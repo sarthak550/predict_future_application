@@ -14,7 +14,7 @@
       "autolinkingModuleResolution": true,
       "typedRoutes": true
     },
-    "plugins": ["expo-router"],
+    "plugins": [["expo-router", { "root": "./src/app" }]],
     "splash": {
       "backgroundColor": "#F6F7FB",
       "resizeMode": "contain"
