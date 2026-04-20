@@ -1,0 +1,30 @@
+{
+  "name": "predict-future-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "turbo run dev --parallel --filter=@predict-future/web --filter=@predict-future/api --filter=@predict-future/mobile",
+    "dev:web": "npm run dev --workspace @predict-future/web",
+    "dev:api": "npm run dev --workspace @predict-future/api",
+    "dev:mobile": "npm run dev --workspace @predict-future/mobile",
+    "build": "turbo run build",
+    "build:web": "npm run build --workspace @predict-future/web",
+    "build:api": "npm run build --workspace @predict-future/api",
+    "build:mobile": "npm run build --workspace @predict-future/mobile",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "prisma:generate": "npm run prisma:generate --workspace @predict-future/api",
+    "prisma:push": "npm run prisma:push --workspace @predict-future/api",
+    "prisma:migrate": "npm run prisma:migrate --workspace @predict-future/api",
+    "prisma:seed": "npm run prisma:seed --workspace @predict-future/api",
+    "ingest:news": "npm run ingest:news --workspace @predict-future/api"
+  },
+  "devDependencies": {
+    "turbo": "^2.0.12",
+    "typescript": "^5.6.3"
+  }
+}

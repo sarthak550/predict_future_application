@@ -1,0 +1,20 @@
+{
+  "name": "@predict-future/validation",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./auth": "./src/auth.ts",
+    "./group": "./src/group.ts",
+    "./market": "./src/market.ts",
+    "./news": "./src/news.ts",
+    "./story": "./src/story.ts"
+  },
+  "dependencies": {
+    "@predict-future/business-rules": "*",
+    "@prisma/client": "^5.22.0",
+    "zod": "^3.23.8"
+  }
+}

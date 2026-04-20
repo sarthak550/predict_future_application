@@ -1,0 +1,33 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": [
+        "./src/*"
+      ],
+      "@predict-future/api-client": [
+        "../../packages/api-client/src/index.ts"
+      ],
+      "@predict-future/auth-shared": [
+        "../../packages/auth-shared/src/index.ts"
+      ],
+      "@predict-future/types": [
+        "../../packages/types/src/index.ts"
+      ],
+      "@predict-future/ui-tokens": [
+        "../../packages/ui-tokens/src/index.ts"
+      ],
+      "@predict-future/utils": [
+        "../../packages/utils/src/index.ts"
+      ]
+    }
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    ".expo/types/**/*.ts",
+    "expo-env.d.ts"
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./*"],
+      "@predict-future/api-client": ["../../packages/api-client/src/index.ts"],
+      "@predict-future/business-rules": ["../../packages/business-rules/src/index.ts"],
+      "@predict-future/business-rules/*": ["../../packages/business-rules/src/*"],
+      "@predict-future/config": ["../../packages/config/src/index.ts"],
+      "@predict-future/types": ["../../packages/types/src/index.ts"],
+      "@predict-future/utils": ["../../packages/utils/src/index.ts"],
+      "@predict-future/validation": ["../../packages/validation/src/index.ts"],
+      "@predict-future/validation/*": ["../../packages/validation/src/*"],
+      "@predict-future/ui-tokens": ["../../packages/ui-tokens/src/index.ts"],
+      "@predict-future/auth-shared": ["../../packages/auth-shared/src/index.ts"]
+    }
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+  "exclude": ["node_modules"]
+}

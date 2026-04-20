@@ -1,0 +1,13 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [
+    {
+      "path": "/api/cron/news-ingestion",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/market-lifecycle",
+      "schedule": "*/10 * * * *"
+    }
+  ]
+}

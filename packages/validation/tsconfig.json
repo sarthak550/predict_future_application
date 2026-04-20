@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@predict-future/business-rules": ["../business-rules/src/index.ts"],
+      "@predict-future/business-rules/*": ["../business-rules/src/*"]
+    }
+  },
+  "include": ["src/**/*.ts"]
+}

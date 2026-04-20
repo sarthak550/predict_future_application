@@ -1,0 +1,22 @@
+{
+  "name": "@predict-future/business-rules",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./markets/access": "./src/markets/access.ts",
+    "./markets/policies": "./src/markets/policies.ts",
+    "./markets/probability": "./src/markets/probability.ts",
+    "./markets/numeric": "./src/markets/numeric.ts",
+    "./markets/ranking": "./src/markets/ranking.ts",
+    "./hosts/trust": "./src/hosts/trust.ts",
+    "./news/category-map": "./src/news/category-map.ts",
+    "./news/types": "./src/news/types.ts",
+    "./stories/ranking": "./src/stories/ranking.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.22.0"
+  }
+}
