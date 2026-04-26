@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "crypto";
-import { type Prisma, StoryStatus } from "@prisma/client";
+import { type MarketType, type Prisma, StoryStatus } from "@prisma/client";
 
 import { getPreferredSourceTrustTier } from "@/lib/news/config";
 import { prisma } from "@/lib/prisma";
@@ -160,6 +160,11 @@ async function upsertStoryWithMarket(tx: TxClient, input: StoryInput, actorId: s
       resolutionRuleText: input.attachedPrediction.resolutionRuleText,
       fallbackRuleText: input.attachedPrediction.fallbackRuleText || null,
       structuredData: input.attachedPrediction.structuredData,
+      marketType: (input.attachedPrediction.marketType === "NUMERIC" ? "NUMERIC" : "BINARY") as MarketType,
+      unit: input.attachedPrediction.unit ?? null,
+      minValue: input.attachedPrediction.minValue ?? null,
+      maxValue: input.attachedPrediction.maxValue ?? null,
+      precision: input.attachedPrediction.precision ?? null,
       storyId: story.id,
       approvedAt:
         storyStatus === "APPROVED" || storyStatus === "PUBLISHED"

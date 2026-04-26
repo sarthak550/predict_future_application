@@ -50,7 +50,7 @@ const baseMarketSchema = z.object({
   template: z.nativeEnum(MarketTemplate).default(MarketTemplate.CUSTOM),
   closeAt: isoDateString,
   resolveAt: isoDateString,
-  resolutionMode: z.nativeEnum(ResolutionMode).default(ResolutionMode.VERIFIED),
+  resolutionMode: z.nativeEnum(ResolutionMode).default(ResolutionMode.HOST),
   resolutionSourceType: z.nativeEnum(ResolutionSourceType).optional(),
   resolutionSourceName: z.string().max(120).optional().or(z.literal("")),
   resolutionSourceUrl: optionalUrl,
@@ -97,18 +97,18 @@ export const createMarketSchema = baseMarketSchema.superRefine((value, ctx) => {
     });
   }
 
-  if (value.visibility === MarketVisibility.PUBLIC && !["VERIFIED", "TRUSTED_HOST"].includes(value.resolutionMode)) {
+  if (value.visibility === MarketVisibility.PUBLIC && !["TRUSTED_HOST", "HOST", "GROUP_VOTE"].includes(value.resolutionMode)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      message: "Public markets must use verified or trusted-host resolution.",
+      message: "Public markets must use host, trusted-host, or community consensus resolution.",
       path: ["resolutionMode"]
     });
   }
 
-  if (value.visibility === MarketVisibility.PRIVATE && !["VERIFIED", "HOST", "GROUP_VOTE"].includes(value.resolutionMode)) {
+  if (value.visibility === MarketVisibility.PRIVATE && !["HOST", "GROUP_VOTE"].includes(value.resolutionMode)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      message: "Private markets must use verified, host, or group-vote resolution.",
+      message: "Private markets must use host or community consensus resolution.",
       path: ["resolutionMode"]
     });
   }
@@ -130,18 +130,10 @@ export const createMarketSchema = baseMarketSchema.superRefine((value, ctx) => {
   }
 
   if (value.marketType === MarketType.NUMERIC) {
-    if (value.visibility !== MarketVisibility.PRIVATE) {
+    if (!["HOST", "TRUSTED_HOST"].includes(value.resolutionMode)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Numeric markets are private/group only in the MVP.",
-        path: ["marketType"]
-      });
-    }
-
-    if (value.resolutionMode !== ResolutionMode.HOST) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Numeric markets currently require host resolution.",
+        message: "Numeric markets require host or trusted-host resolution.",
         path: ["resolutionMode"]
       });
     }
@@ -195,24 +187,6 @@ export const createMarketSchema = baseMarketSchema.superRefine((value, ctx) => {
           path: ["payoutDistribution"]
         });
       }
-    }
-  }
-
-  if (value.resolutionMode === ResolutionMode.VERIFIED) {
-    if (!value.resolutionSourceName || value.resolutionSourceName.trim().length < 2) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Verified markets need a named source.",
-        path: ["resolutionSourceName"]
-      });
-    }
-
-    if (!value.resolutionSourceType) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Verified markets need a source type.",
-        path: ["resolutionSourceType"]
-      });
     }
   }
 
@@ -394,6 +368,11 @@ export const adminOverturnResolutionSchema = z.object({
 
 export const adminCancelMarketSchema = z.object({
   explanation: z.string().min(8).max(1000)
+});
+
+export const voteSchema = z.object({
+  side: z.nativeEnum(PositionSide).optional(),
+  numericValue: z.coerce.number().optional()
 });
 
 export type CreateMarketInput = z.infer<typeof createMarketSchema>;

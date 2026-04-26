@@ -1,11 +1,19 @@
 import { buildAuthHeaders, type AuthTokenProvider } from "@predict-future/auth-shared";
 import type {
+  ApiCricketMatchDetail,
+  ApiFootballMatchDetail,
   ApiGroupDetail,
+  ApiGroupSummary,
   ApiHostEligibility,
   ApiHostStats,
+  ApiLeaderboardEntry,
+  ApiLiveScore,
   ApiMarketDetail,
   ApiMarketSummary,
+  ApiMyProfile,
   ApiNewsFeedItem,
+  ApiUserProfile,
+  ApiVote,
   AppMarketCategory
 } from "@predict-future/types";
 
@@ -25,6 +33,8 @@ export type NewsQuery = {
   limit?: number;
   cursor?: string | null;
   category?: AppMarketCategory;
+  excludeCategory?: string;
+  userId?: string;
 };
 
 export type PublicMarketsQuery = {
@@ -111,8 +121,19 @@ export function createApiClient(options: ApiClientOptions) {
     getPublicMarkets(query?: PublicMarketsQuery) {
       return request<{ markets: ApiMarketSummary[] }>("/api/markets/public", query);
     },
-    getMarketById(marketId: string) {
-      return request<ApiMarketDetail>(`/api/markets/${marketId}`);
+    getMarketById(marketId: string, query?: { userId?: string }) {
+      return request<ApiMarketDetail & { userPositions?: Array<{ id: string; side: string | null; amount: number; numericValue: number | null; createdAt: string }> }>(`/api/markets/${marketId}`, query);
+    },
+    placePosition(marketId: string, body: { side?: string; numericValue?: number; amount: number }, query?: { userId?: string }) {
+      return request<{ ok: boolean }>(
+        `/api/markets/${marketId}/positions`,
+        query,
+        {
+          method: "POST",
+          body: JSON.stringify(body),
+          auth: true,
+        }
+      );
     },
     getHostEligibility() {
       return request<{ eligibility: ApiHostEligibility }>("/api/hosts/eligibility", undefined, { auth: true });
@@ -120,18 +141,82 @@ export function createApiClient(options: ApiClientOptions) {
     getUserHostStats(userId: string) {
       return request<ApiHostStats>(`/api/users/${userId}/host-stats`);
     },
-    getGroupById(groupId: string) {
-      return request<ApiGroupDetail>(`/api/groups/${groupId}`, undefined, { auth: true });
+    getGroupById(groupId: string, query?: { userId?: string }) {
+      return request<ApiGroupDetail>(`/api/groups/${groupId}`, query, { auth: true });
     },
-    createMarket(body: unknown) {
+    createMarket(body: unknown, query?: { userId?: string }) {
       return request<{ market: { id: string } }>(
         "/api/markets/create",
-        undefined,
+        query,
         {
           method: "POST",
           body: JSON.stringify(body),
           auth: true
         }
+      );
+    },
+    castVote(marketId: string, body: { side?: string; numericValue?: number }, query?: { userId?: string }) {
+      return request<{ ok: boolean }>(
+        `/api/markets/${marketId}/vote`,
+        query,
+        {
+          method: "POST",
+          body: JSON.stringify(body),
+          auth: true
+        }
+      );
+    },
+    refreshNewsFeed(query?: { userId?: string }) {
+      return request<Record<string, unknown>>(
+        "/api/news/refresh",
+        query,
+        { method: "POST" }
+      );
+    },
+    getLiveScores() {
+      return request<{ scores: ApiLiveScore[] }>("/api/sports/scores");
+    },
+    getCricketMatchDetail(matchId: string, leagueId: string) {
+      return request<ApiCricketMatchDetail>(`/api/sports/match/${matchId}`, { league: leagueId });
+    },
+    getFootballMatchDetail(matchId: string, leaguePath: string) {
+      return request<ApiFootballMatchDetail>(`/api/sports/match/${matchId}`, { league: leaguePath });
+    },
+    getLeaderboard(query?: { category?: AppMarketCategory }) {
+      return request<{ entries: ApiLeaderboardEntry[] }>("/api/leaderboard", query);
+    },
+    getProfile(username: string) {
+      return request<{ user: ApiUserProfile }>(`/api/profile/${username}`);
+    },
+    getMyProfile(query?: { userId?: string }) {
+      return request<ApiMyProfile>("/api/profile/me", query, { auth: true });
+    },
+    getMyMarkets() {
+      return request<{ createdPolls: ApiMyProfile["createdPolls"]; votes: ApiMyProfile["votes"] }>(
+        "/api/profile/me/markets",
+        undefined,
+        { auth: true }
+      );
+    },
+    getMyGroups(query?: { userId?: string }) {
+      return request<{ groups: Array<ApiGroupSummary & { memberCount?: number; marketCount?: number }> }>(
+        "/api/groups",
+        query,
+        { auth: true }
+      );
+    },
+    createGroup(body: { name: string; description?: string }, query?: { userId?: string }) {
+      return request<{ group: ApiGroupSummary }>(
+        "/api/groups/create",
+        query,
+        { method: "POST", body: JSON.stringify(body), auth: true }
+      );
+    },
+    joinGroup(body: { inviteCode: string }, query?: { userId?: string }) {
+      return request<{ group: ApiGroupSummary }>(
+        "/api/groups/join",
+        query,
+        { method: "POST", body: JSON.stringify(body), auth: true }
       );
     }
   };

@@ -44,11 +44,11 @@ function deriveResolutionFields(payload: CreateMarketInput) {
   if (payload.resolutionMode === ResolutionMode.GROUP_VOTE) {
     return {
       resolutionSourceType: ResolutionSourceType.MANUAL,
-      resolutionSourceName: "Group vote",
+      resolutionSourceName: "Community consensus",
       resolutionSourceUrl: null,
       fallbackRuleText:
         payload.fallbackRuleText ||
-        "If the group cannot reach a clear vote outcome, the group owner or staff should cancel and refund positions."
+        "If participants cannot reach a clear vote outcome, the market creator or staff should cancel and refund positions."
     };
   }
 

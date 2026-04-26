@@ -239,6 +239,7 @@ model User {
   reviewedStories    Story[]            @relation("ReviewedStories")
   createdMarkets     Market[]           @relation("CreatedMarkets")
   approvedMarkets    Market[]           @relation("ApprovedMarkets")
+  votes              Vote[]
   positions          MarketPosition[]
   comments           MarketComment[]
   reports            MarketReport[]     @relation("ReportedByUser")
@@ -540,6 +541,10 @@ model Market {
   hostResolutionEvidenceJson Json?
   resolutionFinalizedById String?
   overturnedReason     String?
+  yesCount             Int                   @default(0)
+  noCount              Int                   @default(0)
+  totalVotes           Int                   @default(0)
+  averageNumericValue  Float?
   isFlagged            Boolean               @default(false)
   isFeatured           Boolean               @default(false)
   approvedAt           DateTime?
@@ -548,6 +553,7 @@ model Market {
   createdAt            DateTime              @default(now())
   updatedAt            DateTime              @updatedAt
   story                Story?                @relation(fields: [storyId], references: [id], onDelete: SetNull)
+  votes                Vote[]
   positions            MarketPosition[]
   comments             MarketComment[]
   reports              MarketReport[]
@@ -566,6 +572,21 @@ model Market {
   @@index([groupId, status, createdAt])
   @@index([resolutionStatus, challengeWindowEndsAt])
   @@index([marketType, visibility, status])
+}
+
+model Vote {
+  id           String       @id @default(cuid())
+  userId       String
+  marketId     String
+  side         PositionSide?
+  numericValue Float?
+  createdAt    DateTime     @default(now())
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  market       Market       @relation(fields: [marketId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, marketId])
+  @@index([marketId, createdAt])
+  @@index([userId, createdAt])
 }
 
 model MarketPosition {

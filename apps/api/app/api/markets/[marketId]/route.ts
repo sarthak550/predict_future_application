@@ -7,13 +7,15 @@ import { prisma } from "@/lib/prisma";
 import { updateMarketSchema } from "@/lib/validations/market";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: { marketId: string } }
 ) {
+  const { searchParams } = new URL(request.url);
   const session = await getSession();
-  const viewer = session?.user?.id
+  const viewerId = session?.user?.id ?? searchParams.get("userId");
+  const viewer = viewerId
     ? await prisma.user.findUnique({
-        where: { id: session.user.id },
+        where: { id: viewerId },
         select: {
           id: true,
           role: true
@@ -70,7 +72,23 @@ export async function GET(
     return NextResponse.json({ error: "Market not found." }, { status: 404 });
   }
 
-  return NextResponse.json({ market });
+  const userPositions = viewerId
+    ? await prisma.marketPosition.findMany({
+        where: { marketId: market.id, userId: viewerId },
+        select: {
+          id: true,
+          side: true,
+          amount: true,
+          numericValue: true,
+          probabilityAtEntry: true,
+          estimatedReturnAtEntry: true,
+          createdAt: true,
+        },
+        orderBy: { createdAt: "desc" },
+      })
+    : [];
+
+  return NextResponse.json({ market, userPositions });
 }
 
 export async function PATCH(

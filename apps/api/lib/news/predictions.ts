@@ -14,6 +14,11 @@ type PredictionSuggestion = {
   resolutionRuleText: string;
   fallbackRuleText?: string;
   structuredData?: Record<string, unknown>;
+  marketType?: "BINARY" | "NUMERIC";
+  unit?: string;
+  minValue?: number;
+  maxValue?: number;
+  precision?: number;
 };
 
 type StoryLike = {

@@ -1,7 +1,9 @@
 import { type MarketCategory, StoryStatus } from "@prisma/client";
 
+import { generatePollWithAI } from "@/lib/ai/gemini";
 import { getConfiguredIngestionCategories, shouldSeedTrendingStory } from "@/lib/news/config";
 import { ingestStories } from "@/lib/news/ingestion";
+import { fetchOgImage, isGoogleNewsUrl } from "@/lib/news/og-image";
 import { fetchTopHeadlines } from "@/lib/news/providers";
 import { generatePredictionFromStory } from "@/lib/news/predictions";
 import { fetchRSSFeed } from "@/lib/news/rssProvider";
@@ -9,6 +11,56 @@ import { getRssSources, type RssSource } from "@/lib/news/rssSources";
 import type { NormalizedNewsItem } from "@/lib/news/types";
 import { prisma } from "@/lib/prisma";
 import type { StoryInput } from "@/lib/validations/story";
+
+/**
+ * Find stories with no imageUrl and attempt to fetch the og:image
+ * from their source article. Runs in the background after ingestion.
+ *
+ * Skips Google News redirect URLs since they can't be resolved without JS.
+ */
+async function backfillMissingImages() {
+  const stories = await prisma.story.findMany({
+    where: {
+      OR: [{ imageUrl: null }, { imageUrl: "" }],
+      sourceUrl: { not: "" },
+      status: { in: ["PUBLISHED", "APPROVED"] },
+    },
+    select: { id: true, sourceUrl: true },
+    orderBy: { createdAt: "desc" },
+    take: 50,
+  });
+
+  if (stories.length === 0) return;
+
+  // Filter out Google News URLs (they require JS to resolve the real article)
+  const resolvable = stories.filter((s) => !isGoogleNewsUrl(s.sourceUrl));
+  if (resolvable.length === 0) return;
+
+  let filled = 0;
+  // Process up to 5 concurrently
+  const CONCURRENCY = 5;
+  for (let i = 0; i < resolvable.length; i += CONCURRENCY) {
+    const batch = resolvable.slice(i, i + CONCURRENCY);
+    const results = await Promise.allSettled(
+      batch.map(async (story) => {
+        const ogImage = await fetchOgImage(story.sourceUrl);
+        if (ogImage) {
+          await prisma.story.update({
+            where: { id: story.id },
+            data: { imageUrl: ogImage },
+          });
+          return true;
+        }
+        return false;
+      })
+    );
+    filled += results.filter((r) => r.status === "fulfilled" && r.value).length;
+  }
+
+  if (filled > 0) {
+    console.info(`[news:og-backfill] filled ${filled}/${resolvable.length} missing images (${stories.length - resolvable.length} Google News URLs skipped)`);
+  }
+}
 
 export type FeedIngestionStatus = {
   id: string;
@@ -235,20 +287,90 @@ export class RSSIngestionService {
       throw new Error("A staff user is required to ingest news stories.");
     }
 
-    const storiesToIngest: StoryInput[] = newStories.map((item) => {
-      const category = item.category as MarketCategory;
-      const generatedPrediction = generatePredictionFromStory({
-        headline: item.title,
-        summary: item.summary,
-        category,
-        publishedAt: item.published_at,
-        sourceName: item.source_name,
-        sourceUrl: item.source_url
-      });
+    const storiesToIngest: StoryInput[] = [];
+    let aiEnabled = Boolean(process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY);
+    let aiCallCount = 0;
 
-      return {
+    for (const item of newStories) {
+      const category = item.category as MarketCategory;
+      let aiSummary = item.summary; // Will be replaced by AI if available
+      let generatedPrediction: ReturnType<typeof generatePredictionFromStory> = null;
+
+      // AI-first: try Groq/Gemini for poll generation (opinion polls, not bets)
+      if (aiEnabled) {
+        try {
+          // Rate limit: wait 2.5s between AI calls to stay within Groq's 30 RPM
+          if (aiCallCount > 0) {
+            await new Promise((r) => setTimeout(r, 2500));
+          }
+          aiCallCount++;
+
+          const aiResult = await generatePollWithAI({
+            headline: item.title,
+            summary: item.summary,
+            category,
+            sourceName: item.source_name,
+            sourceUrl: item.source_url,
+            publishedAt: item.published_at.toISOString(),
+          });
+
+          if (aiResult.skip && aiResult.enhancedSummary) {
+            // AI decided no good poll — use the enhanced summary
+            aiSummary = aiResult.enhancedSummary;
+            console.info(`[news:ai] skipped poll, enhanced summary for "${item.title.slice(0, 60)}..."`);
+          } else {
+            const now = new Date();
+            const pollHours = Math.max(aiResult.expiresInHours ?? 168, 48);
+            const closeAt = new Date(now.getTime() + pollHours * 60 * 60 * 1000).toISOString();
+            const resolveAt = new Date(now.getTime() + (pollHours + 24) * 60 * 60 * 1000).toISOString();
+            generatedPrediction = {
+              title: aiResult.title,
+              description: aiResult.description,
+              template: "CUSTOM" as const,
+              closeAt,
+              resolveAt,
+              resolutionSourceType: "MANUAL" as const,
+              resolutionSourceName: item.source_name,
+              resolutionSourceUrl: item.source_url,
+              resolutionRuleText: `This is an opinion poll. The voting period closes automatically.`,
+              marketType: aiResult.marketType,
+              unit: aiResult.unit,
+              minValue: aiResult.minValue,
+              maxValue: aiResult.maxValue,
+              precision: aiResult.precision,
+            };
+
+            console.info(`[news:ai] generated ${aiResult.marketType} poll for "${item.title.slice(0, 60)}..."`);
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.warn(`[news:ai] failed for "${item.title.slice(0, 60)}...":`, msg);
+          // If rate limited, stop trying AI for remaining stories
+          if (msg.toLowerCase().includes("rate limit")) {
+            console.warn("[news:ai] rate limited — disabling AI for remaining stories in this batch");
+            aiEnabled = false;
+          }
+        }
+      }
+
+      // Fallback to rule-based only when AI is unavailable or failed
+      if (!generatedPrediction && !aiEnabled) {
+        generatedPrediction = generatePredictionFromStory({
+          headline: item.title,
+          summary: item.summary,
+          category,
+          publishedAt: item.published_at,
+          sourceName: item.source_name,
+          sourceUrl: item.source_url
+        });
+        if (generatedPrediction) {
+          console.info(`[news:rules] fallback generated poll for "${item.title.slice(0, 60)}..."`);
+        }
+      }
+
+      storiesToIngest.push({
         headline: item.title,
-        summary: item.summary,
+        summary: aiSummary,
         category,
         sourceName: item.source_name,
         sourceUrl: item.source_url,
@@ -270,8 +392,8 @@ export class RSSIngestionService {
           hasPrediction: Boolean(generatedPrediction)
         }),
         attachedPrediction: generatedPrediction ?? undefined
-      };
-    });
+      });
+    }
 
     await ingestStories(storiesToIngest, staffActorId);
 
@@ -297,6 +419,11 @@ export class RSSIngestionService {
       inserted: perFeedInserted.get(feed.id) ?? 0,
       skippedDuplicates: perFeedSkipped.get(feed.id) ?? 0
     }));
+
+    // Backfill OG images for stories that have no image
+    void backfillMissingImages().catch((err) =>
+      console.warn("[news:ingestion] og-image backfill failed:", err)
+    );
 
     console.info(
       `[news:ingestion] fetched=${normalized.length} inserted=${newStories.length} duplicates=${

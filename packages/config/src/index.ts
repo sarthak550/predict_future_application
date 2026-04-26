@@ -48,11 +48,11 @@ export const marketVisibilityLabels: Record<MarketVisibility, string> = {
 };
 
 export const resolutionModeLabels: Record<ResolutionMode, string> = {
-  VERIFIED: "Verified",
+  VERIFIED: "Verified (legacy)",
   TRUSTED_HOST: "Trusted host",
   HOST: "Host",
-  GROUP_VOTE: "Group vote",
-  SOURCE_BASED: "Source-based",
+  GROUP_VOTE: "Community consensus",
+  SOURCE_BASED: "Source-based (legacy)",
   HOST_RESOLVED: "Host-resolved"
 };
 

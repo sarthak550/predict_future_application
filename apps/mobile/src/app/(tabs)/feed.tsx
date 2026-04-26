@@ -1,17 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, RefreshControl, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import { useNavigation } from "expo-router";
 
 import type { ApiNewsFeedItem } from "@predict-future/types";
 import { colors, radius, spacing } from "@predict-future/ui-tokens";
 
 import { NewsFeedCard } from "@/components/news-feed-card";
 import { mobileApi } from "@/lib/api";
+import { env } from "@/lib/env";
 
 const PAGE_SIZE = 10;
 const TAB_BAR_HEIGHT = 72;
 
 export default function FeedScreen() {
   const { height } = useWindowDimensions();
+  const navigation = useNavigation();
+  const listRef = useRef<FlatList<ApiNewsFeedItem>>(null);
   const [items, setItems] = useState<ApiNewsFeedItem[]>([]);
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -45,7 +49,9 @@ export default function FeedScreen() {
     try {
       const response = await mobileApi.getNews({
         limit: PAGE_SIZE,
-        cursor: mode === "append" ? cursorRef.current : null
+        cursor: mode === "append" ? cursorRef.current : null,
+        excludeCategory: "SPORTS",
+        userId: env.demoUserId,
       });
       if (!mountedRef.current) return;
 
@@ -73,12 +79,23 @@ export default function FeedScreen() {
     void loadPage("replace");
   }, [loadPage]);
 
+
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     cursorRef.current = null;
     hasMoreRef.current = true;
-    void loadPage("replace");
+    mobileApi.refreshNewsFeed({ userId: env.demoUserId }).catch(() => {});
+    setTimeout(() => void loadPage("replace"), 1500);
   }, [loadPage]);
+
+  // Scroll to top + refresh when the Feed tab is tapped while already active
+  useEffect(() => {
+    const unsubscribe = navigation.addListener("tabPress" as never, () => {
+      listRef.current?.scrollToOffset({ offset: 0, animated: true });
+      onRefresh();
+    });
+    return unsubscribe;
+  }, [navigation, onRefresh]);
 
   const onEndReached = useCallback(() => {
     if (hasMoreRef.current && !inFlightRef.current) {
@@ -88,15 +105,29 @@ export default function FeedScreen() {
 
   const cardHeight = useMemo(() => Math.max(520, height - TAB_BAR_HEIGHT), [height]);
 
+  const getItemLayout = useCallback(
+    (_data: ArrayLike<ApiNewsFeedItem> | null | undefined, index: number) => ({
+      length: cardHeight,
+      offset: cardHeight * index,
+      index,
+    }),
+    [cardHeight]
+  );
+
   return (
     <View style={styles.screen}>
       <FlatList
+        ref={listRef}
         data={items}
         keyExtractor={(item) => item.id}
-        pagingEnabled
+        snapToInterval={cardHeight}
         snapToAlignment="start"
-        decelerationRate="fast"
+        decelerationRate={0.985}
         showsVerticalScrollIndicator={false}
+        getItemLayout={getItemLayout}
+        removeClippedSubviews
+        maxToRenderPerBatch={3}
+        windowSize={5}
         contentContainerStyle={items.length === 0 ? styles.emptyContent : undefined}
         onEndReachedThreshold={0.65}
         onEndReached={onEndReached}

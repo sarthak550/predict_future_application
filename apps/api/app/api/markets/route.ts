@@ -101,13 +101,15 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const { searchParams } = new URL(request.url);
     const session = await getSession();
-    if (!session?.user?.id) {
+    const userId = session?.user?.id ?? searchParams.get("userId");
+    if (!userId) {
       return NextResponse.json({ error: "Authentication required." }, { status: 401 });
     }
 
     const actor = await prisma.user.findUnique({
-      where: { id: session.user.id }
+      where: { id: userId }
     });
     if (!actor || actor.isSuspended) {
       return NextResponse.json({ error: "Account is not allowed to create markets." }, { status: 403 });

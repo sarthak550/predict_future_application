@@ -549,7 +549,7 @@ export async function submitHostMarketResolution(input: {
 
     const sourceName =
       normalizedMode === "GROUP_VOTE"
-        ? "Group vote"
+        ? "Community consensus"
         : `${market.creator.username} (host)`;
 
     if (isCancellation) {

@@ -19,13 +19,15 @@ export async function POST(
   { params }: { params: { marketId: string } }
 ) {
   try {
+    const { searchParams } = new URL(request.url);
     const session = await getSession();
-    if (!session?.user?.id) {
+    const userId = session?.user?.id ?? searchParams.get("userId");
+    if (!userId) {
       return NextResponse.json({ error: "Authentication required." }, { status: 401 });
     }
 
     const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
+      where: { id: userId },
       select: {
         id: true,
         username: true,

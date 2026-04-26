@@ -4,16 +4,18 @@ import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: { id: string } }
 ) {
+  const { searchParams } = new URL(request.url);
   const session = await getSession();
-  if (!session?.user?.id) {
+  const userId = session?.user?.id ?? searchParams.get("userId");
+  if (!userId) {
     return NextResponse.json({ error: "Authentication required." }, { status: 401 });
   }
 
   const viewer = await prisma.user.findUnique({
-    where: { id: session.user.id },
+    where: { id: userId },
     select: {
       id: true,
       role: true

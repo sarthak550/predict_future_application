@@ -27,7 +27,12 @@ export const attachedPredictionSchema = z
     resolutionSourceUrl: z.string().url().optional().or(z.literal("")),
     resolutionRuleText: z.string().min(16).max(1000),
     fallbackRuleText: z.string().max(1000).optional().or(z.literal("")),
-    structuredData: z.record(z.any()).optional()
+    structuredData: z.record(z.any()).optional(),
+    marketType: z.enum(["BINARY", "NUMERIC"]).optional(),
+    unit: z.string().max(50).optional(),
+    minValue: z.number().optional(),
+    maxValue: z.number().optional(),
+    precision: z.number().int().min(0).max(6).optional()
   })
   .superRefine((value, ctx) => {
     if (new Date(value.closeAt) >= new Date(value.resolveAt)) {

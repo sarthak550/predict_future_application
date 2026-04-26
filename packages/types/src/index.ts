@@ -22,7 +22,7 @@ export type AppMarketStatus =
 
 export type AppMarketVisibility = "PUBLIC" | "PRIVATE";
 export type AppMarketType = "BINARY" | "NUMERIC";
-export type AppResolutionMode = "VERIFIED" | "TRUSTED_HOST" | "HOST" | "GROUP_VOTE";
+export type AppResolutionMode = "TRUSTED_HOST" | "HOST" | "GROUP_VOTE";
 export type AppResolutionStatus =
   | "OPEN"
   | "CLOSED"
@@ -68,6 +68,7 @@ export type ApiNewsFeedItem = {
   isFeatured: boolean;
   isTrending: boolean;
   market: ApiMarketSummary | null;
+  poll: ApiPollSummary | null;
 };
 
 export type ApiMarketSummary = {
@@ -95,6 +96,11 @@ export type ApiMarketSummary = {
   totalVolume?: number;
   totalParticipants?: number;
   marketRankScore?: number;
+  unit?: string | null;
+  minValue?: number | null;
+  maxValue?: number | null;
+  precision?: number | null;
+  averageNumericValue?: number | null;
   creator?: {
     username: string;
     reputationScore?: number;
@@ -190,4 +196,156 @@ export type ApiGroupSummary = {
 
 export type ApiGroupDetail = {
   group: Record<string, unknown>;
+};
+
+// --- Sports types ---
+
+export type ApiTeamDetail = {
+  name: string;
+  abbreviation: string;
+  logo: string;
+  score: string;
+  record?: string;
+  linescores?: string[];
+};
+
+export type ApiLiveScore = {
+  id: string;
+  sport: string;
+  league: string;
+  status: "pre" | "in" | "post";
+  statusDetail: string;
+  shortDetail: string;
+  startTime: string;
+  venue?: string;
+  venueCity?: string;
+  statusSummary?: string;
+  broadcast?: string;
+  homeTeam: ApiTeamDetail;
+  awayTeam: ApiTeamDetail;
+};
+
+export type ApiCricketMatchDetail = Record<string, unknown>;
+export type ApiFootballMatchDetail = Record<string, unknown>;
+
+// --- Poll / Vote types (used by news feed polls) ---
+
+export type AppVoteSide = "YES" | "NO";
+
+export type ApiVote = {
+  id: string;
+  side: AppVoteSide | null;
+  numericValue: number | null;
+  createdAt: string;
+};
+
+export type ApiLeaderboardEntry = {
+  id: string;
+  username: string;
+  reputationScore: number;
+  accuracyScore: number;
+  totalPredictions?: number;
+  totalNetPoints?: number;
+  stats?: {
+    totalPredictions?: number;
+    totalNetPoints?: number;
+  } | null;
+};
+
+export type ApiBadge = {
+  id: string;
+  name: string;
+  description?: string;
+  earnedAt?: string;
+};
+
+export type ApiCategoryStat = {
+  category: AppMarketCategory;
+  accuracyScore: number;
+  totalPredictions?: number;
+  totalNetPoints?: number;
+};
+
+export type ApiPositionSummary = {
+  id: string;
+  side: AppPositionSide;
+  amount: number;
+  createdAt: string;
+  market: {
+    id: string;
+    title: string;
+    status: AppMarketStatus;
+  };
+};
+
+export type ApiUserProfile = {
+  id: string;
+  username: string;
+  reputationScore: number;
+  accuracyScore: number;
+  level?: number;
+  streak?: number;
+  stats?: {
+    totalPredictions?: number;
+    totalNetPoints?: number;
+    totalVolume?: number;
+  } | null;
+  wallet?: {
+    balance: number;
+  } | null;
+  badges?: Array<{ badge: ApiBadge }>;
+  categoryStats?: ApiCategoryStat[];
+  positions?: ApiPositionSummary[];
+  createdMarkets?: Array<{
+    id: string;
+    title: string;
+    status: AppMarketStatus;
+  }>;
+  hostStats?: ApiHostStats["hostStats"];
+};
+
+export type ApiMyProfile = {
+  user: ApiUserProfile;
+  createdPolls: Array<{
+    id: string;
+    title: string;
+    status: AppMarketStatus;
+    category: AppMarketCategory;
+    yesCount: number;
+    noCount: number;
+    totalVotes: number;
+    closeAt: string;
+    createdAt: string;
+  }>;
+  votes: Array<{
+    id: string;
+    side: AppVoteSide | null;
+    numericValue: number | null;
+    createdAt: string;
+    market: {
+      id: string;
+      title: string;
+      status: AppMarketStatus;
+      category: AppMarketCategory;
+      yesCount: number;
+      noCount: number;
+    };
+  }>;
+};
+
+export type ApiPollSummary = {
+  id: string;
+  title: string;
+  description?: string | null;
+  status: AppMarketStatus;
+  marketType?: AppMarketType;
+  yesCount: number;
+  noCount: number;
+  totalVotes: number;
+  averageNumericValue?: number | null;
+  closeAt?: string | null;
+  unit?: string | null;
+  minValue?: number | null;
+  maxValue?: number | null;
+  userVote?: { side?: string | null; numericValue?: number | null } | null;
 };
