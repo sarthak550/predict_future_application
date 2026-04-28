@@ -99,6 +99,7 @@ function MarketBody({
   const isOpen = market.status === "OPEN";
   const isClosed = !isOpen;
   const isNumeric = market.marketType === "NUMERIC";
+  const isPoll = Boolean(market.storyId);
 
   // Bet state
   const [selectedSide, setSelectedSide] = useState<"YES" | "NO" | null>(null);
@@ -285,8 +286,18 @@ function MarketBody({
         </View>
       ) : null}
 
+      {/* Poll notice — no staking for AI-generated polls */}
+      {isPoll ? (
+        <View style={[styles.card, styles.pollCard]}>
+          <Text style={styles.pollTitle}>Community Poll</Text>
+          <Text style={styles.pollText}>
+            This is an AI-generated opinion poll linked to a news story. Votes are free and no points are at stake.
+          </Text>
+        </View>
+      ) : null}
+
       {/* Betting panel */}
-      {isOpen && !betSuccess ? (
+      {!isPoll && isOpen && !betSuccess ? (
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>
             {hasPosition ? "Increase Your Bet" : "Place Your Bet"}
@@ -434,7 +445,7 @@ function MarketBody({
       ) : null}
 
       {/* Success state */}
-      {betSuccess ? (
+      {!isPoll && betSuccess ? (
         <View style={[styles.card, styles.successCard]}>
           <Text style={styles.successTitle}>Bet placed!</Text>
           <Text style={styles.successText}>
@@ -454,7 +465,7 @@ function MarketBody({
       ) : null}
 
       {/* Closed state */}
-      {isClosed && !hasPosition ? (
+      {!isPoll && isClosed && !hasPosition ? (
         <View style={[styles.card, styles.closedCard]}>
           <Text style={styles.closedText}>This market is no longer accepting bets.</Text>
         </View>
@@ -857,6 +868,23 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "700",
     color: "#fff",
+  },
+  // Poll notice
+  pollCard: {
+    backgroundColor: "#EFF6FF",
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
+  },
+  pollTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#1D4ED8",
+    marginBottom: spacing.sm,
+  },
+  pollText: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: "#1E40AF",
   },
   // Closed
   closedCard: {

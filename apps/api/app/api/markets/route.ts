@@ -18,6 +18,7 @@ export async function GET(request: Request) {
   const markets = await prisma.market.findMany({
     where: {
       visibility: "PUBLIC",
+      storyId: null,
       ...(status && Object.values(MarketStatus).includes(status as MarketStatus)
         ? { status: status as MarketStatus }
         : {}),

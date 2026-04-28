@@ -1,8 +1,10 @@
 import { Link } from "expo-router";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
+  Animated,
   ActivityIndicator,
   Image,
+  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -10,24 +12,25 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 
 import type { ApiNewsFeedItem } from "@predict-future/types";
-import { formatPercent, formatPoints, formatRelativeTime } from "@predict-future/utils";
+import { formatPercent, formatRelativeTime } from "@predict-future/utils";
 import { colors, radius, shadows, spacing } from "@predict-future/ui-tokens";
 
 import { mobileApi } from "@/lib/api";
 import { env } from "@/lib/env";
+import { useWatchlist } from "@/providers/watchlist-provider";
 
 type Props = {
   item: ApiNewsFeedItem;
   viewportHeight: number;
+  showHint?: boolean;
 };
 
-export function NewsFeedCard({ item, viewportHeight }: Props) {
+export function NewsFeedCard({ item, viewportHeight, showHint }: Props) {
   const market = item.market;
   const poll = item.poll;
-  const totalPool = (market?.yesPool ?? 0) + (market?.noPool ?? 0);
-  const yesProbability = totalPool > 0 ? (market?.yesPool ?? 0) / totalPool : 0.5;
 
   const existingVote = poll?.userVote;
   const [voted, setVoted] = useState<string | null>(() => {
@@ -40,10 +43,36 @@ export function NewsFeedCard({ item, viewportHeight }: Props) {
   const [numericInput, setNumericInput] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  // Animated bar for post-vote live results
+  const barAnim = useRef(new Animated.Value(existingVote ? 1 : 0)).current;
+
   const pollClosed =
     poll?.status === "CLOSED" ||
     poll?.status === "RESOLVED" ||
     (poll?.closeAt && new Date(poll.closeAt) <= new Date());
+
+  // Optimistic post-vote counts
+  const totalVotesDisplay = (poll?.totalVotes ?? 0) + (voted && !existingVote ? 1 : 0);
+  const yesVotesDisplay = (poll?.yesCount ?? 0) + (voted === "YES" && !existingVote ? 1 : 0);
+  const yesPctDisplay =
+    totalVotesDisplay > 0 ? (yesVotesDisplay / totalVotesDisplay) * 100 : 50;
+
+  const barYesWidth = barAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0%", `${Math.max(4, Math.min(96, yesPctDisplay))}%`],
+  });
+
+  // Watchlist
+  const watchlist = useWatchlist();
+  const isBookmarked = market ? watchlist.has(market.id) : false;
+  function toggleBookmark() {
+    if (!market) return;
+    if (isBookmarked) {
+      watchlist.remove(market.id);
+    } else {
+      watchlist.add({ id: market.id, title: market.title, status: market.status ?? "OPEN" });
+    }
+  }
 
   async function handleVote(side?: string, numericValue?: number) {
     if (!market || voting) return;
@@ -56,9 +85,15 @@ export function NewsFeedCard({ item, viewportHeight }: Props) {
         { userId: env.demoUserId }
       );
       setVoted(side ?? String(numericValue));
+      // Animate bar to crowd percentage
+      Animated.spring(barAnim, {
+        toValue: 1,
+        tension: 40,
+        friction: 8,
+        useNativeDriver: false,
+      }).start();
     } catch (err: unknown) {
-      const message =
-        err instanceof Error ? err.message : "Vote failed";
+      const message = err instanceof Error ? err.message : "Vote failed";
       setError(message);
     } finally {
       setVoting(false);
@@ -76,42 +111,64 @@ export function NewsFeedCard({ item, viewportHeight }: Props) {
           showsVerticalScrollIndicator={false}
           nestedScrollEnabled
         >
-          {hasImage && (
+          {hasImage ? (
             <Image
               source={{ uri: item.imageUrl! }}
               style={styles.heroImage}
               resizeMode="cover"
             />
+          ) : (
+            <View
+              style={[
+                styles.heroPlaceholder,
+                { backgroundColor: CATEGORY_COLORS[item.category] ?? CATEGORY_COLORS.GENERAL },
+              ]}
+            >
+              <Text style={styles.placeholderEmoji}>
+                {CATEGORY_EMOJI[item.category] ?? "📰"}
+              </Text>
+            </View>
           )}
 
           <View style={styles.content}>
             <Text style={styles.category}>{item.category}</Text>
-            <Text style={[styles.headline, hasImage && styles.headlineCompact]}>
-              {item.headline}
-            </Text>
+            <Text style={styles.headline}>{item.headline}</Text>
             <Text style={styles.summary}>{item.summary}</Text>
 
-            <View style={styles.metaRow}>
+            <Pressable
+              onPress={() => Linking.openURL(item.sourceUrl)}
+              style={styles.metaRow}
+            >
               <Text style={styles.source}>{item.sourceName}</Text>
-              <Text style={styles.published}>
-                {formatRelativeTime(item.publishedAt)}
-              </Text>
-            </View>
+              <Text style={styles.readMore}>Read more →</Text>
+              <View style={{ flex: 1 }} />
+              <Text style={styles.published}>{formatRelativeTime(item.publishedAt)}</Text>
+            </Pressable>
 
             {market ? (
               <View style={styles.marketBlock}>
-                <Text style={styles.marketTitle}>{market.title}</Text>
+                {/* Market title row with bookmark */}
+                <View style={styles.marketTitleRow}>
+                  <Text style={styles.marketTitle}>
+                    {market.title}
+                  </Text>
+                  <Pressable onPress={toggleBookmark} hitSlop={8} style={styles.bookmarkBtn}>
+                    <Ionicons
+                      name={isBookmarked ? "bookmark" : "bookmark-outline"}
+                      size={18}
+                      color={isBookmarked ? colors.accent : colors.textMuted}
+                    />
+                  </Pressable>
+                </View>
 
-                {/* Progress bar */}
-                {poll && poll.totalVotes > 0 ? (
+                {/* Progress bar — crowd probability (hidden once user has voted; live results bar takes over) */}
+                {!voted && poll && poll.totalVotes > 0 ? (
                   <>
                     <View style={styles.progressTrack}>
                       <View
                         style={[
                           styles.progressFill,
-                          {
-                            width: `${Math.max(8, (poll.yesCount / poll.totalVotes) * 100)}%`,
-                          },
+                          { width: `${Math.max(8, (poll.yesCount / poll.totalVotes) * 100)}%` },
                         ]}
                       />
                     </View>
@@ -119,44 +176,74 @@ export function NewsFeedCard({ item, viewportHeight }: Props) {
                       <Text style={styles.poolLabel}>
                         YES {formatPercent(poll.yesCount / poll.totalVotes)}
                       </Text>
-                      <Text style={styles.poolLabel}>
-                        {poll.totalVotes} votes
-                      </Text>
+                      <Text style={styles.poolLabel}>{poll.totalVotes} votes</Text>
                     </View>
                   </>
-                ) : (
-                  <>
-                    <View style={styles.progressTrack}>
-                      <View
-                        style={[
-                          styles.progressFill,
-                          { width: `${Math.max(8, yesProbability * 100)}%` },
-                        ]}
-                      />
-                    </View>
-                    <View style={styles.poolRow}>
-                      <Text style={styles.poolLabel}>
-                        YES {formatPercent(yesProbability)}
-                      </Text>
-                      <Text style={styles.poolLabel}>
-                        {formatPoints(market.totalVolume ?? totalPool)} pts
-                      </Text>
-                    </View>
-                  </>
-                )}
+                ) : null}
 
-                {/* Inline voting */}
+                {/* Vote / results area */}
                 {pollClosed ? (
                   <View style={styles.closedBanner}>
                     <Text style={styles.closedText}>Poll closed</Text>
                   </View>
                 ) : voted ? (
-                  <View style={styles.votedBanner}>
-                    <Text style={styles.votedText}>
-                      {voted === "YES" || voted === "NO"
-                        ? `You voted ${voted}`
-                        : `Your guess: ${voted}${poll?.unit ? ` ${poll.unit}` : ""}`}
-                    </Text>
+                  // ── Live results (animated) ──
+                  <View style={styles.liveResults}>
+                    {poll?.marketType === "NUMERIC" ? (
+                      <View style={styles.numericResult}>
+                        <Ionicons name="checkmark-circle" size={16} color="#059669" />
+                        <Text style={styles.numericResultText}>
+                          Your guess: {voted}
+                          {poll?.unit ? ` ${poll.unit}` : ""}
+                        </Text>
+                        {poll?.averageNumericValue != null && (
+                          <Text style={styles.crowdAvg}>
+                            Crowd avg:{" "}
+                            {poll.averageNumericValue.toFixed(1)}
+                            {poll.unit ? ` ${poll.unit}` : ""}
+                          </Text>
+                        )}
+                      </View>
+                    ) : (
+                      <>
+                        <View style={styles.liveBarTrack}>
+                          <Animated.View
+                            style={[styles.liveBarYes, { width: barYesWidth }]}
+                          />
+                        </View>
+                        <View style={styles.liveLabelsRow}>
+                          <Text style={styles.liveLabelYes}>
+                            YES {Math.round(yesPctDisplay)}%
+                          </Text>
+                          <Text style={styles.liveTotalVotes}>
+                            {totalVotesDisplay} votes
+                          </Text>
+                          <Text style={styles.liveLabelNo}>
+                            NO {Math.round(100 - yesPctDisplay)}%
+                          </Text>
+                        </View>
+                        <View
+                          style={[
+                            styles.yourVoteBadge,
+                            voted === "YES" ? styles.yourVoteYes : styles.yourVoteNo,
+                          ]}
+                        >
+                          <Ionicons
+                            name="checkmark-circle"
+                            size={14}
+                            color={voted === "YES" ? "#059669" : "#DC2626"}
+                          />
+                          <Text
+                            style={[
+                              styles.yourVoteText,
+                              voted === "YES" ? styles.yourVoteTextYes : styles.yourVoteTextNo,
+                            ]}
+                          >
+                            You voted {voted}
+                          </Text>
+                        </View>
+                      </>
+                    )}
                   </View>
                 ) : poll ? (
                   poll.marketType === "NUMERIC" ? (
@@ -203,9 +290,16 @@ export function NewsFeedCard({ item, viewportHeight }: Props) {
                         disabled={voting}
                       >
                         {voting ? (
-                          <ActivityIndicator size="small" color="#fff" />
+                          <ActivityIndicator size="small" color="#059669" />
                         ) : (
-                          <Text style={styles.yesBtnText}>YES</Text>
+                          <>
+                            <Text style={styles.yesBtnLabel}>YES</Text>
+                            {poll.totalVotes > 0 && (
+                              <Text style={styles.btnPct}>
+                                {Math.round((poll.yesCount / poll.totalVotes) * 100)}%
+                              </Text>
+                            )}
+                          </>
                         )}
                       </Pressable>
                       <Pressable
@@ -214,9 +308,16 @@ export function NewsFeedCard({ item, viewportHeight }: Props) {
                         disabled={voting}
                       >
                         {voting ? (
-                          <ActivityIndicator size="small" color="#fff" />
+                          <ActivityIndicator size="small" color="#DC2626" />
                         ) : (
-                          <Text style={styles.noBtnText}>NO</Text>
+                          <>
+                            <Text style={styles.noBtnLabel}>NO</Text>
+                            {poll.totalVotes > 0 && (
+                              <Text style={styles.btnPct}>
+                                {Math.round((poll.noCount / poll.totalVotes) * 100)}%
+                              </Text>
+                            )}
+                          </>
                         )}
                       </Pressable>
                     </View>
@@ -227,30 +328,57 @@ export function NewsFeedCard({ item, viewportHeight }: Props) {
                   </Link>
                 )}
 
-                {error ? (
-                  <Text style={styles.errorText}>{error}</Text>
-                ) : null}
+                {error ? <Text style={styles.errorText}>{error}</Text> : null}
               </View>
             ) : (
               <View style={styles.marketBlock}>
-                <Text style={styles.marketTitle}>Poll attaching</Text>
+                <Text style={styles.marketTitle}>Generating prediction…</Text>
                 <Text style={styles.summary}>
-                  This story is live in the feed while poll generation catches
-                  up.
+                  This story is live — a market will appear shortly.
                 </Text>
               </View>
             )}
           </View>
         </ScrollView>
       </View>
+
+      {/* Swipe hint */}
+      {showHint && (
+        <View style={styles.swipeHint} pointerEvents="none">
+          <Ionicons name="chevron-up" size={20} color="rgba(255,255,255,0.8)" />
+          <Text style={styles.swipeHintText}>Swipe up for next story</Text>
+        </View>
+      )}
     </View>
   );
 }
 
+const CATEGORY_COLORS: Record<string, string> = {
+  TECH: "#7C3AED",
+  BUSINESS: "#0369A1",
+  SPORTS: "#DC2626",
+  ENTERTAINMENT: "#D97706",
+  WEATHER: "#0EA5E9",
+  GENERAL: "#64748B",
+  PRODUCT: "#059669",
+  COMPANY: "#4338CA",
+};
+
+const CATEGORY_EMOJI: Record<string, string> = {
+  TECH: "💻",
+  BUSINESS: "📈",
+  SPORTS: "⚽",
+  ENTERTAINMENT: "🎬",
+  WEATHER: "🌤️",
+  GENERAL: "📰",
+  PRODUCT: "🚀",
+  COMPANY: "🏢",
+};
+
 const styles = StyleSheet.create({
   frame: {
     paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
+    paddingVertical: spacing.sm,
     justifyContent: "center",
     backgroundColor: colors.background,
   },
@@ -261,76 +389,85 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     ...shadows.card,
   },
-  scrollView: {
-    flex: 1,
-  },
-  scrollContent: {
-    flexGrow: 1,
-  },
-  heroImage: {
+  scrollView: { flex: 1 },
+  scrollContent: { flexGrow: 1 },
+
+  heroImage: { width: "100%", height: 220 },
+  heroPlaceholder: {
     width: "100%",
-    height: 200,
-  },
-  content: {
-    flex: 1,
-    padding: spacing.xl,
+    height: 160,
+    alignItems: "center",
     justifyContent: "center",
+    opacity: 0.85,
   },
+  placeholderEmoji: { fontSize: 52 },
+
+  content: { flex: 1, padding: spacing.xl, justifyContent: "center" },
   category: {
-    fontSize: 12,
-    fontWeight: "700",
+    fontSize: 11,
+    fontWeight: "800",
     letterSpacing: 1,
     textTransform: "uppercase",
     color: colors.accent,
+    backgroundColor: "#EFF6FF",
+    alignSelf: "flex-start",
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: radius.pill,
+    overflow: "hidden",
   },
   headline: {
-    marginTop: spacing.sm,
-    fontSize: 28,
-    lineHeight: 34,
-    fontWeight: "700",
+    marginTop: spacing.md,
+    fontSize: 22,
+    lineHeight: 28,
+    fontWeight: "800",
     color: colors.text,
-  },
-  headlineCompact: {
-    fontSize: 24,
-    lineHeight: 30,
   },
   summary: {
     marginTop: spacing.md,
     fontSize: 15,
-    lineHeight: 22,
+    lineHeight: 23,
     color: colors.textMuted,
   },
   metaRow: {
     marginTop: spacing.lg,
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
+    gap: 8,
+    paddingVertical: spacing.sm,
   },
-  source: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: colors.text,
-  },
-  published: {
-    fontSize: 13,
-    color: colors.textMuted,
-  },
+  source: { fontSize: 13, fontWeight: "700", color: colors.text },
+  readMore: { fontSize: 13, fontWeight: "600", color: colors.accent },
+  published: { fontSize: 12, color: colors.textMuted },
+
   marketBlock: {
     marginTop: spacing.lg,
     padding: spacing.lg,
     borderRadius: radius.md,
-    backgroundColor: colors.surfaceMuted,
+    backgroundColor: "#F8FAFF",
+    borderWidth: 1,
+    borderColor: "#E8EDF5",
+  },
+  marketTitleRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: spacing.sm,
   },
   marketTitle: {
-    fontSize: 17,
+    flex: 1,
+    fontSize: 15,
+    lineHeight: 21,
     fontWeight: "700",
     color: colors.text,
   },
+  bookmarkBtn: {
+    paddingTop: 2,
+  },
   progressTrack: {
     marginTop: spacing.md,
-    height: 10,
+    height: 8,
     borderRadius: radius.pill,
-    backgroundColor: "#DCE3F2",
+    backgroundColor: "#E2E8F0",
     overflow: "hidden",
   },
   progressFill: {
@@ -339,51 +476,43 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accent,
   },
   poolRow: {
-    marginTop: spacing.sm,
+    marginTop: 6,
     flexDirection: "row",
     justifyContent: "space-between",
   },
-  poolLabel: {
-    fontSize: 13,
-    color: colors.textMuted,
-  },
+  poolLabel: { fontSize: 12, fontWeight: "600", color: colors.textMuted },
+
   // Binary vote buttons
   binaryVoteRow: {
     marginTop: spacing.md,
     flexDirection: "row",
-    gap: spacing.md,
+    gap: spacing.sm,
   },
   yesBtn: {
     flex: 1,
-    paddingVertical: 14,
+    paddingVertical: 12,
     borderRadius: radius.md,
-    backgroundColor: "#16A34A",
+    backgroundColor: "#ECFDF5",
+    borderWidth: 1,
+    borderColor: "#A7F3D0",
     alignItems: "center",
     justifyContent: "center",
-  },
-  yesBtnText: {
-    fontSize: 16,
-    fontWeight: "800",
-    color: "#fff",
-    letterSpacing: 1,
   },
   noBtn: {
     flex: 1,
-    paddingVertical: 14,
+    paddingVertical: 12,
     borderRadius: radius.md,
-    backgroundColor: "#DC2626",
+    backgroundColor: "#FFF1F2",
+    borderWidth: 1,
+    borderColor: "#FECDD3",
     alignItems: "center",
     justifyContent: "center",
   },
-  noBtnText: {
-    fontSize: 16,
-    fontWeight: "800",
-    color: "#fff",
-    letterSpacing: 1,
-  },
-  btnDisabled: {
-    opacity: 0.5,
-  },
+  yesBtnLabel: { fontSize: 12, fontWeight: "800", letterSpacing: 0.5, color: "#059669" },
+  noBtnLabel: { fontSize: 12, fontWeight: "800", letterSpacing: 0.5, color: "#DC2626" },
+  btnPct: { fontSize: 20, fontWeight: "700", color: colors.text, marginTop: 2 },
+  btnDisabled: { opacity: 0.5 },
+
   // Numeric vote
   numericVoteRow: {
     marginTop: spacing.md,
@@ -393,68 +522,109 @@ const styles = StyleSheet.create({
   },
   numericInput: {
     flex: 1,
-    height: 46,
+    height: 44,
     borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: "#D1D5DB",
+    borderColor: "#E2E8F0",
     paddingHorizontal: spacing.md,
     fontSize: 16,
     color: colors.text,
     backgroundColor: "#fff",
   },
-  unitLabel: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: colors.textMuted,
-  },
+  unitLabel: { fontSize: 13, fontWeight: "600", color: colors.textMuted },
   submitBtn: {
     paddingHorizontal: spacing.lg,
-    paddingVertical: 12,
+    paddingVertical: 11,
     borderRadius: radius.md,
-    backgroundColor: colors.primary,
+    backgroundColor: colors.accent,
     alignItems: "center",
     justifyContent: "center",
   },
-  submitBtnText: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: "#fff",
-  },
-  // Voted state
-  votedBanner: {
+  submitBtnText: { fontSize: 14, fontWeight: "700", color: "#fff" },
+
+  // ── Live results (post-vote) ──
+  liveResults: {
     marginTop: spacing.md,
-    paddingVertical: 12,
-    borderRadius: radius.md,
-    backgroundColor: "#E0F2FE",
+    gap: spacing.sm,
+  },
+  liveBarTrack: {
+    height: 10,
+    borderRadius: radius.pill,
+    backgroundColor: "#FEE2E2",
+    overflow: "hidden",
+  },
+  liveBarYes: {
+    height: "100%",
+    borderRadius: radius.pill,
+    backgroundColor: "#059669",
+  },
+  liveLabelsRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
     alignItems: "center",
   },
-  votedText: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: "#0369A1",
+  liveLabelYes: { fontSize: 13, fontWeight: "700", color: "#059669" },
+  liveLabelNo: { fontSize: 13, fontWeight: "700", color: "#DC2626" },
+  liveTotalVotes: { fontSize: 12, color: colors.textMuted },
+  yourVoteBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    alignSelf: "flex-start",
   },
-  // Closed state
+  yourVoteYes: { backgroundColor: "#ECFDF5", borderWidth: 1, borderColor: "#A7F3D0" },
+  yourVoteNo: { backgroundColor: "#FFF1F2", borderWidth: 1, borderColor: "#FECDD3" },
+  yourVoteText: { fontSize: 13, fontWeight: "700" },
+  yourVoteTextYes: { color: "#059669" },
+  yourVoteTextNo: { color: "#DC2626" },
+
+  // Numeric result
+  numericResult: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    paddingVertical: 8,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: "#ECFDF5",
+    borderWidth: 1,
+    borderColor: "#A7F3D0",
+    flexWrap: "wrap",
+  },
+  numericResultText: { fontSize: 13, fontWeight: "700", color: "#059669" },
+  crowdAvg: { fontSize: 12, color: colors.textMuted, marginLeft: "auto" },
+
+  // Closed
   closedBanner: {
     marginTop: spacing.md,
-    paddingVertical: 12,
+    paddingVertical: 11,
     borderRadius: radius.md,
     backgroundColor: "#F3F4F6",
     alignItems: "center",
   },
-  closedText: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: "#6B7280",
+  closedText: { fontSize: 14, fontWeight: "700", color: "#6B7280" },
+
+  errorText: { marginTop: spacing.sm, fontSize: 12, color: "#DC2626" },
+  link: { marginTop: spacing.md, fontSize: 14, fontWeight: "700", color: colors.accent },
+
+  // Swipe hint
+  swipeHint: {
+    position: "absolute",
+    bottom: spacing.xl,
+    left: 0,
+    right: 0,
+    alignItems: "center",
+    gap: 4,
   },
-  errorText: {
-    marginTop: spacing.sm,
-    fontSize: 13,
-    color: "#DC2626",
-  },
-  link: {
-    marginTop: spacing.lg,
-    fontSize: 15,
-    fontWeight: "700",
-    color: colors.primary,
+  swipeHintText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "rgba(255,255,255,0.8)",
+    textShadowColor: "rgba(0,0,0,0.4)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
   },
 });

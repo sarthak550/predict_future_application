@@ -38,15 +38,6 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
-        name="markets"
-        options={{
-          title: "Markets",
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="trending-up-outline" size={size} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
         name="create"
         options={{
           title: "Create",
@@ -56,13 +47,17 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
-        name="leaderboard"
+        name="markets"
         options={{
-          title: "Ranks",
+          title: "Markets",
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="trophy-outline" size={size} color={color} />
+            <Ionicons name="trending-up-outline" size={size} color={color} />
           ),
         }}
+      />
+      <Tabs.Screen
+        name="leaderboard"
+        options={{ href: null }}
       />
       <Tabs.Screen
         name="profile"

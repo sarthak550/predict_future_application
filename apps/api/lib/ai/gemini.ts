@@ -180,6 +180,17 @@ function validateAndNormalize(parsed: PollResult, originalSummary?: string): Pol
   return parsed;
 }
 
+// ---- Rate limit helper ----
+
+class RateLimitError extends Error {
+  retryAfterSeconds: number;
+  constructor(message: string, retryAfterSeconds: number) {
+    super(message);
+    this.name = "RateLimitError";
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
 // ---- Groq (primary) ----
 
 const GROQ_MODELS = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"] as const;
@@ -208,7 +219,10 @@ async function callGroq(apiKey: string, story: NewsStoryInput, modelIndex = 0): 
     const errorText = await response.text();
     console.error("Groq API error:", response.status, errorText);
     if (response.status === 429) {
-      throw new Error("Rate limit reached. Please wait a moment and try again.");
+      // Parse the retry delay from the error message (e.g. "Please try again in 3.11s")
+      const retryMatch = errorText.match(/try again in ([\d.]+)s/i);
+      const retrySeconds = retryMatch ? Math.ceil(parseFloat(retryMatch[1])) + 1 : 0;
+      throw new RateLimitError(`Rate limit reached`, retrySeconds);
     }
     throw new Error(`Groq API returned ${response.status}`);
   }
@@ -292,17 +306,28 @@ export async function generatePollWithAI(story: NewsStoryInput): Promise<PollRes
   }
 
   if (groqKey) {
+    // Try each Groq model, with one retry per model if rate-limited
     for (let i = 0; i < GROQ_MODELS.length; i++) {
-      try {
-        return await callGroq(groqKey, story, i);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (msg.includes("Rate limit") || msg.includes("429")) {
-          console.warn(`[ai] Groq ${GROQ_MODELS[i]} rate limited, trying next model...`);
-          continue;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          return await callGroq(groqKey, story, i);
+        } catch (err) {
+          if (err instanceof RateLimitError) {
+            if (attempt === 0 && err.retryAfterSeconds > 0 && err.retryAfterSeconds <= 30) {
+              // Wait the suggested time and retry the same model
+              console.warn(`[ai] Groq ${GROQ_MODELS[i]} rate limited, retrying in ${err.retryAfterSeconds}s...`);
+              await new Promise((r) => setTimeout(r, err.retryAfterSeconds * 1000));
+              continue;
+            }
+            // Too long to wait or second attempt — try next model
+            console.warn(`[ai] Groq ${GROQ_MODELS[i]} rate limited, trying next model...`);
+            break;
+          }
+          const msg = err instanceof Error ? err.message : String(err);
+          console.warn(`Groq ${GROQ_MODELS[i]} failed:`, msg);
+          if (i === GROQ_MODELS.length - 1 && !geminiKey) throw err;
+          break;
         }
-        console.warn(`Groq ${GROQ_MODELS[i]} failed:`, msg);
-        if (i === GROQ_MODELS.length - 1 && !geminiKey) throw err;
       }
     }
     if (!geminiKey) {

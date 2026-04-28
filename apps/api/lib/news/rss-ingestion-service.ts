@@ -1,15 +1,17 @@
-import { type MarketCategory, StoryStatus } from "@prisma/client";
+import { randomUUID } from "crypto";
+import { type MarketCategory, type MarketType, StoryStatus } from "@prisma/client";
 
 import { generatePollWithAI } from "@/lib/ai/gemini";
 import { getConfiguredIngestionCategories, shouldSeedTrendingStory } from "@/lib/news/config";
 import { ingestStories } from "@/lib/news/ingestion";
 import { fetchOgImage, isGoogleNewsUrl } from "@/lib/news/og-image";
 import { fetchTopHeadlines } from "@/lib/news/providers";
-import { generatePredictionFromStory } from "@/lib/news/predictions";
+
 import { fetchRSSFeed } from "@/lib/news/rssProvider";
 import { getRssSources, type RssSource } from "@/lib/news/rssSources";
 import type { NormalizedNewsItem } from "@/lib/news/types";
 import { prisma } from "@/lib/prisma";
+import { slugify } from "@/lib/utils";
 import type { StoryInput } from "@/lib/validations/story";
 
 /**
@@ -18,7 +20,7 @@ import type { StoryInput } from "@/lib/validations/story";
  *
  * Skips Google News redirect URLs since they can't be resolved without JS.
  */
-async function backfillMissingImages() {
+export async function backfillMissingImages() {
   const stories = await prisma.story.findMany({
     where: {
       OR: [{ imageUrl: null }, { imageUrl: "" }],
@@ -27,23 +29,28 @@ async function backfillMissingImages() {
     },
     select: { id: true, sourceUrl: true },
     orderBy: { createdAt: "desc" },
-    take: 50,
+    take: 200,
   });
 
-  if (stories.length === 0) return;
+  if (stories.length === 0) {
+    console.info("[news:og-backfill] no stories need images");
+    return;
+  }
 
-  // Filter out Google News URLs (they require JS to resolve the real article)
+  // Split into resolvable (non-Google) and Google News stories
   const resolvable = stories.filter((s) => !isGoogleNewsUrl(s.sourceUrl));
+  const googleStories = stories.filter((s) => isGoogleNewsUrl(s.sourceUrl));
+  console.info(`[news:og-backfill] checking ${resolvable.length} direct URLs, ${googleStories.length} Google News (skipped)`);
   if (resolvable.length === 0) return;
 
   let filled = 0;
-  // Process up to 5 concurrently
+  // Process up to 5 concurrently with 8s timeout per URL
   const CONCURRENCY = 5;
   for (let i = 0; i < resolvable.length; i += CONCURRENCY) {
     const batch = resolvable.slice(i, i + CONCURRENCY);
     const results = await Promise.allSettled(
       batch.map(async (story) => {
-        const ogImage = await fetchOgImage(story.sourceUrl);
+        const ogImage = await fetchOgImage(story.sourceUrl, 8000);
         if (ogImage) {
           await prisma.story.update({
             where: { id: story.id },
@@ -57,9 +64,7 @@ async function backfillMissingImages() {
     filled += results.filter((r) => r.status === "fulfilled" && r.value).length;
   }
 
-  if (filled > 0) {
-    console.info(`[news:og-backfill] filled ${filled}/${resolvable.length} missing images (${stories.length - resolvable.length} Google News URLs skipped)`);
-  }
+  console.info(`[news:og-backfill] filled ${filled}/${resolvable.length} missing images`);
 }
 
 export type FeedIngestionStatus = {
@@ -209,6 +214,110 @@ async function getStaffActorId(actorId?: string) {
   )?.id;
 }
 
+const MAX_AI_POLLS_PER_BATCH = 8;
+
+/**
+ * Generates AI polls for recently-ingested stories that don't have a market yet.
+ * Runs in the background after stories are already saved to the DB.
+ */
+async function generatePollsInBackground(items: NormalizedNewsItem[], actorId: string) {
+  // Find stories that were just inserted and have no market
+  const sourceUrls = items.map((i) => i.source_url);
+  const stories = await prisma.story.findMany({
+    where: {
+      sourceUrl: { in: sourceUrls },
+      market: null,
+    },
+    select: { id: true, headline: true, summary: true, category: true, sourceName: true, sourceUrl: true, publishedAt: true },
+    orderBy: { publishedAt: "desc" },
+    take: MAX_AI_POLLS_PER_BATCH,
+  });
+
+  if (stories.length === 0) {
+    console.info("[news:ai-polls] no stories need polls");
+    return;
+  }
+
+  let aiEnabled = true;
+  let generated = 0;
+
+  for (let i = 0; i < stories.length; i++) {
+    if (!aiEnabled) break;
+    const story = stories[i];
+
+    // Rate limit: 15s between calls for Groq free tier
+    if (i > 0) {
+      await new Promise((r) => setTimeout(r, 15_000));
+    }
+
+    try {
+      const aiResult = await generatePollWithAI({
+        headline: story.headline,
+        summary: story.summary,
+        category: story.category,
+        sourceName: story.sourceName,
+        sourceUrl: story.sourceUrl,
+        publishedAt: story.publishedAt.toISOString(),
+      });
+
+      if (aiResult.skip) {
+        // Update story summary if AI provided an enhanced one
+        if (aiResult.enhancedSummary) {
+          await prisma.story.update({
+            where: { id: story.id },
+            data: { summary: aiResult.enhancedSummary },
+          });
+          console.info(`[news:ai-polls] enhanced summary for "${story.headline.slice(0, 50)}..."`);
+        }
+        continue;
+      }
+
+      const now = new Date();
+      const pollHours = Math.max(aiResult.expiresInHours ?? 168, 48);
+      const closeAt = new Date(now.getTime() + pollHours * 60 * 60 * 1000);
+      const resolveAt = new Date(now.getTime() + (pollHours + 24) * 60 * 60 * 1000);
+
+      await prisma.market.create({
+        data: {
+          slug: `${slugify(aiResult.title).slice(0, 80)}-${randomUUID().slice(0, 8)}`,
+          title: aiResult.title,
+          description: aiResult.description,
+          category: story.category,
+          template: "CUSTOM",
+          marketType: (aiResult.marketType ?? "BINARY") as MarketType,
+          unit: aiResult.unit ?? null,
+          minValue: aiResult.minValue ?? null,
+          maxValue: aiResult.maxValue ?? null,
+          precision: aiResult.precision ?? null,
+          creatorId: actorId,
+          status: "OPEN",
+          closeAt,
+          resolveAt,
+          resolutionSourceType: "MANUAL",
+          resolutionSourceName: story.sourceName,
+          resolutionSourceUrl: story.sourceUrl,
+          resolutionRuleText: "This is an opinion poll. The voting period closes automatically.",
+          storyId: story.id,
+          approvedAt: now,
+          approvedById: actorId,
+        },
+      });
+
+      generated++;
+      console.info(`[news:ai-polls] created ${aiResult.marketType} poll for "${story.headline.slice(0, 50)}..."`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[news:ai-polls] failed for "${story.headline.slice(0, 50)}...":`, msg);
+      if (msg.toLowerCase().includes("rate limit")) {
+        console.warn("[news:ai-polls] rate limited — stopping background poll generation");
+        aiEnabled = false;
+      }
+    }
+  }
+
+  console.info(`[news:ai-polls] done — ${generated}/${stories.length} polls created`);
+}
+
 export class RSSIngestionService {
   static async run(actorId?: string): Promise<NewsIngestionResult> {
     const { fetchedItems: rssItems, errors, failedFallbackCategories, feeds } = await collectRssItems();
@@ -287,115 +396,60 @@ export class RSSIngestionService {
       throw new Error("A staff user is required to ingest news stories.");
     }
 
-    const storiesToIngest: StoryInput[] = [];
-    let aiEnabled = Boolean(process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY);
-    let aiCallCount = 0;
-
-    for (const item of newStories) {
-      const category = item.category as MarketCategory;
-      let aiSummary = item.summary; // Will be replaced by AI if available
-      let generatedPrediction: ReturnType<typeof generatePredictionFromStory> = null;
-
-      // AI-first: try Groq/Gemini for poll generation (opinion polls, not bets)
-      if (aiEnabled) {
-        try {
-          // Rate limit: wait 2.5s between AI calls to stay within Groq's 30 RPM
-          if (aiCallCount > 0) {
-            await new Promise((r) => setTimeout(r, 2500));
-          }
-          aiCallCount++;
-
-          const aiResult = await generatePollWithAI({
-            headline: item.title,
-            summary: item.summary,
-            category,
-            sourceName: item.source_name,
-            sourceUrl: item.source_url,
-            publishedAt: item.published_at.toISOString(),
-          });
-
-          if (aiResult.skip && aiResult.enhancedSummary) {
-            // AI decided no good poll — use the enhanced summary
-            aiSummary = aiResult.enhancedSummary;
-            console.info(`[news:ai] skipped poll, enhanced summary for "${item.title.slice(0, 60)}..."`);
-          } else {
-            const now = new Date();
-            const pollHours = Math.max(aiResult.expiresInHours ?? 168, 48);
-            const closeAt = new Date(now.getTime() + pollHours * 60 * 60 * 1000).toISOString();
-            const resolveAt = new Date(now.getTime() + (pollHours + 24) * 60 * 60 * 1000).toISOString();
-            generatedPrediction = {
-              title: aiResult.title,
-              description: aiResult.description,
-              template: "CUSTOM" as const,
-              closeAt,
-              resolveAt,
-              resolutionSourceType: "MANUAL" as const,
-              resolutionSourceName: item.source_name,
-              resolutionSourceUrl: item.source_url,
-              resolutionRuleText: `This is an opinion poll. The voting period closes automatically.`,
-              marketType: aiResult.marketType,
-              unit: aiResult.unit,
-              minValue: aiResult.minValue,
-              maxValue: aiResult.maxValue,
-              precision: aiResult.precision,
-            };
-
-            console.info(`[news:ai] generated ${aiResult.marketType} poll for "${item.title.slice(0, 60)}..."`);
-          }
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          console.warn(`[news:ai] failed for "${item.title.slice(0, 60)}...":`, msg);
-          // If rate limited, stop trying AI for remaining stories
-          if (msg.toLowerCase().includes("rate limit")) {
-            console.warn("[news:ai] rate limited — disabling AI for remaining stories in this batch");
-            aiEnabled = false;
-          }
-        }
+    // ---- Phase 1: Ingest all stories immediately ----
+    // Fetch og:image from source articles for stories that have no image from RSS
+    // Skip Google News URLs since they can't be resolved without JavaScript
+    const needsImage = newStories.filter((item) => !item.image_url && !isGoogleNewsUrl(item.source_url));
+    const ogImages = new Map<string, string>();
+    if (needsImage.length > 0) {
+      const CONCURRENCY = 8;
+      for (let i = 0; i < needsImage.length; i += CONCURRENCY) {
+        const batch = needsImage.slice(i, i + CONCURRENCY);
+        const results = await Promise.allSettled(
+          batch.map(async (item) => {
+            const img = await fetchOgImage(item.source_url, 6000);
+            if (img) ogImages.set(item.source_url, img);
+          })
+        );
       }
-
-      // Fallback to rule-based only when AI is unavailable or failed
-      if (!generatedPrediction && !aiEnabled) {
-        generatedPrediction = generatePredictionFromStory({
-          headline: item.title,
-          summary: item.summary,
-          category,
-          publishedAt: item.published_at,
-          sourceName: item.source_name,
-          sourceUrl: item.source_url
-        });
-        if (generatedPrediction) {
-          console.info(`[news:rules] fallback generated poll for "${item.title.slice(0, 60)}..."`);
-        }
-      }
-
-      storiesToIngest.push({
-        headline: item.title,
-        summary: aiSummary,
-        category,
-        sourceName: item.source_name,
-        sourceUrl: item.source_url,
-        sourceHomepageUrl: getSourceHomepageUrl(item.source_url),
-        imageUrl: item.image_url ?? "",
-        publishedAt: item.published_at.toISOString(),
-        ingestedAt: ingestedAt.toISOString(),
-        language: "en",
-        status: StoryStatus.PUBLISHED,
-        ingestionType: item.external_id.startsWith("rss:") ? "RSS" : "API",
-        ingestionFeedId: item.feed_id ?? "",
-        ingestionFeedName: item.feed_name ?? "",
-        externalId: item.external_id,
-        dedupeKey: item.dedupe_key,
-        rawPayloadJson: item.raw_payload_json,
-        isTrending: shouldSeedTrendingStory({
-          category,
-          publishedAt: item.published_at,
-          hasPrediction: Boolean(generatedPrediction)
-        }),
-        attachedPrediction: generatedPrediction ?? undefined
-      });
+      console.info(`[news:og-fetch] fetched ${ogImages.size}/${needsImage.length} og:images inline`);
     }
 
+    const storiesToIngest: StoryInput[] = newStories.map((item) => ({
+      headline: item.title,
+      summary: item.summary,
+      category: item.category as MarketCategory,
+      sourceName: item.source_name,
+      sourceUrl: item.source_url,
+      sourceHomepageUrl: getSourceHomepageUrl(item.source_url),
+      imageUrl: item.image_url ?? ogImages.get(item.source_url) ?? "",
+      publishedAt: item.published_at.toISOString(),
+      ingestedAt: ingestedAt.toISOString(),
+      language: "en",
+      status: StoryStatus.PUBLISHED,
+      ingestionType: item.external_id.startsWith("rss:") ? "RSS" : "API",
+      ingestionFeedId: item.feed_id ?? "",
+      ingestionFeedName: item.feed_name ?? "",
+      externalId: item.external_id,
+      dedupeKey: item.dedupe_key,
+      rawPayloadJson: item.raw_payload_json,
+      isTrending: shouldSeedTrendingStory({
+        category: item.category as MarketCategory,
+        publishedAt: item.published_at,
+        hasPrediction: false
+      }),
+    }));
+
     await ingestStories(storiesToIngest, staffActorId);
+    console.info(`[news:ingestion] phase 1 done — ${storiesToIngest.length} stories inserted`);
+
+    // ---- Phase 2: Generate AI polls in background for stories without markets ----
+    const aiEnabled = Boolean(process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY);
+    if (aiEnabled) {
+      void generatePollsInBackground(newStories, staffActorId).catch((err) =>
+        console.error("[news:ai-polls] background poll generation failed:", err)
+      );
+    }
 
     const newStoryExternalIds = new Set(newStories.map((story) => story.external_id));
     const perFeedInserted = new Map<string, number>();
@@ -420,10 +474,12 @@ export class RSSIngestionService {
       skippedDuplicates: perFeedSkipped.get(feed.id) ?? 0
     }));
 
-    // Backfill OG images for stories that have no image
-    void backfillMissingImages().catch((err) =>
-      console.warn("[news:ingestion] og-image backfill failed:", err)
-    );
+    // Backfill OG images for stories that have no image (awaited since phase 1 is fast)
+    try {
+      await backfillMissingImages();
+    } catch (err) {
+      console.warn("[news:ingestion] og-image backfill failed:", err);
+    }
 
     console.info(
       `[news:ingestion] fetched=${normalized.length} inserted=${newStories.length} duplicates=${

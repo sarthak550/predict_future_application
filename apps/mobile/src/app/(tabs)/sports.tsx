@@ -11,6 +11,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from "react-native";
 
@@ -18,6 +19,7 @@ import type { ApiLiveScore, ApiCricketMatchDetail, ApiFootballMatchDetail, ApiNe
 import { formatRelativeTime } from "@predict-future/utils";
 import { colors, radius, spacing } from "@predict-future/ui-tokens";
 
+import { NewsFeedCard } from "@/components/news-feed-card";
 import { mobileApi } from "@/lib/api";
 
 const LEAGUE_ICONS: Record<string, React.ComponentProps<typeof Feather>["name"]> = {
@@ -54,6 +56,7 @@ function formatMatchTime(startTime: string): string {
 }
 
 export default function SportsScreen() {
+  const { height } = useWindowDimensions();
   const [scores, setScores] = useState<ApiLiveScore[]>([]);
   const [loadingScores, setLoadingScores] = useState(true);
   const [news, setNews] = useState<ApiNewsFeedItem[]>([]);
@@ -61,6 +64,7 @@ export default function SportsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [selectedLeague, setSelectedLeague] = useState<string | null>(null);
   const [selectedMatch, setSelectedMatch] = useState<ApiLiveScore | null>(null);
+  const [selectedStory, setSelectedStory] = useState<ApiNewsFeedItem | null>(null);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -226,7 +230,9 @@ export default function SportsScreen() {
             </View>
           )
         }
-        renderItem={({ item }) => <SportsNewsCard item={item} />}
+        renderItem={({ item }) => (
+          <SportsNewsCard item={item} onPress={() => setSelectedStory(item)} />
+        )}
         contentContainerStyle={styles.listContent}
       />
 
@@ -234,6 +240,12 @@ export default function SportsScreen() {
         match={selectedMatch}
         relatedNews={news}
         onClose={() => setSelectedMatch(null)}
+      />
+
+      <StoryModal
+        item={selectedStory}
+        cardHeight={height * 0.88}
+        onClose={() => setSelectedStory(null)}
       />
     </View>
   );
@@ -1162,42 +1174,76 @@ function InfoRow({ icon, text }: { icon: React.ComponentProps<typeof Feather>["n
 
 // ---- Sports News Card ----
 
-function SportsNewsCard({ item }: { item: ApiNewsFeedItem }) {
-  const market = item.market;
+function SportsNewsCard({ item, onPress }: { item: ApiNewsFeedItem; onPress: () => void }) {
   return (
-    <View style={styles.newsCard}>
-      <View style={styles.newsCardBody}>
-        {item.imageUrl ? <Image source={{ uri: item.imageUrl }} style={styles.newsThumb} /> : null}
+    <Pressable
+      style={({ pressed }) => [styles.newsCard, pressed && styles.newsCardPressed]}
+      onPress={onPress}
+    >
+      <View style={styles.newsCardInner}>
         <View style={styles.newsCardText}>
-          <Text style={styles.newsHeadline} numberOfLines={3}>{item.headline}</Text>
+          <Text style={styles.newsHeadline}>{item.headline}</Text>
           <View style={styles.newsMetaRow}>
             <Text style={styles.newsMeta}>{item.sourceName}</Text>
             <Text style={styles.newsMetaDot}>·</Text>
             <Text style={styles.newsMeta}>{formatRelativeTime(item.publishedAt)}</Text>
+            {item.market && (
+              <>
+                <Text style={styles.newsMetaDot}>·</Text>
+                <Feather name="bar-chart-2" size={11} color={colors.accent} />
+              </>
+            )}
           </View>
         </View>
+        {item.imageUrl ? (
+          <Image source={{ uri: item.imageUrl }} style={styles.newsThumb} />
+        ) : null}
       </View>
-      {market ? (
-        <Link href={`/market/${market.id}`} asChild>
-          <Pressable style={styles.newsMarketBlock}>
-            <View style={styles.newsMarketHeader}>
-              <Feather name={market.marketType === "NUMERIC" ? "hash" : "bar-chart-2"} size={12} color={colors.accent} />
-              <Text style={styles.newsMarketLabel}>{market.marketType === "NUMERIC" ? "GUESS" : "PREDICT"}</Text>
-            </View>
-            <Text style={styles.newsMarketTitle} numberOfLines={2}>{market.title}</Text>
-            <Text style={styles.newsMarketCta}>
-              {market.marketType === "NUMERIC" ? "Make a guess →" : "Place your bet →"}
-            </Text>
-          </Pressable>
-        </Link>
-      ) : item.summary && item.summary !== item.description ? (
-        <View style={styles.newsSummaryBlock}>
-          <Text style={styles.newsSummaryText} numberOfLines={4}>{item.summary}</Text>
-        </View>
-      ) : null}
-    </View>
+    </Pressable>
   );
 }
+
+// ---- Story Modal ----
+
+function StoryModal({
+  item,
+  cardHeight,
+  onClose,
+}: {
+  item: ApiNewsFeedItem | null;
+  cardHeight: number;
+  onClose: () => void;
+}) {
+  if (!item) return null;
+  return (
+    <Modal visible animationType="slide" transparent onRequestClose={onClose}>
+      <View style={storyModal.overlay}>
+        <Pressable style={storyModal.dismiss} onPress={onClose} />
+        <View style={[storyModal.sheet, { height: cardHeight }]}>
+          <View style={storyModal.handle} />
+          <NewsFeedCard item={item} viewportHeight={cardHeight - 28} />
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+const storyModal = StyleSheet.create({
+  overlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.55)", justifyContent: "flex-end" },
+  dismiss: { flex: 1 },
+  sheet: {
+    backgroundColor: colors.background,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    overflow: "hidden",
+    paddingTop: 10,
+  },
+  handle: {
+    width: 36, height: 4, borderRadius: 2,
+    backgroundColor: colors.border,
+    alignSelf: "center", marginBottom: 6,
+  },
+});
 
 // ---- Styles ----
 
@@ -1290,25 +1336,33 @@ const styles = StyleSheet.create({
   },
   newsHeaderText: { fontSize: 16, fontWeight: "700", color: colors.text },
   newsCard: {
-    marginHorizontal: spacing.md, marginBottom: spacing.md, padding: spacing.md,
+    marginHorizontal: spacing.md, marginBottom: spacing.xs,
+    paddingHorizontal: spacing.md, paddingVertical: spacing.md,
     borderRadius: radius.md, backgroundColor: colors.surface,
     borderWidth: 1, borderColor: colors.border,
   },
-  newsCardBody: { flexDirection: "row", gap: spacing.md },
-  newsThumb: { width: 72, height: 72, borderRadius: radius.sm, backgroundColor: colors.surfaceMuted },
+  newsCardInner: { flexDirection: "row", alignItems: "flex-start", gap: spacing.md },
   newsCardText: { flex: 1 },
+  newsThumb: { width: 64, height: 64, borderRadius: radius.sm, backgroundColor: colors.surface },
   newsHeadline: { fontSize: 14, fontWeight: "700", lineHeight: 20, color: colors.text },
   newsMetaRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: spacing.xs },
   newsMeta: { fontSize: 11, color: colors.textMuted },
   newsMetaDot: { fontSize: 11, color: colors.textMuted },
-  newsMarketBlock: {
-    marginTop: spacing.sm, padding: spacing.md, borderRadius: radius.sm,
-    backgroundColor: colors.surfaceMuted, borderWidth: 1, borderColor: "rgba(14,165,233,0.12)",
+  newsCardPressed: { opacity: 0.85 },
+  newsCardPollHint: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    marginTop: spacing.sm,
+    paddingTop: spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
   },
-  newsMarketHeader: { flexDirection: "row", alignItems: "center", gap: 4 },
-  newsMarketLabel: { fontSize: 9, fontWeight: "800", letterSpacing: 0.8, color: colors.accent },
-  newsMarketTitle: { marginTop: 4, fontSize: 13, fontWeight: "600", lineHeight: 18, color: colors.text },
-  newsMarketCta: { marginTop: spacing.xs, fontSize: 12, fontWeight: "700", color: colors.accent },
+  newsCardPollHintText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: colors.accent,
+  },
   newsSummaryBlock: {
     marginTop: spacing.sm, padding: spacing.md, borderRadius: radius.sm,
     backgroundColor: colors.surfaceMuted,

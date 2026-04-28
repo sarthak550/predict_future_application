@@ -16,7 +16,7 @@ const defaultRssSources: RssSource[] = [
     url: "https://news.google.com/rss?hl=en-IN&gl=IN&ceid=IN:en",
     categoryHint: "GENERAL",
     fallbackCategory: "GENERAL",
-    isActive: true
+    isActive: false
   },
   {
     id: "bbc-world",
@@ -54,6 +54,30 @@ const defaultRssSources: RssSource[] = [
     id: "google-news-tech",
     name: "Google News Tech",
     url: "https://news.google.com/rss/search?q=technology&hl=en-IN&gl=IN&ceid=IN:en",
+    categoryHint: "TECH",
+    fallbackCategory: "TECH",
+    isActive: false
+  },
+  {
+    id: "reuters-world",
+    name: "Reuters",
+    url: "https://www.reutersagency.com/feed/?taxonomy=best-sectors&post_type=best",
+    categoryHint: "GENERAL",
+    fallbackCategory: "GENERAL",
+    isActive: true
+  },
+  {
+    id: "the-verge",
+    name: "The Verge",
+    url: "https://www.theverge.com/rss/index.xml",
+    categoryHint: "TECH",
+    fallbackCategory: "TECH",
+    isActive: true
+  },
+  {
+    id: "ars-technica",
+    name: "Ars Technica",
+    url: "https://feeds.arstechnica.com/arstechnica/index",
     categoryHint: "TECH",
     fallbackCategory: "TECH",
     isActive: true

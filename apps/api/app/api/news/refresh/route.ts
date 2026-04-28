@@ -6,7 +6,7 @@ import { runNewsIngestionJob } from "@/lib/jobs/newsIngestion";
 /**
  * POST /api/news/refresh
  *
- * Triggers a news ingestion cycle. Called by the mobile app on pull-to-refresh.
+ * Triggers a news ingestion cycle in the background. Returns immediately.
  * Rate-limited to prevent abuse — only runs if the last ingestion was > 2 minutes ago.
  */
 
@@ -33,7 +33,7 @@ export async function POST(request: Request) {
 
     lastRefreshAt = now;
 
-    // Run ingestion in the background so we don't block the response
+    // Fire and forget — ingestion runs in background
     runNewsIngestionJob()
       .then((result) => {
         console.info(`[news:refresh] ingested=${result.ingested} fetched=${result.fetched}`);

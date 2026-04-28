@@ -127,6 +127,7 @@ export type ApiMarketComment = {
 };
 
 export type ApiMarketDetailMarket = ApiMarketSummary & {
+  storyId?: string | null;
   rulesText?: string | null;
   resolutionRuleText?: string | null;
   resolutionSourceName?: string | null;

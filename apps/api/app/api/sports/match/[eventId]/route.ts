@@ -160,7 +160,7 @@ function transformEspnSummary(raw: any, eventId: string, leagueId: string) {
     homeTeam: {
       name: home?.team?.displayName ?? home?.team?.name ?? "Home",
       abbreviation: home?.team?.abbreviation ?? "",
-      logo: home?.team?.logo ?? "",
+      logo: home?.team?.logo ?? home?.team?.logos?.[0]?.href ?? "",
       score: home?.score ?? "",
       runRate: homeStats.runRate,
       extras: homeStats.extras,
@@ -168,7 +168,7 @@ function transformEspnSummary(raw: any, eventId: string, leagueId: string) {
     awayTeam: {
       name: away?.team?.displayName ?? away?.team?.name ?? "Away",
       abbreviation: away?.team?.abbreviation ?? "",
-      logo: away?.team?.logo ?? "",
+      logo: away?.team?.logo ?? away?.team?.logos?.[0]?.href ?? "",
       score: away?.score ?? "",
       runRate: awayStats.runRate,
       extras: awayStats.extras,
@@ -456,14 +456,14 @@ function transformFootballSummary(raw: any, eventId: string, leagueId: string) {
     homeTeam: {
       name: home?.team?.displayName ?? home?.team?.name ?? "Home",
       abbreviation: home?.team?.abbreviation ?? "",
-      logo: home?.team?.logo ?? "",
+      logo: home?.team?.logo ?? home?.team?.logos?.[0]?.href ?? "",
       score: home?.score ?? "",
       formation: homeRoster?.formation ?? "",
     },
     awayTeam: {
       name: away?.team?.displayName ?? away?.team?.name ?? "Away",
       abbreviation: away?.team?.abbreviation ?? "",
-      logo: away?.team?.logo ?? "",
+      logo: away?.team?.logo ?? away?.team?.logos?.[0]?.href ?? "",
       score: away?.score ?? "",
       formation: awayRoster?.formation ?? "",
     },
