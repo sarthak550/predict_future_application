@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { getSession } from "@/lib/auth";
+import { getSession, getUserIdFromRequest } from "@/lib/auth";
 import { getUserGroups, joinGroupByInviteCode } from "@/lib/groups/service";
 import { prisma } from "@/lib/prisma";
 import { joinGroupSchema } from "@/lib/validations/group";
@@ -8,8 +8,7 @@ import { joinGroupSchema } from "@/lib/validations/group";
 export async function POST(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-    const session = await getSession();
-    const userId = session?.user?.id ?? searchParams.get("userId");
+  const userId = await getUserIdFromRequest(request);
     if (!userId) {
       return NextResponse.json({ error: "Authentication required." }, { status: 401 });
     }

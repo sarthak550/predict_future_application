@@ -54,7 +54,7 @@ const baseMarketSchema = z.object({
   resolutionSourceType: z.nativeEnum(ResolutionSourceType).optional(),
   resolutionSourceName: z.string().max(120).optional().or(z.literal("")),
   resolutionSourceUrl: optionalUrl,
-  resolutionRuleText: z.string().min(16).max(1000),
+  resolutionRuleText: z.string().max(1000).optional().or(z.literal("")),
   fallbackRuleText: z.string().max(1000).optional().or(z.literal("")),
   unit: z.string().max(24).optional().or(z.literal("")),
   minValue: z.coerce.number().min(0).optional(),
@@ -97,18 +97,18 @@ export const createMarketSchema = baseMarketSchema.superRefine((value, ctx) => {
     });
   }
 
-  if (value.visibility === MarketVisibility.PUBLIC && !["TRUSTED_HOST", "HOST", "GROUP_VOTE"].includes(value.resolutionMode)) {
+  if (value.visibility === MarketVisibility.PUBLIC && !["TRUSTED_HOST", "HOST"].includes(value.resolutionMode)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      message: "Public markets must use host, trusted-host, or community consensus resolution.",
+      message: "Public markets must use host or trusted-host resolution.",
       path: ["resolutionMode"]
     });
   }
 
-  if (value.visibility === MarketVisibility.PRIVATE && !["HOST", "GROUP_VOTE"].includes(value.resolutionMode)) {
+  if (value.visibility === MarketVisibility.PRIVATE && value.resolutionMode !== "HOST") {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      message: "Private markets must use host or community consensus resolution.",
+      message: "Private markets must use host resolution.",
       path: ["resolutionMode"]
     });
   }
@@ -305,7 +305,7 @@ export const createMarketSchema = baseMarketSchema.superRefine((value, ctx) => {
     });
   }
 
-  const combinedText = `${value.title}\n${value.description}\n${value.resolutionRuleText}`;
+  const combinedText = `${value.title}\n${value.description}\n${value.resolutionRuleText ?? ""}`;
   if (containsDisallowedMarketTopic(combinedText)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,

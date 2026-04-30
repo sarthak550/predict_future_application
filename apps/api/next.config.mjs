@@ -9,7 +9,11 @@ const nextConfig = {
     "@predict-future/ui-tokens",
     "@predict-future/utils",
     "@predict-future/validation"
-  ]
+  ],
+  webpack: (config) => {
+    config.infrastructureLogging = { level: "error" };
+    return config;
+  }
 };
 
 export default nextConfig;

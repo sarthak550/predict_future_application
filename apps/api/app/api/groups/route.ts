@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { getSession } from "@/lib/auth";
+import { getSession, getUserIdFromRequest } from "@/lib/auth";
 import { getUserGroups } from "@/lib/groups/service";
 
 /**
@@ -9,8 +9,7 @@ import { getUserGroups } from "@/lib/groups/service";
  */
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const session = await getSession();
-  const userId = session?.user?.id ?? searchParams.get("userId");
+  const userId = await getUserIdFromRequest(request);
 
   if (!userId) {
     return NextResponse.json({ error: "Authentication required." }, { status: 401 });

@@ -1,3 +1,5 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -14,12 +16,14 @@ import {
 
 import { Ionicons } from "@expo/vector-icons";
 
-import type { ApiGroupSummary, AppMarketCategory } from "@predict-future/types";
+import type { ApiGroupSummary, ApiHostEligibility, AppMarketCategory } from "@predict-future/types";
 import { colors, radius, shadows, spacing } from "@predict-future/ui-tokens";
 
 import { useApiQuery } from "@/hooks/useApiQuery";
 import { mobileApi } from "@/lib/api";
 import { useSession } from "@/providers/session-provider";
+
+const DRAFT_KEY = "draft_market_form";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -77,15 +81,14 @@ const GRACE_PERIOD_OPTIONS = [
 
 type Visibility = "PUBLIC" | "PRIVATE";
 type MarketType = "BINARY" | "NUMERIC";
-type ResolutionMode = "HOST" | "GROUP_VOTE";
+type ResolutionMode = "HOST";
 type PoolRewardMode = "COMMISSION_BASED" | "BOND_BASED";
 
-// Steps: Audience, Type, Question, Resolution, [Host Settings], Timing, Review
+// Steps: Audience, Type, Question, [Host Settings], Timing, Review
 type StepId =
   | "audience"
   | "type"
   | "question"
-  | "resolution"
   | "host_settings"
   | "timing"
   | "review";
@@ -98,26 +101,187 @@ export default function CreateScreen() {
   const { session, status: sessionStatus } = useSession();
   const userId = session?.userId;
 
+  // Prefill params passed from Sports tab (or other deep links)
+  const params = useLocalSearchParams<{
+    initialTitle?: string;
+    initialCategory?: string;
+  }>();
+  const initialTitle = typeof params.initialTitle === "string" ? params.initialTitle : undefined;
+  const initialCategory =
+    typeof params.initialCategory === "string"
+      ? (params.initialCategory as AppMarketCategory)
+      : undefined;
+
+  const eligibilityFetcher = useCallback(
+    () => mobileApi.getHostEligibility(),
+    [] // no deps — auth token is read from SecureStore at request time
+  );
+
+  const { data: eligibilityData, status: eligibilityStatus } = useApiQuery<{
+    eligibility: ApiHostEligibility;
+  }>(eligibilityFetcher, ["host-eligibility"], {
+    enabled: sessionStatus === "authenticated",
+  });
+
   if (sessionStatus !== "authenticated" || !userId) {
     return (
       <View style={[styles.screen, styles.center]}>
         <Text style={styles.heroTitle}>Create a Prediction</Text>
         <Text style={styles.heroSub}>
-          Sign in to create prediction markets.{"\n"}For local dev, set{" "}
-          <Text style={styles.code}>EXPO_PUBLIC_DEMO_USER_ID</Text>.
+          Sign in to create prediction markets and challenge the crowd.
         </Text>
       </View>
     );
   }
 
-  return <CreateWizard userId={userId} />;
+  const eligibility = eligibilityData?.eligibility ?? null;
+
+  return (
+    <View style={styles.screen}>
+      <HostEligibilityCard
+        eligibility={eligibility}
+        loading={eligibilityStatus === "loading"}
+      />
+      <CreateWizard
+        userId={userId}
+        initialTitle={initialTitle}
+        initialCategory={initialCategory}
+      />
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Host Eligibility Card
+// ---------------------------------------------------------------------------
+
+function HostEligibilityCard({
+  eligibility,
+  loading,
+}: {
+  eligibility: ApiHostEligibility | null;
+  loading: boolean;
+}) {
+  if (loading || !eligibility) return null;
+
+  const { progress, eligible } = eligibility;
+
+  return (
+    <View style={styles.eligibilityCard}>
+      <Text style={styles.eligibilityTitle}>
+        {eligible ? "Trusted Host" : "Host Progress"}
+      </Text>
+
+      {eligible ? (
+        <View style={styles.eligibleBanner}>
+          <Text style={styles.eligibleText}>
+            You're eligible to host public markets!
+          </Text>
+        </View>
+      ) : (
+        <Text style={styles.eligibilitySubtitle}>
+          Complete these to unlock public market creation:
+        </Text>
+      )}
+
+      <ProgressRow
+        label="Account age"
+        current={Math.min(progress.accountAgeDays, progress.minAccountAgeDays)}
+        target={progress.minAccountAgeDays}
+        unit="days"
+        done={progress.accountAgeDays >= progress.minAccountAgeDays}
+      />
+      <ProgressRow
+        label="Markets resolved"
+        current={Math.min(
+          progress.validFinalizedHostedMarketsCount,
+          progress.minValidFinalizedMarkets
+        )}
+        target={progress.minValidFinalizedMarkets}
+        unit=""
+        done={
+          progress.validFinalizedHostedMarketsCount >=
+          progress.minValidFinalizedMarkets
+        }
+      />
+      <ProgressRow
+        label="Trust score"
+        current={Math.min(progress.hostTrustScore, progress.minTrustScore)}
+        target={progress.minTrustScore}
+        unit=""
+        done={progress.hostTrustScore >= progress.minTrustScore}
+      />
+
+      {progress.recentHostTimeoutCount > 0 && (
+        <Text style={styles.penaltyText}>
+          {`⚠ ${progress.recentHostTimeoutCount} recent timeout${progress.recentHostTimeoutCount > 1 ? "s" : ""} (max ${progress.maxRecentTimeoutCount})`}
+        </Text>
+      )}
+      {progress.overturnedHostedMarketsCount > 0 && (
+        <Text style={styles.penaltyText}>
+          {`⚠ ${progress.overturnedHostedMarketsCount} overturned market${progress.overturnedHostedMarketsCount > 1 ? "s" : ""} (max ${progress.maxOverturnedCount})`}
+        </Text>
+      )}
+    </View>
+  );
+}
+
+function ProgressRow({
+  label,
+  current,
+  target,
+  unit,
+  done,
+}: {
+  label: string;
+  current: number;
+  target: number;
+  unit: string;
+  done: boolean;
+}) {
+  const pct = target > 0 ? Math.min(1, current / target) : 0;
+  return (
+    <View style={styles.progressRowContainer}>
+      <View style={styles.progressRowHeader}>
+        <Text style={styles.progressRowLabel}>{label}</Text>
+        <Text
+          style={[
+            styles.progressRowValue,
+            done && styles.progressRowValueDone,
+          ]}
+        >
+          {done
+            ? "✓"
+            : `${Math.round(current)} / ${target}${unit ? ` ${unit}` : ""}`}
+        </Text>
+      </View>
+      <View style={styles.progressTrackSmall}>
+        <View
+          style={[
+            styles.progressFillSmall,
+            { width: `${Math.round(pct * 100)}%` as `${number}%` },
+            done && styles.progressFillDone,
+          ]}
+        />
+      </View>
+    </View>
+  );
 }
 
 // ---------------------------------------------------------------------------
 // Wizard
 // ---------------------------------------------------------------------------
 
-function CreateWizard({ userId }: { userId: string }) {
+function CreateWizard({
+  userId,
+  initialTitle,
+  initialCategory,
+}: {
+  userId: string;
+  initialTitle?: string;
+  initialCategory?: AppMarketCategory;
+}) {
+  const router = useRouter();
   const [stepIdx, setStepIdx] = useState(0);
   const [submitting, setSubmitting] = useState(false);
 
@@ -125,11 +289,10 @@ function CreateWizard({ userId }: { userId: string }) {
   const [visibility, setVisibility] = useState<Visibility>("PUBLIC");
   const [groupId, setGroupId] = useState<string | null>(null);
   const [marketType, setMarketType] = useState<MarketType>("BINARY");
-  const [category, setCategory] = useState<AppMarketCategory>("GENERAL");
-  const [title, setTitle] = useState("");
+  const [category, setCategory] = useState<AppMarketCategory>(initialCategory ?? "GENERAL");
+  const [title, setTitle] = useState(initialTitle ?? "");
   const [description, setDescription] = useState("");
   const [resolutionMode, setResolutionMode] = useState<ResolutionMode>("HOST");
-  const [ruleText, setRuleText] = useState("");
 
   // Timing — store actual dates
   const [closeAt, setCloseAt] = useState<Date>(() => new Date(Date.now() + 24 * 3600000));
@@ -147,6 +310,9 @@ function CreateWizard({ userId }: { userId: string }) {
   const [challengeWindowHours, setChallengeWindowHours] = useState(12);
   const [gracePeriodHours, setGracePeriodHours] = useState(48);
 
+  // Draft banner state
+  const [draftBanner, setDraftBanner] = useState<"hidden" | "visible">("hidden");
+
   // Groups
   const groupsFetcher = useCallback(
     () => mobileApi.getMyGroups({ userId }),
@@ -162,7 +328,7 @@ function CreateWizard({ userId }: { userId: string }) {
 
   // Build the step list dynamically
   const steps: StepId[] = useMemo(() => {
-    const base: StepId[] = ["audience", "type", "question", "resolution"];
+    const base: StepId[] = ["audience", "type", "question"];
     if (needsHostSettings) base.push("host_settings");
     base.push("timing", "review");
     return base;
@@ -190,8 +356,68 @@ function CreateWizard({ userId }: { userId: string }) {
     }
   }, [needsHostSettings, currentStep, stepIdx]);
 
+  // Draft — load on mount
+  useEffect(() => {
+    AsyncStorage.getItem(DRAFT_KEY).then((raw) => {
+      if (!raw) return;
+      try {
+        const draft = JSON.parse(raw) as Record<string, unknown>;
+        if (typeof draft.title === "string" && draft.title.length > 0) {
+          setDraftBanner("visible");
+        }
+      } catch {
+        // ignore malformed draft
+      }
+    });
+  }, []);
+
+  // Draft — save on every step advance
+  async function saveDraft() {
+    const state = {
+      visibility,
+      groupId,
+      marketType,
+      category,
+      title,
+      description,
+      resolutionMode,
+      closeAt: closeAt.toISOString(),
+      resolveAt: resolveAt.toISOString(),
+      unit,
+      minValue,
+      maxValue,
+      poolRewardMode,
+      bondCap,
+      commissionBps,
+      challengeWindowHours,
+      gracePeriodHours,
+    };
+    await AsyncStorage.setItem(DRAFT_KEY, JSON.stringify(state));
+  }
+
+  function restoreDraft(draft: Record<string, unknown>) {
+    if (typeof draft.visibility === "string") setVisibility(draft.visibility as Visibility);
+    if (typeof draft.groupId === "string" || draft.groupId === null) setGroupId(draft.groupId as string | null);
+    if (typeof draft.marketType === "string") setMarketType(draft.marketType as MarketType);
+    if (typeof draft.category === "string") setCategory(draft.category as AppMarketCategory);
+    if (typeof draft.title === "string") setTitle(draft.title);
+    if (typeof draft.description === "string") setDescription(draft.description);
+    if (typeof draft.resolutionMode === "string") setResolutionMode(draft.resolutionMode as ResolutionMode);
+    if (typeof draft.closeAt === "string") { const d = new Date(draft.closeAt); if (!isNaN(d.getTime())) setCloseAt(d); }
+    if (typeof draft.resolveAt === "string") { const d = new Date(draft.resolveAt); if (!isNaN(d.getTime())) setResolveAt(d); }
+    if (typeof draft.unit === "string") setUnit(draft.unit);
+    if (typeof draft.minValue === "string") setMinValue(draft.minValue);
+    if (typeof draft.maxValue === "string") setMaxValue(draft.maxValue);
+    if (typeof draft.poolRewardMode === "string") setPoolRewardMode(draft.poolRewardMode as PoolRewardMode);
+    if (typeof draft.bondCap === "string") setBondCap(draft.bondCap);
+    if (typeof draft.commissionBps === "number") setCommissionBps(draft.commissionBps);
+    if (typeof draft.challengeWindowHours === "number") setChallengeWindowHours(draft.challengeWindowHours);
+    if (typeof draft.gracePeriodHours === "number") setGracePeriodHours(draft.gracePeriodHours);
+  }
+
   // Navigation
   function next() {
+    void saveDraft();
     if (stepIdx < totalSteps - 1) setStepIdx(stepIdx + 1);
   }
   function back() {
@@ -207,8 +433,6 @@ function CreateWizard({ userId }: { userId: string }) {
         return true;
       case "question":
         return title.length >= 12 && description.length >= 24;
-      case "resolution":
-        return ruleText.length >= 16;
       case "host_settings":
         return Number(bondCap) >= 100;
       case "timing":
@@ -236,9 +460,9 @@ function CreateWizard({ userId }: { userId: string }) {
         closeAt: closeAt.toISOString(),
         resolveAt: effectiveResolveAt.toISOString(),
         resolutionMode,
-        resolutionRuleText: ruleText,
+        resolutionRuleText: description,
         resolutionSourceType: "MANUAL",
-        resolutionSourceName: resolutionMode === "GROUP_VOTE" ? "Community consensus" : "Host resolution",
+        resolutionSourceName: "Host resolution",
         ...(visibility === "PRIVATE" && groupId
           ? { groupId, structuredData: { groupId } }
           : {}),
@@ -264,19 +488,24 @@ function CreateWizard({ userId }: { userId: string }) {
           : {}),
       };
 
-      await mobileApi.createMarket(body, { userId });
-      Alert.alert("Market Created!", "Your prediction market is live.", [
-        {
-          text: "Create Another",
-          onPress: () => {
-            setStepIdx(0);
-            setTitle("");
-            setDescription("");
-            setRuleText("");
-            setUnit("");
+      const result = await mobileApi.createMarket(body, { userId });
+      await AsyncStorage.removeItem(DRAFT_KEY);
+      const createdMarketId = result?.market?.id;
+      if (createdMarketId) {
+        router.push(`/market/${createdMarketId}`);
+      } else {
+        Alert.alert("Market Created!", "Your prediction market is live.", [
+          {
+            text: "Create Another",
+            onPress: () => {
+              setStepIdx(0);
+              setTitle("");
+              setDescription("");
+              setUnit("");
+            },
           },
-        },
-      ]);
+        ]);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to create market.";
       Alert.alert("Error", message);
@@ -306,6 +535,41 @@ function CreateWizard({ userId }: { userId: string }) {
         <Text style={styles.stepLabel}>
           Step {stepIdx + 1} of {totalSteps}
         </Text>
+
+        {/* Draft banner — shown on step 1 only */}
+        {currentStep === "audience" && draftBanner === "visible" && (
+          <View style={styles.draftBanner}>
+            <Text style={styles.draftBannerText}>You have a saved draft.</Text>
+            <View style={styles.draftBannerButtons}>
+              <Pressable
+                style={styles.draftBannerBtn}
+                onPress={() => {
+                  AsyncStorage.getItem(DRAFT_KEY).then((raw) => {
+                    if (!raw) return;
+                    try {
+                      const draft = JSON.parse(raw) as Record<string, unknown>;
+                      restoreDraft(draft);
+                    } catch {
+                      // ignore
+                    }
+                  });
+                  setDraftBanner("hidden");
+                }}
+              >
+                <Text style={styles.draftBannerBtnText}>Continue</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.draftBannerBtn, styles.draftBannerBtnOutline]}
+                onPress={() => {
+                  void AsyncStorage.removeItem(DRAFT_KEY);
+                  setDraftBanner("hidden");
+                }}
+              >
+                <Text style={[styles.draftBannerBtnText, styles.draftBannerBtnOutlineText]}>Start Fresh</Text>
+              </Pressable>
+            </View>
+          </View>
+        )}
 
         {/* Steps */}
         {currentStep === "audience" && (
@@ -340,16 +604,6 @@ function CreateWizard({ userId }: { userId: string }) {
             setMinValue={setMinValue}
             maxValue={maxValue}
             setMaxValue={setMaxValue}
-          />
-        )}
-        {currentStep === "resolution" && (
-          <StepResolution
-            visibility={visibility}
-            marketType={marketType}
-            resolutionMode={resolutionMode}
-            setResolutionMode={setResolutionMode}
-            ruleText={ruleText}
-            setRuleText={setRuleText}
           />
         )}
         {currentStep === "host_settings" && (
@@ -827,8 +1081,8 @@ function StepQuestion({
         style={[styles.input, styles.textArea]}
         placeholder={
           marketType === "BINARY"
-            ? "Explain what YES and NO mean. Give people enough info to make a prediction."
-            : "Explain what number people are guessing and any rules."
+            ? "Explain what YES and NO mean, and how the outcome will be determined. E.g. Resolves YES if the team wins by May 31, NO otherwise."
+            : "Describe what number people are guessing and how you'll determine the final value. E.g. The official scorecard from ESPN will be used."
         }
         placeholderTextColor={colors.textMuted}
         value={description}
@@ -935,26 +1189,6 @@ function StepResolution({
             </View>
           </Pressable>
 
-          <Pressable
-            style={[styles.optionCard, resolutionMode === "GROUP_VOTE" && styles.optionCardActive]}
-            onPress={() => setResolutionMode("GROUP_VOTE")}
-          >
-            <View style={styles.optionRow}>
-              <Ionicons
-                name="chatbubbles-outline"
-                size={22}
-                color={resolutionMode === "GROUP_VOTE" ? colors.accent : colors.textMuted}
-              />
-              <View style={styles.optionContent}>
-                <Text style={[styles.optionTitle, resolutionMode === "GROUP_VOTE" && styles.optionTitleActive]}>
-                  Community Consensus
-                </Text>
-                <Text style={[styles.optionDesc, resolutionMode === "GROUP_VOTE" && styles.optionDescActive]}>
-                  Participants vote on the outcome together. Majority wins.
-                </Text>
-              </View>
-            </View>
-          </Pressable>
         </>
       )}
 
@@ -1040,7 +1274,7 @@ function StepHostSettings({
           Bond-based
         </Text>
         <Text style={[styles.optionDesc, poolRewardMode === "BOND_BASED" && styles.optionDescActive]}>
-          You earn back your full bond on clean resolution. No pool cut.
+          You earn up to 10% of the pool (capped at your bond). No pool size limit.
         </Text>
       </Pressable>
 
@@ -1049,7 +1283,9 @@ function StepHostSettings({
         {poolRewardMode === "BOND_BASED" ? "Your stake (bond)" : "Bond amount"}
       </Text>
       <Text style={styles.hint}>
-        Locked from your wallet upfront. Returned after clean resolution. Forfeited on timeout or misconduct. Minimum 100 pts.
+        {poolRewardMode === "BOND_BASED"
+          ? "Locked upfront. Sets your max earnings (up to 10% of the pool). Returned after clean resolution. Forfeited on timeout or misconduct. Minimum 100 pts."
+          : "Locked from your wallet upfront. Returned after clean resolution. Forfeited on timeout or misconduct. Minimum 100 pts."}
       </Text>
       <TextInput
         style={styles.input}
@@ -1479,7 +1715,6 @@ function StepReview({
 }) {
   const modeLabels: Record<ResolutionMode, string> = {
     HOST: "Host Decides",
-    GROUP_VOTE: "Community Consensus",
   };
 
   function fmtDate(d: Date) {
@@ -1541,6 +1776,14 @@ function StepReview({
           </>
         )}
       </View>
+
+      {visibility === "PUBLIC" && (
+        <View style={styles.moderationNotice}>
+          <Text style={styles.moderationNoticeText}>
+            Public markets go through moderation before going live. You'll receive a notification once it's approved.
+          </Text>
+        </View>
+      )}
     </View>
   );
 }
@@ -1901,4 +2144,114 @@ const styles = StyleSheet.create({
   },
   nextLabel: { color: "#FFF", fontSize: 15, fontWeight: "700" },
   btnDisabled: { opacity: 0.4 },
+
+  // Host eligibility card
+  eligibilityCard: {
+    margin: spacing.lg,
+    marginBottom: 0,
+    padding: spacing.lg,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  eligibilityTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: colors.text,
+    marginBottom: spacing.sm,
+  },
+  eligibilitySubtitle: {
+    fontSize: 13,
+    color: colors.textMuted,
+    marginBottom: spacing.md,
+  },
+  eligibleBanner: {
+    backgroundColor: "#DCFCE7",
+    borderRadius: radius.sm,
+    padding: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  eligibleText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#16A34A",
+  },
+  progressRowContainer: { marginBottom: spacing.md },
+  progressRowHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 4,
+  },
+  progressRowLabel: { fontSize: 13, fontWeight: "600", color: colors.text },
+  progressRowValue: { fontSize: 12, color: colors.textMuted },
+  progressRowValueDone: { color: "#16A34A", fontWeight: "700" },
+  progressTrackSmall: {
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: "#E5E7EB",
+    overflow: "hidden",
+  },
+  progressFillSmall: {
+    height: "100%",
+    borderRadius: 3,
+    backgroundColor: colors.accent,
+  },
+  progressFillDone: { backgroundColor: "#16A34A" },
+  penaltyText: { fontSize: 12, color: "#D97706", marginTop: spacing.xs },
+
+  // Draft banner
+  draftBanner: {
+    backgroundColor: "#FFFBEB",
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+    padding: spacing.md,
+    marginBottom: spacing.md,
+  },
+  draftBannerText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#92400E",
+    marginBottom: spacing.sm,
+  },
+  draftBannerButtons: {
+    flexDirection: "row",
+    gap: spacing.sm,
+  },
+  draftBannerBtn: {
+    flex: 1,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: "#D97706",
+    alignItems: "center",
+  },
+  draftBannerBtnOutline: {
+    backgroundColor: "transparent",
+    borderWidth: 1,
+    borderColor: "#D97706",
+  },
+  draftBannerBtnText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#FFFFFF",
+  },
+  draftBannerBtnOutlineText: {
+    color: "#D97706",
+  },
+
+  // Moderation notice (review step)
+  moderationNotice: {
+    marginTop: spacing.md,
+    padding: spacing.md,
+    backgroundColor: "#FFFBEB",
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+  },
+  moderationNoticeText: {
+    fontSize: 12,
+    color: "#92400E",
+    lineHeight: 18,
+  },
 });

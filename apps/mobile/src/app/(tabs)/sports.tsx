@@ -1,5 +1,5 @@
 import { Feather } from "@expo/vector-icons";
-import { Link } from "expo-router";
+import { Link, useRouter } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -15,7 +15,7 @@ import {
   View,
 } from "react-native";
 
-import type { ApiLiveScore, ApiCricketMatchDetail, ApiFootballMatchDetail, ApiNewsFeedItem } from "@predict-future/types";
+import type { ApiLiveScore, ApiCricketMatchDetail, ApiFootballMatchDetail, ApiMarketSummary, ApiNewsFeedItem } from "@predict-future/types";
 import { formatRelativeTime } from "@predict-future/utils";
 import { colors, radius, spacing } from "@predict-future/ui-tokens";
 
@@ -335,11 +335,14 @@ function MatchDetailModal({ match, relatedNews, onClose }: {
   relatedNews: ApiNewsFeedItem[];
   onClose: () => void;
 }) {
+  const router = useRouter();
   const [cricketDetail, setCricketDetail] = useState<ApiCricketMatchDetail | null>(null);
   const [footballDetail, setFootballDetail] = useState<ApiFootballMatchDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [activeTab, setActiveTab] = useState<"summary" | "scorecard" | "stats" | "lineup">("summary");
   const [selectedInningsIdx, setSelectedInningsIdx] = useState(0);
+  const [linkedMarkets, setLinkedMarkets] = useState<ApiMarketSummary[]>([]);
+  const [loadingMarkets, setLoadingMarkets] = useState(false);
 
   useEffect(() => {
     if (!match) {
@@ -348,8 +351,36 @@ function MatchDetailModal({ match, relatedNews, onClose }: {
       setLoadingDetail(false);
       setActiveTab("summary");
       setSelectedInningsIdx(0);
+      setLinkedMarkets([]);
       return;
     }
+  }, [match]);
+
+  // Fetch linked markets when match changes
+  useEffect(() => {
+    if (!match) return;
+    let cancelled = false;
+    setLoadingMarkets(true);
+    const q = `${match.homeTeam.name} ${match.awayTeam.name}`;
+    mobileApi.getPublicMarkets({ q, category: "SPORTS", limit: 5 })
+      .then((res) => { if (!cancelled) setLinkedMarkets(res.markets ?? []); })
+      .catch(() => { if (!cancelled) setLinkedMarkets([]); })
+      .finally(() => { if (!cancelled) setLoadingMarkets(false); });
+    return () => { cancelled = true; };
+  }, [match?.id]);
+
+  const handleCreatePrediction = useCallback(() => {
+    if (!match) return;
+    const initialTitle = `Will ${match.homeTeam.name} beat ${match.awayTeam.name}?`;
+    onClose();
+    router.push({
+      pathname: "/(tabs)/create",
+      params: { initialTitle, initialCategory: "SPORTS" },
+    });
+  }, [match, onClose, router]);
+
+  useEffect(() => {
+    if (!match) return;
 
     if (match.sport === "Cricket") {
       let cancelled = false;
@@ -472,6 +503,11 @@ function MatchDetailModal({ match, relatedNews, onClose }: {
                   onSelectIdx={setSelectedInningsIdx}
                 />
               )}
+              <LinkedMarketsPanel
+                markets={linkedMarkets}
+                loading={loadingMarkets}
+                onCreatePrediction={handleCreatePrediction}
+              />
             </ScrollView>
           </View>
         </View>
@@ -555,6 +591,11 @@ function MatchDetailModal({ match, relatedNews, onClose }: {
               ) : (
                 <FootballLineupTab detail={footballDetail} />
               )}
+              <LinkedMarketsPanel
+                markets={linkedMarkets}
+                loading={loadingMarkets}
+                onCreatePrediction={handleCreatePrediction}
+              />
             </ScrollView>
           </View>
         </View>
@@ -726,12 +767,108 @@ function MatchDetailModal({ match, relatedNews, onClose }: {
                 ))}
               </View>
             ) : null}
+            <LinkedMarketsPanel
+              markets={linkedMarkets}
+              loading={loadingMarkets}
+              onCreatePrediction={handleCreatePrediction}
+            />
           </ScrollView>
         </View>
       </View>
     </Modal>
   );
 }
+
+// ---- Linked Markets Panel (T5) ----
+
+function LinkedMarketsPanel({
+  markets,
+  loading,
+  onCreatePrediction,
+}: {
+  markets: ApiMarketSummary[];
+  loading: boolean;
+  onCreatePrediction: () => void;
+}) {
+  const router = useRouter();
+  return (
+    <View style={linkedStyles.panel}>
+      <Text style={linkedStyles.heading}>Predictions</Text>
+      {loading ? (
+        <ActivityIndicator size="small" color={colors.accent} style={{ marginVertical: spacing.md }} />
+      ) : markets.length === 0 ? (
+        <Text style={linkedStyles.empty}>No predictions yet for this match.</Text>
+      ) : (
+        markets.map((m) => (
+          <Pressable
+            key={m.id}
+            style={linkedStyles.marketRow}
+            onPress={() => router.push(`/market/${m.id}`)}
+          >
+            <Text style={linkedStyles.marketTitle} numberOfLines={2}>{m.title}</Text>
+            <Feather name="chevron-right" size={14} color={colors.accent} />
+          </Pressable>
+        ))
+      )}
+      <Pressable style={linkedStyles.createBtn} onPress={onCreatePrediction}>
+        <Feather name="plus" size={14} color="#fff" />
+        <Text style={linkedStyles.createBtnText}>Create Prediction</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+const linkedStyles = StyleSheet.create({
+  panel: {
+    marginTop: spacing.md,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: "rgba(255,255,255,0.04)",
+  },
+  heading: {
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+    color: "rgba(255,255,255,0.4)",
+    textTransform: "uppercase",
+    marginBottom: spacing.sm,
+  },
+  empty: {
+    fontSize: 13,
+    color: "rgba(255,255,255,0.4)",
+    marginBottom: spacing.sm,
+  },
+  marketRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255,255,255,0.05)",
+    gap: spacing.sm,
+  },
+  marketTitle: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#e2e8f0",
+    flex: 1,
+  },
+  createBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    marginTop: spacing.md,
+    paddingVertical: 10,
+    borderRadius: radius.md,
+    backgroundColor: colors.accent,
+  },
+  createBtnText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#fff",
+  },
+});
 
 // ---- Cricket Summary Tab ----
 

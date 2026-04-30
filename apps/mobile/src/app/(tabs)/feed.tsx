@@ -11,15 +11,16 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
-import { useNavigation } from "expo-router";
+import { useFocusEffect, useNavigation, useRouter } from "expo-router";
 
 import type { ApiNewsFeedItem, AppMarketCategory } from "@predict-future/types";
 import { colors, radius, spacing } from "@predict-future/ui-tokens";
 
 import { InsightCard } from "@/components/insight-card";
 import { NewsFeedCard } from "@/components/news-feed-card";
+import { StreakBadge } from "@/components/streak-reminder";
 import { mobileApi } from "@/lib/api";
-import { env } from "@/lib/env";
+import { useSession } from "@/providers/session-provider";
 
 const PAGE_SIZE = 10;
 const TAB_BAR_HEIGHT = 72;
@@ -69,7 +70,10 @@ function buildFeedItems(newsItems: ApiNewsFeedItem[]): NewsListItem[] {
 export default function FeedScreen() {
   const { height } = useWindowDimensions();
   const navigation = useNavigation();
+  const router = useRouter();
+  const { session, status: authStatus } = useSession();
   const listRef = useRef<FlatList<NewsListItem>>(null);
+  const [streakCount, setStreakCount] = useState(0);
 
   const [items, setItems] = useState<ApiNewsFeedItem[]>([]);
   const [hasMore, setHasMore] = useState(true);
@@ -77,6 +81,15 @@ export default function FeedScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [category, setCategory] = useState<AppMarketCategory | "ALL">("ALL");
+
+  // Fetch streak count once when authenticated
+  useEffect(() => {
+    if (authStatus !== "authenticated" || !session) return;
+    void mobileApi.getMyProfile().then((p) => {
+      setStreakCount(p.user.streak ?? 0);
+    }).catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authStatus]);
 
   // Swipe hint — shown on first load, disappears after 3s
   const [showHint, setShowHint] = useState(true);
@@ -120,12 +133,11 @@ export default function FeedScreen() {
       const query: Parameters<typeof mobileApi.getNews>[0] = {
         limit: PAGE_SIZE,
         cursor: mode === "append" ? cursorRef.current : null,
-        userId: env.demoUserId,
       };
 
       if (cat === "ALL") {
-        // Default: show everything except sports (sports has its own tab)
-        // — but allow override if user explicitly wants sports
+        // Sports has its own dedicated tab — exclude from the main feed
+        query.excludeCategory = "SPORTS";
       } else {
         query.category = cat;
       }
@@ -157,11 +169,11 @@ export default function FeedScreen() {
     void loadPage("replace");
   }, [loadPage]);
 
-  const onRefresh = useCallback(() => {
+  const onRefresh = useCallback(async () => {
     setRefreshing(true);
     cursorRef.current = null;
     hasMoreRef.current = true;
-    mobileApi.refreshNewsFeed({ userId: env.demoUserId }).catch(() => {});
+    await mobileApi.refreshNewsFeed().catch(() => {});
     void loadPage("replace");
   }, [loadPage]);
 
@@ -173,6 +185,18 @@ export default function FeedScreen() {
     });
     return unsubscribe;
   }, [navigation, onRefresh]);
+
+  // Silently reload feed every 3 minutes while tab is focused — picks up AI-generated polls
+  useFocusEffect(
+    useCallback(() => {
+      const interval = setInterval(() => {
+        if (!inFlightRef.current) {
+          void loadPage("replace");
+        }
+      }, 3 * 60 * 1000);
+      return () => clearInterval(interval);
+    }, [loadPage])
+  );
 
   const onEndReached = useCallback(() => {
     if (hasMoreRef.current && !inFlightRef.current) {
@@ -231,6 +255,10 @@ export default function FeedScreen() {
               </Pressable>
             );
           })}
+          <StreakBadge
+            streak={streakCount}
+            onPress={() => router.push("/(tabs)/profile")}
+          />
         </ScrollView>
       </View>
 
@@ -293,6 +321,14 @@ export default function FeedScreen() {
               item={item.item}
               viewportHeight={cardHeight}
               showHint={index === 0 && showHint}
+              onVoted={() => {
+                // Silently refresh the feed so insight cards reflect updated vote counts
+                if (!inFlightRef.current) {
+                  cursorRef.current = null;
+                  hasMoreRef.current = true;
+                  void loadPage("replace");
+                }
+              }}
             />
           );
         }}

@@ -1,11 +1,12 @@
 import { Link, router } from "expo-router";
 import { useState } from "react";
-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from "react-native";
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { colors, radius, spacing } from "@predict-future/ui-tokens";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ApiClientError } from "@predict-future/api-client";
 import { mobileApi } from "@/lib/api";
 import { useSession } from "@/providers/session-provider";
 
@@ -15,18 +16,24 @@ export default function SignUpScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [alreadyExists, setAlreadyExists] = useState(false);
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit() {
     if (!username.trim() || !email.trim() || !password) return;
     setLoading(true);
     setError(null);
+    setAlreadyExists(false);
     try {
       const res = await mobileApi.register({ username: username.trim(), email: email.trim(), password });
-      signIn({ userId: res.user.id, username: res.user.username, token: res.token });
+      signIn({ userId: res.user.id, username: res.user.username, token: res.token, isNew: true });
       router.replace("/(tabs)/feed");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Registration failed.");
+      if (e instanceof ApiClientError && e.status === 409) {
+        setAlreadyExists(true);
+      } else {
+        setError(e instanceof Error ? e.message : "Registration failed.");
+      }
     } finally {
       setLoading(false);
     }
@@ -41,7 +48,16 @@ export default function SignUpScreen() {
         <Text style={styles.title}>Create account</Text>
         <Text style={styles.subtitle}>Free virtual points. No deposits, no risk.</Text>
 
-        {error ? <Text style={styles.error}>{error}</Text> : null}
+        {alreadyExists ? (
+          <View style={styles.existsBox}>
+            <Text style={styles.existsText}>That email or username is already registered.</Text>
+            <Pressable onPress={() => router.replace("/(auth)/sign-in")}>
+              <Text style={styles.existsLink}>Sign in instead →</Text>
+            </Pressable>
+          </View>
+        ) : error ? (
+          <Text style={styles.error}>{error}</Text>
+        ) : null}
 
         <View style={styles.form}>
           <Input label="Username" value={username} onChangeText={setUsername} placeholder="your_handle" autoCapitalize="none" autoCorrect={false} />
@@ -69,6 +85,9 @@ const styles = StyleSheet.create({
   title: { fontSize: 32, fontWeight: "700", color: colors.text },
   subtitle: { marginTop: spacing.sm, fontSize: 16, color: colors.textMuted, lineHeight: 24 },
   error: { marginTop: spacing.lg, color: colors.danger, fontSize: 14, backgroundColor: "rgba(190,18,60,0.08)", padding: spacing.md, borderRadius: radius.sm, overflow: "hidden" },
+  existsBox: { marginTop: spacing.lg, padding: spacing.md, borderRadius: radius.sm, backgroundColor: "#FFFBEB", borderWidth: 1, borderColor: "#FDE68A", gap: spacing.sm },
+  existsText: { color: "#92400E", fontSize: 14 },
+  existsLink: { color: colors.accent, fontSize: 14, fontWeight: "700" },
   form: { marginTop: spacing["2xl"] },
   submitBtn: { marginTop: spacing.xl },
   link: { marginTop: spacing.xl, textAlign: "center", color: colors.accent, fontWeight: "600", fontSize: 14 },

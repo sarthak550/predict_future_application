@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "currentSprint": 7,
+  "tickets": [
+    {
+      "id": "S7-T1",
+      "sprint": 7,
+      "title": "Feed: Inline poll voting directly on news cards",
+      "description": "Users currently have to navigate away from the Feed to vote on polls — they either swipe through to the poll in the feed (if the INSIGHT_INTERVAL triggers) or go to the Markets > Polls tab. This friction kills engagement. The poll question and YES/NO buttons should live inline on the NewsFeedCard for stories that have a linked poll, so users can vote without leaving the feed.\n\n**Acceptance criteria:**\n1. In `apps/mobile/src/components/news-feed-card.tsx` (or wherever NewsFeedCard is defined), check if `item.poll` is non-null and `item.poll.status === 'OPEN'`.\n2. If yes and the user has NOT yet voted (`item.poll.userVote` is null), render a compact inline poll panel at the bottom of the card: the poll question (`item.poll.title`), a YES/NO vote bar (reuse the existing bar component from PollCard), and YES/NO tap targets.\n3. Tapping YES or NO calls `mobileApi.castVote(item.poll.id, { side })`. Apply optimistic update immediately: show the updated vote distribution and the 'You voted YES/NO' chip inline.\n4. If the user has already voted, show the result bar + 'You voted X' chip without the vote buttons.\n5. On vote success call `onVoted?.()` to trigger a feed refresh so the insight card data also updates.\n6. If `item.poll.marketType === 'NUMERIC'`, show a compact number input + Submit button instead of YES/NO buttons.\n7. Ensure the poll panel does not overflow the card viewport (use `maxHeight` or a collapsed/expanded toggle if needed).\n8. Handle error state: if the vote API call fails, revert the optimistic update and show a brief error message.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-01"
+    },
+    {
+      "id": "S7-T2",
+      "sprint": 7,
+      "title": "Market detail: sticky betting panel (bottom sheet or fixed footer)",
+      "description": "The market detail screen (`apps/mobile/src/app/market/[id].tsx`) requires the user to scroll all the way past market info, existing positions, resolution rules, and comments to reach the betting panel. This is backwards — the primary CTA (Place Bet) should be immediately reachable. Move it to a persistent bottom-of-screen position.\n\n**Acceptance criteria:**\n1. Extract the betting panel (side selection, amount presets, place bet button) into a fixed-position footer or a bottom sheet (modal overlay) in `market/[id].tsx`.\n2. For OPEN non-poll markets: show a persistent bottom bar with the current YES probability, a 'Predict' button, and the user's current position summary if they have one. Tapping 'Predict' opens the full betting sheet (bottom sheet or modal).\n3. For OPEN poll markets: show a compact bottom bar with the poll question abbreviated and YES/NO tap targets. Voting inline collapses the bar to show the result.\n4. For CLOSED/RESOLVED markets: the bottom bar shows the outcome (e.g. 'Resolved YES') and a Share Result button if the user had a position.\n5. The ScrollView main content should NOT be padded with the betting panel content anymore — the information (description, stats, resolution rules, comments) fills the scroll area naturally.\n6. The sticky panel must clear the tab bar and iPhone home indicator (use `SafeAreaView` insets).\n7. When the bet is successfully placed: the bottom bar updates to show 'Position: YES — 100 pts' without requiring a full scroll.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-01"
+    },
+    {
+      "id": "S7-T3",
+      "sprint": 7,
+      "title": "Onboarding: first-run tooltip walkthrough for new users",
+      "description": "New users land on the Feed with no understanding of what polls vs. markets are, how points work, or what the streak means. There is no onboarding. This is the single biggest activation blocker — users who don't understand the product in the first 60 seconds do not return. Build a lightweight tooltip-based first-run walkthrough that fires exactly once for new users.\n\n**Acceptance criteria:**\n1. Use `AsyncStorage` to persist a `onboarding_complete` boolean. Check on app launch.\n2. For users where `onboarding_complete` is not set (first run), show a 4-step tooltip overlay sequence:\n   - Step 1 (Feed tab): 'Swipe up through today's news. Every story has a prediction attached.' with a pulsing arrow pointing at the first card.\n   - Step 2 (first poll card): 'Tap YES or NO to vote. Your accuracy score improves with each correct prediction.'\n   - Step 3 (Markets tab): 'Stake virtual points on outcomes you believe in. Top predictors earn reputation and badges.'\n   - Step 4 (Profile tab): 'Track your points, accuracy, and streak here.'\n3. Each step has a 'Next' button and a 'Skip' link.\n4. After step 4 (or on Skip), set `onboarding_complete = true` in AsyncStorage.\n5. Tooltips use a semi-transparent backdrop with a highlight cutout on the relevant UI element (use a simple modal overlay approach — no need for a native spotlight library).\n6. The walkthrough can be re-triggered from Profile settings for users who want to replay it (add a 'Replay tutorial' option in the profile actions card).\n7. Do not block the UI after the walkthrough completes — the app should be fully interactive immediately.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-01"
+    },
+    {
+      "id": "S7-T4",
+      "sprint": 7,
+      "title": "Streak and daily engagement mechanic",
+      "description": "The user object already has a `streak` field but it is only displayed passively on the Profile screen. It has no behavioral effect in the product — there is no reward for maintaining a streak, no warning when a streak is about to break, and no daily prompt to engage. Streaks are one of the most effective daily retention mechanics in habit-forming apps (Duolingo, Wordle). We need to make the streak mean something.\n\n**Acceptance criteria:**\n1. On app launch (in `apps/mobile/src/providers/session-provider.tsx` or the root layout), fetch the user's profile and check `user.streak` and `user.lastPredictionAt` (or equivalent field).\n2. If the user has a streak >= 3 AND they have NOT yet made a prediction today: show a full-screen streak reminder modal on launch. Content: 'Your X-day streak is at risk! Make a prediction today to keep it alive.' with a 'Go Predict' CTA that navigates to the Feed tab and a 'Later' dismiss option.\n3. If the user's streak just broke (previous streak > 0, current streak is 0 or reset): show a single-time 'Streak reset' notification inside the app (a banner or modal, not a push notification). 'Your streak reset. Start a new one today!'\n4. Add a streak indicator to the Feed tab header — a small fire emoji + streak count badge next to the category filter bar (visible only if streak >= 2). Tapping it navigates to the Profile screen.\n5. If the user's streak is >= 7: add a special 'Weekly streak' visual treatment — gold border on the streak badge, different color.\n6. The streak reminder modal should only fire ONCE per day even if the app is opened multiple times. Use AsyncStorage to track the last time it was shown.\n7. Backend: verify that the `streak` field on the user profile updates correctly when a vote or position is placed. If the API does not return `lastPredictionAt`, add it to the `GET /api/profile/me` response so the client can compute 'has predicted today'.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-01"
+    },
+    {
+      "id": "S7-T5",
+      "sprint": 7,
+      "title": "Sports tab: tap a match to see linked markets and create a prediction",
+      "description": "The Sports tab shows live scores for cricket and football. This is valuable context — but it's a dead end. Users look at a match, get excited about the outcome, and have no path to stake a prediction. The tab should be the entry point to sports prediction markets, not just a scoreboard widget.\n\n**Acceptance criteria:**\n1. In `apps/mobile/src/app/(tabs)/sports.tsx`, make each match card tappable.\n2. When a match is tapped, open a bottom sheet or navigate to a new screen that shows:\n   a. The match summary (teams, current score, status)\n   b. Any existing open prediction markets linked to this match. Query `GET /api/markets/public?q=<team names>&category=SPORTS` — use both team names as the search terms.\n   c. A 'Create Prediction' button that pre-fills the Create tab wizard: visibility=PUBLIC, category=SPORTS, and seeds the title with e.g. 'Will [Team A] beat [Team B]?'\n3. If no markets are found for the match: show an empty state with the 'Create Prediction' CTA prominently.\n4. The linked markets list should show standard MarketSummaryCard items, tappable to go to market detail.\n5. The 'Create Prediction' button should use the existing router navigation to `/(tabs)/create` with prefill params. If the Create screen does not support URL params for prefill, add support for reading `initialTitle` and `initialCategory` from `useLocalSearchParams`.\n6. Ensure the bottom sheet or nested screen works correctly with the tab bar layout (use a modal stack if needed).",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-01"
+    },
+    {
+      "id": "S7-T6",
+      "sprint": 7,
+      "title": "Profile: P&L summary card — net points won/lost across resolved markets",
+      "description": "The profile screen shows wallet balance, reputation score, accuracy %, and streak. But it does not show the one number every prediction market user cares most about: am I up or down overall? Without a P&L view, users cannot evaluate their own skill, which removes a critical engagement driver (wanting to 'get back to even' or 'protect the gain'). This is the financial feedback loop that makes prediction markets addictive.\n\n**Acceptance criteria:**\n1. In `apps/api/app/api/profile/me/route.ts` (or the profile API), add a computed `pnl` field to the response:\n   - `totalStaked`: sum of all `amount` across all resolved positions the user has taken.\n   - `totalReturned`: sum of all `payout` values from resolved positions (if payout is stored) OR compute as: for winning positions, payout = amount * (total pool / winning pool); for losing positions, payout = 0.\n   - `netPnl`: totalReturned - totalStaked (can be negative).\n   - `resolvedMarketCount`: count of resolved markets the user participated in.\n2. In `apps/mobile/src/app/(tabs)/profile.tsx`, add a 'P&L Summary' card below the header card:\n   - Show: Net P&L (large number, green if positive, red if negative), Total Staked, Total Returned, Markets Played.\n   - If `resolvedMarketCount === 0`: show 'No resolved predictions yet. Start predicting to see your P&L.'\n3. The card should be visually prominent — this is the first thing a returning user wants to see after their wallet balance.\n4. Display amounts with the `formatPoints()` utility already in `@predict-future/utils`.\n5. Add a `lastUpdatedAt` timestamp to the card so users know the data is fresh.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-01"
+    },
+    {
+      "id": "S7-T7",
+      "sprint": 7,
+      "title": "Share a market: native share sheet with deep link URL",
+      "description": "The market detail screen has a 'Share this market' link and a 'Share Result' button that both call `Share.share()` with plain text messages. These work, but do not include a deep link URL, which means recipients land on the web with no path to the specific market. Deep links are the viral loop of a prediction market — every share should bring one new user into the product with context already provided.\n\n**Acceptance criteria:**\n1. Update `shareOpenMarket()` in `market/[id].tsx` to include a deep link: `https://predictfuture.app/markets/${marketId}`. The share message should be: `'\"${title}\" — what do you think? Predict on Predict Future: https://predictfuture.app/markets/${marketId}'`\n2. Update `shareMarketResult()` to also include the deep link: after the result line, append `\\n\\nhttps://predictfuture.app/markets/${marketId}`\n3. Add a share button to the MarketSummaryCard component (small share icon, top-right corner). Tapping it triggers `shareOpenMarket`. This makes markets shareable from the Markets tab list view too.\n4. Add share capability to poll cards: after voting, show 'Share your vote' — a share action that says 'I voted [YES/NO] on \"[poll title]\" — what do you think? https://predictfuture.app/polls/${pollId}'\n5. Ensure the shared URL is valid even if the web page is not yet fully built (a basic 404 is acceptable — the URL itself is what matters for virality tracking).\n6. Add `Share` import from `react-native` in any file that needs it.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-01"
+    },
+    {
+      "id": "S7-T8",
+      "sprint": 7,
+      "title": "Markets tab: sort controls and trending markets surface",
+      "description": "The Markets tab currently shows all public markets sorted by `new`. There is no way to sort by activity, volume, or closing soon. Users who want to find the most interesting open market have to scroll a chronological list. This is a discovery failure that increases time-to-first-bet for new users. The API already supports multiple sort modes — the UI just needs to expose them.\n\n**Acceptance criteria:**\n1. In `apps/mobile/src/app/(tabs)/markets.tsx`, add a sort control row below the search bar (only visible in public/Explore mode, hide in search mode).\n2. Sort options: 'New' (default, sort=new), 'Trending' (sort=rank), 'Closing Soon' (sort=close_at), 'Most Active' (sort=volume).\n3. The active sort is highlighted. Switching sort options triggers a refetch of `mobileApi.getPublicMarkets({ sort: selectedSort })`.\n4. Add a 'Trending' shelf at the top of the markets list (before the category pills) in the default/New view only: a horizontal scroll row showing the top 3 markets by `marketRankScore`. Each card in the shelf is compact (title + probability or avg prediction + participant count + category badge). Tapping navigates to market detail.\n5. The trending shelf uses `mobileApi.getPublicMarkets({ sort: 'rank', limit: 3 })` — a separate fetch that can be done in parallel with the main list.\n6. The sort control row should be styled consistently with the existing status tab row (same pill/chip style).\n7. The category filter pills should remain below the sort row — the hierarchy is: mode toggle > search bar > sort row > status tabs > category pills > list.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-01"
+    }
+  ]
+}

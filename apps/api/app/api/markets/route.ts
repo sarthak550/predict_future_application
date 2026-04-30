@@ -14,6 +14,8 @@ export async function GET(request: Request) {
   const q = searchParams.get("q");
   const featured = searchParams.get("featured");
   const sort = searchParams.get("sort");
+  const limitParam = searchParams.get("limit");
+  const limit = limitParam ? Math.max(1, Math.min(100, parseInt(limitParam, 10))) : undefined;
 
   const markets = await prisma.market.findMany({
     where: {
@@ -80,7 +82,7 @@ export async function GET(request: Request) {
   const sortedMarkets =
     sort === "new"
       ? [...markets].sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
-      : sort === "closing"
+      : sort === "closing" || sort === "close_at"
         ? [...markets].sort((left, right) => left.closeAt.getTime() - right.closeAt.getTime())
         : sort === "featured"
           ? [...markets].sort((left, right) => {
@@ -90,10 +92,14 @@ export async function GET(request: Request) {
 
               return computeMarketRankScore(right) - computeMarketRankScore(left);
             })
-          : rankMarkets(markets);
+          : sort === "volume"
+            ? [...markets].sort((left, right) => (right.totalVolume ?? 0) - (left.totalVolume ?? 0))
+            : rankMarkets(markets);
+
+  const resultMarkets = limit ? sortedMarkets.slice(0, limit) : sortedMarkets;
 
   return NextResponse.json({
-    markets: sortedMarkets.map((market) => ({
+    markets: resultMarkets.map((market) => ({
       ...market,
       marketRankScore: computeMarketRankScore(market)
     }))

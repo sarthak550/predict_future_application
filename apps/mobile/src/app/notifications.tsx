@@ -1,5 +1,5 @@
 import { Stack } from "expo-router";
-import { useCallback } from "react";
+import { useCallback, useEffect } from "react";
 import { ActivityIndicator, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from "react-native";
 
 import type { ApiNotification } from "@predict-future/types";
@@ -18,6 +18,11 @@ export default function NotificationsScreen() {
   );
 
   const notifications = data?.notifications ?? [];
+
+  useEffect(() => {
+    if (authStatus !== "authenticated") return;
+    mobileApi.markNotificationsRead().catch(() => {});
+  }, [authStatus]);
 
   async function markAllRead() {
     try {

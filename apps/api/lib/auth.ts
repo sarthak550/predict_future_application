@@ -1,10 +1,41 @@
 import { type Role } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
 import { getServerSession, type NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { redirect } from "next/navigation";
 
 import { prisma } from "@/lib/prisma";
+
+const JWT_SECRET = process.env.NEXTAUTH_SECRET ?? "fallback-dev-secret";
+
+/**
+ * Resolves the authenticated user ID from any request — works for both
+ * web (NextAuth session cookie) and mobile (JWT Bearer token).
+ */
+export async function getUserIdFromRequest(request: Request): Promise<string | null> {
+  // 1. JWT Bearer token (mobile) — check first, fast path
+  const authHeader = request.headers.get("authorization") ?? "";
+  const bearer = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : null;
+  if (bearer) {
+    try {
+      const payload = jwt.verify(bearer, JWT_SECRET) as { sub?: string };
+      if (payload.sub) return payload.sub;
+    } catch {
+      // Invalid or expired — fall through to NextAuth check
+    }
+  }
+
+  // 2. NextAuth session (web cookie-based)
+  try {
+    const session = await getSession();
+    if (session?.user?.id) return session.user.id;
+  } catch {
+    // getSession can throw in some Next.js contexts — ignore
+  }
+
+  return null;
+}
 
 export const authOptions: NextAuthOptions = {
   session: {

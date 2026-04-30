@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { getSession } from "@/lib/auth";
+import { getSession, getUserIdFromRequest } from "@/lib/auth";
 import { canViewMarket } from "@/lib/markets/access";
 import { prisma } from "@/lib/prisma";
 import { voteSchema } from "@/lib/validations/market";
@@ -11,8 +11,7 @@ export async function POST(
 ) {
   try {
     const { searchParams } = new URL(request.url);
-    const session = await getSession();
-    const userId = session?.user?.id ?? searchParams.get("userId");
+  const userId = await getUserIdFromRequest(request);
     if (!userId) {
       return NextResponse.json({ error: "Authentication required." }, { status: 401 });
     }
@@ -75,12 +74,6 @@ export async function POST(
     } else {
       if (payload.numericValue === undefined) {
         return NextResponse.json({ error: "Numeric polls require a value." }, { status: 400 });
-      }
-      if (market.minValue !== null && payload.numericValue < market.minValue) {
-        return NextResponse.json({ error: `Value must be at least ${market.minValue}.` }, { status: 400 });
-      }
-      if (market.maxValue !== null && payload.numericValue > market.maxValue) {
-        return NextResponse.json({ error: `Value must be at most ${market.maxValue}.` }, { status: 400 });
       }
     }
 

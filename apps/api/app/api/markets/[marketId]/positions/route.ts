@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { validateNumericGuess } from "@/lib/markets/numeric";
-import { getSession } from "@/lib/auth";
+import { getSession, getUserIdFromRequest } from "@/lib/auth";
 import { canViewMarket } from "@/lib/markets/access";
 import {
   calculateBondMetrics,
@@ -20,8 +20,7 @@ export async function POST(
 ) {
   try {
     const { searchParams } = new URL(request.url);
-    const session = await getSession();
-    const userId = session?.user?.id ?? searchParams.get("userId");
+  const userId = await getUserIdFromRequest(request);
     if (!userId) {
       return NextResponse.json({ error: "Authentication required." }, { status: 401 });
     }

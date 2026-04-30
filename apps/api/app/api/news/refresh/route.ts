@@ -33,16 +33,10 @@ export async function POST(request: Request) {
 
     lastRefreshAt = now;
 
-    // Fire and forget — ingestion runs in background
-    runNewsIngestionJob()
-      .then((result) => {
-        console.info(`[news:refresh] ingested=${result.ingested} fetched=${result.fetched}`);
-      })
-      .catch((err) => {
-        console.error("[news:refresh] ingestion failed:", err);
-      });
+    const result = await runNewsIngestionJob();
+    console.info(`[news:refresh] ingested=${result.ingested} fetched=${result.fetched}`);
 
-    return NextResponse.json({ triggered: true });
+    return NextResponse.json({ triggered: true, ingested: result.ingested, fetched: result.fetched });
   } catch (error) {
     console.error("Feed refresh error:", error);
     return NextResponse.json({ error: "Failed to refresh feed." }, { status: 500 });

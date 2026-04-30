@@ -11,16 +11,19 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { resetOnboarding } from "@/components/onboarding-walkthrough";
 
 import type {
   ApiCategoryStat,
   ApiGroupSummary,
   ApiLeaderboardEntry,
   ApiMyProfile,
+  ApiPnlSummary,
   ApiPositionSummary,
   AppMarketCategory,
   AppMarketStatus,
 } from "@predict-future/types";
+import { formatPoints, formatRelativeTime } from "@predict-future/utils";
 import { colors, radius, spacing } from "@predict-future/ui-tokens";
 
 import { useApiQuery } from "@/hooks/useApiQuery";
@@ -79,12 +82,12 @@ export default function ProfileScreen() {
   const watchlist = useWatchlist();
 
   const fetcher = useCallback(
-    () => mobileApi.getMyProfile({ userId: userId as string }),
-    [userId]
+    () => mobileApi.getMyProfile(),
+    []
   );
   const groupsFetcher = useCallback(
-    () => mobileApi.getMyGroups({ userId: userId as string }),
-    [userId]
+    () => mobileApi.getMyGroups(),
+    []
   );
 
   const enabled = sessionStatus === "authenticated" && Boolean(userId);
@@ -100,12 +103,18 @@ export default function ProfileScreen() {
 
   if (sessionStatus !== "authenticated" || !userId) {
     return (
-      <View style={styles.screen}>
-        <View style={styles.center}>
-          <Text style={styles.title}>Profile</Text>
-          <Text style={styles.subtitle}>
-            Sign in to view your profile.
+      <View style={[styles.screen, styles.center]}>
+        <View style={styles.unauthCard}>
+          <Text style={styles.unauthTitle}>Sign in to see your profile</Text>
+          <Text style={styles.unauthSubtitle}>
+            Track your predictions, badges, and reputation score.
           </Text>
+          <Pressable
+            style={({ pressed }) => [styles.signInBtn, pressed && { opacity: 0.8 }]}
+            onPress={() => router.push("/(auth)/sign-in")}
+          >
+            <Text style={styles.signInBtnText}>Sign In</Text>
+          </Pressable>
         </View>
       </View>
     );
@@ -139,6 +148,7 @@ export default function ProfileScreen() {
   const positions = user.positions ?? [];
   const badges = user.badges ?? [];
   const categoryStats = user.categoryStats ?? [];
+  const pnl = data?.pnl ?? null;
 
   function handleRefresh() {
     void refetch();
@@ -146,9 +156,16 @@ export default function ProfileScreen() {
   }
 
   function handleLogOut() {
-    Alert.alert("Log Out", "Are you sure you want to log out?", [
+    Alert.alert("Sign out", "Are you sure?", [
       { text: "Cancel", style: "cancel" },
-      { text: "Log Out", style: "destructive", onPress: signOut },
+      {
+        text: "Sign Out",
+        style: "destructive",
+        onPress: () => {
+          signOut();
+          router.replace("/(auth)/sign-in");
+        },
+      },
     ]);
   }
 
@@ -180,10 +197,10 @@ export default function ProfileScreen() {
         </View>
 
         <View style={styles.statsRow}>
-          <Stat label="Accuracy" value={`${(user.accuracyScore ?? 0).toFixed(1)}%`} />
-          <Stat label="Predictions" value={String(stats?.totalPredictions ?? 0)} />
-          <Stat label="Net Pts" value={String(stats?.totalNetPoints ?? 0)} />
-          <Stat label="Balance" value={String(user.wallet?.balance ?? 0)} />
+          <Stat label="Points" value={(user.wallet?.balance ?? 0).toLocaleString()} />
+          <Stat label="Rep" value={(user.reputationScore ?? 0).toLocaleString()} />
+          <Stat label="Accuracy" value={`${(user.accuracyScore ?? 0).toFixed(0)}%`} />
+          <Stat label="Streak" value={(user.streak ?? 0) > 0 ? `🔥 ${user.streak}` : "–"} />
         </View>
 
         {/* Rep score bar */}
@@ -200,33 +217,52 @@ export default function ProfileScreen() {
         </View>
       </View>
 
+      {/* ── P&L Summary ── */}
+      <PnlSummaryCard pnl={pnl} />
+
       {/* ── Badges ── */}
-      {badges.length > 0 && (
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Badges</Text>
-          <View style={styles.badgesGrid}>
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>Badges</Text>
+        {badges.length === 0 ? (
+          <Text style={styles.badgeEmptyText}>No badges yet — keep predicting!</Text>
+        ) : (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.badgeShelf}
+          >
             {badges.map((ub) => {
               const meta = getBadgeMeta(ub.badge.name);
               return (
-                <View key={ub.badge.id} style={[styles.badgeCard, { backgroundColor: meta.bg }]}>
-                  <Text style={styles.badgeEmoji}>{meta.emoji}</Text>
-                  <Text style={[styles.badgeName, { color: meta.color }]}>{ub.badge.name}</Text>
-                  {ub.badge.description ? (
-                    <Text style={styles.badgeDesc} numberOfLines={2}>{ub.badge.description}</Text>
-                  ) : null}
+                <View key={ub.badge.id} style={[styles.badgePill, { backgroundColor: meta.bg }]}>
+                  <Text style={styles.badgePillEmoji}>{meta.emoji}</Text>
+                  <Text style={[styles.badgePillLabel, { color: meta.color }]}>{ub.badge.name}</Text>
                 </View>
               );
             })}
-          </View>
-        </View>
+          </ScrollView>
+        )}
+      </View>
+
+      {/* ── Recent Positions ── */}
+      <RecentPositionsSection positions={positions.slice(0, 10)} />
+
+      {/* ── Category Breakdown ── */}
+      {categoryStats.length > 0 && (
+        <CategoryBreakdownSection categoryStats={categoryStats} />
       )}
 
-      {/* ── My Predictions ── */}
-      {(votes.length > 0 || positions.length > 0) && (
+      {/* ── My Markets ── */}
+      {(user.createdMarkets ?? []).length > 0 && (
+        <MyMarketsSection createdMarkets={(user.createdMarkets ?? []).slice(0, 6)} />
+      )}
+
+      {/* ── My Predictions (Polls) ── */}
+      {votes.length > 0 && (
         <PredictionsSection
           votes={votes}
-          positions={positions}
-          categoryStats={categoryStats}
+          positions={[]}
+          categoryStats={[]}
         />
       )}
 
@@ -275,6 +311,19 @@ export default function ProfileScreen() {
           label="Notifications"
           onPress={() => router.push("/notifications")}
         />
+        <ActionRow
+          icon="help-circle-outline"
+          label="Replay Tutorial"
+          sublabel="Re-run the first-run walkthrough"
+          onPress={async () => {
+            await resetOnboarding();
+            Alert.alert(
+              "Tutorial reset",
+              "Re-open the app or switch tabs to see the walkthrough again.",
+              [{ text: "OK" }]
+            );
+          }}
+        />
       </View>
 
       {/* ── Log Out ── */}
@@ -288,6 +337,100 @@ export default function ProfileScreen() {
     </ScrollView>
   );
 }
+
+// ── PnlSummaryCard ────────────────────────────────────────────────────────────
+
+function PnlSummaryCard({ pnl }: { pnl: ApiPnlSummary | null }) {
+  return (
+    <View style={[styles.card, pnlStyles.pnlCard]}>
+      <Text style={styles.sectionTitle}>P&L Summary</Text>
+      {!pnl || pnl.resolvedMarketCount === 0 ? (
+        <View style={pnlStyles.emptyState}>
+          <Text style={pnlStyles.emptyText}>No resolved predictions yet.</Text>
+          <Text style={pnlStyles.emptyHint}>Start predicting to see your P&L.</Text>
+        </View>
+      ) : (
+        <>
+          {/* Net P&L — prominent */}
+          <View style={pnlStyles.netPnlRow}>
+            <Text style={pnlStyles.netPnlLabel}>Net P&L</Text>
+            <Text
+              style={[
+                pnlStyles.netPnlValue,
+                pnl.netPnl >= 0 ? pnlStyles.pnlPositive : pnlStyles.pnlNegative,
+              ]}
+            >
+              {pnl.netPnl >= 0 ? "+" : ""}{formatPoints(pnl.netPnl)} pts
+            </Text>
+          </View>
+
+          {/* Stats grid */}
+          <View style={pnlStyles.statsGrid}>
+            <PnlStat label="Staked" value={`${formatPoints(pnl.totalStaked)} pts`} />
+            <PnlStat label="Returned" value={`${formatPoints(pnl.totalReturned)} pts`} />
+            <PnlStat label="Markets" value={String(pnl.resolvedMarketCount)} />
+          </View>
+
+          <Text style={pnlStyles.updatedAt}>
+            Updated {formatRelativeTime(pnl.lastUpdatedAt)}
+          </Text>
+        </>
+      )}
+    </View>
+  );
+}
+
+function PnlStat({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={pnlStyles.statBox}>
+      <Text style={pnlStyles.statValue}>{value}</Text>
+      <Text style={pnlStyles.statLabel}>{label}</Text>
+    </View>
+  );
+}
+
+const pnlStyles = StyleSheet.create({
+  pnlCard: {
+    borderLeftWidth: 3,
+    borderLeftColor: colors.accent,
+  },
+  emptyState: { paddingVertical: spacing.md, alignItems: "center" },
+  emptyText: { fontSize: 14, fontWeight: "600", color: colors.textMuted },
+  emptyHint: { fontSize: 12, color: colors.textMuted, marginTop: 4 },
+  netPnlRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: spacing.md,
+    paddingBottom: spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  netPnlLabel: { fontSize: 13, fontWeight: "600", color: colors.textMuted },
+  netPnlValue: { fontSize: 28, fontWeight: "800" },
+  pnlPositive: { color: "#059669" },
+  pnlNegative: { color: "#DC2626" },
+  statsGrid: {
+    flexDirection: "row",
+    marginTop: spacing.md,
+    gap: spacing.sm,
+  },
+  statBox: {
+    flex: 1,
+    alignItems: "center",
+    padding: spacing.sm,
+    backgroundColor: colors.background,
+    borderRadius: radius.md,
+  },
+  statValue: { fontSize: 14, fontWeight: "700", color: colors.text },
+  statLabel: { fontSize: 10, color: colors.textMuted, marginTop: 2 },
+  updatedAt: {
+    fontSize: 10,
+    color: colors.textMuted,
+    marginTop: spacing.sm,
+    textAlign: "right",
+  },
+});
 
 // ── PredictionsSection ────────────────────────────────────────────────────────
 
@@ -473,6 +616,141 @@ function PredictionsSection({
           </View>
         )}
       </ScrollView>
+    </View>
+  );
+}
+
+// ── RecentPositionsSection ───────────────────────────────────────────────────
+
+function RecentPositionsSection({ positions }: { positions: ApiPositionSummary[] }) {
+  const router = useRouter();
+
+  function positionStatusIcon(pos: ApiPositionSummary): React.ReactNode {
+    const { winningSide, status } = pos.market;
+    if (status !== "RESOLVED" || winningSide == null) {
+      return <Ionicons name="time-outline" size={16} color="#94A3B8" />;
+    }
+    if (pos.side === winningSide) {
+      return <Ionicons name="checkmark-circle" size={16} color="#059669" />;
+    }
+    return <Ionicons name="close-circle" size={16} color="#DC2626" />;
+  }
+
+  return (
+    <View style={styles.card}>
+      <Text style={[styles.sectionTitle, { marginBottom: spacing.md }]}>Recent Positions</Text>
+      {positions.length === 0 ? (
+        <View style={styles.predEmpty}>
+          <Text style={styles.predEmptyText}>No positions yet.</Text>
+          <Text style={styles.predEmptyHint}>Head to the Markets tab to stake points.</Text>
+        </View>
+      ) : (
+        positions.map((pos) => (
+          <Pressable
+            key={pos.id}
+            style={({ pressed }) => [styles.trackRow, pressed && styles.trackRowPressed]}
+            onPress={() => router.push(`/market/${pos.market.id}`)}
+          >
+            <View style={styles.trackRowLeft}>
+              <Text style={styles.trackTitle} numberOfLines={2}>
+                {pos.market.title}
+              </Text>
+              <View style={styles.trackMeta}>
+                <View
+                  style={[
+                    styles.sidePillSmall,
+                    pos.side === "YES" ? styles.sideYes : styles.sideNo,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.sidePillSmallText,
+                      { color: pos.side === "YES" ? "#059669" : "#DC2626" },
+                    ]}
+                  >
+                    {pos.side}
+                  </Text>
+                </View>
+                <Text style={styles.betAmountLabel}>
+                  {pos.amount.toLocaleString()} pts
+                </Text>
+              </View>
+            </View>
+            {positionStatusIcon(pos)}
+          </Pressable>
+        ))
+      )}
+    </View>
+  );
+}
+
+// ── CategoryBreakdownSection ──────────────────────────────────────────────────
+
+function CategoryBreakdownSection({ categoryStats }: { categoryStats: ApiCategoryStat[] }) {
+  const top3 = [...categoryStats]
+    .sort((a, b) => b.accuracyScore - a.accuracyScore)
+    .slice(0, 3);
+
+  return (
+    <View style={styles.card}>
+      <Text style={[styles.sectionTitle, { marginBottom: spacing.md }]}>Category Breakdown</Text>
+      {top3.map((cs) => (
+        <View key={cs.category} style={styles.catBreakRow}>
+          <Text style={styles.catBreakLabel}>{cs.category}</Text>
+          <View style={styles.catBreakBarTrack}>
+            <View
+              style={[
+                styles.catBreakBarFill,
+                { width: `${Math.min(100, cs.accuracyScore)}%` },
+              ]}
+            />
+          </View>
+          <Text style={styles.catBreakPct}>{cs.accuracyScore.toFixed(0)}%</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+// ── MyMarketsSection ──────────────────────────────────────────────────────────
+
+const MY_MARKET_STATUS_META: Record<string, { label: string; color: string; bg: string }> = {
+  OPEN:           { label: "Open",    color: "#059669", bg: "#ECFDF5" },
+  PENDING_REVIEW: { label: "Review",  color: "#D97706", bg: "#FFFBEB" },
+  DRAFT:          { label: "Draft",   color: "#94A3B8", bg: "#F8FAFC" },
+  RESOLVED:       { label: "Resolved",color: "#2563EB", bg: "#EFF6FF" },
+  CANCELLED:      { label: "Cancelled",color: "#94A3B8", bg: "#F8FAFC" },
+};
+
+function MyMarketsSection({
+  createdMarkets,
+}: {
+  createdMarkets: Array<{ id: string; title: string; status: AppMarketStatus }>;
+}) {
+  const router = useRouter();
+
+  return (
+    <View style={styles.card}>
+      <Text style={[styles.sectionTitle, { marginBottom: spacing.md }]}>My Markets</Text>
+      {createdMarkets.map((m) => {
+        const meta =
+          MY_MARKET_STATUS_META[m.status] ??
+          { label: m.status, color: colors.textMuted, bg: colors.background };
+        return (
+          <Pressable
+            key={m.id}
+            style={({ pressed }) => [styles.trackRow, pressed && styles.trackRowPressed]}
+            onPress={() => router.push(`/market/${m.id}`)}
+          >
+            <Text style={[styles.trackTitle, { flex: 1 }]} numberOfLines={2}>
+              {m.title}
+            </Text>
+            <View style={[styles.statusPill, { backgroundColor: meta.bg, marginLeft: spacing.sm }]}>
+              <Text style={[styles.statusPillText, { color: meta.color }]}>{meta.label}</Text>
+            </View>
+          </Pressable>
+        );
+      })}
     </View>
   );
 }
@@ -1003,6 +1281,78 @@ const styles = StyleSheet.create({
   },
   grpInviteLabel: { fontSize: 12, color: colors.textMuted },
   grpInviteCode: { fontSize: 13, fontWeight: "700", color: colors.accent, fontFamily: "Courier" },
+
+  // ── Unauthenticated ──
+  unauthCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.xl,
+    alignItems: "center",
+    marginHorizontal: spacing.xl,
+  },
+  unauthTitle: { fontSize: 20, fontWeight: "700", color: colors.text, textAlign: "center" },
+  unauthSubtitle: {
+    marginTop: spacing.sm,
+    fontSize: 14,
+    color: colors.textMuted,
+    textAlign: "center",
+    lineHeight: 20,
+  },
+  signInBtn: {
+    marginTop: spacing.lg,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
+    borderRadius: radius.pill,
+    backgroundColor: colors.accent,
+  },
+  signInBtnText: { color: "#FFFFFF", fontWeight: "700", fontSize: 15 },
+
+  // ── Badge shelf ──
+  badgeShelf: { gap: spacing.sm, paddingVertical: spacing.md },
+  badgePill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.pill,
+  },
+  badgePillEmoji: { fontSize: 16 },
+  badgePillLabel: { fontSize: 13, fontWeight: "700" },
+  badgeEmptyText: {
+    marginTop: spacing.md,
+    fontSize: 13,
+    color: colors.textMuted,
+    fontStyle: "italic",
+  },
+
+  // ── Category breakdown ──
+  catBreakRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  catBreakLabel: {
+    width: 72,
+    fontSize: 12,
+    fontWeight: "600",
+    color: colors.textMuted,
+    textTransform: "capitalize",
+  },
+  catBreakBarTrack: {
+    flex: 1,
+    height: 6,
+    borderRadius: radius.pill,
+    backgroundColor: colors.border,
+    overflow: "hidden",
+  },
+  catBreakBarFill: {
+    height: "100%",
+    borderRadius: radius.pill,
+    backgroundColor: colors.accent,
+  },
+  catBreakPct: { width: 36, textAlign: "right", fontSize: 12, fontWeight: "700", color: colors.text },
 
   // ── Log out ──
   logoutBtn: {

@@ -218,6 +218,7 @@ export async function settleMarket(
     payHostReward?: boolean;
     releaseHostBond?: boolean;
     forfeitHostBond?: boolean;
+    forfeitBondAmount?: number;
   }
 ) {
   const market = await tx.market.findUnique({
@@ -291,12 +292,46 @@ export async function settleMarket(
     }
 
     if (Boolean(options?.forfeitHostBond)) {
+      const totalBond = market.lockedBondAmount;
+      const forfeitAmount =
+        options?.forfeitBondAmount !== undefined
+          ? Math.min(Math.max(0, options.forfeitBondAmount), totalBond)
+          : totalBond;
+      const returnAmount = totalBond - forfeitAmount;
+
       await distributeForfeitedBondCompensation(tx, {
         marketId: market.id,
         marketTitle: market.title,
-        lockedBondAmount: market.lockedBondAmount,
+        lockedBondAmount: forfeitAmount,
         positions: market.positions
       });
+
+      if (returnAmount > 0 && market.creator?.wallet) {
+        const existingReturn = await tx.walletTransaction.findFirst({
+          where: {
+            walletId: market.creator.wallet.id,
+            marketId: market.id,
+            type: "HOST_BOND_RELEASE"
+          }
+        });
+
+        if (!existingReturn) {
+          await tx.wallet.update({
+            where: { id: market.creator.wallet.id },
+            data: { balance: { increment: returnAmount } }
+          });
+
+          await tx.walletTransaction.create({
+            data: {
+              walletId: market.creator.wallet.id,
+              type: "HOST_BOND_RELEASE",
+              amount: returnAmount,
+              description: `Partial host bond return for "${market.title}"`,
+              marketId: market.id
+            }
+          });
+        }
+      }
     }
 
     await releaseOrForfeitHostBond(tx, {

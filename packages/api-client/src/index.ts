@@ -12,6 +12,8 @@ import type {
   ApiMarketSummary,
   ApiMyProfile,
   ApiNewsFeedItem,
+  ApiNotification,
+  ApiPollListItem,
   ApiUserProfile,
   ApiVote,
   AppMarketCategory
@@ -41,8 +43,9 @@ export type PublicMarketsQuery = {
   status?: string;
   category?: AppMarketCategory;
   q?: string;
+  limit?: number;
   featured?: boolean;
-  sort?: "rank" | "new" | "closing" | "featured";
+  sort?: "rank" | "new" | "closing" | "close_at" | "featured" | "volume";
 };
 
 export type RequestOptions = RequestInit & {
@@ -121,8 +124,14 @@ export function createApiClient(options: ApiClientOptions) {
     getPublicMarkets(query?: PublicMarketsQuery) {
       return request<{ markets: ApiMarketSummary[] }>("/api/markets/public", query);
     },
+    getPolls(query?: { status?: "open" | "closed" | "all"; category?: AppMarketCategory }) {
+      return request<{ polls: ApiPollListItem[] }>("/api/polls", query, { auth: true });
+    },
     getMarketById(marketId: string, query?: { userId?: string }) {
-      return request<ApiMarketDetail & { userPositions?: Array<{ id: string; side: string | null; amount: number; numericValue: number | null; createdAt: string }> }>(`/api/markets/${marketId}`, query);
+      return request<ApiMarketDetail & {
+        userPositions?: Array<{ id: string; side: string | null; amount: number; numericValue: number | null; createdAt: string }>;
+        userVote?: { side: string | null; numericValue: number | null } | null;
+      }>(`/api/markets/${marketId}`, query);
     },
     placePosition(marketId: string, body: { side?: string; numericValue?: number; amount: number }, query?: { userId?: string }) {
       return request<{ ok: boolean }>(
@@ -218,7 +227,77 @@ export function createApiClient(options: ApiClientOptions) {
         query,
         { method: "POST", body: JSON.stringify(body), auth: true }
       );
-    }
+    },
+    launchGroup(groupId: string) {
+      return request<{ launched: number; marketIds: string[] }>(
+        `/api/groups/${groupId}/launch`,
+        undefined,
+        { method: "POST", auth: true }
+      );
+    },
+    signIn(body: { email: string; password: string }) {
+      return request<{ user: { id: string; username: string }; token: string }>(
+        "/api/auth/mobile/login",
+        undefined,
+        { method: "POST", body: JSON.stringify(body) }
+      );
+    },
+    register(body: { username: string; email: string; password: string }) {
+      return request<{ user: { id: string; username: string }; token: string }>(
+        "/api/auth/mobile/register",
+        undefined,
+        { method: "POST", body: JSON.stringify(body) }
+      );
+    },
+    registerPushToken(body: { token: string }) {
+      return request<{ ok: boolean }>(
+        "/api/users/push-token",
+        undefined,
+        { method: "POST", body: JSON.stringify(body), auth: true }
+      );
+    },
+    resolveMarket(
+      marketId: string,
+      body: {
+        outcome?: "YES" | "NO";
+        actualValue?: number;
+        resolutionNote: string;
+        evidenceText?: string;
+        evidenceUrl?: string;
+      }
+    ) {
+      return request<{ ok: boolean }>(
+        `/api/markets/${marketId}/resolve`,
+        undefined,
+        { method: "POST", body: JSON.stringify(body), auth: true }
+      );
+    },
+    getMarketComments(marketId: string) {
+      return request<{ comments: Array<{ id: string; content: string; createdAt: string; user: { username: string } }> }>(
+        `/api/markets/${marketId}/comments`
+      );
+    },
+    postMarketComment(marketId: string, body: { content: string }) {
+      return request<{ comment: { id: string; content: string; createdAt: string; user: { username: string } } }>(
+        `/api/markets/${marketId}/comments`,
+        undefined,
+        { method: "POST", body: JSON.stringify(body), auth: true }
+      );
+    },
+    getNotifications(query?: { limit?: number }) {
+      return request<{ notifications: ApiNotification[]; unreadCount: number }>(
+        "/api/notifications",
+        query ? { limit: String(query.limit ?? 20) } : undefined,
+        { auth: true }
+      );
+    },
+    markNotificationsRead() {
+      return request<{ ok: boolean }>(
+        "/api/notifications/read",
+        undefined,
+        { method: "POST", auth: true }
+      );
+    },
   };
 }
 

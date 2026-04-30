@@ -1,17 +1,17 @@
 import { NextResponse } from "next/server";
 
-import { getSession } from "@/lib/auth";
+import { getUserIdFromRequest } from "@/lib/auth";
 import { evaluateTrustedHostEligibility } from "@/lib/markets/policies";
 import { prisma } from "@/lib/prisma";
 
-export async function GET() {
-  const session = await getSession();
-  if (!session?.user?.id) {
+export async function GET(request: Request) {
+  const userId = await getUserIdFromRequest(request);
+  if (!userId) {
     return NextResponse.json({ error: "Authentication required." }, { status: 401 });
   }
 
   const user = await prisma.user.findUnique({
-    where: { id: session.user.id },
+    where: { id: userId },
     include: {
       stats: true
     }

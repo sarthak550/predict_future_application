@@ -88,7 +88,16 @@ export async function GET(
       })
     : [];
 
-  return NextResponse.json({ market, userPositions });
+  // For poll markets (storyId != null), also fetch the user's free vote
+  const userVote =
+    viewerId && market.storyId
+      ? await prisma.vote.findFirst({
+          where: { marketId: market.id, userId: viewerId },
+          select: { side: true, numericValue: true },
+        })
+      : null;
+
+  return NextResponse.json({ market, userPositions, userVote });
 }
 
 export async function PATCH(

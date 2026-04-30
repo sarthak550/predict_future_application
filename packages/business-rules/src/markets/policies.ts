@@ -241,13 +241,16 @@ export function supportsProjectedPool(input: {
 
 export function calculateBondBasedHostReward(input: {
   bondCap: number;
-  totalPool: number;
+  grossPool: number;
 }) {
   if (input.bondCap <= 0) {
     return 0;
   }
 
-  return input.bondCap;
+  // Host earns min(10% of pool, bond amount) — deducted from the pool.
+  // The bond itself is returned separately as the resolution guarantee.
+  const tenPercent = Math.floor((input.grossPool * 1_000) / 10_000);
+  return Math.min(tenPercent, input.bondCap);
 }
 
 export function calculateHostReward(input: {
@@ -261,9 +264,9 @@ export function calculateHostReward(input: {
     return {
       amount: calculateBondBasedHostReward({
         bondCap: input.bondCap,
-        totalPool: input.grossPool
+        grossPool: input.grossPool
       }),
-      source: "bond" as const
+      source: "commission" as const
     };
   }
 

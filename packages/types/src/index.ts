@@ -101,6 +101,9 @@ export type ApiMarketSummary = {
   maxValue?: number | null;
   precision?: number | null;
   averageNumericValue?: number | null;
+  yesCount?: number;
+  noCount?: number;
+  totalVotes?: number;
   creator?: {
     username: string;
     reputationScore?: number;
@@ -226,8 +229,124 @@ export type ApiLiveScore = {
   awayTeam: ApiTeamDetail;
 };
 
-export type ApiCricketMatchDetail = Record<string, unknown>;
-export type ApiFootballMatchDetail = Record<string, unknown>;
+// ---- Cricket match detail types ----
+
+export type ApiCricketBatter = {
+  name: string;
+  runs: number;
+  balls: number;
+  fours: number;
+  sixes: number;
+  strikeRate: string;
+  dismissal: string;
+  isNotOut: boolean;
+};
+
+export type ApiCricketBowler = {
+  name: string;
+  overs: string;
+  maidens: number;
+  runs: number;
+  wickets: number;
+  economy: string;
+};
+
+export type ApiCricketFow = {
+  wicketNum: number;
+  runs: number;
+  overs: string;
+  batter?: string;
+};
+
+export type ApiCricketPartnership = {
+  wicketNum: number;
+  runs: number;
+  batsmen: Array<{ name: string; runs: number; balls: number }>;
+};
+
+export type ApiCricketInnings = {
+  teamAbbr: string;
+  score: string;
+  runRate?: string;
+  batting: ApiCricketBatter[];
+  bowling: ApiCricketBowler[];
+  fow: ApiCricketFow[];
+  partnerships: ApiCricketPartnership[];
+  extras: {
+    total: number;
+    wides: number;
+    noBalls: number;
+    byes: number;
+    legByes: number;
+  };
+};
+
+export type ApiCricketTeamDetail = {
+  name: string;
+  abbreviation: string;
+  logo: string;
+  score: string;
+};
+
+export type ApiCricketMatchDetail = {
+  homeTeam: ApiCricketTeamDetail;
+  awayTeam: ApiCricketTeamDetail;
+  innings: ApiCricketInnings[];
+  statusSummary?: string;
+  statusDetail?: string;
+  toss?: string;
+  venue?: string;
+  venueCity?: string;
+  umpires: string[];
+};
+
+// ---- Football match detail types ----
+
+export type ApiFootballTeamDetail = {
+  name: string;
+  abbreviation: string;
+  logo: string;
+  score: string;
+};
+
+export type ApiFootballEvent = {
+  type: "goal" | "yellow" | "red" | "sub" | string;
+  player: string;
+  team: string;
+  minute?: string;
+};
+
+export type ApiFootballStat = {
+  name: string;
+  home: string;
+  away: string;
+};
+
+export type ApiFootballPlayer = {
+  name: string;
+  jersey: string;
+  position: string;
+};
+
+export type ApiFootballLineup = {
+  formation?: string;
+  starters: ApiFootballPlayer[];
+  subs: ApiFootballPlayer[];
+};
+
+export type ApiFootballMatchDetail = {
+  homeTeam: ApiFootballTeamDetail;
+  awayTeam: ApiFootballTeamDetail;
+  clock?: string;
+  statusDetail?: string;
+  venue?: string;
+  attendance?: string;
+  referee?: string;
+  events: ApiFootballEvent[];
+  stats: ApiFootballStat[];
+  homeLineup: ApiFootballLineup;
+  awayLineup: ApiFootballLineup;
+};
 
 // --- Poll / Vote types (used by news feed polls) ---
 
@@ -276,7 +395,22 @@ export type ApiPositionSummary = {
     id: string;
     title: string;
     status: AppMarketStatus;
+    winningSide?: AppPositionSide | null;
   };
+};
+
+export type ApiPredictionSuggestion = {
+  title: string;
+  category?: AppMarketCategory;
+  description?: string;
+};
+
+export type ApiPnlSummary = {
+  totalStaked: number;
+  totalReturned: number;
+  netPnl: number;
+  resolvedMarketCount: number;
+  lastUpdatedAt: string;
 };
 
 export type ApiUserProfile = {
@@ -286,6 +420,7 @@ export type ApiUserProfile = {
   accuracyScore: number;
   level?: number;
   streak?: number;
+  lastPredictionAt?: string | null;
   stats?: {
     totalPredictions?: number;
     totalNetPoints?: number;
@@ -307,6 +442,7 @@ export type ApiUserProfile = {
 
 export type ApiMyProfile = {
   user: ApiUserProfile;
+  pnl?: ApiPnlSummary | null;
   createdPolls: Array<{
     id: string;
     title: string;
@@ -334,6 +470,28 @@ export type ApiMyProfile = {
   }>;
 };
 
+export type ApiPollListItem = {
+  id: string;
+  title: string;
+  category: AppMarketCategory;
+  status: AppMarketStatus;
+  marketType: AppMarketType;
+  closeAt: string | null;
+  yesCount: number;
+  noCount: number;
+  totalVotes: number;
+  unit: string | null;
+  minValue: number | null;
+  maxValue: number | null;
+  averageNumericValue: number | null;
+  storyHeadline: string | null;
+  storySummary: string | null;
+  storySourceUrl: string | null;
+  storySourceName: string | null;
+  storyImageUrl: string | null;
+  userVote: { side: string | null; numericValue: number | null } | null;
+};
+
 export type ApiPollSummary = {
   id: string;
   title: string;
@@ -349,4 +507,14 @@ export type ApiPollSummary = {
   minValue?: number | null;
   maxValue?: number | null;
   userVote?: { side?: string | null; numericValue?: number | null } | null;
+};
+
+export type ApiNotification = {
+  id: string;
+  title: string;
+  body: string;
+  isRead: boolean;
+  createdAt: string;
+  marketId?: string | null;
+  type: "RESOLUTION" | "CHALLENGE" | "GENERAL" | string;
 };

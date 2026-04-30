@@ -474,12 +474,10 @@ export class RSSIngestionService {
       skippedDuplicates: perFeedSkipped.get(feed.id) ?? 0
     }));
 
-    // Backfill OG images for stories that have no image (awaited since phase 1 is fast)
-    try {
-      await backfillMissingImages();
-    } catch (err) {
-      console.warn("[news:ingestion] og-image backfill failed:", err);
-    }
+    // Backfill OG images for older stories — run in background, don't block response
+    void backfillMissingImages().catch((err) =>
+      console.warn("[news:ingestion] og-image backfill failed:", err)
+    );
 
     console.info(
       `[news:ingestion] fetched=${normalized.length} inserted=${newStories.length} duplicates=${

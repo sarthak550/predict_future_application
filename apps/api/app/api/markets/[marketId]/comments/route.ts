@@ -1,23 +1,65 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 
-import { getSession } from "@/lib/auth";
+import { getUserIdFromRequest } from "@/lib/auth";
 import { canViewMarket } from "@/lib/markets/access";
 import { createNotification } from "@/lib/notifications";
 import { prisma } from "@/lib/prisma";
-import { marketCommentSchema } from "@/lib/validations/market";
+
+const commentSchema = z.object({
+  content: z.string().min(1, "Comment cannot be empty.").max(500, "Comment is too long.")
+});
+
+export async function GET(
+  _request: Request,
+  { params }: { params: { marketId: string } }
+) {
+  try {
+    const market = await prisma.market.findUnique({
+      where: { id: params.marketId },
+      select: { id: true, visibility: true, groupId: true, group: { select: { ownerId: true } } }
+    });
+
+    if (!market) {
+      return NextResponse.json({ error: "Market not found." }, { status: 404 });
+    }
+
+    const rawComments = await prisma.marketComment.findMany({
+      where: { marketId: params.marketId },
+      include: {
+        user: {
+          select: { username: true }
+        }
+      },
+      orderBy: { createdAt: "desc" }
+    });
+
+    const comments = rawComments.map((c) => ({
+      id: c.id,
+      content: c.body,
+      createdAt: c.createdAt.toISOString(),
+      user: { username: c.user.username }
+    }));
+
+    return NextResponse.json({ comments });
+  } catch (error) {
+    console.error(error);
+    return NextResponse.json({ error: "Unable to load comments." }, { status: 500 });
+  }
+}
 
 export async function POST(
   request: Request,
   { params }: { params: { marketId: string } }
 ) {
   try {
-    const session = await getSession();
-    if (!session?.user?.id) {
+    const requestUserId = await getUserIdFromRequest(request);
+    if (!requestUserId) {
       return NextResponse.json({ error: "Authentication required." }, { status: 401 });
     }
 
     const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
+      where: { id: requestUserId },
       select: {
         id: true,
         username: true,
@@ -29,7 +71,8 @@ export async function POST(
       return NextResponse.json({ error: "Account cannot comment." }, { status: 403 });
     }
 
-    const payload = marketCommentSchema.parse(await request.json());
+    const rawBody = await request.json() as unknown;
+    const payload = commentSchema.parse(rawBody);
 
     const result = await prisma.$transaction(async (tx) => {
       const market = await tx.market.findUnique({
@@ -61,7 +104,12 @@ export async function POST(
         data: {
           userId: user.id,
           marketId: market.id,
-          body: payload.body
+          body: payload.content
+        },
+        include: {
+          user: {
+            select: { username: true }
+          }
         }
       });
 
@@ -79,7 +127,17 @@ export async function POST(
       return comment;
     });
 
-    return NextResponse.json({ comment: result }, { status: 201 });
+    return NextResponse.json(
+      {
+        comment: {
+          id: result.id,
+          content: result.body,
+          createdAt: result.createdAt.toISOString(),
+          user: { username: result.user.username }
+        }
+      },
+      { status: 201 }
+    );
   } catch (error) {
     console.error(error);
     return NextResponse.json({ error: "Unable to add comment." }, { status: 400 });

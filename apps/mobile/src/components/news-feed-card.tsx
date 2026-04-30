@@ -19,16 +19,16 @@ import { formatPercent, formatRelativeTime } from "@predict-future/utils";
 import { colors, radius, shadows, spacing } from "@predict-future/ui-tokens";
 
 import { mobileApi } from "@/lib/api";
-import { env } from "@/lib/env";
 import { useWatchlist } from "@/providers/watchlist-provider";
 
 type Props = {
   item: ApiNewsFeedItem;
   viewportHeight: number;
   showHint?: boolean;
+  onVoted?: () => void;
 };
 
-export function NewsFeedCard({ item, viewportHeight, showHint }: Props) {
+export function NewsFeedCard({ item, viewportHeight, showHint, onVoted }: Props) {
   const market = item.market;
   const poll = item.poll;
 
@@ -43,6 +43,11 @@ export function NewsFeedCard({ item, viewportHeight, showHint }: Props) {
   const [numericInput, setNumericInput] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  // Optimistic vote counts (updated immediately on tap, reverted on API failure)
+  const [optimisticYesCount, setOptimisticYesCount] = useState<number | null>(null);
+  const [optimisticNoCount, setOptimisticNoCount] = useState<number | null>(null);
+  const [optimisticTotal, setOptimisticTotal] = useState<number | null>(null);
+
   // Animated bar for post-vote live results
   const barAnim = useRef(new Animated.Value(existingVote ? 1 : 0)).current;
 
@@ -51,11 +56,12 @@ export function NewsFeedCard({ item, viewportHeight, showHint }: Props) {
     poll?.status === "RESOLVED" ||
     (poll?.closeAt && new Date(poll.closeAt) <= new Date());
 
-  // Optimistic post-vote counts
-  const totalVotesDisplay = (poll?.totalVotes ?? 0) + (voted && !existingVote ? 1 : 0);
-  const yesVotesDisplay = (poll?.yesCount ?? 0) + (voted === "YES" && !existingVote ? 1 : 0);
+  // Use optimistic counts when available, otherwise fall back to server counts
+  const yesCount = optimisticYesCount ?? poll?.yesCount ?? 0;
+  const noCount = optimisticNoCount ?? poll?.noCount ?? 0;
+  const totalVotesDisplay = optimisticTotal ?? (poll?.totalVotes ?? 0);
   const yesPctDisplay =
-    totalVotesDisplay > 0 ? (yesVotesDisplay / totalVotesDisplay) * 100 : 50;
+    totalVotesDisplay > 0 ? (yesCount / totalVotesDisplay) * 100 : 50;
 
   const barYesWidth = barAnim.interpolate({
     inputRange: [0, 1],
@@ -75,25 +81,48 @@ export function NewsFeedCard({ item, viewportHeight, showHint }: Props) {
   }
 
   async function handleVote(side?: string, numericValue?: number) {
-    if (!market || voting) return;
+    if (!poll || voting) return;
     setVoting(true);
     setError(null);
+
+    // Snapshot current counts for potential revert
+    const prevVoted = voted;
+    const prevYesCount = optimisticYesCount ?? poll.yesCount;
+    const prevNoCount = optimisticNoCount ?? poll.noCount;
+    const prevTotal = optimisticTotal ?? poll.totalVotes;
+
+    // Apply optimistic update immediately
+    const newVote = side ?? String(numericValue);
+    setVoted(newVote);
+    if (side) {
+      const newTotal = prevTotal + 1;
+      const newYes = side === "YES" ? prevYesCount + 1 : prevYesCount;
+      const newNo = side === "NO" ? prevNoCount + 1 : prevNoCount;
+      setOptimisticYesCount(newYes);
+      setOptimisticNoCount(newNo);
+      setOptimisticTotal(newTotal);
+    }
+
+    // Animate bar to new percentages
+    Animated.spring(barAnim, {
+      toValue: 1,
+      tension: 40,
+      friction: 8,
+      useNativeDriver: false,
+    }).start();
+
     try {
-      await mobileApi.castVote(
-        market.id,
-        { side, numericValue },
-        { userId: env.demoUserId }
-      );
-      setVoted(side ?? String(numericValue));
-      // Animate bar to crowd percentage
-      Animated.spring(barAnim, {
-        toValue: 1,
-        tension: 40,
-        friction: 8,
-        useNativeDriver: false,
-      }).start();
+      await mobileApi.castVote(poll.id, { side, numericValue });
+      // Vote confirmed — trigger feed refresh so insight cards update
+      onVoted?.();
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Vote failed";
+      // Revert optimistic update on failure
+      setVoted(prevVoted);
+      setOptimisticYesCount(prevYesCount !== (poll.yesCount) ? prevYesCount : null);
+      setOptimisticNoCount(prevNoCount !== (poll.noCount) ? prevNoCount : null);
+      setOptimisticTotal(prevTotal !== (poll.totalVotes) ? prevTotal : null);
+      barAnim.setValue(prevVoted ? 1 : 0);
+      const message = err instanceof Error ? err.message : "Vote failed. Please try again.";
       setError(message);
     } finally {
       setVoting(false);
@@ -187,7 +216,7 @@ export function NewsFeedCard({ item, viewportHeight, showHint }: Props) {
                     <Text style={styles.closedText}>Poll closed</Text>
                   </View>
                 ) : voted ? (
-                  // ── Live results (animated) ──
+                  // ── Live results (animated, optimistic) ──
                   <View style={styles.liveResults}>
                     {poll?.marketType === "NUMERIC" ? (
                       <View style={styles.numericResult}>
@@ -245,7 +274,7 @@ export function NewsFeedCard({ item, viewportHeight, showHint }: Props) {
                       </>
                     )}
                   </View>
-                ) : poll ? (
+                ) : poll && poll.status === "OPEN" ? (
                   poll.marketType === "NUMERIC" ? (
                     <View style={styles.numericVoteRow}>
                       <TextInput
@@ -271,7 +300,7 @@ export function NewsFeedCard({ item, viewportHeight, showHint }: Props) {
                         ]}
                         onPress={() => {
                           const val = parseFloat(numericInput);
-                          if (!isNaN(val)) handleVote(undefined, val);
+                          if (!isNaN(val)) void handleVote(undefined, val);
                         }}
                         disabled={!numericInput || voting}
                       >
@@ -286,7 +315,7 @@ export function NewsFeedCard({ item, viewportHeight, showHint }: Props) {
                     <View style={styles.binaryVoteRow}>
                       <Pressable
                         style={[styles.yesBtn, voting && styles.btnDisabled]}
-                        onPress={() => handleVote("YES")}
+                        onPress={() => void handleVote("YES")}
                         disabled={voting}
                       >
                         {voting ? (
@@ -304,7 +333,7 @@ export function NewsFeedCard({ item, viewportHeight, showHint }: Props) {
                       </Pressable>
                       <Pressable
                         style={[styles.noBtn, voting && styles.btnDisabled]}
-                        onPress={() => handleVote("NO")}
+                        onPress={() => void handleVote("NO")}
                         disabled={voting}
                       >
                         {voting ? (
@@ -447,6 +476,9 @@ const styles = StyleSheet.create({
     backgroundColor: "#F8FAFF",
     borderWidth: 1,
     borderColor: "#E8EDF5",
+    // Prevent the poll panel from growing unbounded on small viewports
+    maxHeight: 260,
+    overflow: "hidden",
   },
   marketTitleRow: {
     flexDirection: "row",

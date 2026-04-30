@@ -1,22 +1,32 @@
-import { Stack, useLocalSearchParams } from "expo-router";
-import { useCallback, useState } from "react";
+import { Stack, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
+  Animated,
+  AppState,
+  type AppStateStatus,
+  Modal,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+import type { Session } from "@/providers/session-provider";
 
 import type { ApiMarketDetail } from "@predict-future/types";
 import { formatPercent, formatPoints, formatRelativeTime } from "@predict-future/utils";
 import { colors, radius, shadows, spacing } from "@predict-future/ui-tokens";
 
 import { useApiQuery } from "@/hooks/useApiQuery";
+import { useInterval } from "@/hooks/useInterval";
 import { mobileApi } from "@/lib/api";
-import { env } from "@/lib/env";
+import { useSession } from "@/providers/session-provider";
 
 type UserPosition = {
   id: string;
@@ -26,7 +36,12 @@ type UserPosition = {
   createdAt: string;
 };
 
-type MarketResponse = ApiMarketDetail & { userPositions?: UserPosition[] };
+type UserVote = {
+  side: string | null;
+  numericValue: number | null;
+};
+
+type MarketResponse = ApiMarketDetail & { userPositions?: UserPosition[]; userVote?: UserVote | null };
 
 function normalizeParam(value: string | string[] | undefined): string | null {
   if (Array.isArray(value)) return value[0] ?? null;
@@ -35,12 +50,57 @@ function normalizeParam(value: string | string[] | undefined): string | null {
 
 const BET_PRESETS = [50, 100, 250, 500, 1000];
 
+function calcEstimatedReturn(
+  side: "YES" | "NO",
+  amount: number,
+  yesPool: number,
+  noPool: number
+): number {
+  const projectedYesPool = side === "YES" ? yesPool + amount : yesPool;
+  const projectedNoPool = side === "NO" ? noPool + amount : noPool;
+  if (side === "YES") {
+    if (projectedYesPool === 0) return amount;
+    return Math.floor(amount + (amount / projectedYesPool) * projectedNoPool);
+  }
+  if (projectedNoPool === 0) return amount;
+  return Math.floor(amount + (amount / projectedNoPool) * projectedYesPool);
+}
+
+async function shareMarketResult(input: {
+  title: string;
+  side: string | null;
+  outcome: string | null | undefined;
+  amount: number;
+  marketId: string;
+}) {
+  const won = input.side != null && input.outcome != null && input.side === input.outcome;
+  const lost = input.side != null && input.outcome != null && input.side !== input.outcome;
+  const resultLine = won
+    ? `I predicted ${input.side} and won!`
+    : lost
+    ? `I predicted ${input.side} — the market resolved ${input.outcome}.`
+    : `I participated in this prediction market.`;
+
+  await Share.share({
+    message: `${input.title}\n\n${resultLine}\n\nPredicting on Predict Future — free virtual points, no deposits.\n\nhttps://predictfuture.app/markets/${input.marketId}`,
+    url: `https://predictfuture.app/markets/${input.marketId}`,
+  });
+}
+
+async function shareOpenMarket(title: string, marketId: string) {
+  await Share.share({
+    message: `"${title}" — what do you think? Predict on Predict Future: https://predictfuture.app/markets/${marketId}`,
+    url: `https://predictfuture.app/markets/${marketId}`,
+  });
+}
+
 export default function MarketDetailScreen() {
   const params = useLocalSearchParams<{ id: string | string[] }>();
   const id = normalizeParam(params.id);
+  const insets = useSafeAreaInsets();
 
   const fetcher = useCallback(
-    () => mobileApi.getMarketById(id as string, { userId: env.demoUserId }),
+    () => mobileApi.getMarketById(id as string),
     [id]
   );
 
@@ -49,10 +109,49 @@ export default function MarketDetailScreen() {
     errorFallback: "Unable to load market.",
   });
 
+  // Track whether the screen is focused AND the app is foregrounded
+  const [pollActive, setPollActive] = useState(false);
+  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+
+  useFocusEffect(
+    useCallback(() => {
+      // Screen gained focus — start polling if app is active
+      if (appStateRef.current === "active") setPollActive(true);
+
+      const sub = AppState.addEventListener("change", (next) => {
+        appStateRef.current = next;
+        setPollActive(next === "active");
+      });
+
+      return () => {
+        // Screen lost focus — stop polling
+        setPollActive(false);
+        sub.remove();
+      };
+    }, [])
+  );
+
+  // Poll every 15 seconds while screen is focused and app is foregrounded
+  // Only poll when market is OPEN (no point refreshing resolved markets)
+  const shouldPoll = pollActive && data?.market?.status === "OPEN";
+  useInterval(refetch, 15_000, shouldPoll);
+
+  // Bottom sheet / betting modal state — lifted here so sticky bar can open it
+  const [betSheetOpen, setBetSheetOpen] = useState(false);
+
   return (
-    <>
+    <View style={[styles.root, { paddingBottom: 0 }]}>
       <Stack.Screen options={{ headerShown: true, title: "Market" }} />
-      <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
+
+      {/* Scrollable content area */}
+      <ScrollView
+        style={styles.screen}
+        contentContainerStyle={[
+          styles.content,
+          // Bottom padding so last content clears the sticky bar + safe-area
+          { paddingBottom: STICKY_BAR_HEIGHT + insets.bottom + spacing.lg },
+        ]}
+      >
         {!id ? (
           <Text style={styles.error}>Missing market id.</Text>
         ) : status === "loading" || status === "idle" ? (
@@ -68,24 +167,566 @@ export default function MarketDetailScreen() {
             </Pressable>
           </View>
         ) : data?.market ? (
-          <MarketBody data={data} marketId={id} onRefresh={refetch} />
+          <MarketBody
+            data={data}
+            marketId={id}
+            onRefresh={refetch}
+            onOpenBetSheet={() => setBetSheetOpen(true)}
+          />
         ) : (
           <Text style={styles.error}>Market not found.</Text>
         )}
       </ScrollView>
+
+      {/* Sticky bottom betting panel — always rendered when data is available */}
+      {data?.market && id ? (
+        <StickyBettingBar
+          data={data}
+          marketId={id}
+          betSheetOpen={betSheetOpen}
+          onOpenBetSheet={() => setBetSheetOpen(true)}
+          onCloseBetSheet={() => setBetSheetOpen(false)}
+          onRefresh={refetch}
+          bottomInset={insets.bottom}
+        />
+      ) : null}
+    </View>
+  );
+}
+
+// ─── Constants ───────────────────────────────────────────────────────────────
+
+const STICKY_BAR_HEIGHT = 72;
+
+// ─── StickyBettingBar ─────────────────────────────────────────────────────────
+
+type StickyBettingBarProps = {
+  data: MarketResponse;
+  marketId: string;
+  betSheetOpen: boolean;
+  onOpenBetSheet: () => void;
+  onCloseBetSheet: () => void;
+  onRefresh: () => void;
+  bottomInset: number;
+};
+
+function StickyBettingBar({
+  data,
+  marketId,
+  betSheetOpen,
+  onOpenBetSheet,
+  onCloseBetSheet,
+  onRefresh,
+  bottomInset,
+}: StickyBettingBarProps) {
+  const market = data.market;
+  const positions = data.userPositions ?? [];
+  const hasPosition = positions.length > 0;
+  const totalCommitted = positions.reduce((sum, p) => sum + p.amount, 0);
+
+  const yesPool = market.yesPool ?? 0;
+  const noPool = market.noPool ?? 0;
+  const totalPool = yesPool + noPool;
+  const yesProbability = totalPool > 0 ? yesPool / totalPool : 0.5;
+
+  const isOpen = market.status === "OPEN";
+  const isNumeric = market.marketType === "NUMERIC";
+  const isPoll = Boolean(market.storyId);
+
+  // Poll inline vote state (binary polls on the bar)
+  const existingVote = data.userVote ?? null;
+  const [pollVoteOptimistic, setPollVoteOptimistic] = useState<"YES" | "NO" | null>(
+    existingVote?.side as "YES" | "NO" | null
+  );
+  const [pollVoting, setPollVoting] = useState(false);
+  const [pollVoteError, setPollVoteError] = useState<string | null>(null);
+
+  async function handlePollVote(side: "YES" | "NO") {
+    if (pollVoting || pollVoteOptimistic != null) return;
+    setPollVoteOptimistic(side);
+    setPollVoting(true);
+    setPollVoteError(null);
+    try {
+      await mobileApi.castVote(marketId, { side });
+      onRefresh();
+    } catch (err: unknown) {
+      // Revert optimistic update
+      setPollVoteOptimistic(null);
+      setPollVoteError(err instanceof Error ? err.message : "Vote failed.");
+    } finally {
+      setPollVoting(false);
+    }
+  }
+
+  // Resolved outcome chip
+  const resolvedOutcome = market.winningSide ?? (market.status === "RESOLVED" ? "RESOLVED" : null);
+
+  const barStyle = [
+    styles.stickyBar,
+    { paddingBottom: Math.max(bottomInset, spacing.sm) },
+  ];
+
+  // ── Case 1: Closed / resolved market ──
+  if (!isOpen) {
+    return (
+      <View style={barStyle}>
+        <View style={styles.stickyBarInner}>
+          <View style={styles.stickyBarLeft}>
+            <View style={[styles.outcomePill, resolvedOutcome === "YES" ? styles.outcomePillYes : styles.outcomePillNo]}>
+              <Text style={styles.outcomePillText}>
+                {resolvedOutcome ? `Resolved ${resolvedOutcome}` : market.status}
+              </Text>
+            </View>
+            {hasPosition ? (
+              <Text style={styles.stickyPositionLabel}>
+                Your position: {formatPoints(totalCommitted)} pts
+              </Text>
+            ) : null}
+          </View>
+          {hasPosition && market.winningSide ? (
+            <Pressable
+              style={styles.stickyShareBtn}
+              onPress={() =>
+                shareMarketResult({
+                  title: market.title,
+                  side: positions[0]?.side ?? null,
+                  outcome: market.winningSide ?? null,
+                  amount: totalCommitted,
+                  marketId,
+                })
+              }
+            >
+              <Text style={styles.stickyShareBtnText}>Share Result</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      </View>
+    );
+  }
+
+  // ── Case 2: Open poll market ──
+  if (isPoll && !isNumeric) {
+    const voted = pollVoteOptimistic != null;
+    return (
+      <View style={barStyle}>
+        <View style={styles.stickyBarInner}>
+          {voted ? (
+            <>
+              <View
+                style={[
+                  styles.votedChip,
+                  pollVoteOptimistic === "YES" ? styles.votedChipYes : styles.votedChipNo,
+                ]}
+              >
+                <Text style={styles.votedChipText}>You voted {pollVoteOptimistic}</Text>
+              </View>
+              <Text style={styles.stickyPollSubtext}>Free poll — no points at stake</Text>
+            </>
+          ) : (
+            <>
+              <Text
+                style={styles.stickyPollQuestion}
+                numberOfLines={1}
+                ellipsizeMode="tail"
+              >
+                {market.title}
+              </Text>
+              <View style={styles.stickyPollBtns}>
+                <Pressable
+                  style={[styles.stickyPollBtn, styles.stickyPollBtnYes]}
+                  onPress={() => handlePollVote("YES")}
+                  disabled={pollVoting}
+                >
+                  {pollVoting && pollVoteOptimistic === "YES" ? (
+                    <ActivityIndicator color="#fff" size="small" />
+                  ) : (
+                    <Text style={styles.stickyPollBtnText}>YES</Text>
+                  )}
+                </Pressable>
+                <Pressable
+                  style={[styles.stickyPollBtn, styles.stickyPollBtnNo]}
+                  onPress={() => handlePollVote("NO")}
+                  disabled={pollVoting}
+                >
+                  {pollVoting && pollVoteOptimistic === "NO" ? (
+                    <ActivityIndicator color="#fff" size="small" />
+                  ) : (
+                    <Text style={styles.stickyPollBtnText}>NO</Text>
+                  )}
+                </Pressable>
+              </View>
+              {pollVoteError ? (
+                <Text style={styles.stickyError}>{pollVoteError}</Text>
+              ) : null}
+            </>
+          )}
+        </View>
+      </View>
+    );
+  }
+
+  // ── Case 3: Open non-poll market (binary or numeric) ──
+  return (
+    <>
+      <View style={barStyle}>
+        <View style={styles.stickyBarInner}>
+          <View style={styles.stickyBarLeft}>
+            {!isNumeric ? (
+              <View>
+                <Text style={styles.stickyProbLabel}>YES probability</Text>
+                <Text style={styles.stickyProbValue}>{formatPercent(yesProbability)}</Text>
+              </View>
+            ) : (
+              <View>
+                <Text style={styles.stickyProbLabel}>Avg prediction</Text>
+                <Text style={styles.stickyProbValue}>
+                  {market.averageNumericValue != null
+                    ? `${Number(market.averageNumericValue).toLocaleString(undefined, { maximumFractionDigits: 2 })}${market.unit ? ` ${market.unit}` : ""}`
+                    : "—"}
+                </Text>
+              </View>
+            )}
+            {hasPosition ? (
+              <View style={styles.stickyPositionBadge}>
+                <View
+                  style={[
+                    styles.stickyPosPill,
+                    positions[0]?.side === "YES"
+                      ? styles.stickyPosPillYes
+                      : positions[0]?.side === "NO"
+                      ? styles.stickyPosPillNo
+                      : styles.stickyPosPillNumeric,
+                  ]}
+                >
+                  <Text style={styles.stickyPosPillText}>
+                    {positions[0]?.side ?? `${positions[0]?.numericValue}`}
+                  </Text>
+                </View>
+                <Text style={styles.stickyPositionAmount}>
+                  {formatPoints(totalCommitted)} pts
+                </Text>
+              </View>
+            ) : null}
+          </View>
+          <Pressable style={styles.predictBtn} onPress={onOpenBetSheet}>
+            <Text style={styles.predictBtnText}>
+              {hasPosition ? "Add More" : "Predict"}
+            </Text>
+          </Pressable>
+        </View>
+      </View>
+
+      {/* Full betting bottom sheet modal */}
+      <BettingSheet
+        visible={betSheetOpen}
+        onClose={onCloseBetSheet}
+        data={data}
+        marketId={marketId}
+        onRefresh={onRefresh}
+        onBetSuccess={onCloseBetSheet}
+        bottomInset={bottomInset}
+      />
     </>
   );
 }
+
+// ─── BettingSheet ─────────────────────────────────────────────────────────────
+
+type BettingSheetProps = {
+  visible: boolean;
+  onClose: () => void;
+  data: MarketResponse;
+  marketId: string;
+  onRefresh: () => void;
+  onBetSuccess: () => void;
+  bottomInset: number;
+};
+
+function BettingSheet({
+  visible,
+  onClose,
+  data,
+  marketId,
+  onRefresh,
+  onBetSuccess,
+  bottomInset,
+}: BettingSheetProps) {
+  const market = data.market;
+  const positions = data.userPositions ?? [];
+  const hasPosition = positions.length > 0;
+
+  const yesPool = market.yesPool ?? 0;
+  const noPool = market.noPool ?? 0;
+  const isNumeric = market.marketType === "NUMERIC";
+
+  const [selectedSide, setSelectedSide] = useState<"YES" | "NO" | null>(null);
+  const [numericGuess, setNumericGuess] = useState("");
+  const [amount, setAmount] = useState("");
+  const [customAmount, setCustomAmount] = useState("");
+  const [placing, setPlacing] = useState(false);
+  const [betError, setBetError] = useState<string | null>(null);
+  const [betSuccess, setBetSuccess] = useState(false);
+
+  // Reset form when sheet opens
+  useEffect(() => {
+    if (visible) {
+      setSelectedSide(null);
+      setNumericGuess("");
+      setAmount("");
+      setCustomAmount("");
+      setBetError(null);
+      setBetSuccess(false);
+    }
+  }, [visible]);
+
+  const betAmount = customAmount ? parseInt(customAmount, 10) : parseInt(amount, 10);
+
+  const yesProbability = (yesPool + noPool) > 0 ? yesPool / (yesPool + noPool) : 0.5;
+
+  async function handlePlaceBet() {
+    if (placing) return;
+    if (!betAmount || betAmount < 50) {
+      setBetError("Minimum bet is 50 points.");
+      return;
+    }
+    if (!isNumeric && !selectedSide && !hasPosition) {
+      setBetError("Pick YES or NO.");
+      return;
+    }
+    if (isNumeric && !numericGuess && !hasPosition) {
+      setBetError("Enter your guess.");
+      return;
+    }
+
+    setPlacing(true);
+    setBetError(null);
+    try {
+      const existingSide = positions[0]?.side as "YES" | "NO" | null;
+      await mobileApi.placePosition(marketId, {
+        side: isNumeric ? undefined : hasPosition ? (existingSide ?? undefined) : (selectedSide ?? undefined),
+        numericValue: isNumeric
+          ? hasPosition
+            ? (positions[0]?.numericValue ?? undefined)
+            : parseFloat(numericGuess)
+          : undefined,
+        amount: betAmount,
+      });
+      setBetSuccess(true);
+      onRefresh();
+      // Auto-close after brief success flash
+      setTimeout(() => {
+        onBetSuccess();
+      }, 1200);
+    } catch (err: unknown) {
+      setBetError(err instanceof Error ? err.message : "Failed to place bet.");
+    } finally {
+      setPlacing(false);
+    }
+  }
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={onClose}
+    >
+      <Pressable style={styles.sheetBackdrop} onPress={onClose} />
+      <View style={[styles.sheetContainer, { paddingBottom: Math.max(bottomInset, spacing.lg) }]}>
+        {/* Handle bar */}
+        <View style={styles.sheetHandle} />
+
+        {/* Header */}
+        <View style={styles.sheetHeader}>
+          <Text style={styles.sheetTitle}>
+            {hasPosition ? "Increase Your Bet" : "Place Your Bet"}
+          </Text>
+          <Pressable onPress={onClose} style={styles.sheetCloseBtn} hitSlop={12}>
+            <Text style={styles.sheetCloseBtnText}>Done</Text>
+          </Pressable>
+        </View>
+
+        {betSuccess ? (
+          // ── Success state ──
+          <View style={styles.sheetSuccessSection}>
+            <Text style={styles.sheetSuccessTitle}>Bet placed!</Text>
+            <Text style={styles.sheetSuccessText}>
+              Your position has been recorded. You can increase your bet but cannot change your side.
+            </Text>
+          </View>
+        ) : (
+          <>
+            {/* Side selection (binary, new position only) */}
+            {!isNumeric && !hasPosition ? (
+              <View style={styles.sideRow}>
+                <Pressable
+                  style={[
+                    styles.sideBtn,
+                    styles.sideBtnYes,
+                    selectedSide === "YES" && styles.sideBtnYesActive,
+                  ]}
+                  onPress={() => setSelectedSide("YES")}
+                >
+                  <Text
+                    style={[
+                      styles.sideBtnText,
+                      selectedSide === "YES" && styles.sideBtnTextActive,
+                    ]}
+                  >
+                    YES
+                  </Text>
+                  <Text style={styles.sideProb}>{formatPercent(yesProbability)}</Text>
+                </Pressable>
+                <Pressable
+                  style={[
+                    styles.sideBtn,
+                    styles.sideBtnNo,
+                    selectedSide === "NO" && styles.sideBtnNoActive,
+                  ]}
+                  onPress={() => setSelectedSide("NO")}
+                >
+                  <Text
+                    style={[
+                      styles.sideBtnText,
+                      selectedSide === "NO" && styles.sideBtnTextActive,
+                    ]}
+                  >
+                    NO
+                  </Text>
+                  <Text style={styles.sideProb}>{formatPercent(1 - yesProbability)}</Text>
+                </Pressable>
+              </View>
+            ) : null}
+
+            {/* Existing side reminder */}
+            {!isNumeric && hasPosition ? (
+              <View style={styles.lockedSideRow}>
+                <Text style={styles.lockedLabel}>Your side:</Text>
+                <View
+                  style={[
+                    styles.sidePill,
+                    positions[0]?.side === "YES" ? styles.sidePillYes : styles.sidePillNo,
+                  ]}
+                >
+                  <Text style={styles.sidePillText}>{positions[0]?.side}</Text>
+                </View>
+                <Text style={styles.lockedHint}>(can't change)</Text>
+              </View>
+            ) : null}
+
+            {/* Numeric guess (new position only) */}
+            {isNumeric && !hasPosition ? (
+              <View style={styles.numericSection}>
+                <Text style={styles.inputLabel}>Your guess</Text>
+                <TextInput
+                  style={styles.textInput}
+                  placeholder={
+                    market.minValue != null && market.maxValue != null
+                      ? `Between ${market.minValue} and ${market.maxValue}`
+                      : "Enter your guess"
+                  }
+                  placeholderTextColor={colors.textMuted}
+                  keyboardType="numeric"
+                  value={numericGuess}
+                  onChangeText={setNumericGuess}
+                />
+              </View>
+            ) : null}
+
+            {isNumeric && hasPosition ? (
+              <View style={styles.lockedSideRow}>
+                <Text style={styles.lockedLabel}>Your guess:</Text>
+                <Text style={styles.lockedValue}>{positions[0]?.numericValue}</Text>
+                <Text style={styles.lockedHint}>(can't change)</Text>
+              </View>
+            ) : null}
+
+            {/* Amount selection */}
+            <Text style={[styles.inputLabel, { marginTop: spacing.lg }]}>Amount</Text>
+            <View style={styles.presetRow}>
+              {BET_PRESETS.map((preset) => (
+                <Pressable
+                  key={preset}
+                  style={[
+                    styles.presetPill,
+                    amount === String(preset) && !customAmount && styles.presetPillActive,
+                  ]}
+                  onPress={() => {
+                    setAmount(String(preset));
+                    setCustomAmount("");
+                  }}
+                >
+                  <Text
+                    style={[
+                      styles.presetText,
+                      amount === String(preset) && !customAmount && styles.presetTextActive,
+                    ]}
+                  >
+                    {preset}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+
+            <TextInput
+              style={styles.textInput}
+              placeholder="Custom amount (min 50)"
+              placeholderTextColor={colors.textMuted}
+              keyboardType="numeric"
+              value={customAmount}
+              onChangeText={(text) => {
+                setCustomAmount(text);
+                if (text) setAmount("");
+              }}
+            />
+
+            {!isNumeric && selectedSide && betAmount >= 50 ? (
+              <View style={styles.estimatedReturnRow}>
+                <Text style={styles.estimatedReturnLabel}>Estimated return</Text>
+                <Text style={styles.estimatedReturnValue}>
+                  {formatPoints(calcEstimatedReturn(selectedSide, betAmount, yesPool, noPool))} pts
+                </Text>
+              </View>
+            ) : null}
+
+            {betError ? <Text style={styles.betError}>{betError}</Text> : null}
+
+            <Pressable
+              style={[styles.placeBetBtn, placing && styles.btnDisabled]}
+              onPress={handlePlaceBet}
+              disabled={placing}
+            >
+              {placing ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.placeBetText}>
+                  {hasPosition ? "Increase Bet" : "Place Bet"}{" "}
+                  {betAmount >= 50 ? `— ${betAmount} pts` : ""}
+                </Text>
+              )}
+            </Pressable>
+          </>
+        )}
+      </View>
+    </Modal>
+  );
+}
+
+// ─── MarketBody ───────────────────────────────────────────────────────────────
+// Renders the scrollable content only — no betting panel; that's in the sticky bar.
 
 function MarketBody({
   data,
   marketId,
   onRefresh,
+  onOpenBetSheet,
 }: {
   data: MarketResponse;
   marketId: string;
   onRefresh: () => void;
+  onOpenBetSheet: () => void;
 }) {
+  const { session } = useSession();
   const market = data.market;
   const positions = data.userPositions ?? [];
   const hasPosition = positions.length > 0;
@@ -101,82 +742,102 @@ function MarketBody({
   const isNumeric = market.marketType === "NUMERIC";
   const isPoll = Boolean(market.storyId);
 
-  // Bet state
-  const [selectedSide, setSelectedSide] = useState<"YES" | "NO" | null>(null);
-  const [numericGuess, setNumericGuess] = useState("");
-  const [amount, setAmount] = useState("");
-  const [customAmount, setCustomAmount] = useState("");
-  const [placing, setPlacing] = useState(false);
-  const [betError, setBetError] = useState<string | null>(null);
-  const [betSuccess, setBetSuccess] = useState(false);
+  // Host resolution panel visibility
+  const isResolvable =
+    (market.status === "CLOSED" || market.status === "AWAITING_RESOLUTION") &&
+    market.creator?.username != null &&
+    market.creator.username === session?.username;
 
-  const betAmount = customAmount ? parseInt(customAmount, 10) : parseInt(amount, 10);
+  // Animated probability bar
+  const animatedProb = useRef(new Animated.Value(yesProbability)).current;
 
-  async function handlePlaceBet() {
-    if (placing) return;
-    if (!betAmount || betAmount < 50) {
-      setBetError("Minimum bet is 50 points.");
+  useEffect(() => {
+    Animated.timing(animatedProb, {
+      toValue: yesProbability,
+      duration: 300,
+      useNativeDriver: false, // false required for width/layout animations
+    }).start();
+  }, [yesProbability]);
+
+  // Numeric poll vote state (for numeric polls that remain in scroll body)
+  const existingVote = data.userVote ?? null;
+  const [pollGuess, setPollGuess] = useState(
+    existingVote?.numericValue != null ? String(existingVote.numericValue) : ""
+  );
+  const [pollSubmitting, setPollSubmitting] = useState(false);
+  const [pollVoteError, setPollVoteError] = useState<string | null>(null);
+  const [pollVoteSuccess, setPollVoteSuccess] = useState(false);
+  const [submittedGuess, setSubmittedGuess] = useState<number | null>(
+    existingVote?.numericValue ?? null
+  );
+
+  async function handlePollVote() {
+    if (pollSubmitting) return;
+    const val = parseFloat(pollGuess);
+    if (!pollGuess || isNaN(val)) {
+      setPollVoteError("Enter a valid number.");
       return;
     }
-    if (!isNumeric && !selectedSide) {
-      setBetError("Pick YES or NO.");
-      return;
-    }
-    if (isNumeric && !numericGuess) {
-      setBetError("Enter your guess.");
-      return;
-    }
-
-    setPlacing(true);
-    setBetError(null);
+    setPollSubmitting(true);
+    setPollVoteError(null);
     try {
-      await mobileApi.placePosition(
-        marketId,
-        {
-          side: isNumeric ? undefined : (selectedSide ?? undefined),
-          numericValue: isNumeric ? parseFloat(numericGuess) : undefined,
-          amount: betAmount,
-        },
-        { userId: env.demoUserId }
-      );
-      setBetSuccess(true);
+      await mobileApi.castVote(marketId, { numericValue: val });
+      setSubmittedGuess(val);
+      setPollVoteSuccess(true);
       onRefresh();
     } catch (err: unknown) {
-      setBetError(err instanceof Error ? err.message : "Failed to place bet.");
+      setPollVoteError(err instanceof Error ? err.message : "Failed to submit guess.");
     } finally {
-      setPlacing(false);
+      setPollSubmitting(false);
     }
   }
 
-  async function handleIncreaseBet() {
-    if (placing) return;
-    if (!betAmount || betAmount < 50) {
-      setBetError("Minimum additional bet is 50 points.");
+  // Host resolution state
+  const [resolveOutcome, setResolveOutcome] = useState<"YES" | "NO" | null>(null);
+  const [resolveNumericValue, setResolveNumericValue] = useState("");
+  const [resolveNote, setResolveNote] = useState("");
+  const [resolving, setResolving] = useState(false);
+  const [resolveSuccess, setResolveSuccess] = useState(false);
+
+  async function handleResolve() {
+    if (resolving) return;
+    if (!isNumeric && !resolveOutcome) {
+      Alert.alert("Missing outcome", "Please select YES or NO.");
       return;
     }
-
-    const existingSide = positions[0]?.side as "YES" | "NO" | null;
-
-    setPlacing(true);
-    setBetError(null);
+    if (isNumeric) {
+      const parsed = parseFloat(resolveNumericValue);
+      if (!resolveNumericValue || isNaN(parsed)) {
+        Alert.alert("Invalid value", "Enter a valid numeric outcome.");
+        return;
+      }
+    }
+    if (resolveNote.trim().length < 12) {
+      Alert.alert("Note too short", "Resolution note must be at least 12 characters.");
+      return;
+    }
+    setResolving(true);
     try {
-      await mobileApi.placePosition(
-        marketId,
-        {
-          side: isNumeric ? undefined : (existingSide ?? undefined),
-          numericValue: isNumeric ? (positions[0]?.numericValue ?? undefined) : undefined,
-          amount: betAmount,
-        },
-        { userId: env.demoUserId }
-      );
-      setBetSuccess(true);
-      setCustomAmount("");
-      setAmount("");
+      if (isNumeric) {
+        await mobileApi.resolveMarket(marketId, {
+          actualValue: parseFloat(resolveNumericValue),
+          resolutionNote: resolveNote.trim(),
+        });
+      } else {
+        await mobileApi.resolveMarket(marketId, {
+          outcome: resolveOutcome ?? undefined,
+          resolutionNote: resolveNote.trim(),
+        });
+      }
+      setResolveSuccess(true);
       onRefresh();
     } catch (err: unknown) {
-      setBetError(err instanceof Error ? err.message : "Failed to increase bet.");
+      Alert.alert(
+        "Resolution failed",
+        err instanceof Error ? err.message : "Unable to submit resolution."
+      );
     } finally {
-      setPlacing(false);
+      setResolving(false);
     }
   }
 
@@ -239,12 +900,29 @@ function MarketBody({
         ) : (
           <View style={styles.probabilitySection}>
             <View style={styles.progressTrack}>
-              <View style={[styles.progressFill, { width: `${Math.max(6, yesProbability * 100)}%` }]} />
+              <Animated.View
+                style={[
+                  styles.progressFill,
+                  {
+                    width: animatedProb.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: ["6%", "100%"],
+                      extrapolate: "clamp",
+                    }),
+                  },
+                ]}
+              />
             </View>
             <View style={styles.probRow}>
               <Text style={styles.probYes}>YES {formatPercent(yesProbability)}</Text>
               <Text style={styles.probNo}>NO {formatPercent(1 - yesProbability)}</Text>
             </View>
+            {isOpen ? (
+              <View style={styles.liveBadge}>
+                <View style={styles.liveDot} />
+                <Text style={styles.liveText}>LIVE</Text>
+              </View>
+            ) : null}
           </View>
         )}
 
@@ -257,6 +935,15 @@ function MarketBody({
 
         {market.creator?.username ? (
           <Text style={styles.hostLabel}>Hosted by @{market.creator.username}</Text>
+        ) : null}
+
+        {isOpen ? (
+          <Pressable
+            style={styles.shareLink}
+            onPress={() => shareOpenMarket(market.title, market.id)}
+          >
+            <Text style={styles.shareLinkText}>Share this market</Text>
+          </Pressable>
         ) : null}
       </View>
 
@@ -283,7 +970,30 @@ function MarketBody({
             <Text style={styles.totalLabel}>Total committed</Text>
             <Text style={styles.totalValue}>{formatPoints(totalCommitted)} pts</Text>
           </View>
+          {isOpen ? (
+            <Pressable style={styles.addMoreBtn} onPress={onOpenBetSheet}>
+              <Text style={styles.addMoreBtnText}>Add More</Text>
+            </Pressable>
+          ) : null}
         </View>
+      ) : null}
+
+      {/* Share Result button — resolved markets with a position */}
+      {hasPosition && !isOpen && market.winningSide ? (
+        <Pressable
+          style={styles.shareBtn}
+          onPress={() =>
+            shareMarketResult({
+              title: market.title,
+              side: positions[0]?.side ?? null,
+              outcome: market.winningSide ?? null,
+              amount: totalCommitted,
+              marketId,
+            })
+          }
+        >
+          <Text style={styles.shareBtnText}>Share Result</Text>
+        </Pressable>
       ) : null}
 
       {/* Poll notice — no staking for AI-generated polls */}
@@ -291,180 +1001,54 @@ function MarketBody({
         <View style={[styles.card, styles.pollCard]}>
           <Text style={styles.pollTitle}>Community Poll</Text>
           <Text style={styles.pollText}>
-            This is an AI-generated opinion poll linked to a news story. Votes are free and no points are at stake.
+            This is an AI-generated opinion poll. Votes are free — no points at stake.
           </Text>
         </View>
       ) : null}
 
-      {/* Betting panel */}
-      {!isPoll && isOpen && !betSuccess ? (
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>
-            {hasPosition ? "Increase Your Bet" : "Place Your Bet"}
-          </Text>
-
-          {/* Side selection (binary only, new position only) */}
-          {!isNumeric && !hasPosition ? (
-            <View style={styles.sideRow}>
-              <Pressable
-                style={[
-                  styles.sideBtn,
-                  styles.sideBtnYes,
-                  selectedSide === "YES" && styles.sideBtnYesActive,
-                ]}
-                onPress={() => setSelectedSide("YES")}
-              >
-                <Text
-                  style={[
-                    styles.sideBtnText,
-                    selectedSide === "YES" && styles.sideBtnTextActive,
-                  ]}
-                >
-                  YES
-                </Text>
-                <Text style={styles.sideProb}>{formatPercent(yesProbability)}</Text>
-              </Pressable>
-              <Pressable
-                style={[
-                  styles.sideBtn,
-                  styles.sideBtnNo,
-                  selectedSide === "NO" && styles.sideBtnNoActive,
-                ]}
-                onPress={() => setSelectedSide("NO")}
-              >
-                <Text
-                  style={[
-                    styles.sideBtnText,
-                    selectedSide === "NO" && styles.sideBtnTextActive,
-                  ]}
-                >
-                  NO
-                </Text>
-                <Text style={styles.sideProb}>{formatPercent(1 - yesProbability)}</Text>
-              </Pressable>
-            </View>
-          ) : null}
-
-          {/* Existing side reminder */}
-          {!isNumeric && hasPosition ? (
-            <View style={styles.lockedSideRow}>
-              <Text style={styles.lockedLabel}>Your side:</Text>
-              <View style={[styles.sidePill, positions[0]?.side === "YES" ? styles.sidePillYes : styles.sidePillNo]}>
-                <Text style={styles.sidePillText}>{positions[0]?.side}</Text>
-              </View>
-              <Text style={styles.lockedHint}>(can't change)</Text>
-            </View>
-          ) : null}
-
-          {/* Numeric guess (new position only) */}
-          {isNumeric && !hasPosition ? (
-            <View style={styles.numericSection}>
-              <Text style={styles.inputLabel}>Your guess</Text>
-              <TextInput
-                style={styles.textInput}
-                placeholder={
-                  market.minValue != null && market.maxValue != null
-                    ? `Between ${market.minValue} and ${market.maxValue}`
-                    : "Enter your guess"
-                }
-                placeholderTextColor={colors.textMuted}
-                keyboardType="numeric"
-                value={numericGuess}
-                onChangeText={setNumericGuess}
-              />
-            </View>
-          ) : null}
-
-          {isNumeric && hasPosition ? (
-            <View style={styles.lockedSideRow}>
-              <Text style={styles.lockedLabel}>Your guess:</Text>
-              <Text style={styles.lockedValue}>{positions[0]?.numericValue}</Text>
-              <Text style={styles.lockedHint}>(can't change)</Text>
-            </View>
-          ) : null}
-
-          {/* Amount selection */}
-          <Text style={[styles.inputLabel, { marginTop: spacing.lg }]}>Amount</Text>
-          <View style={styles.presetRow}>
-            {BET_PRESETS.map((preset) => (
-              <Pressable
-                key={preset}
-                style={[
-                  styles.presetPill,
-                  amount === String(preset) && !customAmount && styles.presetPillActive,
-                ]}
-                onPress={() => {
-                  setAmount(String(preset));
-                  setCustomAmount("");
-                }}
-              >
-                <Text
-                  style={[
-                    styles.presetText,
-                    amount === String(preset) && !customAmount && styles.presetTextActive,
-                  ]}
-                >
-                  {preset}
-                </Text>
-              </Pressable>
-            ))}
+      {/* Numeric poll vote input (stays in scroll body — sticky bar only handles binary polls) */}
+      {isPoll && isNumeric && isOpen ? (
+        pollVoteSuccess || submittedGuess != null ? (
+          <View style={[styles.card, styles.successCard]}>
+            <Text style={styles.successTitle}>Guess submitted!</Text>
+            <Text style={styles.successText}>
+              Your guess: {submittedGuess}{market.unit ? ` ${market.unit}` : ""}
+            </Text>
           </View>
-
-          <TextInput
-            style={styles.textInput}
-            placeholder="Custom amount (min 50)"
-            placeholderTextColor={colors.textMuted}
-            keyboardType="numeric"
-            value={customAmount}
-            onChangeText={(text) => {
-              setCustomAmount(text);
-              if (text) setAmount("");
-            }}
-          />
-
-          {betError ? <Text style={styles.betError}>{betError}</Text> : null}
-
-          <Pressable
-            style={[
-              styles.placeBetBtn,
-              placing && styles.btnDisabled,
-            ]}
-            onPress={hasPosition ? handleIncreaseBet : handlePlaceBet}
-            disabled={placing}
-          >
-            {placing ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.placeBetText}>
-                {hasPosition ? "Increase Bet" : "Place Bet"}{" "}
-                {betAmount >= 50 ? `— ${betAmount} pts` : ""}
-              </Text>
-            )}
-          </Pressable>
-        </View>
+        ) : (
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>Enter Your Guess</Text>
+            <TextInput
+              style={styles.textInput}
+              placeholder={
+                market.minValue != null && market.maxValue != null
+                  ? `Between ${market.minValue} and ${market.maxValue}${market.unit ? ` ${market.unit}` : ""}`
+                  : `Enter your guess${market.unit ? ` (${market.unit})` : ""}`
+              }
+              placeholderTextColor={colors.textMuted}
+              keyboardType="numeric"
+              value={pollGuess}
+              onChangeText={setPollGuess}
+            />
+            {pollVoteError ? (
+              <Text style={styles.betError}>{pollVoteError}</Text>
+            ) : null}
+            <Pressable
+              style={[styles.placeBetBtn, pollSubmitting && styles.btnDisabled]}
+              onPress={handlePollVote}
+              disabled={pollSubmitting}
+            >
+              {pollSubmitting ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.placeBetText}>Submit Guess</Text>
+              )}
+            </Pressable>
+          </View>
+        )
       ) : null}
 
-      {/* Success state */}
-      {!isPoll && betSuccess ? (
-        <View style={[styles.card, styles.successCard]}>
-          <Text style={styles.successTitle}>Bet placed!</Text>
-          <Text style={styles.successText}>
-            Your position has been recorded. You can increase your bet but cannot change your side.
-          </Text>
-          <Pressable
-            style={styles.anotherBtn}
-            onPress={() => {
-              setBetSuccess(false);
-              setCustomAmount("");
-              setAmount("");
-            }}
-          >
-            <Text style={styles.anotherBtnText}>Add More</Text>
-          </Pressable>
-        </View>
-      ) : null}
-
-      {/* Closed state */}
+      {/* Closed state — no position */}
       {!isPoll && isClosed && !hasPosition ? (
         <View style={[styles.card, styles.closedCard]}>
           <Text style={styles.closedText}>This market is no longer accepting bets.</Text>
@@ -478,9 +1062,128 @@ function MarketBody({
           <Text style={styles.subtitle}>{market.resolutionRuleText}</Text>
         </View>
       ) : null}
+
+      {/* Comments */}
+      <CommentsSection marketId={marketId} isOpen={isOpen} session={session} />
+
+      {/* Host resolution panel */}
+      {isResolvable ? (
+        resolveSuccess ? (
+          <View style={[styles.card, styles.resolveSuccessCard]}>
+            <Text style={styles.resolveSuccessTitle}>Market resolved — payouts are processing</Text>
+          </View>
+        ) : (
+          <View style={[styles.card, styles.resolveCard]}>
+            <Text style={styles.sectionTitle}>Resolve Market</Text>
+            <Text style={styles.resolveHostHint}>
+              You are the host. Submit the official outcome below.
+            </Text>
+
+            {/* Commission preview */}
+            {(market.hostCommissionBps ?? 0) > 0 ? (
+              <View style={styles.commissionRow}>
+                <Text style={styles.commissionLabel}>Your commission if resolved cleanly</Text>
+                <Text style={styles.commissionValue}>
+                  {formatPoints(
+                    Math.floor(
+                      ((market.totalVolume ?? 0) * (market.hostCommissionBps ?? 0)) / 10000
+                    )
+                  )}{" "}
+                  pts
+                </Text>
+              </View>
+            ) : null}
+
+            {/* Binary outcome selection */}
+            {!isNumeric ? (
+              <View style={styles.sideRow}>
+                <Pressable
+                  style={[
+                    styles.sideBtn,
+                    styles.sideBtnYes,
+                    resolveOutcome === "YES" && styles.sideBtnYesActive,
+                  ]}
+                  onPress={() => setResolveOutcome("YES")}
+                >
+                  <Text
+                    style={[
+                      styles.sideBtnText,
+                      resolveOutcome === "YES" && styles.sideBtnTextActive,
+                    ]}
+                  >
+                    YES
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={[
+                    styles.sideBtn,
+                    styles.sideBtnNo,
+                    resolveOutcome === "NO" && styles.sideBtnNoActive,
+                  ]}
+                  onPress={() => setResolveOutcome("NO")}
+                >
+                  <Text
+                    style={[
+                      styles.sideBtnText,
+                      resolveOutcome === "NO" && styles.sideBtnTextActive,
+                    ]}
+                  >
+                    NO
+                  </Text>
+                </Pressable>
+              </View>
+            ) : null}
+
+            {/* Numeric outcome input */}
+            {isNumeric ? (
+              <View style={styles.numericSection}>
+                <Text style={styles.inputLabel}>
+                  Actual outcome{market.unit ? ` (${market.unit})` : ""}
+                </Text>
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="Enter the actual value"
+                  placeholderTextColor={colors.textMuted}
+                  keyboardType="numeric"
+                  value={resolveNumericValue}
+                  onChangeText={setResolveNumericValue}
+                />
+              </View>
+            ) : null}
+
+            {/* Resolution note */}
+            <Text style={[styles.inputLabel, { marginTop: spacing.lg }]}>
+              Resolution note (min 12 chars)
+            </Text>
+            <TextInput
+              style={[styles.textInput, styles.resolveNoteInput]}
+              placeholder="Describe why the market resolves this way…"
+              placeholderTextColor={colors.textMuted}
+              multiline
+              numberOfLines={3}
+              value={resolveNote}
+              onChangeText={setResolveNote}
+            />
+
+            <Pressable
+              style={[styles.resolveConfirmBtn, resolving && styles.btnDisabled]}
+              onPress={handleResolve}
+              disabled={resolving}
+            >
+              {resolving ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.resolveConfirmText}>Confirm Resolution</Text>
+              )}
+            </Pressable>
+          </View>
+        )
+      ) : null}
     </View>
   );
 }
+
+// ─── InfoItem ─────────────────────────────────────────────────────────────────
 
 function InfoItem({ label, value }: { label: string; value: string }) {
   return (
@@ -491,14 +1194,166 @@ function InfoItem({ label, value }: { label: string; value: string }) {
   );
 }
 
+// ─── CommentsSection ──────────────────────────────────────────────────────────
+
+type CommentItem = {
+  id: string;
+  content: string;
+  createdAt: string;
+  user: { username: string };
+};
+
+const AVATAR_COLORS = ["#6366F1", "#EC4899", "#F59E0B", "#10B981", "#3B82F6", "#EF4444"];
+
+function avatarColorForUsername(username: string): string {
+  let hash = 0;
+  for (let i = 0; i < Math.min(username.length, 7); i++) {
+    hash = (hash * 31 + username.charCodeAt(i)) >>> 0;
+  }
+  return AVATAR_COLORS[hash % AVATAR_COLORS.length] as string;
+}
+
+function CommentsSection({
+  marketId,
+  isOpen,
+  session,
+}: {
+  marketId: string;
+  isOpen: boolean;
+  session: Session | null;
+}) {
+  const fetcher = useCallback(
+    () => mobileApi.getMarketComments(marketId),
+    [marketId]
+  );
+
+  const { data, refetch } = useApiQuery<{ comments: CommentItem[] }>(fetcher, [marketId]);
+
+  const [localComments, setLocalComments] = useState<CommentItem[]>([]);
+  const [commentText, setCommentText] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  // Sync local list from server data
+  useEffect(() => {
+    if (data?.comments) {
+      setLocalComments(data.comments);
+    }
+  }, [data]);
+
+  const canPost = isOpen && session != null;
+  const charsLeft = 500 - commentText.length;
+
+  async function handlePost() {
+    if (submitting || !commentText.trim() || !session) return;
+
+    const optimisticComment: CommentItem = {
+      id: `optimistic-${Date.now()}`,
+      content: commentText.trim(),
+      createdAt: new Date().toISOString(),
+      user: { username: session.username },
+    };
+
+    const textToPost = commentText.trim();
+    setLocalComments((prev) => [optimisticComment, ...prev]);
+    setCommentText("");
+    setSubmitting(true);
+
+    try {
+      await mobileApi.postMarketComment(marketId, { content: textToPost });
+      void refetch();
+    } catch {
+      // Revert optimistic update
+      setLocalComments((prev) => prev.filter((c) => c.id !== optimisticComment.id));
+      setCommentText(textToPost);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <View style={styles.card}>
+      <Text style={styles.sectionTitle}>
+        Comments ({localComments.length})
+      </Text>
+
+      {localComments.length === 0 ? (
+        <Text style={styles.commentsEmpty}>No comments yet. Be the first!</Text>
+      ) : (
+        localComments.map((comment) => (
+          <View key={comment.id} style={styles.commentRow}>
+            <View
+              style={[
+                styles.commentAvatar,
+                { backgroundColor: avatarColorForUsername(comment.user.username) },
+              ]}
+            >
+              <Text style={styles.commentAvatarText}>
+                {comment.user.username.charAt(0).toUpperCase()}
+              </Text>
+            </View>
+            <View style={styles.commentBody}>
+              <View style={styles.commentMeta}>
+                <Text style={styles.commentUsername}>@{comment.user.username}</Text>
+                <Text style={styles.commentTime}>
+                  {formatRelativeTime(comment.createdAt)}
+                </Text>
+              </View>
+              <Text style={styles.commentContent}>{comment.content}</Text>
+            </View>
+          </View>
+        ))
+      )}
+
+      {canPost ? (
+        <View style={styles.commentInputRow}>
+          <TextInput
+            style={styles.commentInput}
+            placeholder="Add a comment..."
+            placeholderTextColor={colors.textMuted}
+            multiline={false}
+            maxLength={500}
+            value={commentText}
+            onChangeText={setCommentText}
+          />
+          <Text style={styles.commentCharsLeft}>{charsLeft}</Text>
+          <Pressable
+            style={[
+              styles.commentPostBtn,
+              (!commentText.trim() || submitting) && styles.btnDisabled,
+            ]}
+            onPress={handlePost}
+            disabled={!commentText.trim() || submitting}
+          >
+            {submitting ? (
+              <ActivityIndicator color="#fff" size="small" />
+            ) : (
+              <Text style={styles.commentPostText}>Post</Text>
+            )}
+          </Pressable>
+        </View>
+      ) : !isOpen ? (
+        <Text style={styles.commentsClosedNote}>Predictions are closed</Text>
+      ) : (
+        <Text style={styles.commentsSignInNote}>Sign in to comment</Text>
+      )}
+    </View>
+  );
+}
+
+// ─── Styles ───────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
+  // Root layout
+  root: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
   screen: {
     flex: 1,
     backgroundColor: colors.background,
   },
   content: {
     padding: spacing.lg,
-    paddingBottom: 100,
   },
   container: {
     gap: spacing.lg,
@@ -507,6 +1362,8 @@ const styles = StyleSheet.create({
     paddingTop: 100,
     alignItems: "center",
   },
+
+  // ── Cards ──
   card: {
     backgroundColor: colors.surface,
     borderRadius: radius.lg,
@@ -553,6 +1410,8 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     color: colors.textMuted,
   },
+
+  // ── Numeric avg ──
   numericAvgSection: {
     marginTop: spacing.xl,
   },
@@ -606,6 +1465,8 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.textMuted,
   },
+
+  // ── Probability bar ──
   probabilitySection: {
     marginTop: spacing.xl,
   },
@@ -635,6 +1496,8 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#DC2626",
   },
+
+  // ── Info grid ──
   infoGrid: {
     marginTop: spacing.xl,
     flexDirection: "row",
@@ -661,7 +1524,8 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: colors.accent,
   },
-  // Positions
+
+  // ── Positions ──
   sectionTitle: {
     fontSize: 18,
     fontWeight: "700",
@@ -714,7 +1578,22 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: colors.text,
   },
-  // Betting
+  addMoreBtn: {
+    marginTop: spacing.md,
+    alignSelf: "flex-start",
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    borderColor: colors.primary,
+  },
+  addMoreBtnText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: colors.primary,
+  },
+
+  // ── Betting panel (inside sheet) ──
   sideRow: {
     flexDirection: "row",
     gap: spacing.md,
@@ -819,6 +1698,21 @@ const styles = StyleSheet.create({
   presetTextActive: {
     color: "#fff",
   },
+  estimatedReturnRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: spacing.md,
+  },
+  estimatedReturnLabel: {
+    fontSize: 14,
+    color: colors.textMuted,
+  },
+  estimatedReturnValue: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: colors.text,
+  },
   betError: {
     marginTop: spacing.sm,
     fontSize: 13,
@@ -839,7 +1733,8 @@ const styles = StyleSheet.create({
   btnDisabled: {
     opacity: 0.5,
   },
-  // Success
+
+  // ── Success state ──
   successCard: {
     backgroundColor: "#F0FDF4",
     borderWidth: 1,
@@ -856,20 +1751,8 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     color: "#15803D",
   },
-  anotherBtn: {
-    marginTop: spacing.md,
-    alignSelf: "flex-start",
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.md,
-    backgroundColor: "#16A34A",
-  },
-  anotherBtnText: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#fff",
-  },
-  // Poll notice
+
+  // ── Poll notice ──
   pollCard: {
     backgroundColor: "#EFF6FF",
     borderWidth: 1,
@@ -886,7 +1769,8 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     color: "#1E40AF",
   },
-  // Closed
+
+  // ── Closed ──
   closedCard: {
     backgroundColor: "#F9FAFB",
   },
@@ -896,6 +1780,55 @@ const styles = StyleSheet.create({
     color: "#6B7280",
     textAlign: "center",
   },
+
+  // ── Share ──
+  shareBtn: {
+    marginTop: spacing.sm,
+    paddingVertical: 14,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    borderColor: colors.accent,
+    alignItems: "center",
+  },
+  shareBtnText: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: colors.accent,
+  },
+  shareLink: {
+    marginTop: spacing.md,
+    alignSelf: "flex-start",
+  },
+  shareLinkText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: colors.accent,
+    textDecorationLine: "underline",
+  },
+
+  // ── Live badge ──
+  liveBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    marginTop: spacing.sm,
+    gap: 5,
+  },
+  liveDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: "#16A34A",
+  },
+  liveText: {
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1,
+    color: "#16A34A",
+    textTransform: "uppercase",
+  },
+
+  // ── Error / retry ──
   error: {
     color: colors.danger,
   },
@@ -911,5 +1844,383 @@ const styles = StyleSheet.create({
     color: colors.surface,
     fontWeight: "700",
     fontSize: 14,
+  },
+
+  // ── Host resolution panel ──
+  resolveCard: {
+    borderWidth: 1.5,
+    borderColor: "#FDE68A",
+    backgroundColor: "#FFFBEB",
+  },
+  resolveHostHint: {
+    fontSize: 14,
+    color: "#92400E",
+    marginBottom: spacing.lg,
+  },
+  commissionRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    backgroundColor: "#FEF3C7",
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    marginBottom: spacing.lg,
+  },
+  commissionLabel: {
+    fontSize: 13,
+    color: "#92400E",
+    flex: 1,
+    marginRight: spacing.sm,
+  },
+  commissionValue: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#78350F",
+  },
+  resolveNoteInput: {
+    height: 80,
+    paddingTop: spacing.sm,
+    textAlignVertical: "top",
+  },
+  resolveConfirmBtn: {
+    marginTop: spacing.lg,
+    paddingVertical: 16,
+    borderRadius: radius.md,
+    backgroundColor: "#D97706",
+    alignItems: "center",
+  },
+  resolveConfirmText: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: "#fff",
+  },
+  resolveSuccessCard: {
+    backgroundColor: "#F0FDF4",
+    borderWidth: 1,
+    borderColor: "#BBF7D0",
+  },
+  resolveSuccessTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#16A34A",
+    textAlign: "center",
+  },
+
+  // ── Comments ──
+  commentsEmpty: {
+    fontSize: 14,
+    color: colors.textMuted,
+    textAlign: "center",
+    paddingVertical: spacing.md,
+  },
+  commentRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  commentAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  commentAvatarText: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#fff",
+  },
+  commentBody: {
+    flex: 1,
+  },
+  commentMeta: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    marginBottom: 2,
+  },
+  commentUsername: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: colors.text,
+  },
+  commentTime: {
+    fontSize: 12,
+    color: colors.textMuted,
+  },
+  commentContent: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: colors.text,
+  },
+  commentInputRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    marginTop: spacing.lg,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  commentInput: {
+    flex: 1,
+    height: 40,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: "#D1D5DB",
+    paddingHorizontal: spacing.md,
+    fontSize: 14,
+    color: colors.text,
+    backgroundColor: "#fff",
+  },
+  commentCharsLeft: {
+    fontSize: 12,
+    color: colors.textMuted,
+    minWidth: 28,
+    textAlign: "right",
+  },
+  commentPostBtn: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+    borderRadius: radius.md,
+    backgroundColor: colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    minWidth: 52,
+  },
+  commentPostText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#fff",
+  },
+  commentsClosedNote: {
+    marginTop: spacing.md,
+    fontSize: 13,
+    color: colors.textMuted,
+    textAlign: "center",
+  },
+  commentsSignInNote: {
+    marginTop: spacing.md,
+    fontSize: 13,
+    color: colors.textMuted,
+    textAlign: "center",
+  },
+
+  // ── Sticky betting bar ──
+  stickyBar: {
+    backgroundColor: colors.surface,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingTop: spacing.md,
+    paddingHorizontal: spacing.lg,
+    ...shadows.card,
+  },
+  stickyBarInner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    minHeight: STICKY_BAR_HEIGHT - spacing.md,
+    gap: spacing.md,
+  },
+  stickyBarLeft: {
+    flex: 1,
+    gap: spacing.xs,
+  },
+  stickyProbLabel: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: colors.textMuted,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+  stickyProbValue: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: "#16A34A",
+  },
+  stickyPositionBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    marginTop: 2,
+  },
+  stickyPosPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radius.sm,
+  },
+  stickyPosPillYes: { backgroundColor: "#DCFCE7" },
+  stickyPosPillNo: { backgroundColor: "#FEE2E2" },
+  stickyPosPillNumeric: { backgroundColor: "#DBEAFE" },
+  stickyPosPillText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: colors.text,
+  },
+  stickyPositionAmount: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: colors.textMuted,
+  },
+  stickyPositionLabel: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: colors.textMuted,
+  },
+  predictBtn: {
+    paddingHorizontal: spacing.xl,
+    paddingVertical: 14,
+    borderRadius: radius.md,
+    backgroundColor: colors.primary,
+    alignItems: "center",
+    minWidth: 110,
+  },
+  predictBtnText: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#fff",
+  },
+
+  // ── Sticky poll bar ──
+  stickyPollQuestion: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: "600",
+    color: colors.text,
+  },
+  stickyPollBtns: {
+    flexDirection: "row",
+    gap: spacing.sm,
+  },
+  stickyPollBtn: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: 12,
+    borderRadius: radius.md,
+    alignItems: "center",
+    minWidth: 64,
+  },
+  stickyPollBtnYes: {
+    backgroundColor: "#16A34A",
+  },
+  stickyPollBtnNo: {
+    backgroundColor: "#DC2626",
+  },
+  stickyPollBtnText: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#fff",
+  },
+  stickyPollSubtext: {
+    fontSize: 12,
+    color: colors.textMuted,
+    marginLeft: spacing.sm,
+  },
+  stickyError: {
+    fontSize: 12,
+    color: "#DC2626",
+    marginTop: 2,
+  },
+
+  // ── Voted chip ──
+  votedChip: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 8,
+    borderRadius: radius.pill,
+  },
+  votedChipYes: { backgroundColor: "#DCFCE7" },
+  votedChipNo: { backgroundColor: "#FEE2E2" },
+  votedChipText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: colors.text,
+  },
+
+  // ── Outcome pill (resolved bar) ──
+  outcomePill: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+  },
+  outcomePillYes: { backgroundColor: "#DCFCE7" },
+  outcomePillNo: { backgroundColor: "#FEE2E2" },
+  outcomePillText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: colors.text,
+  },
+  stickyShareBtn: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: 12,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    borderColor: colors.accent,
+    alignItems: "center",
+  },
+  stickyShareBtnText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: colors.accent,
+  },
+
+  // ── Bottom sheet ──
+  sheetBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.45)",
+  },
+  sheetContainer: {
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: spacing.xl,
+    paddingTop: spacing.md,
+    maxHeight: "88%",
+  },
+  sheetHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "#D1D5DB",
+    alignSelf: "center",
+    marginBottom: spacing.md,
+  },
+  sheetHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: spacing.xl,
+  },
+  sheetTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: colors.text,
+  },
+  sheetCloseBtn: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  sheetCloseBtnText: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: colors.accent,
+  },
+  sheetSuccessSection: {
+    paddingVertical: spacing.xl,
+    alignItems: "center",
+  },
+  sheetSuccessTitle: {
+    fontSize: 22,
+    fontWeight: "700",
+    color: "#16A34A",
+    marginBottom: spacing.sm,
+  },
+  sheetSuccessText: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: "#15803D",
+    textAlign: "center",
   },
 });

@@ -1,5 +1,5 @@
 import { useRouter } from "expo-router";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, Share, StyleSheet, Text, View } from "react-native";
 
 import type { ApiMarketSummary } from "@predict-future/types";
 import { formatPercent, formatPoints, formatRelativeTime } from "@predict-future/utils";
@@ -8,6 +8,12 @@ import { colors, radius, shadows, spacing } from "@predict-future/ui-tokens";
 type Props = {
   item: ApiMarketSummary;
 };
+
+async function shareMarket(item: ApiMarketSummary) {
+  const url = `https://predictfuture.app/markets/${item.id}`;
+  const message = `"${item.title}" — what do you think? Predict on Predict Future: ${url}`;
+  await Share.share({ message, url });
+}
 
 export function MarketSummaryCard({ item }: Props) {
   const router = useRouter();
@@ -32,6 +38,13 @@ export function MarketSummaryCard({ item }: Props) {
         {item.category ? (
           <Text style={styles.category}>{item.category}</Text>
         ) : null}
+        <Pressable
+          style={styles.shareBtn}
+          onPress={(e) => { e.stopPropagation?.(); void shareMarket(item); }}
+          hitSlop={8}
+        >
+          <Text style={styles.shareBtnText}>Share</Text>
+        </Pressable>
       </View>
 
       <Text style={styles.title} numberOfLines={2}>{item.title}</Text>
@@ -130,6 +143,19 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.sm,
+    flex: 1,
+  },
+  shareBtn: {
+    marginLeft: "auto",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radius.sm,
+    backgroundColor: "#EEF2FF",
+  },
+  shareBtnText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: colors.primary,
   },
   badge: {
     paddingHorizontal: 8,

@@ -225,6 +225,7 @@ model User {
   isSuspended        Boolean            @default(false)
   suspendedReason    String?
   reputationScore    Int                @default(50)
+  expoPushToken      String?
   accuracyScore      Float              @default(0)
   level              Int                @default(1)
   streak             Int                @default(0)
