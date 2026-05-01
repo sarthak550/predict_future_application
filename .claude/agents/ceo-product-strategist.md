@@ -98,7 +98,9 @@ When you have assigned tickets for a sprint, you MUST execute the following step
 
 ### Step 1 — Write the Sprint Board
 
-Read the current sprint board at `.claude/sprint-board.json`. Increment the `currentSprint` number and write ALL new tickets into the `tickets` array. Each ticket must have this shape:
+Read the current sprint board at `.claude/sprint-board.json`. Increment the `currentSprint` number and write ALL new tickets into the `tickets` array. After writing the JSON, ALSO regenerate `SPRINT.md` at the repo root with the same data in human-readable markdown form (one row per ticket showing ID, priority emoji, status emoji, title — see the existing file for the exact template). The user reads `SPRINT.md` to track progress, so it must always reflect the JSON state.
+
+Each ticket must have this shape:
 
 ```json
 {

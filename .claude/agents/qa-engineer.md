@@ -72,6 +72,29 @@ npx tsc --noEmit -p apps/mobile/tsconfig.json 2>&1 | head -40
 
 Any TypeScript errors are a **FAIL**.
 
+#### Check F: Missing dependencies (CRITICAL — added after the S7/S8 native-module incident)
+
+TypeScript will silently pass when a package is `import`-ed in code but missing from `package.json`, because Metro symlinks pull in transitive copies. The first sign of failure is on a real native build, when the bundler crashes with `Cannot find native module 'X'` or `NativeModule: X is null`. This must be caught BEFORE PASS, not at runtime.
+
+For every ticket that touches mobile code, run this audit:
+
+```bash
+# Extract every imported package from changed mobile files
+git -C /Users/sarthak/predict_future diff --name-only HEAD apps/mobile/src/ \
+  | xargs -I{} grep -hoE "from \"[a-z@][^\"]+\"" {} 2>/dev/null \
+  | sed -E 's/from "([^/"]+\/[^/"]+|[^/"]+).*"/\1/' \
+  | grep -v "^@/" \
+  | grep -v "^@predict-future" \
+  | sort -u
+```
+
+For EACH bare import (e.g. `expo-notifications`, `@react-native-async-storage/async-storage`, `expo-secure-store`):
+
+1. Check if it appears in `apps/mobile/package.json` `dependencies`. If not — **FAIL** with failureNote: `[package-name] is imported in [file-path] but missing from apps/mobile/package.json. CTO must run "npx expo install [package-name]" and re-submit.`
+2. Native modules to be especially watchful for: anything starting with `expo-`, `react-native-`, `@react-native-`, `@react-native-community/`. These require BOTH a package.json entry AND a native rebuild on the device.
+
+Repeat the same audit pattern for `apps/api/` against `apps/api/package.json` if API code changed.
+
 ### Step 3 — Runtime Verification (Live HTTP Requests)
 
 **Prerequisites**: The API server must be running at `http://localhost:3001`. If it is not running, note this in your report and skip runtime checks — but flag that runtime verification was skipped.
@@ -224,6 +247,8 @@ After issuing your verdict, you MUST update the sprint board AND spawn the next 
    - `status` → `"done"`
    - `qaVerdict` → `"pass"`
 
+   Then mirror the change to `SPRINT.md` at the repo root: update the corresponding ticket row's status emoji to ✅. The user reads SPRINT.md to track progress, so the two files must stay in sync.
+
 2. Check for the next `pending` ticket in the same sprint:
 
    **If a pending ticket exists**: spawn CTO for the next ticket:
@@ -250,6 +275,8 @@ After issuing your verdict, you MUST update the sprint board AND spawn the next 
    - `qaVerdict` → `"fail"`
    - `failureNotes` → a JSON array of strings, one per failure. Be specific: include file paths, what was wrong, and what the fix should be. Example: `["apps/api/app/api/polls/route.ts uses getSession() without getUserIdFromRequest — mobile Bearer token never resolves userId", "packages/api-client/src/index.ts getPolls() missing auth: true — Authorization header never sent"]`
 
+   Then mirror the change to `SPRINT.md` at the repo root: update the corresponding ticket row's status emoji to ❌.
+
 2. Spawn CTO to fix:
    ```
    Agent(
@@ -268,6 +295,34 @@ When updating the sprint board, always:
 3. Write the full updated JSON back to `.claude/sprint-board.json`
 
 Never overwrite the whole file from memory — always read first to preserve other tickets' state.
+
+---
+
+## Smoke-Test Checklist Requirement
+
+Every QA report for a sprint MUST end with a Smoke-Test Checklist block. The sprint is NOT complete until the human operator confirms they have walked through the checklist and found no blocking issues. QA may pass individual tickets based on static analysis, but the sprint-level verdict is **PENDING** until the smoke test is confirmed by the human.
+
+The checklist block must appear verbatim at the end of the final QA report for a sprint (or adapted to reflect the specific changes in that sprint). Individual ticket verdicts (pass/fail) remain driven by static analysis. The smoke-test checklist is an additional sprint-level gate — it does not retroactively change individual ticket statuses.
+
+### Standard 5-Minute Smoke-Test Flow
+
+Append this block to the final QA report for every sprint (replacing `[Sprint N]` with the actual sprint number):
+
+```markdown
+---
+
+## Sprint [N] Smoke-Test Checklist
+
+The sprint is **PENDING HUMAN VERIFICATION** until you confirm the following. Walk through this flow on a device or simulator with a live API connection.
+
+- [ ] **Sign up / Sign in** — Create a new account OR log in as `kira@example.com` (Password123!). Confirm the session loads and the Feed tab appears.
+- [ ] **Feed tab — vote persistence** — Scroll 3 cards. Confirm vote buttons (YES / NO) are visible on poll cards. Cast a YES vote on any poll card. Pull down to refresh the feed. Confirm the "You voted YES" indicator is still visible after the refresh (not wiped). If the indicator disappears, S9-T1 has regressed.
+- [ ] **Markets tab — sticky bet panel** — Open any OPEN market. Confirm the sticky bet panel is visible at the bottom of the screen without scrolling. Place a 1-point bet. Confirm the position summary ("Position: YES — 1 pt") appears in the sticky bar after placing.
+- [ ] **Profile tab — bet history** — Navigate to Profile. Confirm the "Recent Positions" section shows the bet just placed (not an empty list). Confirm wallet balance has been deducted by 1 point.
+- [ ] **Create tab — Simple wizard** — Tap Create. Confirm the step indicator shows 4–5 steps (not 6). Complete Steps 1–4 (audience, type, question, timing) without opening Advanced settings. Tap Next at Step 4 (timing) and confirm the review/submit step appears. Submit. Confirm the success screen appears with a "View Market" button.
+
+If any box cannot be checked, **do not mark the sprint complete**. File a new failing ticket describing the regression and restart QA from that ticket.
+```
 
 ---
 

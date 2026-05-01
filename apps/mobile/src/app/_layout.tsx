@@ -26,14 +26,19 @@ function PushTokenRegistrar() {
     if (Platform.OS === "web") return;
 
     void (async () => {
-      const { status } = await Notifications.requestPermissionsAsync();
-      if (status !== "granted") return;
+      try {
+        const { status } = await Notifications.requestPermissionsAsync();
+        if (status !== "granted") return;
 
-      const tokenData = await Notifications.getExpoPushTokenAsync();
-      await mobileApi.registerPushToken({ token: tokenData.data }).catch(() => {
+        // Push notifications need FCM credentials on Android (google-services.json).
+        // In dev builds without it, getExpoPushTokenAsync throws — swallow silently
+        // so the app continues to work without notifications.
+        const tokenData = await Notifications.getExpoPushTokenAsync();
+        await mobileApi.registerPushToken({ token: tokenData.data });
+      } catch {
         // Best-effort — push token registration failures must never surface to
         // the user or interrupt the session. The user can still use the app.
-      });
+      }
     })();
   }, [session?.userId]);
 

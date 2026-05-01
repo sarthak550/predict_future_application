@@ -18,6 +18,7 @@ import { colors, radius, spacing } from "@predict-future/ui-tokens";
 
 import { InsightCard } from "@/components/insight-card";
 import { NewsFeedCard } from "@/components/news-feed-card";
+import { SkeletonFeedCard } from "@/components/skeleton-feed-card";
 import { StreakBadge } from "@/components/streak-reminder";
 import { mobileApi } from "@/lib/api";
 import { useSession } from "@/providers/session-provider";
@@ -82,6 +83,13 @@ export default function FeedScreen() {
   const [error, setError] = useState<string | null>(null);
   const [category, setCategory] = useState<AppMarketCategory | "ALL">("ALL");
 
+  // Skeleton loading: shown only on the FIRST load (items empty) after a 150ms
+  // delay so fast API responses never flash the skeleton.
+  const [showSkeleton, setShowSkeleton] = useState(false);
+  // Track whether the very first load has ever produced items (prevents skeleton
+  // from reappearing on pull-to-refresh or category switches once we've had data).
+  const hasEverLoadedRef = useRef(false);
+
   // Fetch streak count once when authenticated
   useEffect(() => {
     if (authStatus !== "authenticated" || !session) return;
@@ -90,6 +98,26 @@ export default function FeedScreen() {
     }).catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authStatus]);
+
+  // Skeleton 150ms delay: only fires when loading is true and no items have
+  // arrived yet AND we have never successfully loaded data before.
+  // Cleared as soon as loading ends (data arrived or error) or items appear.
+  useEffect(() => {
+    if (!loading || items.length > 0 || hasEverLoadedRef.current) {
+      setShowSkeleton(false);
+      return;
+    }
+    const timer = setTimeout(() => {
+      // Re-check conditions inside the timeout — may have resolved in 150ms
+      if (!hasEverLoadedRef.current) {
+        setShowSkeleton(true);
+      }
+    }, 150);
+    return () => {
+      clearTimeout(timer);
+      setShowSkeleton(false);
+    };
+  }, [loading, items.length]);
 
   // Swipe hint — shown on first load, disappears after 3s
   const [showHint, setShowHint] = useState(true);
@@ -153,6 +181,9 @@ export default function FeedScreen() {
       hasMoreRef.current = Boolean(response.hasMore);
       setHasMore(hasMoreRef.current);
       setError(null);
+      // Mark that we have successfully loaded at least once so the skeleton
+      // never reappears after the first data arrives (pull-to-refresh, etc.)
+      hasEverLoadedRef.current = true;
     } catch (nextError) {
       if (!mountedRef.current) return;
       setError(nextError instanceof Error ? nextError.message : "Unable to fetch the feed.");
@@ -285,10 +316,17 @@ export default function FeedScreen() {
           />
         }
         ListEmptyComponent={
-          loading ? (
+          showSkeleton ? (
+            // Skeleton cards — only shown on first load (items empty) after 150ms delay
+            <View style={{ flex: 1 }}>
+              <SkeletonFeedCard viewportHeight={cardHeight} />
+              <SkeletonFeedCard viewportHeight={cardHeight} />
+              <SkeletonFeedCard viewportHeight={cardHeight} />
+            </View>
+          ) : loading ? (
+            // Brief spinner before skeleton threshold is reached (sub-150ms)
             <View style={styles.centerState}>
               <ActivityIndicator size="large" color={colors.accent} />
-              <Text style={styles.stateText}>Loading latest news…</Text>
             </View>
           ) : error ? (
             <View style={styles.centerState}>

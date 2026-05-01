@@ -1,6 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -8,6 +8,7 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -16,7 +17,7 @@ import {
 
 import { Ionicons } from "@expo/vector-icons";
 
-import type { ApiGroupSummary, ApiHostEligibility, AppMarketCategory } from "@predict-future/types";
+import type { ApiGroupSummary, ApiHostEligibility, AppMarketCategory, AppMarketStatus } from "@predict-future/types";
 import { colors, radius, shadows, spacing } from "@predict-future/ui-tokens";
 
 import { useApiQuery } from "@/hooks/useApiQuery";
@@ -84,13 +85,13 @@ type MarketType = "BINARY" | "NUMERIC";
 type ResolutionMode = "HOST";
 type PoolRewardMode = "COMMISSION_BASED" | "BOND_BASED";
 
-// Steps: Audience, Type, Question, [Host Settings], Timing, Review
+// Steps: Audience, Type, Question, Timing, [Host Settings — Advanced only], Review
 type StepId =
   | "audience"
   | "type"
   | "question"
-  | "host_settings"
   | "timing"
+  | "host_settings"
   | "review";
 
 // ---------------------------------------------------------------------------
@@ -272,6 +273,35 @@ function ProgressRow({
 // Wizard
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Share helper (mirrors market detail screen helper)
+// ---------------------------------------------------------------------------
+
+async function shareOpenMarket(title: string, marketId: string) {
+  try {
+    await Share.share({
+      message: `"${title}" — what do you think? Predict on Predict Future: https://predictfuture.app/markets/${marketId}`,
+      url: `https://predictfuture.app/markets/${marketId}`,
+    });
+  } catch {
+    // user dismissed share sheet — no-op
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Success state type
+// ---------------------------------------------------------------------------
+
+type SuccessState = {
+  marketId: string;
+  marketTitle: string;
+  marketStatus: AppMarketStatus;
+};
+
+// ---------------------------------------------------------------------------
+// Wizard
+// ---------------------------------------------------------------------------
+
 function CreateWizard({
   userId,
   initialTitle,
@@ -284,6 +314,14 @@ function CreateWizard({
   const router = useRouter();
   const [stepIdx, setStepIdx] = useState(0);
   const [submitting, setSubmitting] = useState(false);
+  const [successState, setSuccessState] = useState<SuccessState | null>(null);
+
+  // "Draft saved" indicator — shown for 2s after each step advance
+  const [showSaved, setShowSaved] = useState(false);
+  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Advanced mode — when false, host_settings step is hidden and defaults are used
+  const [advancedMode, setAdvancedMode] = useState(false);
 
   // --- Form state ---
   const [visibility, setVisibility] = useState<Visibility>("PUBLIC");
@@ -323,16 +361,15 @@ function CreateWizard({
   }>(groupsFetcher, [userId]);
   const groups = groupsData?.groups ?? [];
 
-  // Whether host settings step is needed
-  const needsHostSettings = resolutionMode === "HOST";
-
   // Build the step list dynamically
+  // Simple mode (default): audience → type → question → timing → review (4 meaningful steps)
+  // Advanced mode: audience → type → question → timing → host_settings → review
   const steps: StepId[] = useMemo(() => {
-    const base: StepId[] = ["audience", "type", "question"];
-    if (needsHostSettings) base.push("host_settings");
-    base.push("timing", "review");
+    const base: StepId[] = ["audience", "type", "question", "timing"];
+    if (advancedMode) base.push("host_settings");
+    base.push("review");
     return base;
-  }, [needsHostSettings]);
+  }, [advancedMode]);
 
   const currentStep = steps[stepIdx] ?? "audience";
   const totalSteps = steps.length;
@@ -348,13 +385,6 @@ function CreateWizard({
   useEffect(() => {
     if (marketType === "NUMERIC") setResolutionMode("HOST");
   }, [marketType]);
-
-  // If we toggle away from HOST while on the host_settings step, go back
-  useEffect(() => {
-    if (!needsHostSettings && currentStep === "host_settings") {
-      setStepIdx(Math.max(0, stepIdx - 1));
-    }
-  }, [needsHostSettings, currentStep, stepIdx]);
 
   // Draft — load on mount
   useEffect(() => {
@@ -391,6 +421,7 @@ function CreateWizard({
       commissionBps,
       challengeWindowHours,
       gracePeriodHours,
+      advancedMode,
     };
     await AsyncStorage.setItem(DRAFT_KEY, JSON.stringify(state));
   }
@@ -413,16 +444,28 @@ function CreateWizard({
     if (typeof draft.commissionBps === "number") setCommissionBps(draft.commissionBps);
     if (typeof draft.challengeWindowHours === "number") setChallengeWindowHours(draft.challengeWindowHours);
     if (typeof draft.gracePeriodHours === "number") setGracePeriodHours(draft.gracePeriodHours);
+    if (typeof draft.advancedMode === "boolean") setAdvancedMode(draft.advancedMode);
   }
 
   // Navigation
   function next() {
     void saveDraft();
+    // Show "Draft saved" indicator for 2 seconds
+    if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+    setShowSaved(true);
+    savedTimerRef.current = setTimeout(() => setShowSaved(false), 2000);
     if (stepIdx < totalSteps - 1) setStepIdx(stepIdx + 1);
   }
   function back() {
     if (stepIdx > 0) setStepIdx(stepIdx - 1);
   }
+
+  // Cleanup saved indicator timer on unmount
+  useEffect(() => {
+    return () => {
+      if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+    };
+  }, []);
 
   // Validation per step
   function canAdvance(): boolean {
@@ -491,20 +534,15 @@ function CreateWizard({
       const result = await mobileApi.createMarket(body, { userId });
       await AsyncStorage.removeItem(DRAFT_KEY);
       const createdMarketId = result?.market?.id;
+      const createdMarketStatus = result?.market?.status ?? "PENDING_REVIEW";
       if (createdMarketId) {
-        router.push(`/market/${createdMarketId}`);
+        setSuccessState({
+          marketId: createdMarketId,
+          marketTitle: title,
+          marketStatus: createdMarketStatus,
+        });
       } else {
-        Alert.alert("Market Created!", "Your prediction market is live.", [
-          {
-            text: "Create Another",
-            onPress: () => {
-              setStepIdx(0);
-              setTitle("");
-              setDescription("");
-              setUnit("");
-            },
-          },
-        ]);
+        Alert.alert("Market Created!", "Your prediction market is live.");
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to create market.";
@@ -514,6 +552,87 @@ function CreateWizard({
     }
   }
 
+  function handleCreateAnother() {
+    setSuccessState(null);
+    setStepIdx(0);
+    setTitle(initialTitle ?? "");
+    setDescription("");
+    setUnit("");
+    setVisibility("PUBLIC");
+    setGroupId(null);
+    setMarketType("BINARY");
+    setCategory(initialCategory ?? "GENERAL");
+    setCloseAt(new Date(Date.now() + 24 * 3600000));
+    setResolveAt(new Date(Date.now() + 48 * 3600000));
+  }
+
+  // ── Success screen ─────────────────────────────────────────────────────────
+  if (successState) {
+    const isLive = successState.marketStatus === "OPEN";
+
+    return (
+      <KeyboardAvoidingView
+        style={styles.screen}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
+        <ScrollView
+          contentContainerStyle={[styles.scrollContent, styles.successContainer]}
+          keyboardShouldPersistTaps="handled"
+        >
+          {/* Checkmark icon */}
+          <View style={styles.successIconWrap}>
+            <Ionicons name="checkmark-circle" size={72} color={colors.success} />
+          </View>
+
+          <Text style={styles.successHeadline}>Market Created!</Text>
+          <Text style={styles.successTitle} numberOfLines={3}>
+            {successState.marketTitle}
+          </Text>
+
+          {isLive ? (
+            <View style={styles.successStatusBadge}>
+              <Text style={styles.successStatusLive}>Your market is live!</Text>
+            </View>
+          ) : (
+            <View style={[styles.successStatusBadge, styles.successStatusPendingBadge]}>
+              <Text style={styles.successStatusPending}>
+                Pending review — we'll notify you when it's approved.
+              </Text>
+            </View>
+          )}
+
+          {/* Share button — only for live markets */}
+          {isLive && (
+            <Pressable
+              style={styles.successShareBtn}
+              onPress={() => void shareOpenMarket(successState.marketTitle, successState.marketId)}
+            >
+              <Ionicons name="share-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.successShareBtnText}>Share it</Text>
+            </Pressable>
+          )}
+
+          {/* Primary CTA */}
+          <Pressable
+            style={styles.successViewBtn}
+            onPress={() => router.push(`/market/${successState.marketId}`)}
+          >
+            <Text style={styles.successViewBtnText}>View Market</Text>
+          </Pressable>
+
+          {/* Secondary CTA */}
+          <Pressable
+            style={styles.successAnotherBtn}
+            onPress={handleCreateAnother}
+          >
+            <Text style={styles.successAnotherBtnText}>Create Another</Text>
+          </Pressable>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    );
+  }
+
+  // ── Wizard ─────────────────────────────────────────────────────────────────
   return (
     <KeyboardAvoidingView
       style={styles.screen}
@@ -556,7 +675,7 @@ function CreateWizard({
                   setDraftBanner("hidden");
                 }}
               >
-                <Text style={styles.draftBannerBtnText}>Continue</Text>
+                <Text style={styles.draftBannerBtnText}>Restore Draft</Text>
               </Pressable>
               <Pressable
                 style={[styles.draftBannerBtn, styles.draftBannerBtnOutline]}
@@ -565,7 +684,7 @@ function CreateWizard({
                   setDraftBanner("hidden");
                 }}
               >
-                <Text style={[styles.draftBannerBtnText, styles.draftBannerBtnOutlineText]}>Start Fresh</Text>
+                <Text style={[styles.draftBannerBtnText, styles.draftBannerBtnOutlineText]}>Dismiss</Text>
               </Pressable>
             </View>
           </View>
@@ -621,14 +740,40 @@ function CreateWizard({
           />
         )}
         {currentStep === "timing" && (
-          <StepTiming
-            closeAt={closeAt}
-            setCloseAt={setCloseAt}
-            resolveAt={resolveAt}
-            setResolveAt={setResolveAt}
-            isHostResolved={resolutionMode === "HOST"}
-            gracePeriodHours={gracePeriodHours}
-          />
+          <>
+            <StepTiming
+              closeAt={closeAt}
+              setCloseAt={setCloseAt}
+              resolveAt={resolveAt}
+              setResolveAt={setResolveAt}
+              isHostResolved={resolutionMode === "HOST"}
+              gracePeriodHours={gracePeriodHours}
+            />
+            {/* Advanced settings disclosure — only shown on timing step */}
+            <Pressable
+              style={({ pressed }) => [styles.advancedToggleRow, pressed && { opacity: 0.7 }]}
+              onPress={() => setAdvancedMode((prev) => !prev)}
+            >
+              <Ionicons
+                name={advancedMode ? "settings" : "settings-outline"}
+                size={16}
+                color={advancedMode ? colors.accent : colors.textMuted}
+              />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.advancedToggleLabel, advancedMode && styles.advancedToggleLabelActive]}>
+                  Advanced settings
+                </Text>
+                <Text style={styles.advancedToggleSub}>
+                  Set commission, challenge window, and bond cap
+                </Text>
+              </View>
+              <Ionicons
+                name={advancedMode ? "chevron-down" : "chevron-forward"}
+                size={14}
+                color={advancedMode ? colors.accent : colors.textMuted}
+              />
+            </Pressable>
+          </>
         )}
         {currentStep === "review" && (
           <StepReview
@@ -648,6 +793,11 @@ function CreateWizard({
             challengeWindowHours={challengeWindowHours}
             gracePeriodHours={gracePeriodHours}
           />
+        )}
+
+        {/* "Draft saved" indicator */}
+        {showSaved && (
+          <Text style={styles.draftSavedLabel}>Draft saved</Text>
         )}
 
         {/* Navigation */}
@@ -2113,6 +2263,32 @@ const styles = StyleSheet.create({
   reviewSectionTitle: { fontSize: 15, fontWeight: "700", color: colors.text, marginBottom: spacing.sm },
   reviewMeta: { fontSize: 13, color: colors.textMuted, marginTop: spacing.xs },
 
+  // Advanced settings disclosure toggle
+  advancedToggleRow: {
+    marginTop: spacing.lg,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    padding: spacing.md,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  advancedToggleLabel: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: colors.textMuted,
+  },
+  advancedToggleLabelActive: {
+    color: colors.accent,
+  },
+  advancedToggleSub: {
+    fontSize: 11,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+
   // Navigation
   navRow: {
     flexDirection: "row",
@@ -2253,5 +2429,108 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#92400E",
     lineHeight: 18,
+  },
+
+  // Draft saved indicator
+  draftSavedLabel: {
+    fontSize: 12,
+    color: colors.textMuted,
+    textAlign: "right",
+    marginTop: spacing.md,
+    marginBottom: -spacing.sm,
+  },
+
+  // Success screen
+  successContainer: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: spacing.xl * 2,
+  },
+  successIconWrap: {
+    marginBottom: spacing.lg,
+  },
+  successHeadline: {
+    fontSize: 28,
+    fontWeight: "700",
+    color: colors.text,
+    textAlign: "center",
+    marginBottom: spacing.md,
+  },
+  successTitle: {
+    fontSize: 17,
+    fontWeight: "600",
+    color: colors.textMuted,
+    textAlign: "center",
+    lineHeight: 24,
+    marginBottom: spacing.lg,
+    paddingHorizontal: spacing.lg,
+  },
+  successStatusBadge: {
+    backgroundColor: "#DCFCE7",
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    marginBottom: spacing.xl,
+  },
+  successStatusPendingBadge: {
+    backgroundColor: "#FFFBEB",
+  },
+  successStatusLive: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#16A34A",
+    textAlign: "center",
+  },
+  successStatusPending: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#92400E",
+    textAlign: "center",
+    lineHeight: 18,
+  },
+  successShareBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: colors.accent,
+    marginBottom: spacing.md,
+    minWidth: 200,
+    justifyContent: "center",
+  },
+  successShareBtnText: {
+    color: "#FFFFFF",
+    fontWeight: "700",
+    fontSize: 15,
+  },
+  successViewBtn: {
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: colors.success,
+    marginBottom: spacing.md,
+    minWidth: 200,
+    alignItems: "center",
+  },
+  successViewBtnText: {
+    color: "#FFFFFF",
+    fontWeight: "700",
+    fontSize: 15,
+  },
+  successAnotherBtn: {
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
+    borderRadius: radius.lg,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    minWidth: 200,
+    alignItems: "center",
+  },
+  successAnotherBtnText: {
+    color: colors.text,
+    fontWeight: "600",
+    fontSize: 15,
   },
 });

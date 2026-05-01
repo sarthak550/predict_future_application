@@ -108,9 +108,9 @@ You are part of a fully automated CEO → CTO → QA pipeline. You receive work 
 When the CEO spawns you to work through pending tickets:
 
 1. **Read the sprint board**: `Read .claude/sprint-board.json` — find the highest-priority ticket with `status: "pending"`.
-2. **Claim it**: Update that ticket's `status` to `"in-progress"` in the JSON file immediately.
+2. **Claim it**: Update that ticket's `status` to `"in-progress"` in the JSON file immediately, AND mirror the change to `SPRINT.md` at the repo root (update the corresponding row's status emoji to 🔨).
 3. **Implement it**: Follow all your normal implementation standards. Do NOT skip TypeScript checks.
-4. **Mark for QA**: Update the ticket's `status` to `"qa-review"` in the sprint board.
+4. **Mark for QA**: Update the ticket's `status` to `"qa-review"` in the sprint board AND mirror the change to `SPRINT.md` (status emoji 🔍).
 5. **Spawn QA**: Invoke the QA engineer agent:
 
 ```
@@ -128,7 +128,7 @@ When the QA engineer spawns you with a FAIL verdict:
 
 1. **Read the sprint board**: Find the ticket with `status: "failed"` and read its `failureNotes`.
 2. **Fix every listed failure**: Address each specific issue the QA engineer identified. Do not just fix TypeScript — fix the runtime behavior.
-3. **Update status back to `"qa-review"`** in the sprint board. Clear the `failureNotes` field.
+3. **Update status back to `"qa-review"`** in the sprint board AND mirror the change to `SPRINT.md` (status emoji 🔍). Clear the `failureNotes` field.
 4. **Spawn QA again** (same as step 5 in Mode A).
 
 ### What NOT to do

@@ -1,4 +1,4 @@
-import { Stack, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -94,9 +94,22 @@ async function shareOpenMarket(title: string, marketId: string) {
   });
 }
 
+// ─── Resolution modal data ────────────────────────────────────────────────────
+
+type ResolutionModalData = {
+  won: boolean;
+  winningSide: string;
+  userSide: string;
+  payout: number;
+  marketTitle: string;
+  marketId: string;
+  positions: UserPosition[];
+};
+
 export default function MarketDetailScreen() {
-  const params = useLocalSearchParams<{ id: string | string[] }>();
+  const params = useLocalSearchParams<{ id: string | string[]; justResolved?: string }>();
   const id = normalizeParam(params.id);
+  const justResolved = params.justResolved === "true";
   const insets = useSafeAreaInsets();
 
   const fetcher = useCallback(
@@ -135,6 +148,64 @@ export default function MarketDetailScreen() {
   // Only poll when market is OPEN (no point refreshing resolved markets)
   const shouldPoll = pollActive && data?.market?.status === "OPEN";
   useInterval(refetch, 15_000, shouldPoll);
+
+  // ─── Resolution payoff modal ───────────────────────────────────────────────
+  // Track the market status at the time data first loads for this screen mount.
+  // We only show the modal if:
+  //   a) The market was OPEN on first load and then transitioned to RESOLVED (live transition), OR
+  //   b) The screen was opened with justResolved=true nav param.
+  const statusOnFirstLoadRef = useRef<string | null>(null);
+  const resolutionModalShownRef = useRef(false);
+  const [resolutionModal, setResolutionModal] = useState<ResolutionModalData | null>(null);
+
+  useEffect(() => {
+    if (!data?.market) return;
+    const market = data.market;
+    const positions = data.userPositions ?? [];
+
+    // Capture status on first load
+    if (statusOnFirstLoadRef.current === null) {
+      statusOnFirstLoadRef.current = market.status;
+    }
+
+    // Determine whether we should fire the modal
+    const wasOpenOnMount = statusOnFirstLoadRef.current === "OPEN";
+    const isNowResolved = market.status === "RESOLVED";
+    const hasPosition = positions.length > 0;
+    const alreadyShown = resolutionModalShownRef.current;
+
+    if (!alreadyShown && hasPosition && isNowResolved && (wasOpenOnMount || justResolved)) {
+      resolutionModalShownRef.current = true;
+
+      const winningSide = market.winningSide ?? null;
+      const userSide = positions[0]?.side ?? null;
+      const won = winningSide != null && userSide != null && winningSide === userSide;
+      const totalCommitted = positions.reduce((sum, p) => sum + p.amount, 0);
+
+      // Estimate payout for a win using pool math
+      let payout = 0;
+      if (won && winningSide != null) {
+        const yesPool = market.yesPool ?? 0;
+        const noPool = market.noPool ?? 0;
+        payout = calcEstimatedReturn(
+          winningSide as "YES" | "NO",
+          totalCommitted,
+          winningSide === "YES" ? yesPool - totalCommitted : yesPool,
+          winningSide === "NO" ? noPool - totalCommitted : noPool
+        );
+      }
+
+      setResolutionModal({
+        won,
+        winningSide: winningSide ?? "RESOLVED",
+        userSide: userSide ?? "unknown",
+        payout,
+        marketTitle: market.title,
+        marketId: market.id,
+        positions,
+      });
+    }
+  }, [data, justResolved]);
 
   // Bottom sheet / betting modal state — lifted here so sticky bar can open it
   const [betSheetOpen, setBetSheetOpen] = useState(false);
@@ -188,6 +259,14 @@ export default function MarketDetailScreen() {
           onCloseBetSheet={() => setBetSheetOpen(false)}
           onRefresh={refetch}
           bottomInset={insets.bottom}
+        />
+      ) : null}
+
+      {/* Resolution payoff modal */}
+      {resolutionModal && data?.market ? (
+        <ResolutionPayoffModal
+          modalData={resolutionModal}
+          onClose={() => setResolutionModal(null)}
         />
       ) : null}
     </View>
@@ -712,6 +791,138 @@ function BettingSheet({
   );
 }
 
+// ─── ResolutionPayoffModal ────────────────────────────────────────────────────
+
+type ResolutionPayoffModalProps = {
+  modalData: ResolutionModalData;
+  onClose: () => void;
+};
+
+function ResolutionPayoffModal({ modalData, onClose }: ResolutionPayoffModalProps) {
+  const { won, winningSide, userSide, payout, marketTitle, marketId, positions } = modalData;
+  const totalCommitted = positions.reduce((sum, p) => sum + p.amount, 0);
+
+  // Entrance scale animation
+  const scaleAnim = useRef(new Animated.Value(0.8)).current;
+  const opacityAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.spring(scaleAnim, {
+        toValue: 1,
+        useNativeDriver: true,
+        tension: 100,
+        friction: 8,
+      }),
+      Animated.timing(opacityAnim, {
+        toValue: 1,
+        duration: 200,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [scaleAnim, opacityAnim]);
+
+  function handleClose() {
+    Animated.parallel([
+      Animated.timing(scaleAnim, {
+        toValue: 0.85,
+        duration: 150,
+        useNativeDriver: true,
+      }),
+      Animated.timing(opacityAnim, {
+        toValue: 0,
+        duration: 150,
+        useNativeDriver: true,
+      }),
+    ]).start(() => onClose());
+  }
+
+  return (
+    <Modal
+      visible
+      transparent
+      animationType="none"
+      onRequestClose={handleClose}
+    >
+      <Animated.View style={[styles.payoffBackdrop, { opacity: opacityAnim }]}>
+        <Animated.View
+          style={[
+            styles.payoffCard,
+            { transform: [{ scale: scaleAnim }] },
+          ]}
+        >
+          {/* Icon */}
+          <View
+            style={[
+              styles.payoffIconCircle,
+              won ? styles.payoffIconCircleWin : styles.payoffIconCircleLoss,
+            ]}
+          >
+            <Text style={styles.payoffIconText}>{won ? "✓" : "✕"}</Text>
+          </View>
+
+          {won ? (
+            <>
+              {/* Win content */}
+              <Text style={styles.payoffHeadlineWin}>You won!</Text>
+              <Text style={styles.payoffPointsDelta}>+{formatPoints(payout)} pts</Text>
+              <Text style={styles.payoffSubtext}>
+                Predicted {userSide} correctly on:
+              </Text>
+              <Text style={styles.payoffMarketTitle} numberOfLines={3}>
+                {marketTitle}
+              </Text>
+
+              <View style={styles.payoffButtonRow}>
+                <Pressable
+                  style={[styles.payoffBtn, styles.payoffBtnShare]}
+                  onPress={() => {
+                    void shareMarketResult({
+                      title: marketTitle,
+                      side: userSide,
+                      outcome: winningSide,
+                      amount: totalCommitted,
+                      marketId,
+                    });
+                  }}
+                >
+                  <Text style={styles.payoffBtnShareText}>Share Result</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.payoffBtn, styles.payoffBtnClose]}
+                  onPress={handleClose}
+                >
+                  <Text style={styles.payoffBtnCloseText}>Close</Text>
+                </Pressable>
+              </View>
+            </>
+          ) : (
+            <>
+              {/* Loss content */}
+              <Text style={styles.payoffHeadlineLoss}>
+                Market resolved {winningSide}
+              </Text>
+              <Text style={styles.payoffSubtext}>
+                You predicted {userSide}
+              </Text>
+              <Text style={styles.payoffMarketTitle} numberOfLines={3}>
+                {marketTitle}
+              </Text>
+
+              <Pressable
+                style={[styles.payoffBtn, styles.payoffBtnClose, styles.payoffBtnCloseFull]}
+                onPress={handleClose}
+              >
+                <Text style={styles.payoffBtnCloseText}>Close</Text>
+              </Pressable>
+            </>
+          )}
+        </Animated.View>
+      </Animated.View>
+    </Modal>
+  );
+}
+
 // ─── MarketBody ───────────────────────────────────────────────────────────────
 // Renders the scrollable content only — no betting panel; that's in the sticky bar.
 
@@ -1063,6 +1274,14 @@ function MarketBody({
         </View>
       ) : null}
 
+      {/* Resolution details — shown only for RESOLVED markets */}
+      {market.status === "RESOLVED" && market.resolution ? (
+        <ResolutionSection
+          resolution={market.resolution}
+          winningSide={market.winningSide ?? null}
+        />
+      ) : null}
+
       {/* Comments */}
       <CommentsSection marketId={marketId} isOpen={isOpen} session={session} />
 
@@ -1183,6 +1402,89 @@ function MarketBody({
   );
 }
 
+// ─── ResolutionSection ───────────────────────────────────────────────────────
+
+type ResolutionData = {
+  rationale: string;
+  resolvedBy: { username: string } | null;
+  createdAt: string;
+  wasOverturned: boolean;
+};
+
+function ResolutionSection({
+  resolution,
+  winningSide,
+}: {
+  resolution: ResolutionData;
+  winningSide: string | null;
+}) {
+  const outcomeLabel = winningSide ? `Resolved ${winningSide}` : "Resolved";
+  const isYes = winningSide === "YES";
+  const isNo = winningSide === "NO";
+
+  const resolvedDate = new Date(resolution.createdAt).toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+
+  return (
+    <>
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>Resolution</Text>
+
+        {/* Outcome badge row */}
+        <View style={styles.resolutionHeaderRow}>
+          <View
+            style={[
+              styles.resolutionOutcomeBadge,
+              isYes
+                ? styles.resolutionOutcomeBadgeYes
+                : isNo
+                ? styles.resolutionOutcomeBadgeNo
+                : styles.resolutionOutcomeBadgeNeutral,
+            ]}
+          >
+            <Text
+              style={[
+                styles.resolutionOutcomeBadgeText,
+                isYes
+                  ? styles.resolutionOutcomeBadgeTextYes
+                  : isNo
+                  ? styles.resolutionOutcomeBadgeTextNo
+                  : styles.resolutionOutcomeBadgeTextNeutral,
+              ]}
+            >
+              {outcomeLabel}
+            </Text>
+          </View>
+
+          {resolution.wasOverturned ? (
+            <View style={styles.overturnedBadge}>
+              <Text style={styles.overturnedBadgeText}>Overturned by admin</Text>
+            </View>
+          ) : null}
+        </View>
+
+        {/* Resolver identity and date */}
+        <Text style={styles.resolutionMeta}>
+          {resolution.resolvedBy
+            ? `Resolved by @${resolution.resolvedBy.username} on ${resolvedDate}`
+            : `Resolved on ${resolvedDate}`}
+        </Text>
+      </View>
+
+      {/* Rationale card — only if non-empty */}
+      {resolution.rationale.trim().length > 0 ? (
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>Resolution Rationale</Text>
+          <Text style={styles.subtitle}>{resolution.rationale}</Text>
+        </View>
+      ) : null}
+    </>
+  );
+}
+
 // ─── InfoItem ─────────────────────────────────────────────────────────────────
 
 function InfoItem({ label, value }: { label: string; value: string }) {
@@ -1222,6 +1524,7 @@ function CommentsSection({
   isOpen: boolean;
   session: Session | null;
 }) {
+  const router = useRouter();
   const fetcher = useCallback(
     () => mobileApi.getMarketComments(marketId),
     [marketId]
@@ -1293,7 +1596,12 @@ function CommentsSection({
             </View>
             <View style={styles.commentBody}>
               <View style={styles.commentMeta}>
-                <Text style={styles.commentUsername}>@{comment.user.username}</Text>
+                <Pressable
+                  onPress={() => router.push(`/user/${comment.user.username}`)}
+                  hitSlop={4}
+                >
+                  <Text style={styles.commentUsername}>@{comment.user.username}</Text>
+                </Pressable>
                 <Text style={styles.commentTime}>
                   {formatRelativeTime(comment.createdAt)}
                 </Text>
@@ -1846,6 +2154,68 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
 
+  // ── Resolution section (resolved market display) ──
+  resolutionHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  resolutionOutcomeBadge: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+  },
+  resolutionOutcomeBadgeYes: {
+    backgroundColor: "#DCFCE7",
+    borderWidth: 1,
+    borderColor: "#86EFAC",
+  },
+  resolutionOutcomeBadgeNo: {
+    backgroundColor: "#FEE2E2",
+    borderWidth: 1,
+    borderColor: "#FCA5A5",
+  },
+  resolutionOutcomeBadgeNeutral: {
+    backgroundColor: "#F3F4F6",
+    borderWidth: 1,
+    borderColor: "#D1D5DB",
+  },
+  resolutionOutcomeBadgeText: {
+    fontSize: 14,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+  },
+  resolutionOutcomeBadgeTextYes: {
+    color: "#15803D",
+  },
+  resolutionOutcomeBadgeTextNo: {
+    color: "#DC2626",
+  },
+  resolutionOutcomeBadgeTextNeutral: {
+    color: "#6B7280",
+  },
+  overturnedBadge: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    backgroundColor: "#FEF3C7",
+    borderWidth: 1,
+    borderColor: "#FCD34D",
+  },
+  overturnedBadgeText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#92400E",
+  },
+  resolutionMeta: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: colors.textMuted,
+    fontWeight: "500",
+  },
+
   // ── Host resolution panel ──
   resolveCard: {
     borderWidth: 1.5,
@@ -2222,5 +2592,115 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     color: "#15803D",
     textAlign: "center",
+  },
+
+  // ── Resolution payoff modal ──
+  payoffBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: spacing.xl,
+  },
+  payoffCard: {
+    backgroundColor: colors.surface,
+    borderRadius: 24,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: 36,
+    alignItems: "center",
+    width: "100%",
+    maxWidth: 360,
+    ...shadows.card,
+  },
+  payoffIconCircle: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: spacing.lg,
+  },
+  payoffIconCircleWin: {
+    backgroundColor: "#DCFCE7",
+    borderWidth: 3,
+    borderColor: "#16A34A",
+  },
+  payoffIconCircleLoss: {
+    backgroundColor: "#FEE2E2",
+    borderWidth: 3,
+    borderColor: "#DC2626",
+  },
+  payoffIconText: {
+    fontSize: 36,
+    fontWeight: "900",
+    lineHeight: 44,
+  },
+  payoffHeadlineWin: {
+    fontSize: 28,
+    fontWeight: "900",
+    color: "#16A34A",
+    textAlign: "center",
+    marginBottom: spacing.sm,
+  },
+  payoffHeadlineLoss: {
+    fontSize: 22,
+    fontWeight: "800",
+    color: "#DC2626",
+    textAlign: "center",
+    marginBottom: spacing.sm,
+  },
+  payoffPointsDelta: {
+    fontSize: 40,
+    fontWeight: "900",
+    color: "#16A34A",
+    textAlign: "center",
+    marginBottom: spacing.md,
+    letterSpacing: -1,
+  },
+  payoffSubtext: {
+    fontSize: 15,
+    color: colors.textMuted,
+    textAlign: "center",
+    marginBottom: spacing.xs,
+  },
+  payoffMarketTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: colors.text,
+    textAlign: "center",
+    marginBottom: spacing.xl,
+    lineHeight: 22,
+  },
+  payoffButtonRow: {
+    flexDirection: "row",
+    gap: spacing.md,
+    width: "100%",
+  },
+  payoffBtn: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: radius.md,
+    alignItems: "center",
+  },
+  payoffBtnShare: {
+    backgroundColor: colors.primary,
+  },
+  payoffBtnShareText: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#fff",
+  },
+  payoffBtnClose: {
+    backgroundColor: "#F3F4F6",
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  payoffBtnCloseFull: {
+    width: "100%",
+  },
+  payoffBtnCloseText: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: colors.text,
   },
 });

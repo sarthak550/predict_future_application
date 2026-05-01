@@ -143,7 +143,12 @@ export type ApiMarketDetailMarket = ApiMarketSummary & {
     memberships?: Array<{ userId: string }>;
   } | null;
   comments?: ApiMarketComment[];
-  resolution?: Record<string, unknown> | null;
+  resolution?: {
+    rationale: string;
+    resolvedBy: { username: string } | null;
+    createdAt: string;
+    wasOverturned: boolean;
+  } | null;
 };
 
 export type ApiMarketDetail = {
@@ -359,6 +364,8 @@ export type ApiVote = {
   createdAt: string;
 };
 
+export type ApiLeaderboardTimeWindow = "week" | "month" | "all";
+
 export type ApiLeaderboardEntry = {
   id: string;
   username: string;
@@ -370,6 +377,22 @@ export type ApiLeaderboardEntry = {
     totalPredictions?: number;
     totalNetPoints?: number;
   } | null;
+};
+
+export type ApiLeaderboardUserContext = {
+  rank: number;
+  score: number;
+  targetUsername: string | null;
+  targetRank: number | null;
+  targetScore: number | null;
+  gap: number | null;
+  gapUnit: "rep" | "accuracy";
+};
+
+export type ApiLeaderboardResponse = {
+  entries: ApiLeaderboardEntry[];
+  userRank: number | null;
+  userContext: ApiLeaderboardUserContext | null;
 };
 
 export type ApiBadge = {
@@ -516,5 +539,6 @@ export type ApiNotification = {
   isRead: boolean;
   createdAt: string;
   marketId?: string | null;
+  href?: string | null;
   type: "RESOLUTION" | "CHALLENGE" | "GENERAL" | string;
 };

@@ -44,6 +44,7 @@ async function upsertUser(input: {
       isSuspended: false,
       suspendedReason: null
     },
+    // Seed users intentionally skip the welcome notification — seeded notifications are added explicitly below.
     create: {
       email: input.email,
       username: input.username,

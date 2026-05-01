@@ -87,6 +87,7 @@ export default function TabsLayout() {
         />
         <Tabs.Screen name="leaderboard" options={{ href: null }} />
         <Tabs.Screen name="notifications" options={{ href: null }} />
+        <Tabs.Screen name="groups" options={{ href: null }} />
         <Tabs.Screen
           name="profile"
           options={{
@@ -97,7 +98,6 @@ export default function TabsLayout() {
             tabBarBadge: profileBadge,
           }}
         />
-        <Tabs.Screen name="groups" options={{ href: null }} />
       </Tabs>
     </>
   );

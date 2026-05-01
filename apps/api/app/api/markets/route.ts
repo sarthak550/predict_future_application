@@ -131,7 +131,7 @@ export async function POST(request: Request) {
       payload
     });
 
-    return NextResponse.json({ market: { id: market.id } }, { status: 201 });
+    return NextResponse.json({ market: { id: market.id, status: market.status } }, { status: 201 });
   } catch (error) {
     console.error(error);
     if (error instanceof Error) {

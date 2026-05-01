@@ -16,11 +16,9 @@ import { resetOnboarding } from "@/components/onboarding-walkthrough";
 import type {
   ApiCategoryStat,
   ApiGroupSummary,
-  ApiLeaderboardEntry,
   ApiMyProfile,
   ApiPnlSummary,
   ApiPositionSummary,
-  AppMarketCategory,
   AppMarketStatus,
 } from "@predict-future/types";
 import { formatPoints, formatRelativeTime } from "@predict-future/utils";
@@ -30,6 +28,10 @@ import { useApiQuery } from "@/hooks/useApiQuery";
 import { mobileApi } from "@/lib/api";
 import { useSession } from "@/providers/session-provider";
 import { useWatchlist, type WatchlistItem } from "@/providers/watchlist-provider";
+
+// ── Sub-tab types ─────────────────────────────────────────────────────────────
+
+type ProfileTab = "activity" | "stats" | "markets";
 
 // ── Badge config ─────────────────────────────────────────────────────────────
 
@@ -63,15 +65,67 @@ function getStatusMeta(status: string) {
   return STATUS_META[status] ?? { label: status, color: colors.textMuted, bg: colors.background };
 }
 
-// ── Category config ───────────────────────────────────────────────────────────
+// ── Activity item types ───────────────────────────────────────────────────────
 
-const LEADERBOARD_CATEGORIES: Array<{ label: string; value: AppMarketCategory | undefined }> = [
-  { label: "All",     value: undefined },
-  { label: "Sports",  value: "SPORTS" },
-  { label: "Tech",    value: "TECH" },
-  { label: "Business",value: "BUSINESS" },
-  { label: "General", value: "GENERAL" },
-];
+type VoteItem = {
+  id: string;
+  side: string | null;
+  numericValue: number | null;
+  createdAt: string;
+  market: {
+    id: string;
+    title: string;
+    status: AppMarketStatus;
+    yesCount: number;
+    noCount: number;
+  };
+};
+
+type ActivityItemKind = "position" | "vote";
+
+type ActivityItem = {
+  kind: ActivityItemKind;
+  id: string;
+  createdAt: string;
+  marketId: string;
+  marketTitle: string;
+  marketStatus: AppMarketStatus;
+  winningSide: string | null | undefined;
+  call: string;          // e.g. "YES", "NO", "42"
+  amount: number | null; // for positions
+};
+
+function buildBetItems(positions: ApiPositionSummary[]): ActivityItem[] {
+  return [...positions]
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .map((p) => ({
+      kind: "position" as ActivityItemKind,
+      id: p.id,
+      createdAt: p.createdAt,
+      marketId: p.market.id,
+      marketTitle: p.market.title,
+      marketStatus: p.market.status,
+      winningSide: p.market.winningSide,
+      call: p.side ?? "?",
+      amount: p.amount,
+    }));
+}
+
+function buildVoteItems(votes: VoteItem[]): ActivityItem[] {
+  return [...votes]
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .map((v) => ({
+      kind: "vote" as ActivityItemKind,
+      id: v.id,
+      createdAt: v.createdAt,
+      marketId: v.market.id,
+      marketTitle: v.market.title,
+      marketStatus: v.market.status,
+      winningSide: undefined,
+      call: v.side ?? (v.numericValue != null ? String(v.numericValue) : "?"),
+      amount: null,
+    }));
+}
 
 // ── Main screen ───────────────────────────────────────────────────────────────
 
@@ -80,6 +134,8 @@ export default function ProfileScreen() {
   const { session, status: sessionStatus, signOut } = useSession();
   const userId = session?.userId;
   const watchlist = useWatchlist();
+
+  const [activeTab, setActiveTab] = useState<ProfileTab>("activity");
 
   const fetcher = useCallback(
     () => mobileApi.getMyProfile(),
@@ -142,13 +198,27 @@ export default function ProfileScreen() {
   const user = data?.user;
   if (!user) return null;
 
-  const stats = user.stats;
   const groups = groupsData?.groups ?? [];
   const votes = data?.votes ?? [];
   const positions = user.positions ?? [];
   const badges = user.badges ?? [];
   const categoryStats = user.categoryStats ?? [];
   const pnl = data?.pnl ?? null;
+  const createdMarkets = user.createdMarkets ?? [];
+
+  // Determine "fully brand-new" state (all four empty simultaneously)
+  const isFullyBrandNew =
+    positions.length === 0 &&
+    votes.length === 0 &&
+    badges.length === 0 &&
+    (pnl === null || pnl.resolvedMarketCount === 0);
+
+  // Build separate activity arrays for Bets and Votes
+  const betItems = buildBetItems(positions);
+  const voteActivityItems = buildVoteItems(votes);
+
+  // Markets tab data availability
+  const hasMarkets = createdMarkets.length > 0 || watchlist.items.length > 0;
 
   function handleRefresh() {
     void refetch();
@@ -169,15 +239,15 @@ export default function ProfileScreen() {
     ]);
   }
 
+  // ── Performance Strip data ──
+  const netPnl = pnl?.netPnl ?? 0;
+  const balanceFormatted = formatPoints(user.wallet?.balance ?? 0);
+  const accuracyScore = user.accuracyScore ?? 0;
+  const hasAnyPredictions = positions.length > 0 || votes.length > 0;
+
   return (
-    <ScrollView
-      style={styles.screen}
-      contentContainerStyle={styles.scrollContent}
-      refreshControl={
-        <RefreshControl refreshing={loading} onRefresh={handleRefresh} tintColor={colors.accent} />
-      }
-    >
-      {/* ── Profile Header ── */}
+    <View style={styles.screen}>
+      {/* ── Sticky Profile Header (outside ScrollView — stays pinned while body scrolls) ── */}
       <View style={styles.headerCard}>
         <View style={styles.headerTop}>
           <View style={styles.avatarCircle}>
@@ -193,80 +263,840 @@ export default function ProfileScreen() {
                 <Tag label={`🔥 ${user.streak} streak`} accent />
               )}
             </View>
-          </View>
-        </View>
-
-        <View style={styles.statsRow}>
-          <Stat label="Points" value={(user.wallet?.balance ?? 0).toLocaleString()} />
-          <Stat label="Rep" value={(user.reputationScore ?? 0).toLocaleString()} />
-          <Stat label="Accuracy" value={`${(user.accuracyScore ?? 0).toFixed(0)}%`} />
-          <Stat label="Streak" value={(user.streak ?? 0) > 0 ? `🔥 ${user.streak}` : "–"} />
-        </View>
-
-        {/* Rep score bar */}
-        <View style={styles.repRow}>
-          <Text style={styles.repLabel}>{user.reputationScore.toLocaleString()} reputation</Text>
-          <View style={styles.repBarTrack}>
-            <View
-              style={[
-                styles.repBarFill,
-                { width: `${Math.min(100, (user.reputationScore / 5000) * 100)}%` },
-              ]}
-            />
+            {/* ── Performance Strip ── */}
+            {hasAnyPredictions ? (
+              <Text style={styles.performanceStrip}>
+                {balanceFormatted} pts{" · "}{positions.length} predictions{" · "}{accuracyScore.toFixed(0)}% accuracy{" · "}{netPnl > 0 ? "+" : ""}{netPnl} net
+              </Text>
+            ) : (
+              <Pressable
+                onPress={() => router.push("/(tabs)/feed")}
+                style={({ pressed }) => [styles.performanceStripCta, pressed && { opacity: 0.7 }]}
+              >
+                <Text style={styles.performanceStripCtaText}>Make your first prediction</Text>
+                <Ionicons name="arrow-forward" size={12} color="rgba(255,255,255,0.6)" />
+              </Pressable>
+            )}
           </View>
         </View>
       </View>
 
-      {/* ── P&L Summary ── */}
-      <PnlSummaryCard pnl={pnl} />
+      {/* ── Sub-tab bar (sticky, below header) ── */}
+      <SubTabBar activeTab={activeTab} onSelect={setActiveTab} />
 
-      {/* ── Badges ── */}
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Badges</Text>
-        {badges.length === 0 ? (
-          <Text style={styles.badgeEmptyText}>No badges yet — keep predicting!</Text>
+      {/* ── Scrollable body ── */}
+      <ScrollView
+        style={styles.scrollBody}
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={
+          <RefreshControl refreshing={loading} onRefresh={handleRefresh} tintColor={colors.accent} />
+        }
+      >
+        {/* ── Tab content ── */}
+        {activeTab === "activity" && (
+          <ActivityTabContent
+            betItems={betItems}
+            voteItems={voteActivityItems}
+            isFullyBrandNew={isFullyBrandNew}
+            router={router}
+          />
+        )}
+
+        {activeTab === "stats" && (
+          <StatsTabContent
+            pnl={pnl}
+            categoryStats={categoryStats}
+            hostStats={user.hostStats}
+            positions={positions}
+            accuracyScore={accuracyScore}
+            isFullyBrandNew={isFullyBrandNew}
+          />
+        )}
+
+        {activeTab === "markets" && (
+          <MarketsTabContent
+            createdMarkets={createdMarkets.slice(0, 6) as Array<{ id: string; title: string; status: AppMarketStatus }>}
+            watchlist={watchlist}
+            hasMarkets={hasMarkets}
+            router={router}
+          />
+        )}
+
+        {/* ────────────────────────────────────────────────────────────────────
+            Navigation items — ALWAYS VISIBLE regardless of selected sub-tab
+            (Leaderboard + Groups + Notifications/Logout footer)
+        ──────────────────────────────────────────────────────────────────── */}
+
+        {/* ── Social card: Leaderboard + Groups ── */}
+        <View style={styles.socialCard}>
+          <Pressable
+            style={({ pressed }) => [styles.socialRow, pressed && { opacity: 0.75 }]}
+            onPress={() => router.push("/(tabs)/leaderboard")}
+          >
+            <Ionicons name="trophy-outline" size={20} color={colors.accent} />
+            <Text style={styles.socialRowLabel}>Leaderboard</Text>
+            <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+          </Pressable>
+
+          <View style={styles.socialDivider} />
+
+          <Pressable
+            style={({ pressed }) => [styles.socialRow, pressed && { opacity: 0.75 }]}
+            onPress={() => router.push("/(tabs)/groups")}
+          >
+            <Ionicons name="people-outline" size={20} color={colors.accent} />
+            <Text style={styles.socialRowLabel}>Groups</Text>
+            {groups.length > 0 ? (
+              <View style={styles.socialRowBadge}>
+                <Text style={styles.socialRowBadgeText}>{groups.length}</Text>
+              </View>
+            ) : null}
+            <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+          </Pressable>
+
+          {groups.length > 0 ? (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.groupsChipShelf}
+            >
+              {groups.map((g) => (
+                <Pressable
+                  key={g.id}
+                  style={({ pressed }) => [styles.groupChip, pressed && { opacity: 0.75 }]}
+                  onPress={() => router.push(`/group/${g.id}`)}
+                >
+                  <Text style={styles.groupChipName} numberOfLines={1}>{g.name}</Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          ) : (
+            <Text style={styles.socialEmptyHint}>Tap to join with an invite code</Text>
+          )}
+        </View>
+
+        {/* ── Actions ── */}
+        <View style={styles.actionsCard}>
+          <ActionRow
+            icon="notifications-outline"
+            label="Notifications"
+            onPress={() => router.push("/notifications")}
+          />
+          <ActionRow
+            icon="help-circle-outline"
+            label="Replay Tutorial"
+            sublabel="Re-run the first-run walkthrough"
+            onPress={async () => {
+              await resetOnboarding();
+              Alert.alert(
+                "Tutorial reset",
+                "Re-open the app or switch tabs to see the walkthrough again.",
+                [{ text: "OK" }]
+              );
+            }}
+          />
+        </View>
+
+        {/* ── Log Out ── */}
+        <Pressable
+          style={({ pressed }) => [styles.logoutBtn, pressed && styles.logoutPressed]}
+          onPress={handleLogOut}
+        >
+          <Ionicons name="log-out-outline" size={18} color={colors.danger} />
+          <Text style={styles.logoutText}>Log Out</Text>
+        </Pressable>
+      </ScrollView>
+    </View>
+  );
+}
+
+// ── SubTabBar ─────────────────────────────────────────────────────────────────
+
+function SubTabBar({
+  activeTab,
+  onSelect,
+}: {
+  activeTab: ProfileTab;
+  onSelect: (tab: ProfileTab) => void;
+}) {
+  const tabs: Array<{ key: ProfileTab; label: string }> = [
+    { key: "activity", label: "Activity" },
+    { key: "stats",    label: "Stats" },
+    { key: "markets",  label: "Markets" },
+  ];
+
+  return (
+    <View style={subTabStyles.bar}>
+      <View style={subTabStyles.segmented}>
+        {tabs.map((t) => (
+          <Pressable
+            key={t.key}
+            style={({ pressed }) => [
+              subTabStyles.pill,
+              activeTab === t.key && subTabStyles.pillActive,
+              pressed && { opacity: 0.8 },
+            ]}
+            onPress={() => onSelect(t.key)}
+          >
+            <Text
+              style={[
+                subTabStyles.pillLabel,
+                activeTab === t.key && subTabStyles.pillLabelActive,
+              ]}
+            >
+              {t.label}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+const subTabStyles = StyleSheet.create({
+  bar: {
+    backgroundColor: colors.background,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  segmented: {
+    flexDirection: "row",
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: 3,
+    alignSelf: "stretch",
+  },
+  pill: {
+    flex: 1,
+    paddingVertical: 7,
+    alignItems: "center",
+    borderRadius: radius.md,
+  },
+  pillActive: {
+    backgroundColor: colors.text,
+  },
+  pillLabel: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: colors.textMuted,
+  },
+  pillLabelActive: {
+    color: "#FFFFFF",
+  },
+});
+
+// ── ActivityTabContent ────────────────────────────────────────────────────────
+
+const ACTIVITY_SECTION_MAX_HEIGHT = 320;
+const MARKETS_SECTION_MAX_HEIGHT = 320;
+
+type ActivitySubTab = "bets" | "votes";
+
+function ActivityTabContent({
+  betItems,
+  voteItems,
+  isFullyBrandNew,
+  router,
+}: {
+  betItems: ActivityItem[];
+  voteItems: ActivityItem[];
+  isFullyBrandNew: boolean;
+  router: ReturnType<typeof useRouter>;
+}) {
+  const [activitySubTab, setActivitySubTab] = useState<ActivitySubTab>("bets");
+
+  // For truly brand-new users (all four categories empty), show GetStartedCard
+  // and skip the pill toggle entirely.
+  if (isFullyBrandNew) {
+    return <GetStartedCard router={router} />;
+  }
+
+  const subTabs: Array<{ key: ActivitySubTab; label: string }> = [
+    { key: "bets",  label: "Bets" },
+    { key: "votes", label: "Votes" },
+  ];
+
+  return (
+    <View style={styles.card}>
+      {/* ── Pill toggle: Bets | Votes ── */}
+      <View style={activityTabStyles.subPillBar}>
+        {subTabs.map((t) => (
+          <Pressable
+            key={t.key}
+            style={({ pressed }) => [
+              activityTabStyles.subPill,
+              activitySubTab === t.key && activityTabStyles.subPillActive,
+              pressed && { opacity: 0.8 },
+            ]}
+            onPress={() => setActivitySubTab(t.key)}
+          >
+            <Text
+              style={[
+                activityTabStyles.subPillLabel,
+                activitySubTab === t.key && activityTabStyles.subPillLabelActive,
+              ]}
+            >
+              {t.label}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+
+      {/* ── Bets list ── */}
+      {activitySubTab === "bets" && (
+        betItems.length === 0 ? (
+          <Text style={activityTabStyles.sectionEmptyText}>
+            No bets yet — head to Markets to stake your first prediction.
+          </Text>
         ) : (
           <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.badgeShelf}
+            style={{ maxHeight: ACTIVITY_SECTION_MAX_HEIGHT }}
+            nestedScrollEnabled={true}
+            showsVerticalScrollIndicator={betItems.length > 4}
           >
-            {badges.map((ub) => {
-              const meta = getBadgeMeta(ub.badge.name);
-              return (
-                <View key={ub.badge.id} style={[styles.badgePill, { backgroundColor: meta.bg }]}>
-                  <Text style={styles.badgePillEmoji}>{meta.emoji}</Text>
-                  <Text style={[styles.badgePillLabel, { color: meta.color }]}>{ub.badge.name}</Text>
-                </View>
-              );
-            })}
+            {betItems.map((item) => (
+              <ActivityRow key={`pos-${item.id}`} item={item} router={router} />
+            ))}
           </ScrollView>
-        )}
+        )
+      )}
+
+      {/* ── Votes list ── */}
+      {activitySubTab === "votes" && (
+        voteItems.length === 0 ? (
+          <Text style={activityTabStyles.sectionEmptyText}>
+            No poll votes yet — vote on news cards in the Feed.
+          </Text>
+        ) : (
+          <ScrollView
+            style={{ maxHeight: ACTIVITY_SECTION_MAX_HEIGHT }}
+            nestedScrollEnabled={true}
+            showsVerticalScrollIndicator={voteItems.length > 4}
+          >
+            {voteItems.map((item) => (
+              <ActivityRow key={`vote-${item.id}`} item={item} router={router} />
+            ))}
+          </ScrollView>
+        )
+      )}
+    </View>
+  );
+}
+
+const activityTabStyles = StyleSheet.create({
+  // ── Pill toggle (subordinate to main SubTabBar) ──
+  subPillBar: {
+    flexDirection: "row",
+    backgroundColor: colors.background,
+    borderRadius: radius.md,
+    padding: 2,
+    alignSelf: "flex-start",
+    marginBottom: spacing.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+  },
+  subPill: {
+    paddingVertical: 5,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.sm,
+  },
+  subPillActive: {
+    backgroundColor: colors.text,
+  },
+  subPillLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: colors.textMuted,
+  },
+  subPillLabelActive: {
+    color: "#FFFFFF",
+  },
+  sectionEmptyText: {
+    fontSize: 13,
+    color: colors.textMuted,
+    lineHeight: 19,
+    paddingBottom: spacing.sm,
+  },
+});
+
+function ActivityRow({
+  item,
+  router,
+}: {
+  item: ActivityItem;
+  router: ReturnType<typeof useRouter>;
+}) {
+  const callColor = item.call === "YES" ? "#059669" : item.call === "NO" ? "#DC2626" : colors.text;
+
+  function outcomeIcon(): React.ReactNode {
+    if (item.kind === "vote") {
+      // Votes don't have a winningSide tracked in the same way — show clock unless resolved
+      const sm = getStatusMeta(item.marketStatus);
+      if (item.marketStatus === "RESOLVED") {
+        return <Ionicons name="checkmark-circle-outline" size={16} color={colors.textMuted} />;
+      }
+      return <Ionicons name="time-outline" size={16} color={sm.color} />;
+    }
+    // Position
+    if (item.marketStatus !== "RESOLVED" || item.winningSide == null) {
+      return <Ionicons name="time-outline" size={16} color="#94A3B8" />;
+    }
+    if (item.call === item.winningSide) {
+      return <Ionicons name="checkmark-circle" size={16} color="#059669" />;
+    }
+    return <Ionicons name="close-circle" size={16} color="#DC2626" />;
+  }
+
+  return (
+    <Pressable
+      style={({ pressed }) => [styles.trackRow, pressed && styles.trackRowPressed]}
+      onPress={() => router.push(`/market/${item.marketId}`)}
+    >
+      <View style={styles.trackRowLeft}>
+        <Text style={styles.trackTitle} numberOfLines={2}>
+          {item.marketTitle}
+        </Text>
+        <View style={styles.trackMeta}>
+          {/* Kind badge */}
+          <View style={[styles.statusPill, { backgroundColor: item.kind === "position" ? "#EFF6FF" : "#F5F3FF" }]}>
+            <Text style={[styles.statusPillText, { color: item.kind === "position" ? "#2563EB" : "#7C3AED" }]}>
+              {item.kind === "position" ? "Bet" : "Vote"}
+            </Text>
+          </View>
+          {/* Call */}
+          <Text style={styles.trackVote}>
+            <Text style={{ fontWeight: "700", color: callColor }}>{item.call}</Text>
+          </Text>
+          {/* Amount (positions only) */}
+          {item.amount != null && item.amount > 0 && (
+            <Text style={styles.betAmountLabel}>{item.amount.toLocaleString()} pts</Text>
+          )}
+          {/* Relative time */}
+          <Text style={styles.trackCrowd}>{formatRelativeTime(item.createdAt)}</Text>
+        </View>
+      </View>
+      {outcomeIcon()}
+    </Pressable>
+  );
+}
+
+// ── StatsTabContent ───────────────────────────────────────────────────────────
+
+function StatsTabContent({
+  pnl,
+  categoryStats,
+  hostStats,
+  positions,
+  accuracyScore,
+  isFullyBrandNew,
+}: {
+  pnl: ApiPnlSummary | null;
+  categoryStats: ApiCategoryStat[];
+  hostStats: {
+    hostTrustScore: number;
+    hostedMarketsCount: number;
+    cleanStreakCount: number;
+  } | null | undefined;
+  positions: ApiPositionSummary[];
+  accuracyScore: number;
+  isFullyBrandNew: boolean;
+}) {
+  // Fully brand-new users: suppress the card — GetStartedCard on Activity tab
+  // already handles the empty state. Show a simple message instead.
+  if (isFullyBrandNew) {
+    return (
+      <View style={tabEmptyStyles.container}>
+        <Ionicons name="bar-chart-outline" size={28} color={colors.textMuted} />
+        <Text style={tabEmptyStyles.text}>Complete your first prediction to unlock stats.</Text>
+      </View>
+    );
+  }
+
+  return (
+    <PerformanceCard
+      pnl={pnl}
+      categoryStats={categoryStats}
+      hostStats={hostStats}
+      positions={positions}
+      accuracyScore={accuracyScore}
+    />
+  );
+}
+
+// ── PerformanceCard ───────────────────────────────────────────────────────────
+//
+// Consolidated single card that replaces the three separate cards
+// (PnlSummaryCard + CategoryBreakdownSection + Host Stats card) on the Stats tab.
+//
+// Predictions count: uses positions.length (bets placed), not positions + votes.
+// Rationale: positions represent genuine financial commitment with a point stake;
+// votes are lightweight poll opinions. The "Predictions" pill on this card
+// specifically tracks staked predictions, which is the meaningful engagement
+// signal for the performance view.
+//
+// Win Rate: computed from positions where market.status === 'RESOLVED'.
+// wonCount  = positions where market.winningSide === position.side
+// resolvedCount = positions where market.status === 'RESOLVED'
+// winRate = (wonCount / resolvedCount) * 100 if resolvedCount > 0 else "—"
+
+function PerformanceCard({
+  pnl,
+  categoryStats,
+  hostStats,
+  positions,
+  accuracyScore,
+}: {
+  pnl: ApiPnlSummary | null;
+  categoryStats: ApiCategoryStat[];
+  hostStats: {
+    hostTrustScore: number;
+    hostedMarketsCount: number;
+    cleanStreakCount: number;
+  } | null | undefined;
+  positions: ApiPositionSummary[];
+  accuracyScore: number;
+}) {
+  const [catExpanded, setCatExpanded] = useState(false);
+  const [hostExpanded, setHostExpanded] = useState(false);
+
+  // ── Derived stats ──
+  const hasResolvedPnl = pnl !== null && pnl.resolvedMarketCount > 0;
+  const netPnl = pnl?.netPnl ?? 0;
+
+  // Win rate from positions array
+  const resolvedPositions = positions.filter((p) => p.market.status === "RESOLVED");
+  const wonPositions = resolvedPositions.filter(
+    (p) => p.market.winningSide != null && p.market.winningSide === p.side
+  );
+  const winRateStr =
+    resolvedPositions.length > 0
+      ? `${((wonPositions.length / resolvedPositions.length) * 100).toFixed(0)}%`
+      : "—";
+
+  // Top category: highest accuracyScore from categoryStats
+  const topCategory =
+    categoryStats.length > 0
+      ? [...categoryStats].sort((a, b) => b.accuracyScore - a.accuracyScore)[0].category
+      : "—";
+
+  // Top 3 categories for the breakdown bars
+  const top3Categories = [...categoryStats]
+    .sort((a, b) => b.accuracyScore - a.accuracyScore)
+    .slice(0, 3);
+
+  // ── Skeleton: has activity but no resolved predictions ──
+  if (!hasResolvedPnl) {
+    return <PerformanceSkeletonCard />;
+  }
+
+  // ── P&L color ──
+  const pnlColor =
+    netPnl > 0 ? "#059669" : netPnl < 0 ? "#DC2626" : colors.textMuted;
+
+  return (
+    <View style={perfStyles.card}>
+      {/* Row 1: Dominant net P&L */}
+      <View style={perfStyles.pnlRow}>
+        <Text style={[perfStyles.pnlNumber, { color: pnlColor }]}>
+          {netPnl > 0 ? "+" : ""}{netPnl.toLocaleString()}
+        </Text>
+        <Text style={perfStyles.pnlSubtext}>Net P&L across resolved predictions</Text>
       </View>
 
-      {/* ── Recent Positions ── */}
-      <RecentPositionsSection positions={positions.slice(0, 10)} />
+      {/* Divider */}
+      <View style={perfStyles.divider} />
 
-      {/* ── Category Breakdown ── */}
+      {/* Row 2: 4-stat pill grid (2×2) */}
+      <View style={perfStyles.pillGrid}>
+        <StatPill label="Accuracy" value={`${accuracyScore.toFixed(0)}%`} />
+        <StatPill label="Predictions" value={String(positions.length)} />
+        <StatPill label="Win Rate" value={winRateStr} />
+        <StatPill label="Top Category" value={topCategory} />
+      </View>
+
+      {/* Row 3: Category Breakdown (collapsible) */}
       {categoryStats.length > 0 && (
-        <CategoryBreakdownSection categoryStats={categoryStats} />
+        <>
+          <View style={perfStyles.divider} />
+          <Pressable
+            style={({ pressed }) => [perfStyles.collapseHeader, pressed && { opacity: 0.7 }]}
+            onPress={() => setCatExpanded((v) => !v)}
+          >
+            <Text style={perfStyles.collapseLabel}>Category Breakdown</Text>
+            <View style={perfStyles.collapseRight}>
+              {!catExpanded && (
+                <Text style={perfStyles.collapseTeaser}>
+                  {categoryStats.length} {categoryStats.length === 1 ? "category" : "categories"}
+                </Text>
+              )}
+              <Ionicons
+                name={catExpanded ? "chevron-up" : "chevron-down"}
+                size={16}
+                color={colors.textMuted}
+              />
+            </View>
+          </Pressable>
+          {catExpanded && (
+            <View style={perfStyles.collapseBody}>
+              {top3Categories.map((cs) => (
+                <View key={cs.category} style={styles.catBreakRow}>
+                  <Text style={styles.catBreakLabel}>{cs.category}</Text>
+                  <View style={styles.catBreakBarTrack}>
+                    <View
+                      style={[
+                        styles.catBreakBarFill,
+                        { width: `${Math.min(100, cs.accuracyScore)}%` },
+                      ]}
+                    />
+                  </View>
+                  <Text style={styles.catBreakPct}>{cs.accuracyScore.toFixed(0)}%</Text>
+                </View>
+              ))}
+            </View>
+          )}
+        </>
       )}
 
-      {/* ── My Markets ── */}
-      {(user.createdMarkets ?? []).length > 0 && (
-        <MyMarketsSection createdMarkets={(user.createdMarkets ?? []).slice(0, 6)} />
+      {/* Row 4: Host Stats (only when present, collapsible) */}
+      {hostStats != null && (
+        <>
+          <View style={perfStyles.divider} />
+          <Pressable
+            style={({ pressed }) => [perfStyles.collapseHeader, pressed && { opacity: 0.7 }]}
+            onPress={() => setHostExpanded((v) => !v)}
+          >
+            <Text style={perfStyles.collapseLabel}>Host Stats</Text>
+            <Ionicons
+              name={hostExpanded ? "chevron-up" : "chevron-down"}
+              size={16}
+              color={colors.textMuted}
+            />
+          </Pressable>
+          {hostExpanded && (
+            <View style={[perfStyles.collapseBody, styles.hostStatsRow]}>
+              <HostStat label="Trust Score" value={String(hostStats.hostTrustScore)} />
+              <HostStat label="Markets" value={String(hostStats.hostedMarketsCount)} />
+              <HostStat label="Clean Streak" value={String(hostStats.cleanStreakCount)} />
+            </View>
+          )}
+        </>
+      )}
+    </View>
+  );
+}
+
+// ── StatPill ─────────────────────────────────────────────────────────────────
+
+function StatPill({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={perfStyles.pill}>
+      <Text style={perfStyles.pillValue} numberOfLines={1} adjustsFontSizeToFit>
+        {value}
+      </Text>
+      <Text style={perfStyles.pillLabel}>{label}</Text>
+    </View>
+  );
+}
+
+// ── PerformanceSkeletonCard ───────────────────────────────────────────────────
+// Shown when user has activity (positions or votes) but no resolved predictions yet.
+// Uses muted-grey placeholder blocks to show the layout shape, plus a CTA.
+
+function PerformanceSkeletonCard() {
+  return (
+    <View style={perfStyles.card}>
+      {/* Skeleton: dominant number area */}
+      <View style={perfStyles.skeletonPnlRow}>
+        <View style={perfStyles.skeletonPnlBlock} />
+        <View style={perfStyles.skeletonSubtextBlock} />
+      </View>
+
+      <View style={perfStyles.divider} />
+
+      {/* Skeleton: 4 pill placeholders */}
+      <View style={perfStyles.pillGrid}>
+        {[0, 1, 2, 3].map((i) => (
+          <View key={i} style={perfStyles.skeletonPill} />
+        ))}
+      </View>
+
+      {/* CTA */}
+      <View style={perfStyles.divider} />
+      <View style={perfStyles.skeletonCta}>
+        <Ionicons name="lock-closed-outline" size={16} color={colors.textMuted} />
+        <Text style={perfStyles.skeletonCtaText}>
+          Make 3 predictions to unlock your stats
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+const perfStyles = StyleSheet.create({
+  card: {
+    marginTop: spacing.md,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    overflow: "hidden",
+  },
+
+  // ── P&L Row ──
+  pnlRow: {
+    padding: spacing.lg,
+    alignItems: "center",
+  },
+  pnlNumber: {
+    fontSize: 36,
+    fontWeight: "800",
+    lineHeight: 42,
+    letterSpacing: -0.5,
+  },
+  pnlSubtext: {
+    marginTop: 4,
+    fontSize: 12,
+    color: colors.textMuted,
+    textAlign: "center",
+  },
+
+  // ── Divider ──
+  divider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.border,
+    marginHorizontal: spacing.lg,
+  },
+
+  // ── Stat pill grid ──
+  pillGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    padding: spacing.md,
+    gap: spacing.sm,
+  },
+  pill: {
+    flex: 1,
+    minWidth: "44%",
+    alignItems: "center",
+    backgroundColor: colors.background,
+    borderRadius: radius.md,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.sm,
+  },
+  pillValue: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: colors.text,
+    textAlign: "center",
+  },
+  pillLabel: {
+    marginTop: 3,
+    fontSize: 10,
+    fontWeight: "600",
+    color: colors.textMuted,
+    textAlign: "center",
+  },
+
+  // ── Collapsible header ──
+  collapseHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+  },
+  collapseLabel: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: colors.text,
+  },
+  collapseRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  collapseTeaser: {
+    fontSize: 12,
+    color: colors.textMuted,
+  },
+  collapseBody: {
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.md,
+  },
+
+  // ── Skeleton ──
+  skeletonPnlRow: {
+    padding: spacing.lg,
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  skeletonPnlBlock: {
+    width: 120,
+    height: 36,
+    borderRadius: radius.md,
+    backgroundColor: colors.border,
+  },
+  skeletonSubtextBlock: {
+    width: 200,
+    height: 12,
+    borderRadius: radius.sm,
+    backgroundColor: colors.border,
+    opacity: 0.6,
+  },
+  skeletonPill: {
+    flex: 1,
+    minWidth: "44%",
+    height: 60,
+    borderRadius: radius.md,
+    backgroundColor: colors.border,
+    opacity: 0.5,
+  },
+  skeletonCta: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+  },
+  skeletonCtaText: {
+    fontSize: 13,
+    color: colors.textMuted,
+    fontWeight: "600",
+    textAlign: "center",
+  },
+});
+
+// ── MarketsTabContent ─────────────────────────────────────────────────────────
+
+function MarketsTabContent({
+  createdMarkets,
+  watchlist,
+  hasMarkets,
+  router,
+}: {
+  createdMarkets: Array<{ id: string; title: string; status: AppMarketStatus }>;
+  watchlist: ReturnType<typeof useWatchlist>;
+  hasMarkets: boolean;
+  router: ReturnType<typeof useRouter>;
+}) {
+  if (!hasMarkets) {
+    return (
+      <View style={tabEmptyStyles.container}>
+        <Ionicons name="bookmark-outline" size={28} color={colors.textMuted} />
+        <Text style={tabEmptyStyles.text}>Markets you create or watch will appear here.</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View>
+      {/* My Markets */}
+      {createdMarkets.length > 0 && (
+        <MyMarketsSection createdMarkets={createdMarkets} />
       )}
 
-      {/* ── My Predictions (Polls) ── */}
-      {votes.length > 0 && (
-        <PredictionsSection
-          votes={votes}
-          positions={[]}
-          categoryStats={[]}
-        />
-      )}
-
-      {/* ── Watchlist ── */}
+      {/* Watchlist */}
       {watchlist.items.length > 0 && (
         <View style={styles.card}>
           <View style={styles.sectionTitleRow}>
@@ -275,442 +1105,125 @@ export default function ProfileScreen() {
               <Text style={styles.clearBtn}>Clear all</Text>
             </Pressable>
           </View>
-          {watchlist.items.map((item) => (
-            <WatchlistRow
-              key={item.id}
-              item={item}
-              onRemove={() => watchlist.remove(item.id)}
-              onPress={() => router.push(`/market/${item.id}`)}
-            />
-          ))}
+          <ScrollView
+            style={{ maxHeight: MARKETS_SECTION_MAX_HEIGHT }}
+            nestedScrollEnabled={true}
+            showsVerticalScrollIndicator={watchlist.items.length > 4}
+          >
+            {watchlist.items.map((item) => (
+              <WatchlistRow
+                key={item.id}
+                item={item}
+                onRemove={() => watchlist.remove(item.id)}
+                onPress={() => router.push(`/market/${item.id}`)}
+              />
+            ))}
+          </ScrollView>
         </View>
-      )}
-
-      {/* ── Leaderboard ── */}
-      <LeaderboardSection currentUserId={userId} />
-
-      {/* ── Host Trust ── */}
-      {user.hostStats && (
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Host Stats</Text>
-          <View style={styles.hostStatsRow}>
-            <HostStat label="Trust Score" value={String(user.hostStats.hostTrustScore)} />
-            <HostStat label="Markets" value={String(user.hostStats.hostedMarketsCount)} />
-            <HostStat label="Clean Streak" value={String(user.hostStats.cleanStreakCount)} />
-          </View>
-        </View>
-      )}
-
-      {/* ── Groups ── */}
-      {groups.length > 0 && <GroupsAccordion groups={groups} />}
-
-      {/* ── Actions ── */}
-      <View style={styles.actionsCard}>
-        <ActionRow
-          icon="notifications-outline"
-          label="Notifications"
-          onPress={() => router.push("/notifications")}
-        />
-        <ActionRow
-          icon="help-circle-outline"
-          label="Replay Tutorial"
-          sublabel="Re-run the first-run walkthrough"
-          onPress={async () => {
-            await resetOnboarding();
-            Alert.alert(
-              "Tutorial reset",
-              "Re-open the app or switch tabs to see the walkthrough again.",
-              [{ text: "OK" }]
-            );
-          }}
-        />
-      </View>
-
-      {/* ── Log Out ── */}
-      <Pressable
-        style={({ pressed }) => [styles.logoutBtn, pressed && styles.logoutPressed]}
-        onPress={handleLogOut}
-      >
-        <Ionicons name="log-out-outline" size={18} color={colors.danger} />
-        <Text style={styles.logoutText}>Log Out</Text>
-      </Pressable>
-    </ScrollView>
-  );
-}
-
-// ── PnlSummaryCard ────────────────────────────────────────────────────────────
-
-function PnlSummaryCard({ pnl }: { pnl: ApiPnlSummary | null }) {
-  return (
-    <View style={[styles.card, pnlStyles.pnlCard]}>
-      <Text style={styles.sectionTitle}>P&L Summary</Text>
-      {!pnl || pnl.resolvedMarketCount === 0 ? (
-        <View style={pnlStyles.emptyState}>
-          <Text style={pnlStyles.emptyText}>No resolved predictions yet.</Text>
-          <Text style={pnlStyles.emptyHint}>Start predicting to see your P&L.</Text>
-        </View>
-      ) : (
-        <>
-          {/* Net P&L — prominent */}
-          <View style={pnlStyles.netPnlRow}>
-            <Text style={pnlStyles.netPnlLabel}>Net P&L</Text>
-            <Text
-              style={[
-                pnlStyles.netPnlValue,
-                pnl.netPnl >= 0 ? pnlStyles.pnlPositive : pnlStyles.pnlNegative,
-              ]}
-            >
-              {pnl.netPnl >= 0 ? "+" : ""}{formatPoints(pnl.netPnl)} pts
-            </Text>
-          </View>
-
-          {/* Stats grid */}
-          <View style={pnlStyles.statsGrid}>
-            <PnlStat label="Staked" value={`${formatPoints(pnl.totalStaked)} pts`} />
-            <PnlStat label="Returned" value={`${formatPoints(pnl.totalReturned)} pts`} />
-            <PnlStat label="Markets" value={String(pnl.resolvedMarketCount)} />
-          </View>
-
-          <Text style={pnlStyles.updatedAt}>
-            Updated {formatRelativeTime(pnl.lastUpdatedAt)}
-          </Text>
-        </>
       )}
     </View>
   );
 }
 
-function PnlStat({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={pnlStyles.statBox}>
-      <Text style={pnlStyles.statValue}>{value}</Text>
-      <Text style={pnlStyles.statLabel}>{label}</Text>
-    </View>
-  );
-}
+// ── Tab empty state ───────────────────────────────────────────────────────────
 
-const pnlStyles = StyleSheet.create({
-  pnlCard: {
-    borderLeftWidth: 3,
-    borderLeftColor: colors.accent,
-  },
-  emptyState: { paddingVertical: spacing.md, alignItems: "center" },
-  emptyText: { fontSize: 14, fontWeight: "600", color: colors.textMuted },
-  emptyHint: { fontSize: 12, color: colors.textMuted, marginTop: 4 },
-  netPnlRow: {
-    flexDirection: "row",
+const tabEmptyStyles = StyleSheet.create({
+  container: {
+    marginTop: spacing.xl,
     alignItems: "center",
-    justifyContent: "space-between",
-    marginTop: spacing.md,
-    paddingBottom: spacing.md,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-  },
-  netPnlLabel: { fontSize: 13, fontWeight: "600", color: colors.textMuted },
-  netPnlValue: { fontSize: 28, fontWeight: "800" },
-  pnlPositive: { color: "#059669" },
-  pnlNegative: { color: "#DC2626" },
-  statsGrid: {
-    flexDirection: "row",
-    marginTop: spacing.md,
+    paddingVertical: spacing.xl,
     gap: spacing.sm,
   },
-  statBox: {
-    flex: 1,
-    alignItems: "center",
-    padding: spacing.sm,
-    backgroundColor: colors.background,
-    borderRadius: radius.md,
-  },
-  statValue: { fontSize: 14, fontWeight: "700", color: colors.text },
-  statLabel: { fontSize: 10, color: colors.textMuted, marginTop: 2 },
-  updatedAt: {
-    fontSize: 10,
+  text: {
+    fontSize: 14,
+    fontWeight: "600",
     color: colors.textMuted,
-    marginTop: spacing.sm,
-    textAlign: "right",
+    textAlign: "center",
+    maxWidth: 260,
+  },
+  hint: {
+    fontSize: 12,
+    color: colors.textMuted,
+    textAlign: "center",
+    maxWidth: 260,
   },
 });
 
-// ── PredictionsSection ────────────────────────────────────────────────────────
+// ── GetStartedCard ────────────────────────────────────────────────────────────
 
-type VoteItem = {
-  id: string;
-  side: string | null;
-  numericValue: number | null;
-  createdAt: string;
-  market: {
-    id: string;
-    title: string;
-    status: AppMarketStatus;
-    yesCount: number;
-    noCount: number;
-  };
-};
-
-function PredictionsSection({
-  votes,
-  positions,
-  categoryStats,
-}: {
-  votes: VoteItem[];
-  positions: ApiPositionSummary[];
-  categoryStats: ApiCategoryStat[];
-}) {
-  const router = useRouter();
-  const [tab, setTab] = useState<"bets" | "polls">("bets");
-  const hasBets = positions.length > 0;
-  const hasPolls = votes.length > 0;
+function GetStartedCard({ router }: { router: ReturnType<typeof useRouter> }) {
+  const rows: Array<{
+    icon: keyof typeof Ionicons.glyphMap;
+    label: string;
+    route: string;
+  }> = [
+    { icon: "flash-outline",       label: "Make your first prediction",   route: "/(tabs)/feed" },
+    { icon: "stats-chart-outline", label: "Explore markets to bet on",     route: "/(tabs)/markets" },
+    { icon: "people-outline",      label: "Join a group with an invite code", route: "/(tabs)/groups" },
+  ];
 
   return (
-    <View style={styles.card}>
-      {/* Header + tabs */}
-      <View style={styles.predHeader}>
-        <Text style={styles.sectionTitle}>My Predictions</Text>
-        <View style={styles.predTabs}>
+    <View style={getStartedStyles.card}>
+      <Text style={getStartedStyles.heading}>Welcome to Predict Future</Text>
+      <Text style={getStartedStyles.subtitle}>
+        Your activity and predictions will appear here
+      </Text>
+      <View style={getStartedStyles.rowList}>
+        {rows.map((row) => (
           <Pressable
-            style={[styles.predTab, tab === "bets" && styles.predTabActive]}
-            onPress={() => setTab("bets")}
+            key={row.route}
+            style={({ pressed }) => [getStartedStyles.row, pressed && { opacity: 0.7 }]}
+            onPress={() => router.push(row.route as Parameters<typeof router.push>[0])}
           >
-            <Text style={[styles.predTabText, tab === "bets" && styles.predTabTextActive]}>
-              Bets {positions.length > 0 ? `(${positions.length})` : ""}
-            </Text>
+            <Ionicons name={row.icon} size={20} color={colors.accent} />
+            <Text style={getStartedStyles.rowLabel}>{row.label}</Text>
+            <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
           </Pressable>
-          <Pressable
-            style={[styles.predTab, tab === "polls" && styles.predTabActive]}
-            onPress={() => setTab("polls")}
-          >
-            <Text style={[styles.predTabText, tab === "polls" && styles.predTabTextActive]}>
-              Polls {votes.length > 0 ? `(${votes.length})` : ""}
-            </Text>
-          </Pressable>
-        </View>
+        ))}
       </View>
-
-      {/* Category accuracy — polls tab only */}
-      {tab === "polls" && categoryStats.length > 0 && (
-        <View style={styles.categoryStatsRow}>
-          {categoryStats.slice(0, 4).map((cs) => (
-            <View key={cs.category} style={styles.catStatBox}>
-              <Text style={styles.catStatValue}>{cs.accuracyScore.toFixed(0)}%</Text>
-              <Text style={styles.catStatLabel}>{cs.category.slice(0, 4)}</Text>
-            </View>
-          ))}
-        </View>
-      )}
-
-      {/* Fixed-height scrollable list */}
-      <ScrollView
-        style={styles.predScroll}
-        nestedScrollEnabled
-        showsVerticalScrollIndicator={false}
-      >
-        {tab === "bets" ? (
-          hasBets ? (
-            positions.map((pos) => {
-              const sm = getStatusMeta(pos.market.status);
-              return (
-                <Pressable
-                  key={pos.id}
-                  style={({ pressed }) => [styles.trackRow, pressed && styles.trackRowPressed]}
-                  onPress={() => router.push(`/market/${pos.market.id}`)}
-                >
-                  <View style={styles.trackRowLeft}>
-                    <Text style={styles.trackTitle}>
-                      {pos.market.title}
-                    </Text>
-                    <View style={styles.trackMeta}>
-                      <View style={[styles.statusPill, { backgroundColor: sm.bg }]}>
-                        <Text style={[styles.statusPillText, { color: sm.color }]}>
-                          {sm.label}
-                        </Text>
-                      </View>
-                      {pos.side != null && (
-                        <View
-                          style={[
-                            styles.sidePillSmall,
-                            pos.side === "YES" ? styles.sideYes : styles.sideNo,
-                          ]}
-                        >
-                          <Text
-                            style={[
-                              styles.sidePillSmallText,
-                              { color: pos.side === "YES" ? "#059669" : "#DC2626" },
-                            ]}
-                          >
-                            {pos.side}
-                          </Text>
-                        </View>
-                      )}
-                    </View>
-                  </View>
-                  <View style={styles.betAmountWrap}>
-                    <Text style={styles.betAmount}>{pos.amount.toLocaleString()}</Text>
-                    <Text style={styles.betAmountLabel}>pts staked</Text>
-                  </View>
-                </Pressable>
-              );
-            })
-          ) : (
-            <View style={styles.predEmpty}>
-              <Text style={styles.predEmptyText}>No bets yet.</Text>
-              <Text style={styles.predEmptyHint}>
-                Head to the Markets tab to stake points.
-              </Text>
-            </View>
-          )
-        ) : hasPolls ? (
-          votes.map((vote) => {
-            const sm = getStatusMeta(vote.market.status);
-            const total = vote.market.yesCount + vote.market.noCount;
-            const crowdYesPct = total > 0 ? Math.round((vote.market.yesCount / total) * 100) : 50;
-            const userSide = vote.side ?? (vote.numericValue != null ? String(vote.numericValue) : "?");
-            const agreedWithCrowd =
-              (vote.side === "YES" && crowdYesPct >= 50) ||
-              (vote.side === "NO" && crowdYesPct < 50);
-
-            return (
-              <Pressable
-                key={vote.id}
-                style={({ pressed }) => [styles.trackRow, pressed && styles.trackRowPressed]}
-                onPress={() => router.push(`/market/${vote.market.id}`)}
-              >
-                <View style={styles.trackRowLeft}>
-                  <Text style={styles.trackTitle}>
-                    {vote.market.title}
-                  </Text>
-                  <View style={styles.trackMeta}>
-                    <View style={[styles.statusPill, { backgroundColor: sm.bg }]}>
-                      <Text style={[styles.statusPillText, { color: sm.color }]}>{sm.label}</Text>
-                    </View>
-                    {vote.side != null && (
-                      <Text style={styles.trackVote}>
-                        You:{" "}
-                        <Text style={{ fontWeight: "700", color: vote.side === "YES" ? "#059669" : "#DC2626" }}>
-                          {userSide}
-                        </Text>
-                      </Text>
-                    )}
-                    {total > 0 && vote.side != null && (
-                      <Text style={[styles.trackCrowd, agreedWithCrowd && styles.trackCrowdAgree]}>
-                        {agreedWithCrowd ? "↑ With crowd" : "↓ Contrarian"}
-                      </Text>
-                    )}
-                  </View>
-                </View>
-                <View style={styles.trackBarWrap}>
-                  <View style={styles.miniBarTrack}>
-                    <View style={[styles.miniBarYes, { width: `${crowdYesPct}%` }]} />
-                  </View>
-                  <Text style={styles.miniBarLabel}>{crowdYesPct}% YES</Text>
-                </View>
-              </Pressable>
-            );
-          })
-        ) : (
-          <View style={styles.predEmpty}>
-            <Text style={styles.predEmptyText}>No polls voted yet.</Text>
-            <Text style={styles.predEmptyHint}>
-              Swipe through the feed and share your opinion.
-            </Text>
-          </View>
-        )}
-      </ScrollView>
     </View>
   );
 }
 
-// ── RecentPositionsSection ───────────────────────────────────────────────────
-
-function RecentPositionsSection({ positions }: { positions: ApiPositionSummary[] }) {
-  const router = useRouter();
-
-  function positionStatusIcon(pos: ApiPositionSummary): React.ReactNode {
-    const { winningSide, status } = pos.market;
-    if (status !== "RESOLVED" || winningSide == null) {
-      return <Ionicons name="time-outline" size={16} color="#94A3B8" />;
-    }
-    if (pos.side === winningSide) {
-      return <Ionicons name="checkmark-circle" size={16} color="#059669" />;
-    }
-    return <Ionicons name="close-circle" size={16} color="#DC2626" />;
-  }
-
-  return (
-    <View style={styles.card}>
-      <Text style={[styles.sectionTitle, { marginBottom: spacing.md }]}>Recent Positions</Text>
-      {positions.length === 0 ? (
-        <View style={styles.predEmpty}>
-          <Text style={styles.predEmptyText}>No positions yet.</Text>
-          <Text style={styles.predEmptyHint}>Head to the Markets tab to stake points.</Text>
-        </View>
-      ) : (
-        positions.map((pos) => (
-          <Pressable
-            key={pos.id}
-            style={({ pressed }) => [styles.trackRow, pressed && styles.trackRowPressed]}
-            onPress={() => router.push(`/market/${pos.market.id}`)}
-          >
-            <View style={styles.trackRowLeft}>
-              <Text style={styles.trackTitle} numberOfLines={2}>
-                {pos.market.title}
-              </Text>
-              <View style={styles.trackMeta}>
-                <View
-                  style={[
-                    styles.sidePillSmall,
-                    pos.side === "YES" ? styles.sideYes : styles.sideNo,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.sidePillSmallText,
-                      { color: pos.side === "YES" ? "#059669" : "#DC2626" },
-                    ]}
-                  >
-                    {pos.side}
-                  </Text>
-                </View>
-                <Text style={styles.betAmountLabel}>
-                  {pos.amount.toLocaleString()} pts
-                </Text>
-              </View>
-            </View>
-            {positionStatusIcon(pos)}
-          </Pressable>
-        ))
-      )}
-    </View>
-  );
-}
-
-// ── CategoryBreakdownSection ──────────────────────────────────────────────────
-
-function CategoryBreakdownSection({ categoryStats }: { categoryStats: ApiCategoryStat[] }) {
-  const top3 = [...categoryStats]
-    .sort((a, b) => b.accuracyScore - a.accuracyScore)
-    .slice(0, 3);
-
-  return (
-    <View style={styles.card}>
-      <Text style={[styles.sectionTitle, { marginBottom: spacing.md }]}>Category Breakdown</Text>
-      {top3.map((cs) => (
-        <View key={cs.category} style={styles.catBreakRow}>
-          <Text style={styles.catBreakLabel}>{cs.category}</Text>
-          <View style={styles.catBreakBarTrack}>
-            <View
-              style={[
-                styles.catBreakBarFill,
-                { width: `${Math.min(100, cs.accuracyScore)}%` },
-              ]}
-            />
-          </View>
-          <Text style={styles.catBreakPct}>{cs.accuracyScore.toFixed(0)}%</Text>
-        </View>
-      ))}
-    </View>
-  );
-}
+const getStartedStyles = StyleSheet.create({
+  card: {
+    marginTop: spacing.lg,
+    padding: spacing.lg,
+    backgroundColor: colors.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  heading: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: colors.text,
+  },
+  subtitle: {
+    marginTop: 4,
+    fontSize: 13,
+    color: colors.textMuted,
+    lineHeight: 18,
+  },
+  rowList: {
+    marginTop: spacing.md,
+    gap: 0,
+  },
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    paddingVertical: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+  },
+  rowLabel: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: "600",
+    color: colors.text,
+  },
+});
 
 // ── MyMarketsSection ──────────────────────────────────────────────────────────
 
@@ -732,118 +1245,31 @@ function MyMarketsSection({
   return (
     <View style={styles.card}>
       <Text style={[styles.sectionTitle, { marginBottom: spacing.md }]}>My Markets</Text>
-      {createdMarkets.map((m) => {
-        const meta =
-          MY_MARKET_STATUS_META[m.status] ??
-          { label: m.status, color: colors.textMuted, bg: colors.background };
-        return (
-          <Pressable
-            key={m.id}
-            style={({ pressed }) => [styles.trackRow, pressed && styles.trackRowPressed]}
-            onPress={() => router.push(`/market/${m.id}`)}
-          >
-            <Text style={[styles.trackTitle, { flex: 1 }]} numberOfLines={2}>
-              {m.title}
-            </Text>
-            <View style={[styles.statusPill, { backgroundColor: meta.bg, marginLeft: spacing.sm }]}>
-              <Text style={[styles.statusPillText, { color: meta.color }]}>{meta.label}</Text>
-            </View>
-          </Pressable>
-        );
-      })}
-    </View>
-  );
-}
-
-// ── LeaderboardSection ────────────────────────────────────────────────────────
-
-function LeaderboardSection({ currentUserId }: { currentUserId: string }) {
-  const [expanded, setExpanded] = useState(false);
-  const [category, setCategory] = useState<AppMarketCategory | undefined>(undefined);
-
-  const fetcher = useCallback(
-    () => mobileApi.getLeaderboard({ category }),
-    [category]
-  );
-  const { data, loading } = useApiQuery<{ entries: ApiLeaderboardEntry[] }>(
-    fetcher,
-    [category],
-    { enabled: expanded }
-  );
-
-  const entries = data?.entries ?? [];
-
-  return (
-    <View style={styles.card}>
-      <Pressable style={styles.sectionTitleRow} onPress={() => setExpanded((v) => !v)}>
-        <Text style={styles.sectionTitle}>🏆 Leaderboard</Text>
-        <Ionicons
-          name={expanded ? "chevron-up" : "chevron-down"}
-          size={16}
-          color={colors.textMuted}
-        />
-      </Pressable>
-
-      {expanded && (
-        <>
-          {/* Category filter */}
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.lbTabs}
-          >
-            {LEADERBOARD_CATEGORIES.map((cat) => (
-              <Pressable
-                key={cat.label}
-                style={[styles.lbTab, category === cat.value && styles.lbTabActive]}
-                onPress={() => setCategory(cat.value)}
-              >
-                <Text style={[styles.lbTabLabel, category === cat.value && styles.lbTabLabelActive]}>
-                  {cat.label}
-                </Text>
-              </Pressable>
-            ))}
-          </ScrollView>
-
-          {loading ? (
-            <ActivityIndicator color={colors.accent} style={{ marginVertical: spacing.lg }} />
-          ) : (
-            <View style={styles.lbList}>
-              {entries.slice(0, 10).map((entry, i) => {
-                const raw = entry as Record<string, unknown>;
-                const userObj = (raw.user ?? raw) as Record<string, unknown>;
-                const username = String(userObj.username ?? "unknown");
-                const rep = Number(userObj.reputationScore ?? 0);
-                const isCurrentUser = String(userObj.id ?? raw.id ?? "") === currentUserId;
-                const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : null;
-
-                return (
-                  <View
-                    key={String(i)}
-                    style={[
-                      styles.lbRow,
-                      isCurrentUser && styles.lbRowHighlight,
-                    ]}
-                  >
-                    <Text style={styles.lbRank}>
-                      {medal ?? `#${i + 1}`}
-                    </Text>
-                    <View style={styles.lbUserInfo}>
-                      <Text style={[styles.lbUsername, isCurrentUser && styles.lbUsernameSelf]}>
-                        @{username}{isCurrentUser ? " (you)" : ""}
-                      </Text>
-                      <Text style={styles.lbScore}>{rep.toLocaleString()} rep</Text>
-                    </View>
-                  </View>
-                );
-              })}
-              {entries.length === 0 && (
-                <Text style={styles.emptyHint}>No entries yet.</Text>
-              )}
-            </View>
-          )}
-        </>
-      )}
+      <ScrollView
+        style={{ maxHeight: MARKETS_SECTION_MAX_HEIGHT }}
+        nestedScrollEnabled={true}
+        showsVerticalScrollIndicator={createdMarkets.length > 4}
+      >
+        {createdMarkets.map((m) => {
+          const meta =
+            MY_MARKET_STATUS_META[m.status] ??
+            { label: m.status, color: colors.textMuted, bg: colors.background };
+          return (
+            <Pressable
+              key={m.id}
+              style={({ pressed }) => [styles.trackRow, pressed && styles.trackRowPressed]}
+              onPress={() => router.push(`/market/${m.id}`)}
+            >
+              <Text style={[styles.trackTitle, { flex: 1 }]} numberOfLines={2}>
+                {m.title}
+              </Text>
+              <View style={[styles.statusPill, { backgroundColor: meta.bg, marginLeft: spacing.sm }]}>
+                <Text style={[styles.statusPillText, { color: meta.color }]}>{meta.label}</Text>
+              </View>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
     </View>
   );
 }
@@ -885,15 +1311,6 @@ function Tag({ label, accent }: { label: string; accent?: boolean }) {
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={styles.statBox}>
-      <Text style={styles.statValue}>{value}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
-    </View>
-  );
-}
-
 function HostStat({ label, value }: { label: string; value: string }) {
   return (
     <View style={styles.hostStatBox}>
@@ -926,79 +1343,13 @@ function ActionRow({
   );
 }
 
-function GroupsAccordion({
-  groups,
-}: {
-  groups: Array<ApiGroupSummary & { memberCount?: number; marketCount?: number }>;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  return (
-    <View style={styles.grpCard}>
-      <Pressable style={styles.grpHeader} onPress={() => setExpanded((prev) => !prev)}>
-        <View style={styles.grpHeaderLeft}>
-          <Ionicons name="people" size={20} color={colors.accent} />
-          <Text style={styles.grpHeaderLabel}>
-            {groups.length} {groups.length === 1 ? "Group" : "Groups"}
-          </Text>
-        </View>
-        <Ionicons name={expanded ? "chevron-up" : "chevron-down"} size={16} color={colors.textMuted} />
-      </Pressable>
-      {expanded && (
-        <View style={styles.grpList}>
-          {groups.map((g) => {
-            const isSelected = selectedId === g.id;
-            return (
-              <View key={g.id}>
-                <Pressable
-                  style={[styles.grpRow, isSelected && styles.grpRowActive]}
-                  onPress={() => setSelectedId(isSelected ? null : g.id)}
-                >
-                  <View style={styles.grpRowLeft}>
-                    <Text style={styles.grpRowName} numberOfLines={1}>{g.name}</Text>
-                    <View style={styles.grpRowMeta}>
-                      {g.memberCount != null && (
-                        <Text style={styles.grpRowMetaText}>{g.memberCount} members</Text>
-                      )}
-                      {g.marketCount != null && (
-                        <Text style={styles.grpRowMetaText}> · {g.marketCount} markets</Text>
-                      )}
-                    </View>
-                  </View>
-                  <Ionicons name={isSelected ? "chevron-up" : "chevron-down"} size={14} color={colors.textMuted} />
-                </Pressable>
-                {isSelected && g.inviteCode && (
-                  <View style={styles.grpDetail}>
-                    {g.description ? (
-                      <Text style={styles.grpDetailDesc}>{g.description}</Text>
-                    ) : null}
-                    <Pressable
-                      style={styles.grpInviteRow}
-                      onPress={() => Alert.alert("Invite Code", g.inviteCode!, [{ text: "OK" }])}
-                    >
-                      <Ionicons name="link-outline" size={14} color={colors.accent} />
-                      <Text style={styles.grpInviteLabel}>Invite:</Text>
-                      <Text style={styles.grpInviteCode}>{g.inviteCode}</Text>
-                    </Pressable>
-                  </View>
-                )}
-              </View>
-            );
-          })}
-        </View>
-      )}
-    </View>
-  );
-}
-
 // ── Styles ────────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
-  scrollContent: { padding: spacing.xl, paddingBottom: 60 },
+  scrollBody: { flex: 1, backgroundColor: colors.background },
+  scrollContent: { paddingHorizontal: spacing.xl, paddingTop: 0, paddingBottom: 60 },
   center: { flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.xl },
-  title: { fontSize: 28, fontWeight: "700", color: colors.text },
-  subtitle: { marginTop: spacing.md, fontSize: 15, color: colors.textMuted, textAlign: "center", lineHeight: 22 },
   errorText: { color: colors.danger, fontSize: 14 },
   retryBtn: {
     marginTop: spacing.lg,
@@ -1012,8 +1363,8 @@ const styles = StyleSheet.create({
   // ── Header ──
   headerCard: {
     backgroundColor: colors.text,
-    borderRadius: radius.lg,
-    padding: spacing.xl,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.lg,
   },
   headerTop: { flexDirection: "row", alignItems: "center", gap: spacing.lg },
   avatarCircle: {
@@ -1036,24 +1387,28 @@ const styles = StyleSheet.create({
   },
   tagAccent: { backgroundColor: "rgba(251,191,36,0.3)" },
   tagText: { color: "#FFFFFF", fontSize: 12, fontWeight: "600" },
-  statsRow: { flexDirection: "row", marginTop: spacing.lg, gap: spacing.sm },
-  statBox: {
-    flex: 1,
-    alignItems: "center",
-    padding: spacing.sm,
-    backgroundColor: "rgba(255,255,255,0.1)",
-    borderRadius: radius.md,
+  performanceStrip: {
+    marginTop: spacing.sm,
+    fontSize: 12,
+    color: "rgba(255,255,255,0.65)",
+    fontWeight: "500",
+    lineHeight: 18,
   },
-  statValue: { fontSize: 16, fontWeight: "700", color: "#FFFFFF" },
-  statLabel: { fontSize: 10, color: "rgba(255,255,255,0.6)", marginTop: 2 },
-  repRow: { marginTop: spacing.lg, gap: 6 },
-  repLabel: { fontSize: 12, color: "rgba(255,255,255,0.6)", fontWeight: "600" },
-  repBarTrack: { height: 4, borderRadius: radius.pill, backgroundColor: "rgba(255,255,255,0.15)", overflow: "hidden" },
-  repBarFill: { height: "100%", borderRadius: radius.pill, backgroundColor: "rgba(255,255,255,0.8)" },
+  performanceStripCta: {
+    marginTop: spacing.sm,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  performanceStripCtaText: {
+    fontSize: 12,
+    color: "rgba(255,255,255,0.65)",
+    fontWeight: "600",
+  },
 
   // ── Generic card ──
   card: {
-    marginTop: spacing.lg,
+    marginTop: spacing.md,
     padding: spacing.lg,
     backgroundColor: colors.surface,
     borderRadius: radius.lg,
@@ -1067,97 +1422,7 @@ const styles = StyleSheet.create({
   },
   clearBtn: { fontSize: 13, fontWeight: "600", color: colors.accent },
 
-  // ── Badges ──
-  badgesGrid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginTop: spacing.md },
-  badgeCard: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.md,
-    minWidth: 80,
-    alignItems: "center",
-    gap: 3,
-  },
-  badgeEmoji: { fontSize: 24 },
-  badgeName: { fontSize: 12, fontWeight: "700", textAlign: "center" },
-  badgeDesc: { fontSize: 10, color: colors.textMuted, textAlign: "center", lineHeight: 14 },
-
-  // ── Predictions (Bets / Polls) ──
-  predHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: spacing.md,
-  },
-  predTabs: {
-    flexDirection: "row",
-    backgroundColor: colors.background,
-    borderRadius: radius.md,
-    padding: 2,
-  },
-  predTab: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: 5,
-    borderRadius: radius.sm,
-  },
-  predTabActive: {
-    backgroundColor: colors.text,
-  },
-  predTabText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: colors.textMuted,
-  },
-  predTabTextActive: {
-    color: "#FFFFFF",
-  },
-  predScroll: {
-    maxHeight: 280,
-    marginTop: spacing.sm,
-  },
-  predEmpty: {
-    paddingVertical: spacing.xl,
-    alignItems: "center",
-  },
-  predEmptyText: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: colors.textMuted,
-  },
-  predEmptyHint: {
-    marginTop: 4,
-    fontSize: 12,
-    color: colors.textMuted,
-    textAlign: "center",
-  },
-  sidePillSmall: {
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: radius.pill,
-  },
-  sideYes: { backgroundColor: "#ECFDF5" },
-  sideNo: { backgroundColor: "#FFF1F2" },
-  sidePillSmallText: { fontSize: 10, fontWeight: "700" },
-  betAmountWrap: { alignItems: "center", minWidth: 56 },
-  betAmount: { fontSize: 15, fontWeight: "700", color: colors.text },
-  betAmountLabel: { fontSize: 9, color: colors.textMuted, marginTop: 1 },
-
   // ── Track record (shared row styles) ──
-  categoryStatsRow: {
-    flexDirection: "row",
-    gap: spacing.sm,
-    marginTop: spacing.sm,
-    marginBottom: spacing.md,
-  },
-  catStatBox: {
-    flex: 1,
-    alignItems: "center",
-    paddingVertical: spacing.sm,
-    backgroundColor: colors.background,
-    borderRadius: radius.md,
-  },
-  catStatValue: { fontSize: 16, fontWeight: "700", color: colors.text },
-  catStatLabel: { fontSize: 10, color: colors.textMuted, marginTop: 2 },
-  trackRecordList: { gap: spacing.sm, marginTop: spacing.sm },
   trackRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -1180,11 +1445,7 @@ const styles = StyleSheet.create({
   statusPillText: { fontSize: 10, fontWeight: "700" },
   trackVote: { fontSize: 12, color: colors.textMuted },
   trackCrowd: { fontSize: 11, color: colors.textMuted, fontWeight: "600" },
-  trackCrowdAgree: { color: "#059669" },
-  trackBarWrap: { alignItems: "center", width: 60 },
-  miniBarTrack: { width: 52, height: 5, borderRadius: radius.pill, backgroundColor: "#FEE2E2", overflow: "hidden" },
-  miniBarYes: { height: "100%", borderRadius: radius.pill, backgroundColor: "#059669" },
-  miniBarLabel: { fontSize: 10, color: colors.textMuted, marginTop: 3 },
+  betAmountLabel: { fontSize: 9, color: colors.textMuted, marginTop: 1 },
 
   // ── Watchlist ──
   watchlistRow: {
@@ -1198,34 +1459,75 @@ const styles = StyleSheet.create({
   watchlistRowLeft: { flex: 1 },
   watchlistTitle: { fontSize: 14, fontWeight: "600", color: colors.text, lineHeight: 20 },
 
-  // ── Leaderboard ──
-  lbTabs: { gap: spacing.sm, paddingVertical: spacing.md },
-  lbTab: {
-    paddingHorizontal: spacing.lg,
-    paddingVertical: 6,
-    borderRadius: radius.pill,
+  // ── Social card (Leaderboard + Groups unified) ──
+  socialCard: {
+    marginTop: spacing.md,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingVertical: spacing.xs,
+  },
+  socialRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+  },
+  socialRowLabel: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: "700",
+    color: colors.text,
+  },
+  socialRowBadge: {
+    minWidth: 22,
+    height: 22,
+    paddingHorizontal: 6,
+    borderRadius: 11,
+    backgroundColor: colors.accent + "1F",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  socialRowBadgeText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: colors.accent,
+  },
+  socialDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.border,
+    marginHorizontal: spacing.md,
+  },
+  socialEmptyHint: {
+    fontSize: 12,
+    color: colors.textMuted,
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.md,
+    marginTop: -spacing.sm,
+  },
+
+  // ── Group chip shelf (inside social card) ──
+  groupsChipShelf: {
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.md,
+    gap: spacing.sm,
+  },
+  groupChip: {
     backgroundColor: colors.background,
     borderWidth: 1,
     borderColor: colors.border,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm - 2,
+    borderRadius: radius.pill,
+    maxWidth: 160,
   },
-  lbTabActive: { backgroundColor: colors.text, borderColor: colors.text },
-  lbTabLabel: { fontSize: 13, fontWeight: "600", color: colors.textMuted },
-  lbTabLabelActive: { color: "#FFFFFF" },
-  lbList: { gap: spacing.sm },
-  lbRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: spacing.md,
-    borderRadius: radius.md,
-    backgroundColor: colors.background,
+  groupChipName: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: colors.text,
   },
-  lbRowHighlight: { backgroundColor: "#EFF6FF", borderWidth: 1, borderColor: colors.accent },
-  lbRank: { fontSize: 18, width: 40, textAlign: "center" },
-  lbUserInfo: { flex: 1 },
-  lbUsername: { fontSize: 14, fontWeight: "600", color: colors.text },
-  lbUsernameSelf: { color: colors.accent },
-  lbScore: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
-  emptyHint: { textAlign: "center", color: colors.textMuted, paddingVertical: spacing.md },
 
   // ── Host stats ──
   hostStatsRow: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.sm },
@@ -1241,7 +1543,7 @@ const styles = StyleSheet.create({
 
   // ── Actions card ──
   actionsCard: {
-    marginTop: spacing.lg,
+    marginTop: spacing.md,
     backgroundColor: colors.surface,
     borderRadius: radius.lg,
     overflow: "hidden",
@@ -1255,32 +1557,6 @@ const styles = StyleSheet.create({
   actionTextWrap: { flex: 1 },
   actionLabel: { fontSize: 15, fontWeight: "600", color: colors.text },
   actionSublabel: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
-
-  // ── Groups ──
-  grpCard: { marginTop: spacing.lg, backgroundColor: colors.surface, borderRadius: radius.lg, overflow: "hidden" },
-  grpHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: spacing.lg },
-  grpHeaderLeft: { flexDirection: "row", alignItems: "center", gap: spacing.md },
-  grpHeaderLabel: { fontSize: 15, fontWeight: "700", color: colors.text },
-  grpList: { borderTopWidth: 1, borderTopColor: colors.border },
-  grpRow: {
-    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-    paddingHorizontal: spacing.lg, paddingVertical: 14,
-    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border,
-  },
-  grpRowActive: { backgroundColor: colors.accent + "08" },
-  grpRowLeft: { flex: 1, marginRight: spacing.sm },
-  grpRowName: { fontSize: 14, fontWeight: "600", color: colors.text },
-  grpRowMeta: { flexDirection: "row", alignItems: "center", marginTop: 2 },
-  grpRowMetaText: { fontSize: 12, color: colors.textMuted },
-  grpDetail: { paddingHorizontal: spacing.lg, paddingBottom: spacing.md, backgroundColor: colors.background },
-  grpDetailDesc: { fontSize: 13, color: colors.textMuted, lineHeight: 18, paddingTop: spacing.sm },
-  grpInviteRow: {
-    flexDirection: "row", alignItems: "center", gap: 6, marginTop: spacing.sm,
-    backgroundColor: colors.surface, paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
-    borderRadius: radius.md, alignSelf: "flex-start",
-  },
-  grpInviteLabel: { fontSize: 12, color: colors.textMuted },
-  grpInviteCode: { fontSize: 13, fontWeight: "700", color: colors.accent, fontFamily: "Courier" },
 
   // ── Unauthenticated ──
   unauthCard: {
@@ -1306,25 +1582,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accent,
   },
   signInBtnText: { color: "#FFFFFF", fontWeight: "700", fontSize: 15 },
-
-  // ── Badge shelf ──
-  badgeShelf: { gap: spacing.sm, paddingVertical: spacing.md },
-  badgePill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.pill,
-  },
-  badgePillEmoji: { fontSize: 16 },
-  badgePillLabel: { fontSize: 13, fontWeight: "700" },
-  badgeEmptyText: {
-    marginTop: spacing.md,
-    fontSize: 13,
-    color: colors.textMuted,
-    fontStyle: "italic",
-  },
 
   // ── Category breakdown ──
   catBreakRow: {
@@ -1356,7 +1613,7 @@ const styles = StyleSheet.create({
 
   // ── Log out ──
   logoutBtn: {
-    marginTop: spacing.xl,
+    marginTop: spacing.lg,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",

@@ -6,7 +6,8 @@ import type {
   ApiGroupSummary,
   ApiHostEligibility,
   ApiHostStats,
-  ApiLeaderboardEntry,
+  ApiLeaderboardResponse,
+  ApiLeaderboardTimeWindow,
   ApiLiveScore,
   ApiMarketDetail,
   ApiMarketSummary,
@@ -16,8 +17,11 @@ import type {
   ApiPollListItem,
   ApiUserProfile,
   ApiVote,
-  AppMarketCategory
+  AppMarketCategory,
+  AppMarketStatus
 } from "@predict-future/types";
+
+export type { ApiLeaderboardTimeWindow };
 
 export type NewsFeedPage = {
   items: ApiNewsFeedItem[];
@@ -116,7 +120,7 @@ export function createApiClient(options: ApiClientOptions) {
   return {
     request,
     getNews(query?: NewsQuery) {
-      return request<NewsFeedPage>("/api/news", query);
+      return request<NewsFeedPage>("/api/news", query, { auth: true });
     },
     getNewsDebug() {
       return request<Record<string, unknown>>("/api/news/debug");
@@ -131,7 +135,7 @@ export function createApiClient(options: ApiClientOptions) {
       return request<ApiMarketDetail & {
         userPositions?: Array<{ id: string; side: string | null; amount: number; numericValue: number | null; createdAt: string }>;
         userVote?: { side: string | null; numericValue: number | null } | null;
-      }>(`/api/markets/${marketId}`, query);
+      }>(`/api/markets/${marketId}`, query, { auth: true });
     },
     placePosition(marketId: string, body: { side?: string; numericValue?: number; amount: number }, query?: { userId?: string }) {
       return request<{ ok: boolean }>(
@@ -154,7 +158,7 @@ export function createApiClient(options: ApiClientOptions) {
       return request<ApiGroupDetail>(`/api/groups/${groupId}`, query, { auth: true });
     },
     createMarket(body: unknown, query?: { userId?: string }) {
-      return request<{ market: { id: string } }>(
+      return request<{ market: { id: string; status: AppMarketStatus } }>(
         "/api/markets/create",
         query,
         {
@@ -179,7 +183,7 @@ export function createApiClient(options: ApiClientOptions) {
       return request<Record<string, unknown>>(
         "/api/news/refresh",
         query,
-        { method: "POST" }
+        { method: "POST", auth: true }
       );
     },
     getLiveScores() {
@@ -191,10 +195,13 @@ export function createApiClient(options: ApiClientOptions) {
     getFootballMatchDetail(matchId: string, leaguePath: string) {
       return request<ApiFootballMatchDetail>(`/api/sports/match/${matchId}`, { league: leaguePath });
     },
-    getLeaderboard(query?: { category?: AppMarketCategory }) {
-      return request<{ entries: ApiLeaderboardEntry[] }>("/api/leaderboard", query);
+    getLeaderboard(query?: { category?: AppMarketCategory; timeWindow?: ApiLeaderboardTimeWindow }) {
+      return request<ApiLeaderboardResponse>("/api/leaderboard", query, { auth: true });
     },
     getProfile(username: string) {
+      return request<{ user: ApiUserProfile }>(`/api/profile/${username}`);
+    },
+    getUserProfile(username: string) {
       return request<{ user: ApiUserProfile }>(`/api/profile/${username}`);
     },
     getMyProfile(query?: { userId?: string }) {
@@ -219,6 +226,12 @@ export function createApiClient(options: ApiClientOptions) {
         "/api/groups/create",
         query,
         { method: "POST", body: JSON.stringify(body), auth: true }
+      );
+    },
+    getGroupPreview(inviteCode: string) {
+      return request<{ id: string; name: string; description: string | null; memberCount: number }>(
+        "/api/groups/preview",
+        { inviteCode }
       );
     },
     joinGroup(body: { inviteCode: string }, query?: { userId?: string }) {
@@ -296,6 +309,13 @@ export function createApiClient(options: ApiClientOptions) {
         "/api/notifications/read",
         undefined,
         { method: "POST", auth: true }
+      );
+    },
+    markNotificationRead(id: string) {
+      return request<{ ok: boolean }>(
+        `/api/notifications/${id}/read`,
+        undefined,
+        { method: "PATCH", auth: true }
       );
     },
   };

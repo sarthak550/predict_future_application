@@ -7,3 +7,4 @@
 - [push_notifications_ticket4.md](push_notifications_ticket4.md) — Sprint 1 Ticket 4: Expo push notifications for market lifecycle events, schema + endpoint + resolution hook + mobile registration (COMPLETE)
 - [group_leagues_ticket7.md](group_leagues_ticket7.md) — Sprint 2 Ticket 7: Group detail screen, launch endpoint, api-client method, markets tab navigation (COMPLETE)
 - [sprint7_tickets.md](sprint7_tickets.md) — Sprint 7 T3-T8: onboarding, streak/P&L, sports linked markets, sort controls, share URLs — all COMPLETE
+- [project_sprint11.md](project_sprint11.md) — Sprint 11 Profile redesign: T1 sticky header (done), T2 sub-tabs (qa-review), T3 consolidated Performance card (pending). Human checkpoint required between T2 and T3.

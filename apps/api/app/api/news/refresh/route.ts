@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { getSession } from "@/lib/auth";
+import { getUserIdFromRequest } from "@/lib/auth";
 import { runNewsIngestionJob } from "@/lib/jobs/newsIngestion";
 
 /**
@@ -15,9 +15,7 @@ const MIN_REFRESH_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
 
 export async function POST(request: Request) {
   try {
-    const { searchParams } = new URL(request.url);
-    const session = await getSession();
-    const userId = session?.user?.id ?? searchParams.get("userId");
+    const userId = await getUserIdFromRequest(request);
     if (!userId) {
       return NextResponse.json({ error: "Authentication required." }, { status: 401 });
     }

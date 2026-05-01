@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { getSession } from "@/lib/auth";
+import { getSession, getUserIdFromRequest } from "@/lib/auth";
 import { canManageMarket, canViewMarket } from "@/lib/markets/access";
 import { finalizeMarketResolution } from "@/lib/markets/resolution";
 import { prisma } from "@/lib/prisma";
@@ -10,9 +10,7 @@ export async function GET(
   request: Request,
   { params }: { params: { marketId: string } }
 ) {
-  const { searchParams } = new URL(request.url);
-  const session = await getSession();
-  const viewerId = session?.user?.id ?? searchParams.get("userId");
+  const viewerId = (await getUserIdFromRequest(request)) ?? undefined;
   const viewer = viewerId
     ? await prisma.user.findUnique({
         where: { id: viewerId },
@@ -60,7 +58,18 @@ export async function GET(
           }
         }
       },
-      resolution: true
+      resolution: {
+        select: {
+          explanation: true,
+          resolvedAt: true,
+          createdAt: true,
+          resolvedBy: {
+            select: {
+              username: true,
+            },
+          },
+        },
+      }
     }
   });
 
@@ -97,7 +106,22 @@ export async function GET(
         })
       : null;
 
-  return NextResponse.json({ market, userPositions, userVote });
+  // Shape the resolution field: rename explanation → rationale, add wasOverturned
+  const shapedResolution = market.resolution
+    ? {
+        rationale: market.resolution.explanation,
+        resolvedBy: market.resolution.resolvedBy ?? null,
+        createdAt: market.resolution.createdAt,
+        wasOverturned: Boolean(market.overturnedReason),
+      }
+    : null;
+
+  const responseMarket = {
+    ...market,
+    resolution: shapedResolution,
+  };
+
+  return NextResponse.json({ market: responseMarket, userPositions, userVote });
 }
 
 export async function PATCH(

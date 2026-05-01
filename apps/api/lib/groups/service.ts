@@ -92,6 +92,83 @@ export async function joinGroupByInviteCode(input: {
   });
 }
 
+export async function joinGroupById(input: {
+  userId: string;
+  groupId: string;
+}) {
+  return prisma.$transaction(async (tx) => {
+    const group = await tx.group.findUnique({
+      where: { id: input.groupId }
+    });
+
+    if (!group || group.isArchived) {
+      throw new Error("Group not found.");
+    }
+
+    const existingMembership = await tx.groupMembership.findUnique({
+      where: {
+        groupId_userId: {
+          groupId: group.id,
+          userId: input.userId
+        }
+      }
+    });
+
+    if (existingMembership) {
+      return group;
+    }
+
+    await tx.groupMembership.create({
+      data: {
+        groupId: group.id,
+        userId: input.userId,
+        role: GroupRole.MEMBER
+      }
+    });
+
+    return group;
+  });
+}
+
+/**
+ * Returns groups the given user is NOT already a member of, ordered by
+ * most-recently-created first, capped at `limit` results.
+ */
+export async function getDiscoverGroups(userId: string, limit = 20) {
+  const groups = await prisma.group.findMany({
+    where: {
+      isArchived: false,
+      memberships: {
+        none: {
+          userId
+        }
+      }
+    },
+    take: limit,
+    orderBy: {
+      createdAt: "desc"
+    },
+    include: {
+      _count: {
+        select: {
+          memberships: true,
+          markets: true
+        }
+      }
+    }
+  });
+
+  return groups.map((group) => ({
+    id: group.id,
+    slug: group.slug,
+    name: group.name,
+    description: group.description,
+    memberCount: group._count.memberships,
+    marketCount: group._count.markets
+    // Note: inviteCode is intentionally omitted — users must enter it manually
+  }));
+}
+
 export async function getUserGroups(userId: string) {
   const memberships = await prisma.groupMembership.findMany({
     where: {

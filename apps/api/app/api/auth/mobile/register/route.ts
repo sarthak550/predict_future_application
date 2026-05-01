@@ -34,12 +34,18 @@ export async function POST(request: Request) {
         username: payload.username,
         email: payload.email.toLowerCase(),
         passwordHash,
+        wallet: {
+          create: {
+            balance: STARTING_BALANCE,
+            startingBalance: STARTING_BALANCE,
+          },
+        },
         stats: { create: {} },
         notifications: {
           create: {
             type: "SYSTEM",
-            title: "Welcome!",
-            body: "Your account is ready. Start sharing your opinions on the latest news!",
+            title: "Welcome to the news feed",
+            body: `Your account is ready and ${STARTING_BALANCE.toLocaleString("en-IN")} virtual points have been added for your first predictions.`,
             href: "/feed",
           },
         },
