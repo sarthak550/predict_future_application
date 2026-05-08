@@ -12,6 +12,7 @@ import {
 import { createNotification } from "@/lib/notifications";
 import { calculateEstimatedReturn, calculateProbabilities } from "@/lib/markets/probability";
 import { prisma } from "@/lib/prisma";
+import { checkAndCompleteQuests, type CompletedQuestReward } from "@/lib/quests/engine";
 import { marketPositionSchema } from "@/lib/validations/market";
 
 export async function POST(
@@ -20,7 +21,7 @@ export async function POST(
 ) {
   try {
     const { searchParams } = new URL(request.url);
-  const userId = await getUserIdFromRequest(request);
+    const userId = await getUserIdFromRequest(request);
     if (!userId) {
       return NextResponse.json({ error: "Authentication required." }, { status: 401 });
     }
@@ -31,7 +32,8 @@ export async function POST(
         id: true,
         username: true,
         isSuspended: true,
-        role: true
+        role: true,
+        referredById: true
       }
     });
     if (!user || user.isSuspended) {
@@ -39,6 +41,8 @@ export async function POST(
     }
 
     const payload = marketPositionSchema.parse(await request.json());
+
+    let questRewards: CompletedQuestReward[] = [];
 
     await prisma.$transaction(async (tx) => {
       const market = await tx.market.findUnique({
@@ -214,9 +218,97 @@ export async function POST(
           href: `/markets/${market.id}`
         });
       }
+
+      // Quest engine — check if any daily prediction quests are now complete.
+      // Non-fatal: a quest engine error must never roll back the bet itself.
+      try {
+        questRewards = await checkAndCompleteQuests(user.id, "PREDICTION", tx);
+      } catch (questErr) {
+        console.error("[quest engine] non-fatal error:", questErr);
+      }
+
+      // Referral reward — fires on the user's FIRST ever position, if they were referred.
+      // Gate: referredById is set AND no REFERRAL_BONUS_REFEREE transaction exists yet.
+      // Non-fatal: errors must never roll back the position itself.
+      try {
+        if (user.referredById) {
+          // Count all positions for this user (including the one just created)
+          const totalPositions = await tx.marketPosition.count({
+            where: { userId: user.id },
+          });
+
+          if (totalPositions === 1) {
+            // Check idempotency: has the referee already been credited?
+            const referrerWallet = await tx.wallet.findUnique({
+              where: { userId: user.referredById },
+              select: { id: true },
+            });
+            const refereeWallet = await tx.wallet.findUnique({
+              where: { userId: user.id },
+              select: { id: true },
+            });
+
+            const alreadyCredited = refereeWallet
+              ? await tx.walletTransaction.count({
+                  where: {
+                    walletId: refereeWallet.id,
+                    type: "REFERRAL_BONUS_REFEREE",
+                  },
+                })
+              : 1; // treat as "already credited" if wallet not found — skip safely
+
+            if (alreadyCredited === 0 && refereeWallet) {
+              const REFERRAL_BONUS = 250;
+
+              // Credit the referee (+250 pts)
+              await tx.wallet.update({
+                where: { id: refereeWallet.id },
+                data: { balance: { increment: REFERRAL_BONUS } },
+              });
+              await tx.walletTransaction.create({
+                data: {
+                  walletId: refereeWallet.id,
+                  type: "REFERRAL_BONUS_REFEREE",
+                  amount: REFERRAL_BONUS,
+                  description: "Referral bonus — your first prediction",
+                },
+              });
+
+              // Credit the referrer (+250 pts)
+              if (referrerWallet) {
+                await tx.wallet.update({
+                  where: { id: referrerWallet.id },
+                  data: { balance: { increment: REFERRAL_BONUS } },
+                });
+                await tx.walletTransaction.create({
+                  data: {
+                    walletId: referrerWallet.id,
+                    type: "REFERRAL_BONUS_REFERRER",
+                    amount: REFERRAL_BONUS,
+                    description: `Referral bonus — ${user.username} made their first prediction`,
+                  },
+                });
+
+                // Notify the referrer
+                await tx.notification.create({
+                  data: {
+                    userId: user.referredById,
+                    type: "REFERRAL_REWARD",
+                    title: "Referral reward!",
+                    body: `${user.username} made their first prediction. You both earned ${REFERRAL_BONUS} pts!`,
+                    href: "/profile",
+                  },
+                });
+              }
+            }
+          }
+        }
+      } catch (referralErr) {
+        console.error("[referral reward] non-fatal error:", referralErr);
+      }
     });
 
-    return NextResponse.json({ ok: true }, { status: 201 });
+    return NextResponse.json({ ok: true, questRewards }, { status: 201 });
   } catch (error) {
     console.error(error);
     return NextResponse.json(

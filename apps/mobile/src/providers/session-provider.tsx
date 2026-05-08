@@ -1,7 +1,8 @@
+import { router } from "expo-router";
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import * as SecureStore from "expo-secure-store";
 
-import { setApiTokenCache } from "@/lib/api";
+import { setApiAuthFailureHandler, setApiTokenCache } from "@/lib/api";
 
 const SESSION_TOKEN_KEY = "session_token";
 const SESSION_USER_ID_KEY = "session_user_id";
@@ -103,7 +104,19 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     ]).catch((err) => {
       console.error("[SessionProvider] Failed to clear session:", err);
     });
+
+    router.replace("/(auth)/sign-in");
   }, []);
+
+  // Sign the user out automatically when the API reports the session is no longer
+  // valid — e.g. 401 on an authenticated request, or 404 on /api/profile/me when
+  // the stored userId no longer exists in the DB (after a re-seed).
+  useEffect(() => {
+    setApiAuthFailureHandler(() => {
+      signOut();
+    });
+    return () => setApiAuthFailureHandler(null);
+  }, [signOut]);
 
   const value = useMemo<SessionState>(
     () => ({ session, status, isNewUser, signIn, signOut }),

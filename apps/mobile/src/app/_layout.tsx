@@ -1,4 +1,3 @@
-import * as Notifications from "expo-notifications";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
@@ -10,6 +9,35 @@ import { colors } from "@predict-future/ui-tokens";
 import { mobileApi } from "@/lib/api";
 import { AppProviders } from "@/providers";
 import { useSession } from "@/providers/session-provider";
+import { LeagueBanner } from "@/components/league-banner";
+
+/**
+ * Lazy-load expo-notifications. In Expo Go (SDK 53+) Android remote-push support
+ * was removed and the module logs an error at module-init time. We detect Expo Go
+ * via Constants.appOwnership and skip the require entirely — push then becomes a
+ * no-op until the user runs a development build (where Notifications loads cleanly).
+ */
+import Constants from "expo-constants";
+
+type NotificationsModule = typeof import("expo-notifications");
+let _notifications: NotificationsModule | null = null;
+let _notificationsTried = false;
+function tryLoadNotifications(): NotificationsModule | null {
+  if (_notificationsTried) return _notifications;
+  _notificationsTried = true;
+  // Don't even attempt the require in Expo Go — the module's init logs a noisy
+  // error in dev tools that can't be suppressed by try/catch alone.
+  if (Constants.appOwnership === "expo") {
+    return null;
+  }
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    _notifications = require("expo-notifications");
+  } catch {
+    _notifications = null;
+  }
+  return _notifications;
+}
 
 /**
  * Registers an Expo push token with the API once the user is authenticated.
@@ -27,6 +55,9 @@ function PushTokenRegistrar() {
 
     void (async () => {
       try {
+        const Notifications = tryLoadNotifications();
+        if (!Notifications) return; // expo-notifications unavailable (e.g. Expo Go SDK 53+)
+
         const { status } = await Notifications.requestPermissionsAsync();
         if (status !== "granted") return;
 
@@ -49,6 +80,7 @@ export default function RootLayout() {
   return (
     <AppProviders>
       <PushTokenRegistrar />
+      <LeagueBanner />
       <StatusBar style="dark" translucent={Platform.OS === "android"} backgroundColor="transparent" />
       <SafeAreaView
         style={styles.safeArea}

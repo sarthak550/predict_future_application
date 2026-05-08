@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getSession, getUserIdFromRequest } from "@/lib/auth";
 import { canViewMarket } from "@/lib/markets/access";
 import { prisma } from "@/lib/prisma";
+import { checkAndCompleteQuests } from "@/lib/quests/engine";
 import { voteSchema } from "@/lib/validations/market";
 
 export async function POST(
@@ -113,6 +114,14 @@ export async function POST(
             averageNumericValue: avg,
           }
         });
+      }
+
+      // Quest engine — check if VOTE_ON_POLL quest is now complete.
+      // Non-fatal: a quest engine error must never roll back the vote itself.
+      try {
+        await checkAndCompleteQuests(user.id, "POLL_VOTE", tx);
+      } catch (questErr) {
+        console.error("[quest engine] non-fatal error:", questErr);
       }
     });
 

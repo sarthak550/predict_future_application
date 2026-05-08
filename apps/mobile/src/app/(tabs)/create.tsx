@@ -81,7 +81,7 @@ const GRACE_PERIOD_OPTIONS = [
 ];
 
 type Visibility = "PUBLIC" | "PRIVATE";
-type MarketType = "BINARY" | "NUMERIC";
+type MarketType = "BINARY" | "NUMERIC" | "MULTIPLE_CHOICE";
 type ResolutionMode = "HOST";
 type PoolRewardMode = "COMMISSION_BASED" | "BOND_BASED";
 
@@ -341,6 +341,9 @@ function CreateWizard({
   const [minValue, setMinValue] = useState("0");
   const [maxValue, setMaxValue] = useState("100");
 
+  // Multiple choice options
+  const [mcOptions, setMcOptions] = useState<string[]>(["", ""]);
+
   // Host settings
   const [poolRewardMode, setPoolRewardMode] = useState<PoolRewardMode>("COMMISSION_BASED");
   const [bondCap, setBondCap] = useState("500");
@@ -475,6 +478,10 @@ function CreateWizard({
       case "type":
         return true;
       case "question":
+        if (marketType === "MULTIPLE_CHOICE") {
+          const validOptions = mcOptions.filter((o) => o.trim().length > 0);
+          return title.length >= 12 && description.length >= 24 && validOptions.length >= 2;
+        }
         return title.length >= 12 && description.length >= 24;
       case "host_settings":
         return Number(bondCap) >= 100;
@@ -518,6 +525,14 @@ function CreateWizard({
               winnersCount: 1,
               payoutDistribution: [100],
               tieBreakerRule: "SPLIT",
+            }
+          : {}),
+        ...(marketType === "MULTIPLE_CHOICE"
+          ? {
+              options: mcOptions
+                .map((label) => label.trim())
+                .filter((label) => label.length > 0)
+                .map((label) => ({ label })),
             }
           : {}),
         ...(resolutionMode === "HOST"
@@ -564,6 +579,7 @@ function CreateWizard({
     setCategory(initialCategory ?? "GENERAL");
     setCloseAt(new Date(Date.now() + 24 * 3600000));
     setResolveAt(new Date(Date.now() + 48 * 3600000));
+    setMcOptions(["", ""]);
   }
 
   // ── Success screen ─────────────────────────────────────────────────────────
@@ -723,6 +739,8 @@ function CreateWizard({
             setMinValue={setMinValue}
             maxValue={maxValue}
             setMaxValue={setMaxValue}
+            mcOptions={mcOptions}
+            setMcOptions={setMcOptions}
           />
         )}
         {currentStep === "host_settings" && (
@@ -1159,6 +1177,18 @@ function StepType({
         </Text>
       </Pressable>
 
+      <Pressable
+        style={[styles.optionCard, marketType === "MULTIPLE_CHOICE" && styles.optionCardActive]}
+        onPress={() => setMarketType("MULTIPLE_CHOICE")}
+      >
+        <Text style={[styles.optionTitle, marketType === "MULTIPLE_CHOICE" && styles.optionTitleActive]}>
+          Multiple Choice
+        </Text>
+        <Text style={[styles.optionDesc, marketType === "MULTIPLE_CHOICE" && styles.optionDescActive]}>
+          "Which team will win?" — users pick from your defined options.
+        </Text>
+      </Pressable>
+
       <Text style={[styles.label, { marginTop: spacing.xl }]}>Category</Text>
       <View style={styles.pillRow}>
         {CATEGORIES.map((c) => (
@@ -1193,6 +1223,8 @@ function StepQuestion({
   setMinValue,
   maxValue,
   setMaxValue,
+  mcOptions,
+  setMcOptions,
 }: {
   marketType: MarketType;
   title: string;
@@ -1205,6 +1237,8 @@ function StepQuestion({
   setMinValue: (v: string) => void;
   maxValue: string;
   setMaxValue: (v: string) => void;
+  mcOptions: string[];
+  setMcOptions: (opts: string[]) => void;
 }) {
   return (
     <View>
@@ -1216,6 +1250,8 @@ function StepQuestion({
         placeholder={
           marketType === "BINARY"
             ? "Will India win the World Cup 2026?"
+            : marketType === "MULTIPLE_CHOICE"
+            ? "Which team will win the tournament?"
             : "How many runs will India score in the 1st innings?"
         }
         placeholderTextColor={colors.textMuted}
@@ -1232,6 +1268,8 @@ function StepQuestion({
         placeholder={
           marketType === "BINARY"
             ? "Explain what YES and NO mean, and how the outcome will be determined. E.g. Resolves YES if the team wins by May 31, NO otherwise."
+            : marketType === "MULTIPLE_CHOICE"
+            ? "Describe how you will determine the winning option and when."
             : "Describe what number people are guessing and how you'll determine the final value. E.g. The official scorecard from ESPN will be used."
         }
         placeholderTextColor={colors.textMuted}
@@ -1276,6 +1314,51 @@ function StepQuestion({
               />
             </View>
           </View>
+        </>
+      )}
+
+      {marketType === "MULTIPLE_CHOICE" && (
+        <>
+          <Text style={[styles.label, { marginTop: spacing.lg }]}>
+            Options (2–10)
+          </Text>
+          {mcOptions.map((opt, idx) => (
+            <View key={idx} style={styles.mcOptionRow}>
+              <TextInput
+                style={[styles.input, { flex: 1, marginBottom: 0 }]}
+                placeholder={`Option ${idx + 1}`}
+                placeholderTextColor={colors.textMuted}
+                value={opt}
+                onChangeText={(text) => {
+                  const next = [...mcOptions];
+                  next[idx] = text;
+                  setMcOptions(next);
+                }}
+                maxLength={100}
+              />
+              {mcOptions.length > 2 ? (
+                <Pressable
+                  style={styles.mcRemoveBtn}
+                  onPress={() => {
+                    const next = mcOptions.filter((_, i) => i !== idx);
+                    setMcOptions(next);
+                  }}
+                  hitSlop={8}
+                >
+                  <Ionicons name="close-circle" size={20} color={colors.textMuted} />
+                </Pressable>
+              ) : null}
+            </View>
+          ))}
+          {mcOptions.length < 10 ? (
+            <Pressable
+              style={styles.mcAddBtn}
+              onPress={() => setMcOptions([...mcOptions, ""])}
+            >
+              <Ionicons name="add-circle-outline" size={18} color={colors.accent} />
+              <Text style={styles.mcAddBtnText}>Add option</Text>
+            </Pressable>
+          ) : null}
         </>
       )}
     </View>
@@ -2532,5 +2615,27 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontWeight: "600",
     fontSize: 15,
+  },
+
+  // ── Multiple choice option builder ──
+  mcOptionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: spacing.sm,
+    gap: spacing.sm,
+  },
+  mcRemoveBtn: {
+    padding: 4,
+  },
+  mcAddBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    paddingVertical: spacing.sm,
+  },
+  mcAddBtnText: {
+    color: colors.accent,
+    fontWeight: "600",
+    fontSize: 14,
   },
 });

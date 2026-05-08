@@ -1,3 +1,33 @@
+export type AppLeagueTier =
+  | "BRONZE"
+  | "SILVER"
+  | "GOLD"
+  | "PLATINUM"
+  | "DIAMOND";
+
+export type ApiLeagueEntry = {
+  month: string;        // 'YYYY-MM'
+  tier: AppLeagueTier;
+  netPointsMonth: number;
+  rank: number | null;
+};
+
+/** One entry in a paginated tier standings response. */
+export type ApiLeagueTierStandingEntry = {
+  rank: number | null;
+  userId: string;
+  username: string;
+  netPointsMonth: number;
+};
+
+/** Paginated response for GET /api/leagues/standings. */
+export type ApiLeagueStandingsPage = {
+  tier: AppLeagueTier;
+  month: string;
+  entries: ApiLeagueTierStandingEntry[];
+  nextCursor: string | null;
+};
+
 export type AppMarketCategory =
   | "GENERAL"
   | "SPORTS"
@@ -6,7 +36,8 @@ export type AppMarketCategory =
   | "WEATHER"
   | "ENTERTAINMENT"
   | "PRODUCT"
-  | "COMPANY";
+  | "COMPANY"
+  | "FINANCE";
 
 export type AppMarketStatus =
   | "DRAFT"
@@ -21,7 +52,15 @@ export type AppMarketStatus =
   | "HOST_TIMEOUT";
 
 export type AppMarketVisibility = "PUBLIC" | "PRIVATE";
-export type AppMarketType = "BINARY" | "NUMERIC";
+export type AppMarketType = "BINARY" | "NUMERIC" | "MULTIPLE_CHOICE";
+
+export type ApiMarketOption = {
+  id: string;
+  label: string;
+  sortOrder: number;
+  totalStaked: number;
+  isWinner: boolean;
+};
 export type AppResolutionMode = "TRUSTED_HOST" | "HOST" | "GROUP_VOTE";
 export type AppResolutionStatus =
   | "OPEN"
@@ -54,6 +93,22 @@ export type ApiNewsItem = {
   status?: string;
 };
 
+export type ApiExpertOpinionItem = {
+  id: string;
+  expertId: string;
+  expertName: string;
+  expertOrganization: string;
+  avatarUrl?: string | null;
+  verified?: boolean;
+  quote: string;
+  direction: "BULLISH" | "BEARISH" | "NEUTRAL";
+  sourceUrl: string;
+  resolutionStatus: "PENDING" | "RESOLVED_HIT" | "RESOLVED_MISS" | "NOT_GRADED";
+  resolvedAt?: string | null;
+  /** Nullable FK to a MarketEventCluster (S18-T4) */
+  eventClusterId?: string | null;
+};
+
 export type ApiNewsFeedItem = {
   id: string;
   slug: string;
@@ -69,6 +124,7 @@ export type ApiNewsFeedItem = {
   isTrending: boolean;
   market: ApiMarketSummary | null;
   poll: ApiPollSummary | null;
+  expertOpinions?: ApiExpertOpinionItem[];
 };
 
 export type ApiMarketSummary = {
@@ -118,6 +174,15 @@ export type ApiMarketSummary = {
   _count?: {
     comments?: number;
   };
+  /** Populated for MULTIPLE_CHOICE markets */
+  options?: ApiMarketOption[];
+  winningOptionId?: string | null;
+  /** Populated on market detail responses for authenticated users of MULTIPLE_CHOICE markets */
+  userMultiChoicePositions?: Array<{ optionId: string; amount: number }>;
+  /** Non-null for markets imported from external platforms (e.g. 'manifold'). */
+  originPlatform?: string | null;
+  /** Canonical source URL — set on imported markets; used for attribution badge link. */
+  resolutionSourceUrl?: string | null;
 };
 
 export type ApiMarketComment = {
@@ -461,6 +526,11 @@ export type ApiUserProfile = {
     status: AppMarketStatus;
   }>;
   hostStats?: ApiHostStats["hostStats"];
+  /** Social graph counts — present on all profile responses (S24-T2/T3). */
+  followerCount?: number;
+  followingCount?: number;
+  /** Whether the currently-authenticated viewer follows this user. False when unauthenticated. */
+  isFollowedByMe?: boolean;
 };
 
 export type ApiMyProfile = {
@@ -541,4 +611,260 @@ export type ApiNotification = {
   marketId?: string | null;
   href?: string | null;
   type: "RESOLUTION" | "CHALLENGE" | "GENERAL" | string;
+};
+
+// ─── Finance: Expert Opinion Polls ────────────────────────────────────────────
+
+export type ApiExpertOpinionPollType = "IMPLICATION" | "RETROSPECTIVE";
+
+/** Poll A (IMPLICATION) 5-bucket agreement choices (v3). */
+export type ApiImplicationChoice =
+  | "STRONGLY_DISAGREE"
+  | "DISAGREE"
+  | "NEUTRAL"
+  | "AGREE"
+  | "STRONGLY_AGREE";
+
+export type ApiExpertOpinionVoteChoice =
+  | ApiImplicationChoice
+  | "HIT"
+  | "MISS";
+
+export interface ApiExpertOpinionTallies {
+  implication: {
+    stronglyDisagree: number;
+    disagree: number;
+    neutral: number;
+    agree: number;
+    stronglyAgree: number;
+    total: number;
+    userChoice: ApiImplicationChoice | null;
+    /** 0=STRONGLY_DISAGREE, 1=DISAGREE, 2=NEUTRAL, 3=AGREE, 4=STRONGLY_AGREE; null when total === 0 */
+    medianBucket: 0 | 1 | 2 | 3 | 4 | null;
+  };
+  retrospective: {
+    hit: number;
+    miss: number;
+    total: number;
+    userChoice: "HIT" | "MISS" | null;
+    isLocked: boolean;
+    unlockReason: string | null;
+  };
+}
+
+// ─── Finance: Market Event Clusters ───────────────────────────────────────────
+
+export interface ClusterDataPoint {
+  label: string;
+  value: string;
+  subtext?: string;
+  date?: string;
+}
+
+export interface ApiMarketEventCluster {
+  id: string;
+  slug: string;
+  name: string;
+  description?: string | null;
+  startsAt: string; // ISO
+  endsAt: string; // ISO
+  bannerEmoji?: string | null;
+  category: string;
+}
+
+// ─── Finance: Expert Profile + Calls ──────────────────────────────────────────
+
+export interface ApiExpertCall {
+  id: string;
+  quote: string;
+  direction: string;
+  publishedAt: string;
+  resolutionStatus: string;
+  resolvedAt?: string | null;
+  resolutionNote?: string | null;
+  retrospectiveTallies?: { hit: number; miss: number; total: number };
+}
+
+export interface ApiExpertProfile {
+  id: string;
+  name: string;
+  organization: string;
+  verified: boolean;
+  bio?: string | null;
+  avatarUrl?: string | null;
+  credibilityScore: number | null;
+  provisional: boolean;
+  totalOpinions: number;
+  resolvedCount: number;
+  recentCalls: ApiExpertCall[];
+}
+
+export interface ApiExpertLeaderboardEntry {
+  rank: number;
+  expert: ApiExpertProfile & { hitCount: number; missCount: number };
+}
+
+// ─── Finance: Expert Sentiment Aggregate ──────────────────────────────────────
+
+export interface ApiFinanceExpertSentiment {
+  bullishCount: number;
+  bearishCount: number;
+  neutralCount: number;
+  totalCount: number;
+  /** 0–100, rounded to 1 decimal */
+  bullishPercent: number;
+  bearishPercent: number;
+  neutralPercent: number;
+  dominantLean: "BULLISH" | "BEARISH" | "NEUTRAL" | "MIXED";
+  samplePeriod: "7d";
+}
+
+// ─── Finance: Markets Feed ─────────────────────────────────────────────────────
+
+export interface ApiFinanceSentiment {
+  marketId: string;
+  marketTitle: string;
+  yesPercent: number;
+  noPercent: number;
+  totalVotes: number;
+  leanLabel: "Bullish" | "Bearish" | "Uncertain";
+  /** yesPercent from the previous calendar day for the same market, null if no data */
+  previousDayScore: number | null;
+}
+
+export interface ApiFinanceEventCluster extends ApiMarketEventCluster {
+  markets: ApiMarketSummary[];
+  dataPoints: ClusterDataPoint[];
+  expertTakeCount: number;
+}
+
+export interface ApiFinanceMarketsResponse {
+  sentimentToday: ApiFinanceSentiment | null;
+  eventClusters: ApiFinanceEventCluster[];
+  unclusteredMarkets: {
+    items: ApiMarketSummary[];
+    nextCursor: string | null;
+    total: number;
+  };
+}
+
+// ─── Calibration scorecard ─────────────────────────────────────────────────────
+
+export type ApiCalibrationCategoryBreakdown = {
+  category: string;
+  totalPredictions: number;
+  totalWins: number;
+  accuracyScore: number;
+  totalNetPoints: number;
+};
+
+export type ApiUserCalibration = {
+  overallAccuracy: number;
+  totalPredictions: number;
+  totalWins: number;
+  bestStreak: number;
+  categoryBreakdown: ApiCalibrationCategoryBreakdown[];
+};
+
+export type ApiCategoryTopEntry = {
+  rank: number;
+  id: string;
+  username: string;
+  accuracyScore: number;
+  totalPredictions: number;
+};
+
+export type ApiCategoryTopResponse = {
+  category: string;
+  entries: ApiCategoryTopEntry[];
+};
+
+// ─── Story detail (single story + attached expert opinions) ───────────────────
+
+export interface ApiStoryExpertOpinion extends ApiExpertOpinionItem {
+  verified: boolean; // Always present on story detail responses (not optional)
+}
+
+export interface ApiStory {
+  id: string;
+  slug: string;
+  headline: string;
+  summary: string;
+  category: AppMarketCategory;
+  sourceName: string;
+  sourceUrl: string;
+  imageUrl: string | null;
+  publishedAt: string;
+  ingestedAt: string;
+  expertOpinions: ApiStoryExpertOpinion[];
+}
+
+// ─── Follow system (S24-T2) ───────────────────────────────────────────────────
+
+/** Returned by POST /api/users/[userId]/follow and DELETE /api/users/[userId]/follow */
+export type ApiFollowStatus = {
+  following: boolean;
+};
+
+/** One entry in the followers/following paginated list */
+export type ApiFollowerEntry = {
+  userId: string;
+  username: string;
+  avatarUrl: string | null;
+  accuracyScore: number;
+};
+
+// ─── Daily quests (S24-T4) ────────────────────────────────────────────────────
+
+/** Valid daily quest type identifiers. */
+export type AppQuestType = "PREDICT_3" | "PREDICT_5" | "VOTE_ON_POLL" | "CREATE_MARKET";
+
+/**
+ * A single daily quest entry as returned by GET /api/quests/today.
+ * progress/goal give the raw counts; completed is the definitive flag.
+ */
+export type ApiDailyQuestEntry = {
+  questType: AppQuestType;
+  description: string;
+  reward: number;
+  completed: boolean;
+  completedAt: string | null; // ISO datetime, null if not yet completed
+  progress: number;
+  goal: number;
+};
+
+/**
+ * Full response shape of GET /api/quests/today.
+ */
+export type ApiDailyQuests = {
+  date: string; // 'YYYY-MM-DD' IST
+  quests: ApiDailyQuestEntry[];
+  totalEarnedToday: number;
+  streak: number; // current win streak from UserStat
+};
+
+/**
+ * A single quest reward returned inline in bet/vote API responses so the
+ * mobile client can show a "Quest complete! +N pts" toast without a refetch.
+ */
+export type ApiQuestReward = {
+  questType: string;
+  reward: number;
+};
+
+/**
+ * Response shape of POST /api/markets/[marketId]/positions.
+ */
+export type ApiPlacePositionResponse = {
+  ok: boolean;
+  questRewards: ApiQuestReward[];
+};
+
+/**
+ * Response shape of GET /api/users/me/referral-code (S24-T6).
+ */
+export type ApiReferralInfo = {
+  referralCode: string;
+  referralCount: number;
+  totalEarned: number;
 };

@@ -69,7 +69,13 @@ const baseMarketSchema = z.object({
   bondCap: z.coerce.number().int().min(0).max(100000).optional(),
   dynamicPoolEnabled: z.coerce.boolean().optional(),
   challengeWindowHours: z.coerce.number().int().min(1).max(72).optional(),
-  gracePeriodHours: z.coerce.number().int().min(1).max(getMaxGracePeriodHours()).optional()
+  gracePeriodHours: z.coerce.number().int().min(1).max(getMaxGracePeriodHours()).optional(),
+  // MULTIPLE_CHOICE only — 2-10 option labels
+  options: z
+    .array(z.object({ label: z.string().min(1).max(100) }))
+    .min(2, "Multiple choice markets require at least 2 options.")
+    .max(10, "Multiple choice markets allow at most 10 options.")
+    .optional()
 });
 
 export const createMarketSchema = baseMarketSchema.superRefine((value, ctx) => {
@@ -294,6 +300,26 @@ export const createMarketSchema = baseMarketSchema.superRefine((value, ctx) => {
     });
   }
 
+  if (value.marketType === MarketType.MULTIPLE_CHOICE) {
+    if (!value.options || value.options.length < 2) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Multiple choice markets require at least 2 options.",
+        path: ["options"]
+      });
+    } else {
+      const labels = value.options.map((o) => o.label.trim().toLowerCase());
+      const uniqueLabels = new Set(labels);
+      if (uniqueLabels.size !== labels.length) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "All option labels must be unique.",
+          path: ["options"]
+        });
+      }
+    }
+  }
+
   if (
     value.poolRewardMode &&
     !["HOST", "TRUSTED_HOST"].includes(value.resolutionMode)
@@ -364,6 +390,15 @@ export const adminOverturnResolutionSchema = z.object({
   sourceName: z.string().min(2).max(120),
   sourceUrl: z.string().url().optional().or(z.literal("")),
   overturnedReason: z.string().min(8).max(500)
+});
+
+export const multiChoicePositionSchema = z.object({
+  optionId: z.string().cuid(),
+  amount: z.coerce.number().int().min(10, "Minimum stake is 10 points.").max(100000)
+});
+
+export const resolveMultiChoiceSchema = z.object({
+  winningOptionId: z.string().cuid()
 });
 
 export const adminCancelMarketSchema = z.object({

@@ -5,6 +5,7 @@ import {
   Pressable,
   RefreshControl,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   View,
@@ -15,10 +16,14 @@ import { resetOnboarding } from "@/components/onboarding-walkthrough";
 
 import type {
   ApiCategoryStat,
+  ApiDailyQuests,
   ApiGroupSummary,
+  ApiLeagueEntry,
   ApiMyProfile,
   ApiPnlSummary,
   ApiPositionSummary,
+  ApiReferralInfo,
+  AppLeagueTier,
   AppMarketStatus,
 } from "@predict-future/types";
 import { formatPoints, formatRelativeTime } from "@predict-future/utils";
@@ -53,6 +58,9 @@ function getBadgeMeta(name: string): BadgeMeta {
 // ── Status helpers ────────────────────────────────────────────────────────────
 
 const STATUS_META: Record<string, { label: string; color: string; bg: string }> = {
+  DRAFT:               { label: "Pending review", color: "#92400E", bg: "#FEF3C7" },
+  PENDING_REVIEW:      { label: "Pending review", color: "#92400E", bg: "#FEF3C7" },
+  REJECTED:            { label: "Rejected",  color: "#991B1B", bg: "#FEE2E2" },
   OPEN:                { label: "Live",      color: "#059669", bg: "#ECFDF5" },
   CLOSED:              { label: "Closed",    color: "#D97706", bg: "#FFFBEB" },
   AWAITING_RESOLUTION: { label: "Pending",   color: "#7C3AED", bg: "#F5F3FF" },
@@ -64,6 +72,51 @@ const STATUS_META: Record<string, { label: string; color: string; bg: string }> 
 function getStatusMeta(status: string) {
   return STATUS_META[status] ?? { label: status, color: colors.textMuted, bg: colors.background };
 }
+
+// ── League tier helpers ───────────────────────────────────────────────────────
+
+const TIER_COLORS: Record<AppLeagueTier, string> = {
+  BRONZE:   "#CD7F32",
+  SILVER:   "#A8A9AD",
+  GOLD:     "#FFD700",
+  PLATINUM: "#E5E4E2",
+  DIAMOND:  "#B9F2FF",
+};
+
+function TierBadge({
+  tier,
+  onPress,
+}: {
+  tier: AppLeagueTier | null | undefined;
+  onPress: () => void;
+}) {
+  const bg = tier ? TIER_COLORS[tier] : "rgba(255,255,255,0.15)";
+  const label = tier ?? "Unranked";
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [tierBadgeStyles.pill, { backgroundColor: bg }, pressed && { opacity: 0.75 }]}
+      hitSlop={8}
+    >
+      <Text style={tierBadgeStyles.label} numberOfLines={1}>{label}</Text>
+    </Pressable>
+  );
+}
+
+const tierBadgeStyles = StyleSheet.create({
+  pill: {
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 999,
+    alignSelf: "flex-start",
+  },
+  label: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#1A1A2E",
+    letterSpacing: 0.3,
+  },
+});
 
 // ── Activity item types ───────────────────────────────────────────────────────
 
@@ -145,6 +198,18 @@ export default function ProfileScreen() {
     () => mobileApi.getMyGroups(),
     []
   );
+  const questsFetcher = useCallback(
+    () => mobileApi.getQuestsToday(),
+    []
+  );
+  const referralFetcher = useCallback(
+    () => mobileApi.getMyReferralCode(),
+    []
+  );
+  const leagueFetcher = useCallback(
+    () => mobileApi.getMyCurrentLeague(),
+    []
+  );
 
   const enabled = sessionStatus === "authenticated" && Boolean(userId);
 
@@ -156,6 +221,21 @@ export default function ProfileScreen() {
   const { data: groupsData, refetch: refetchGroups } = useApiQuery<{
     groups: Array<ApiGroupSummary & { memberCount?: number; marketCount?: number }>;
   }>(groupsFetcher, [userId], { enabled });
+  const { data: questsData, refetch: refetchQuests } = useApiQuery<ApiDailyQuests>(
+    questsFetcher,
+    [userId],
+    { enabled }
+  );
+  const { data: referralData } = useApiQuery<ApiReferralInfo>(
+    referralFetcher,
+    [userId],
+    { enabled }
+  );
+  const { data: leagueData } = useApiQuery<ApiLeagueEntry>(
+    leagueFetcher,
+    [userId],
+    { enabled }
+  );
 
   if (sessionStatus !== "authenticated" || !userId) {
     return (
@@ -223,6 +303,7 @@ export default function ProfileScreen() {
   function handleRefresh() {
     void refetch();
     void refetchGroups();
+    void refetchQuests();
   }
 
   function handleLogOut() {
@@ -238,6 +319,11 @@ export default function ProfileScreen() {
       },
     ]);
   }
+
+  // ── Quests summary ──
+  const quests = questsData?.quests ?? [];
+  const questsCompletedCount = quests.filter((q) => q.completed).length;
+  const questsTotalCount = quests.length;
 
   // ── Performance Strip data ──
   const netPnl = pnl?.netPnl ?? 0;
@@ -262,6 +348,10 @@ export default function ProfileScreen() {
               {(user.streak ?? 0) > 0 && (
                 <Tag label={`🔥 ${user.streak} streak`} accent />
               )}
+              <TierBadge
+                tier={leagueData?.tier ?? null}
+                onPress={() => router.push("/leagues")}
+              />
             </View>
             {/* ── Performance Strip ── */}
             {hasAnyPredictions ? (
@@ -327,8 +417,54 @@ export default function ProfileScreen() {
             (Leaderboard + Groups + Notifications/Logout footer)
         ──────────────────────────────────────────────────────────────────── */}
 
-        {/* ── Social card: Leaderboard + Groups ── */}
+        {/* ── Social card: Daily Quests + Leaderboard + Groups ── */}
         <View style={styles.socialCard}>
+          <Pressable
+            style={({ pressed }) => [styles.socialRow, pressed && { opacity: 0.75 }]}
+            onPress={() => router.push("/quests")}
+          >
+            <Ionicons name="flame-outline" size={20} color={colors.accent} />
+            <Text style={styles.socialRowLabel}>Daily Quests</Text>
+            {questsTotalCount > 0 ? (
+              <View style={styles.socialRowBadge}>
+                <Text style={styles.socialRowBadgeText}>
+                  {questsCompletedCount}/{questsTotalCount}
+                </Text>
+              </View>
+            ) : null}
+            <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+          </Pressable>
+
+          <View style={styles.socialDivider} />
+
+          <Pressable
+            style={({ pressed }) => [styles.socialRow, pressed && { opacity: 0.75 }]}
+            onPress={() => router.push("/leagues")}
+          >
+            <Ionicons name="ribbon-outline" size={20} color={colors.accent} />
+            <Text style={styles.socialRowLabel}>Leagues</Text>
+            {leagueData ? (
+              <View style={styles.leagueBadgeRow}>
+                <View
+                  style={[
+                    styles.leagueTierPill,
+                    { backgroundColor: TIER_COLORS[leagueData.tier] },
+                  ]}
+                >
+                  <Text style={styles.leagueTierText}>{leagueData.tier}</Text>
+                </View>
+                {leagueData.rank != null && (
+                  <Text style={styles.leagueRankText}>Rank #{leagueData.rank}</Text>
+                )}
+              </View>
+            ) : (
+              <Text style={styles.leagueUnranked}>Unranked</Text>
+            )}
+            <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+          </Pressable>
+
+          <View style={styles.socialDivider} />
+
           <Pressable
             style={({ pressed }) => [styles.socialRow, pressed && { opacity: 0.75 }]}
             onPress={() => router.push("/(tabs)/leaderboard")}
@@ -374,6 +510,11 @@ export default function ProfileScreen() {
             <Text style={styles.socialEmptyHint}>Tap to join with an invite code</Text>
           )}
         </View>
+
+        {/* ── Invite Friends card (S24-T6) ── */}
+        {referralData && (
+          <InviteFriendsCard referral={referralData} />
+        )}
 
         {/* ── Actions ── */}
         <View style={styles.actionsCard}>
@@ -1611,6 +1752,35 @@ const styles = StyleSheet.create({
   },
   catBreakPct: { width: 36, textAlign: "right", fontSize: 12, fontWeight: "700", color: colors.text },
 
+  // ── Leagues row ──
+  leagueBadgeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    marginRight: spacing.sm,
+  },
+  leagueTierPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 999,
+  },
+  leagueTierText: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: "#1A1A2E",
+    letterSpacing: 0.3,
+  },
+  leagueRankText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: colors.textMuted,
+  },
+  leagueUnranked: {
+    fontSize: 12,
+    color: colors.textMuted,
+    marginRight: spacing.sm,
+  },
+
   // ── Log out ──
   logoutBtn: {
     marginTop: spacing.lg,
@@ -1626,4 +1796,137 @@ const styles = StyleSheet.create({
   },
   logoutPressed: { opacity: 0.7 },
   logoutText: { fontSize: 15, fontWeight: "600", color: colors.danger },
+});
+
+// ── InviteFriendsCard ─────────────────────────────────────────────────────────
+
+function InviteFriendsCard({ referral }: { referral: ApiReferralInfo }) {
+  const shareMessage = `Join me on Predict Future! Use my code ${referral.referralCode} — we both get 250 points when you make your first prediction. https://predictfuture.app`;
+
+  async function handleShare() {
+    try {
+      await Share.share({
+        message: shareMessage,
+        title: "Join Predict Future",
+      });
+    } catch (err) {
+      // Share sheet dismissed — no action needed
+    }
+  }
+
+  return (
+    <View style={inviteStyles.card}>
+      <View style={inviteStyles.headerRow}>
+        <Ionicons name="gift-outline" size={18} color={colors.accent} />
+        <Text style={inviteStyles.title}>Invite Friends</Text>
+      </View>
+
+      <Text style={inviteStyles.subtitle}>
+        You and a friend both earn{" "}
+        <Text style={inviteStyles.highlight}>250 pts</Text>
+        {" "}when they make their first prediction.
+      </Text>
+
+      {/* Referral code display */}
+      <View style={inviteStyles.codeBox}>
+        <Text style={inviteStyles.codeLabel}>Your Code</Text>
+        <Text style={inviteStyles.code}>{referral.referralCode}</Text>
+      </View>
+
+      {/* Share button */}
+      <Pressable
+        style={({ pressed }) => [inviteStyles.shareBtn, pressed && { opacity: 0.75 }]}
+        onPress={handleShare}
+      >
+        <Ionicons name="share-social-outline" size={16} color="#FFFFFF" />
+        <Text style={inviteStyles.shareBtnText}>Share via WhatsApp</Text>
+      </Pressable>
+
+      {/* Stats */}
+      {referral.referralCount > 0 && (
+        <Text style={inviteStyles.stats}>
+          {referral.referralCount} {referral.referralCount === 1 ? "friend" : "friends"} joined
+          {referral.totalEarned > 0 ? ` · ${referral.totalEarned.toLocaleString()} pts earned` : ""}
+        </Text>
+      )}
+    </View>
+  );
+}
+
+const inviteStyles = StyleSheet.create({
+  card: {
+    marginTop: spacing.md,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+  },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  title: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: colors.text,
+  },
+  subtitle: {
+    fontSize: 13,
+    color: colors.textMuted,
+    lineHeight: 19,
+    marginBottom: spacing.md,
+  },
+  highlight: {
+    color: colors.text,
+    fontWeight: "700",
+  },
+  codeBox: {
+    backgroundColor: colors.background,
+    borderRadius: radius.md,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: spacing.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+  },
+  codeLabel: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: colors.textMuted,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  code: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: colors.text,
+    letterSpacing: 2,
+  },
+  shareBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.sm,
+    backgroundColor: "#25D366", // WhatsApp green
+    borderRadius: radius.md,
+    paddingVertical: spacing.sm + 2,
+    paddingHorizontal: spacing.lg,
+  },
+  shareBtnText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#FFFFFF",
+  },
+  stats: {
+    marginTop: spacing.sm,
+    fontSize: 12,
+    color: colors.textMuted,
+    textAlign: "center",
+  },
 });

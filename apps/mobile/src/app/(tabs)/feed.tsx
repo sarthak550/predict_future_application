@@ -11,7 +11,7 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
-import { useFocusEffect, useNavigation, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 
 import type { ApiNewsFeedItem, AppMarketCategory } from "@predict-future/types";
 import { colors, radius, spacing } from "@predict-future/ui-tokens";
@@ -32,6 +32,7 @@ const INSIGHT_INTERVAL = 4;
 type CategoryFilter = { key: AppMarketCategory | "ALL"; label: string; emoji: string };
 const CATEGORIES: CategoryFilter[] = [
   { key: "ALL",           label: "All",           emoji: "🌐" },
+  { key: "FINANCE",       label: "Finance",       emoji: "₹" },
   { key: "TECH",          label: "Tech",          emoji: "💻" },
   { key: "BUSINESS",      label: "Business",      emoji: "📈" },
   { key: "SPORTS",        label: "Sports",        emoji: "⚽" },
@@ -72,6 +73,7 @@ export default function FeedScreen() {
   const { height } = useWindowDimensions();
   const navigation = useNavigation();
   const router = useRouter();
+  const { category: categoryParam } = useLocalSearchParams<{ category?: string }>();
   const { session, status: authStatus } = useSession();
   const listRef = useRef<FlatList<NewsListItem>>(null);
   const [streakCount, setStreakCount] = useState(0);
@@ -81,7 +83,27 @@ export default function FeedScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [category, setCategory] = useState<AppMarketCategory | "ALL">("ALL");
+  const [category, setCategory] = useState<AppMarketCategory | "ALL">(() => {
+    const validCategories: Array<AppMarketCategory | "ALL"> = [
+      "ALL", "FINANCE", "TECH", "BUSINESS", "SPORTS", "ENTERTAINMENT", "GENERAL", "WEATHER",
+    ];
+    if (categoryParam && validCategories.includes(categoryParam as AppMarketCategory | "ALL")) {
+      return categoryParam as AppMarketCategory | "ALL";
+    }
+    return "ALL";
+  });
+
+  // Sync `category` state whenever the URL param changes (e.g., navigating from
+  // the Finance tab via a deep link). useState initializer only fires on first
+  // render, so without this effect the param is ignored on subsequent navigations.
+  useEffect(() => {
+    const validCategories: Array<AppMarketCategory | "ALL"> = [
+      "ALL", "FINANCE", "TECH", "BUSINESS", "SPORTS", "ENTERTAINMENT", "GENERAL", "WEATHER",
+    ];
+    if (categoryParam && validCategories.includes(categoryParam as AppMarketCategory | "ALL")) {
+      setCategory(categoryParam as AppMarketCategory | "ALL");
+    }
+  }, [categoryParam]);
 
   // Skeleton loading: shown only on the FIRST load (items empty) after a 150ms
   // delay so fast API responses never flash the skeleton.
@@ -293,6 +315,16 @@ export default function FeedScreen() {
         </ScrollView>
       </View>
 
+      {/* Finance cross-tab discovery banner */}
+      {category === "FINANCE" && (
+        <Pressable
+          style={styles.financeBanner}
+          onPress={() => router.push("/(tabs)/markets?mode=finance" as Parameters<typeof router.push>[0])}
+        >
+          <Text style={styles.financeBannerText}>Predict on Finance Markets →</Text>
+        </Pressable>
+      )}
+
       <FlatList
         ref={listRef}
         data={feedItems}
@@ -433,6 +465,21 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
   },
   categoryChipLabelActive: { color: "#FFFFFF" },
+
+  // Finance cross-tab banner
+  financeBanner: {
+    backgroundColor: "#EEF2FF",
+    borderBottomWidth: 1,
+    borderBottomColor: "#C7D2FE",
+    paddingVertical: 8,
+    paddingHorizontal: spacing.lg,
+    alignItems: "flex-end",
+  },
+  financeBannerText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#4338CA",
+  },
 
   // List states
   emptyContent: { flexGrow: 1 },

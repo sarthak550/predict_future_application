@@ -22,6 +22,45 @@ export async function GET(request: Request) {
   const timeWindowParam = searchParams.get("timeWindow") ?? "all";
   const timeWindow: TimeWindow =
     timeWindowParam === "week" || timeWindowParam === "month" ? timeWindowParam : "all";
+  const topMode = searchParams.get("top") === "true";
+  const limitParam = parseInt(searchParams.get("limit") ?? "10", 10);
+  const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, 50) : 10;
+
+  // ── Top-N category leaderboard (calibration scorecard surface) ─────────────
+  // GET /api/leaderboard?top=true&category=FINANCE&limit=10
+  // Auth: optional. Cache-Control: public 5 min.
+  if (topMode && category && Object.values(MarketCategory).includes(category as MarketCategory)) {
+    const rows = await prisma.userCategoryStat.findMany({
+      where: {
+        category: category as MarketCategory,
+        totalPredictions: { gte: 1 },
+      },
+      include: {
+        user: {
+          select: { username: true },
+        },
+      },
+      orderBy: [{ accuracyScore: "desc" }, { totalPredictions: "desc" }],
+      take: limit,
+    });
+
+    const entries = rows.map((row, idx) => ({
+      rank: idx + 1,
+      id: row.userId,
+      username: row.user.username,
+      accuracyScore: row.accuracyScore,
+      totalPredictions: row.totalPredictions,
+    }));
+
+    return NextResponse.json(
+      { category, entries },
+      {
+        headers: {
+          "Cache-Control": "public, max-age=300",
+        },
+      }
+    );
+  }
 
   const cutoff = getCutoff(timeWindow);
 

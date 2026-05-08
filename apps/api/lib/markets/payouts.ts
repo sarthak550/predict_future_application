@@ -5,6 +5,7 @@ import {
   parseNumericPayoutDistribution
 } from "@/lib/markets/numeric";
 import { calculateHostReward, isHostResolvedMode } from "@/lib/markets/policies";
+import { updateLeagueMonthPoints } from "@/lib/leagues/processing";
 import { createNotification } from "@/lib/notifications";
 import { refreshUserStats } from "@/lib/stats";
 
@@ -443,6 +444,16 @@ export async function settleMarket(
           marketId: market.id,
           positionId: position.id
         });
+
+        // League points: net gain only (payout minus original stake)
+        const netGain = payout - position.amount;
+        if (netGain > 0) {
+          try {
+            await updateLeagueMonthPoints(position.userId, netGain, tx);
+          } catch (leagueErr) {
+            console.error("[leagues] updateLeagueMonthPoints failed (numeric win):", leagueErr);
+          }
+        }
       }
 
       await tx.marketPosition.update({
@@ -546,6 +557,16 @@ export async function settleMarket(
       positionId: winner.id
     });
 
+    // League points: net gain only (payout minus original stake)
+    const netGain = payout - winner.amount;
+    if (netGain > 0) {
+      try {
+        await updateLeagueMonthPoints(winner.userId, netGain, tx);
+      } catch (leagueErr) {
+        console.error("[leagues] updateLeagueMonthPoints failed (binary win):", leagueErr);
+      }
+    }
+
     await tx.marketPosition.update({
       where: { id: winner.id },
       data: {
@@ -624,4 +645,210 @@ export async function settleMarket(
   }
 
   await refreshUserStats(tx, market.creatorId);
+}
+
+/**
+ * Settle a MULTIPLE_CHOICE market. The caller must have already written
+ * `market.winningOptionId` and `market.outcome = RESOLVED` before invoking.
+ *
+ * Payout formula: for each winner,
+ *   payout = floor((user_amount / winning_total) * total_pool)
+ * Remainder cents are distributed to top winners (largest stake first).
+ */
+export async function settleMultiChoiceMarket(
+  tx: TxClient,
+  marketId: string
+) {
+  const market = await tx.market.findUnique({
+    where: { id: marketId },
+    include: {
+      creator: { include: { wallet: true } }
+    }
+  });
+
+  if (!market) {
+    throw new Error("Market not found.");
+  }
+
+  if (market.marketType !== "MULTIPLE_CHOICE") {
+    throw new Error("settleMultiChoiceMarket called on a non-MULTIPLE_CHOICE market.");
+  }
+
+  // Gather all positions for this market.
+  const allPositions = await tx.multiChoicePosition.findMany({
+    where: { marketId, settledAt: null },
+    include: {
+      user: { include: { wallet: true } }
+    }
+  });
+
+  const totalPool = allPositions.reduce((sum, p) => sum + p.amount, 0);
+
+  // CANCELLED path — full refund.
+  if (market.outcome === MarketOutcome.CANCELLED) {
+    for (const position of allPositions) {
+      if (!position.user.wallet) continue;
+
+      await tx.wallet.update({
+        where: { id: position.user.wallet.id },
+        data: { balance: { increment: position.amount } }
+      });
+
+      await tx.walletTransaction.create({
+        data: {
+          walletId: position.user.wallet.id,
+          type: "MARKET_REFUND",
+          amount: position.amount,
+          description: `Refund for cancelled multi-choice market "${market.title}"`,
+          marketId: market.id
+        }
+      });
+
+      await tx.multiChoicePosition.update({
+        where: { id: position.id },
+        data: { payoutAmount: position.amount, settledAt: new Date() }
+      });
+    }
+
+    // Notify participants.
+    const participantIds = Array.from(new Set(allPositions.map((p) => p.userId)));
+    for (const userId of participantIds) {
+      try {
+        await createNotification(tx, {
+          userId,
+          marketId: market.id,
+          type: "MARKET_RESOLVED",
+          title: "Market cancelled",
+          body: `${market.title} was cancelled and your stake was refunded.`,
+          href: `/markets/${market.id}`
+        });
+        await refreshUserStats(tx, userId);
+      } catch (notifErr) {
+        console.error("[settleMultiChoiceMarket] cancelled notification error:", notifErr);
+      }
+    }
+    return;
+  }
+
+  if (!market.winningOptionId) {
+    throw new Error("Winning option not set for MULTIPLE_CHOICE resolution.");
+  }
+
+  const winningPositions = allPositions.filter(
+    (p) => p.optionId === market.winningOptionId
+  );
+  const winningTotal = winningPositions.reduce((sum, p) => sum + p.amount, 0);
+
+  // Build payout map.
+  const payoutMap = new Map<string, { positionId: string; userId: string; payout: number }>();
+
+  if (winningTotal === 0) {
+    // No one bet on the winning option — refund everyone.
+    for (const position of allPositions) {
+      payoutMap.set(position.id, {
+        positionId: position.id,
+        userId: position.userId,
+        payout: position.amount
+      });
+    }
+  } else {
+    // Proportional payouts for winners.
+    const rawPayouts = winningPositions.map((p) => ({
+      positionId: p.id,
+      userId: p.userId,
+      payout: Math.floor((p.amount / winningTotal) * totalPool)
+    }));
+
+    // Distribute remainder (rounding dust) to highest stakers first.
+    const distributed = rawPayouts.reduce((sum, p) => sum + p.payout, 0);
+    let remainder = totalPool - distributed;
+    rawPayouts.sort((a, b) => b.payout - a.payout);
+    let cursor = 0;
+    while (remainder > 0 && rawPayouts.length > 0) {
+      rawPayouts[cursor % rawPayouts.length].payout += 1;
+      remainder -= 1;
+      cursor += 1;
+    }
+
+    for (const entry of rawPayouts) {
+      payoutMap.set(entry.positionId, entry);
+    }
+  }
+
+  // Credit wallets.
+  const settledUserIds = new Set<string>();
+  for (const [positionId, entry] of payoutMap.entries()) {
+    const position = allPositions.find((p) => p.id === positionId);
+    if (!position?.user.wallet) continue;
+
+    await tx.wallet.update({
+      where: { id: position.user.wallet.id },
+      data: { balance: { increment: entry.payout } }
+    });
+
+    await tx.walletTransaction.create({
+      data: {
+        walletId: position.user.wallet.id,
+        type: "MARKET_WIN",
+        amount: entry.payout,
+        description: `Payout for multi-choice market "${market.title}"`,
+        marketId: market.id
+      }
+    });
+
+    await tx.multiChoicePosition.update({
+      where: { id: positionId },
+      data: { payoutAmount: entry.payout, settledAt: new Date() }
+    });
+
+    settledUserIds.add(entry.userId);
+
+    // League points — net gain = payout - amount staked.
+    const netGain = entry.payout - position.amount;
+    if (netGain > 0) {
+      try {
+        await updateLeagueMonthPoints(entry.userId, netGain, tx);
+      } catch (leagueErr) {
+        console.error("[league] multi-choice non-fatal error:", leagueErr);
+      }
+    }
+  }
+
+  // For losing positions — mark settled, no credit.
+  for (const position of allPositions) {
+    if (!payoutMap.has(position.id)) {
+      await tx.multiChoicePosition.update({
+        where: { id: position.id },
+        data: { payoutAmount: 0, settledAt: new Date() }
+      });
+
+      // Negative league points for the loss.
+      try {
+        await updateLeagueMonthPoints(position.userId, -position.amount, tx);
+      } catch (leagueErr) {
+        console.error("[league] multi-choice loss non-fatal error:", leagueErr);
+      }
+    }
+  }
+
+  // Notify all participants.
+  const allParticipantIds = Array.from(new Set(allPositions.map((p) => p.userId)));
+  for (const userId of allParticipantIds) {
+    const won = settledUserIds.has(userId);
+    try {
+      await createNotification(tx, {
+        userId,
+        marketId: market.id,
+        type: "MARKET_RESOLVED",
+        title: won ? "Winning prediction" : "Market resolved",
+        body: won
+          ? `${market.title} resolved and you won!`
+          : `${market.title} has resolved. Better luck next time.`,
+        href: `/markets/${market.id}`
+      });
+      await refreshUserStats(tx, userId);
+    } catch (notifErr) {
+      console.error("[settleMultiChoiceMarket] notification error:", notifErr);
+    }
+  }
 }

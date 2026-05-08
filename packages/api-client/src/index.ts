@@ -1,6 +1,15 @@
 import { buildAuthHeaders, type AuthTokenProvider } from "@predict-future/auth-shared";
 import type {
+  ApiCategoryTopResponse,
   ApiCricketMatchDetail,
+  ApiDailyQuests,
+  ApiExpertLeaderboardEntry,
+  ApiExpertOpinionTallies,
+  ApiExpertProfile,
+  ApiFinanceExpertSentiment,
+  ApiFinanceMarketsResponse,
+  ApiFollowerEntry,
+  ApiFollowStatus,
   ApiFootballMatchDetail,
   ApiGroupDetail,
   ApiGroupSummary,
@@ -8,15 +17,22 @@ import type {
   ApiHostStats,
   ApiLeaderboardResponse,
   ApiLeaderboardTimeWindow,
+  ApiLeagueEntry,
+  ApiLeagueStandingsPage,
   ApiLiveScore,
   ApiMarketDetail,
   ApiMarketSummary,
   ApiMyProfile,
   ApiNewsFeedItem,
   ApiNotification,
+  ApiPlacePositionResponse,
   ApiPollListItem,
+  ApiReferralInfo,
+  ApiStory,
+  ApiUserCalibration,
   ApiUserProfile,
   ApiVote,
+  AppLeagueTier,
   AppMarketCategory,
   AppMarketStatus
 } from "@predict-future/types";
@@ -29,10 +45,13 @@ export type NewsFeedPage = {
   hasMore: boolean;
 };
 
+export type AuthFailureReason = "unauthorized" | "user_not_found";
+
 export type ApiClientOptions = {
   baseUrl: string;
   getAuthToken?: AuthTokenProvider;
   fetchFn?: typeof fetch;
+  onAuthFailure?: (reason: AuthFailureReason) => void;
 };
 
 export type NewsQuery = {
@@ -41,6 +60,7 @@ export type NewsQuery = {
   category?: AppMarketCategory;
   excludeCategory?: string;
   userId?: string;
+  requireExpertOpinions?: boolean;
 };
 
 export type PublicMarketsQuery = {
@@ -111,6 +131,15 @@ export function createApiClient(options: ApiClientOptions) {
         typeof payload === "object" && payload && "error" in payload && typeof payload.error === "string"
           ? payload.error
           : `Request failed with status ${response.status}.`;
+
+      if (options.onAuthFailure) {
+        if (response.status === 401 && init?.auth) {
+          options.onAuthFailure("unauthorized");
+        } else if (response.status === 404 && path === "/api/profile/me") {
+          options.onAuthFailure("user_not_found");
+        }
+      }
+
       throw new ApiClientError(message, response.status, payload);
     }
 
@@ -134,17 +163,40 @@ export function createApiClient(options: ApiClientOptions) {
     getMarketById(marketId: string, query?: { userId?: string }) {
       return request<ApiMarketDetail & {
         userPositions?: Array<{ id: string; side: string | null; amount: number; numericValue: number | null; createdAt: string }>;
+        userMultiChoicePositions?: Array<{ optionId: string; amount: number }>;
         userVote?: { side: string | null; numericValue: number | null } | null;
       }>(`/api/markets/${marketId}`, query, { auth: true });
     },
     placePosition(marketId: string, body: { side?: string; numericValue?: number; amount: number }, query?: { userId?: string }) {
-      return request<{ ok: boolean }>(
+      return request<ApiPlacePositionResponse>(
         `/api/markets/${marketId}/positions`,
         query,
         {
           method: "POST",
           body: JSON.stringify(body),
           auth: true,
+        }
+      );
+    },
+    placeMultiChoicePosition(marketId: string, body: { optionId: string; amount: number }) {
+      return request<{ ok: boolean; questRewards: Array<{ questId: string; reward: number }> }>(
+        `/api/markets/${marketId}/positions/multi-choice`,
+        undefined,
+        {
+          method: "POST",
+          body: JSON.stringify(body),
+          auth: true
+        }
+      );
+    },
+    resolveMultiChoiceMarket(marketId: string, body: { winningOptionId: string }) {
+      return request<{ ok: boolean }>(
+        `/api/markets/${marketId}/resolve-multi-choice`,
+        undefined,
+        {
+          method: "POST",
+          body: JSON.stringify(body),
+          auth: true
         }
       );
     },
@@ -199,10 +251,10 @@ export function createApiClient(options: ApiClientOptions) {
       return request<ApiLeaderboardResponse>("/api/leaderboard", query, { auth: true });
     },
     getProfile(username: string) {
-      return request<{ user: ApiUserProfile }>(`/api/profile/${username}`);
+      return request<{ user: ApiUserProfile }>(`/api/profile/${username}`, undefined, { auth: true });
     },
     getUserProfile(username: string) {
-      return request<{ user: ApiUserProfile }>(`/api/profile/${username}`);
+      return request<{ user: ApiUserProfile }>(`/api/profile/${username}`, undefined, { auth: true });
     },
     getMyProfile(query?: { userId?: string }) {
       return request<ApiMyProfile>("/api/profile/me", query, { auth: true });
@@ -316,6 +368,203 @@ export function createApiClient(options: ApiClientOptions) {
         `/api/notifications/${id}/read`,
         undefined,
         { method: "PATCH", auth: true }
+      );
+    },
+
+    // ─── Finance: Expert Opinion Polls ────────────────────────────────────
+    castExpertOpinionVote(
+      opinionId: string,
+      body: { pollType: string; choice: string }
+    ) {
+      return request<ApiExpertOpinionTallies>(
+        `/api/finance/expert-opinions/${opinionId}/vote`,
+        undefined,
+        { method: "POST", auth: true, body: JSON.stringify(body) }
+      );
+    },
+
+    getExpertOpinionTallies(opinionId: string) {
+      return request<ApiExpertOpinionTallies>(
+        `/api/finance/expert-opinions/${opinionId}/tallies`,
+        undefined,
+        { auth: true }
+      );
+    },
+
+    // ─── Finance: Expert Sentiment Aggregate ──────────────────────────────
+    getFinanceExpertSentiment() {
+      return request<ApiFinanceExpertSentiment>("/api/finance/expert-sentiment");
+    },
+
+    // ─── Finance: Markets Feed ─────────────────────────────────────────────
+    getFinanceMarkets(params?: { cursor?: string }) {
+      return request<ApiFinanceMarketsResponse>(
+        `/api/finance/markets`,
+        params
+      );
+    },
+
+    // ─── Finance: Expert Profile + Leaderboard ────────────────────────────
+    getExpertProfile(expertId: string) {
+      return request<ApiExpertProfile>(
+        `/api/finance/experts/${expertId}`
+      );
+    },
+
+    getExpertCalls(expertId: string, params?: { cursor?: string }) {
+      return request<{ items: import("@predict-future/types").ApiExpertCall[]; nextCursor: string | null }>(
+        `/api/finance/experts/${expertId}/calls`,
+        params
+      );
+    },
+
+    getExpertLeaderboard(params?: { org?: string }) {
+      return request<ApiExpertLeaderboardEntry[]>(
+        `/api/finance/experts/leaderboard`,
+        params
+      );
+    },
+
+    // ─── Story detail ──────────────────────────────────────────────────────
+    getStory(storyId: string) {
+      return request<{ story: ApiStory }>(`/api/news/${storyId}`);
+    },
+
+    // ─── Calibration scorecard ─────────────────────────────────────────────
+    /** Fetch a user's calibration data — overall accuracy + per-category breakdown. Auth: none. */
+    getUserCalibration(userId: string) {
+      return request<ApiUserCalibration>(`/api/users/${userId}/calibration`);
+    },
+
+    /** Fetch the top-N users in a given category by accuracy. Auth: none. */
+    getCategoryTop(params: { category: AppMarketCategory; limit?: number }) {
+      return request<ApiCategoryTopResponse>("/api/leaderboard", {
+        top: "true",
+        category: params.category,
+        limit: params.limit ?? 10,
+      });
+    },
+
+    // ─── Follow system (S24-T2) ────────────────────────────────────────────
+
+    /**
+     * Follow a user. Auth required.
+     * Idempotent — safe to call if already following.
+     */
+    followUser(userId: string) {
+      return request<ApiFollowStatus>(
+        `/api/users/${userId}/follow`,
+        undefined,
+        { method: "POST", auth: true }
+      );
+    },
+
+    /**
+     * Unfollow a user. Auth required.
+     * Idempotent — safe to call even if not currently following.
+     */
+    unfollowUser(userId: string) {
+      return request<ApiFollowStatus>(
+        `/api/users/${userId}/follow`,
+        undefined,
+        { method: "DELETE", auth: true }
+      );
+    },
+
+    /**
+     * Get a user's followers (paginated). Auth: none.
+     */
+    getFollowers(userId: string, params?: { cursor?: string }) {
+      return request<{ items: ApiFollowerEntry[]; nextCursor: string | null }>(
+        `/api/users/${userId}/followers`,
+        params
+      );
+    },
+
+    /**
+     * Get the users a user follows (paginated). Auth: none.
+     */
+    getFollowing(userId: string, params?: { cursor?: string }) {
+      return request<{ items: ApiFollowerEntry[]; nextCursor: string | null }>(
+        `/api/users/${userId}/following`,
+        params
+      );
+    },
+
+    // ─── Daily quests (S24-T4) ────────────────────────────────────────────────
+
+    /**
+     * Fetch today's daily quests for the authenticated user.
+     * Returns quest progress, completion status, and total points earned today.
+     * Auth: required.
+     */
+    getQuestsToday() {
+      return request<ApiDailyQuests>("/api/quests/today", undefined, { auth: true });
+    },
+
+    // ─── Referral rewards (S24-T6) ────────────────────────────────────────────
+
+    /**
+     * Fetch the authenticated user's referral code and stats.
+     * Lazily generates and persists a code if one does not exist.
+     * Auth: required.
+     */
+    getMyReferralCode() {
+      return request<ApiReferralInfo>(
+        "/api/users/me/referral-code",
+        undefined,
+        { auth: true }
+      );
+    },
+
+    // ─── Monthly leagues (S24-T7) ─────────────────────────────────────────────
+
+    /**
+     * Fetch the authenticated user's MonthlyLeagueEntry for the current IST month.
+     * Auto-creates the entry at BRONZE tier if it does not exist.
+     * Auth: required.
+     */
+    getMyCurrentLeague() {
+      return request<ApiLeagueEntry>(
+        "/api/leagues/current",
+        undefined,
+        { auth: true }
+      );
+    },
+
+    // ─── Monthly leagues (S24-T8) ─────────────────────────────────────────────
+
+    /**
+     * Fetch paginated standings for a given tier and month.
+     * Auth: not required.
+     */
+    getLeagueStandings(params: { tier: AppLeagueTier; month: string; cursor?: string }) {
+      return request<ApiLeagueStandingsPage>(
+        "/api/leagues/standings",
+        {
+          tier: params.tier,
+          month: params.month,
+          ...(params.cursor ? { cursor: params.cursor } : {}),
+        }
+      );
+    },
+
+    /**
+     * Trigger month-end promotion/relegation processing. Admin only.
+     * Defaults to the previous IST calendar month when month is omitted.
+     */
+    processLeagueMonthEnd(params?: { month?: string }) {
+      return request<
+        | { month: string; processed: number; promoted: number; relegated: number }
+        | { alreadyProcessed: true }
+      >(
+        "/api/admin/leagues/process-month-end",
+        undefined,
+        {
+          method: "POST",
+          body: JSON.stringify(params ?? {}),
+          auth: true,
+        }
       );
     },
   };

@@ -1,10 +1,12 @@
 ---
 name: Predict Future — Product Overview
-description: Core product description, stack, business model direction, and key architectural decisions for Predict Future
+description: Core product description, stack, business model direction, and key architectural decisions for Predict Future. Repositioned to "India's Analyst Scorecard" on 2026-05-06.
 type: project
 ---
 
-Predict Future is a news-first, virtual-points prediction market platform (play-money only). Users create markets tied to news stories; "hosts" earn commission or bond-based rewards. Mobile-first (Expo Android), with a web app and central Next.js API.
+POSITIONING LOCK (2026-05-06): The product is publicly branded as "India's Analyst Scorecard." Do NOT use "prediction market" in any public-facing copy, press materials, onboarding, or App Store listing. The product is a news-native analyst call-rating platform where Indian retail investors rate real sell-side analyst calls and a live leaderboard tracks which analysts (and users) have the best accuracy track record.
+
+Predict Future is a news-native analyst call-rating platform (play-money only). Users rate real analyst calls from HDFC Securities, ICICI Direct, Morgan Stanley India, etc. as BULLISH/BEARISH/NEUTRAL, make their own competing calls, and a public credibility leaderboard tracks accuracy over time. Mobile-first (Expo Android), with a web app and central Next.js API.
 
 **Why:** Building toward a real-money prediction market eventually, but explicitly play-money first to build audience and compliance buffer.
 

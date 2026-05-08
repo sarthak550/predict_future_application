@@ -42,6 +42,7 @@ const SORT_OPTIONS: { key: MarketSort; label: string }[] = [
 
 const CATEGORIES: { key: AppMarketCategory | "ALL"; label: string }[] = [
   { key: "ALL", label: "All" },
+  { key: "FINANCE", label: "Finance" },
   { key: "SPORTS", label: "Sports" },
   { key: "TECH", label: "Tech" },
   { key: "BUSINESS", label: "Business" },
@@ -52,7 +53,7 @@ const CATEGORIES: { key: AppMarketCategory | "ALL"; label: string }[] = [
   { key: "GENERAL", label: "General" },
 ];
 
-const LIVE_STATUSES = new Set(["OPEN", "DRAFT"]);
+const LIVE_STATUSES = new Set(["OPEN"]);
 const ENDED_STATUSES = new Set(["CLOSED", "CANCELLED", "AWAITING_RESOLUTION"]);
 const SETTLED_STATUSES = new Set(["RESOLVED", "RESOLVING"]);
 

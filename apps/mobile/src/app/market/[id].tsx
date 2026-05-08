@@ -1,3 +1,4 @@
+import { Ionicons } from "@expo/vector-icons";
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -310,6 +311,7 @@ function StickyBettingBar({
 
   const isOpen = market.status === "OPEN";
   const isNumeric = market.marketType === "NUMERIC";
+  const isMultipleChoice = market.marketType === "MULTIPLE_CHOICE";
   const isPoll = Boolean(market.storyId);
 
   // Poll inline vote state (binary polls on the bar)
@@ -444,7 +446,38 @@ function StickyBettingBar({
     );
   }
 
-  // ── Case 3: Open non-poll market (binary or numeric) ──
+  // ── Case 3: Open multiple-choice market ──
+  if (isMultipleChoice) {
+    const totalStaked = (market.options ?? []).reduce((sum, o) => sum + o.totalStaked, 0);
+    return (
+      <>
+        <View style={barStyle}>
+          <View style={styles.stickyBarInner}>
+            <View style={styles.stickyBarLeft}>
+              <Text style={styles.stickyProbLabel}>Total staked</Text>
+              <Text style={styles.stickyProbValue}>{formatPoints(totalStaked)} pts</Text>
+            </View>
+            <Pressable style={styles.predictBtn} onPress={onOpenBetSheet}>
+              <Text style={styles.predictBtnText}>
+                {hasPosition ? "Stake More" : "Predict"}
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+        <MultiChoiceBettingSheet
+          visible={betSheetOpen}
+          onClose={onCloseBetSheet}
+          data={data}
+          marketId={marketId}
+          onRefresh={onRefresh}
+          onBetSuccess={onCloseBetSheet}
+          bottomInset={bottomInset}
+        />
+      </>
+    );
+  }
+
+  // ── Case 4: Open non-poll market (binary or numeric) ──
   return (
     <>
       <View style={barStyle}>
@@ -581,7 +614,7 @@ function BettingSheet({
     setBetError(null);
     try {
       const existingSide = positions[0]?.side as "YES" | "NO" | null;
-      await mobileApi.placePosition(marketId, {
+      const result = await mobileApi.placePosition(marketId, {
         side: isNumeric ? undefined : hasPosition ? (existingSide ?? undefined) : (selectedSide ?? undefined),
         numericValue: isNumeric
           ? hasPosition
@@ -592,6 +625,18 @@ function BettingSheet({
       });
       setBetSuccess(true);
       onRefresh();
+
+      // Show quest-completion toast if any quests were completed as a side-effect.
+      const rewards = result?.questRewards ?? [];
+      if (rewards.length > 0) {
+        const totalPts = rewards.reduce((sum, r) => sum + r.reward, 0);
+        Alert.alert(
+          "Quest complete!",
+          `You earned +${totalPts} pts from daily quests.`,
+          [{ text: "Nice!" }]
+        );
+      }
+
       // Auto-close after brief success flash
       setTimeout(() => {
         onBetSuccess();
@@ -791,6 +836,221 @@ function BettingSheet({
   );
 }
 
+// ─── MultiChoiceBettingSheet ──────────────────────────────────────────────────
+
+type MultiChoiceBettingSheetProps = {
+  visible: boolean;
+  onClose: () => void;
+  data: MarketResponse;
+  marketId: string;
+  onRefresh: () => void;
+  onBetSuccess: () => void;
+  bottomInset: number;
+};
+
+function MultiChoiceBettingSheet({
+  visible,
+  onClose,
+  data,
+  marketId,
+  onRefresh,
+  onBetSuccess,
+  bottomInset,
+}: MultiChoiceBettingSheetProps) {
+  const market = data.market;
+  const options = market.options ?? [];
+  const totalStaked = options.reduce((sum, o) => sum + o.totalStaked, 0);
+
+  const [selectedOptionId, setSelectedOptionId] = useState<string | null>(null);
+  const [amount, setAmount] = useState("");
+  const [customAmount, setCustomAmount] = useState("");
+  const [placing, setPlacing] = useState(false);
+  const [betError, setBetError] = useState<string | null>(null);
+  const [betSuccess, setBetSuccess] = useState(false);
+
+  useEffect(() => {
+    if (visible) {
+      setSelectedOptionId(null);
+      setAmount("");
+      setCustomAmount("");
+      setBetError(null);
+      setBetSuccess(false);
+    }
+  }, [visible]);
+
+  const betAmount = customAmount ? parseInt(customAmount, 10) : parseInt(amount, 10);
+
+  async function handlePlaceBet() {
+    if (placing) return;
+    if (!selectedOptionId) {
+      setBetError("Select an option.");
+      return;
+    }
+    if (!betAmount || betAmount < 10) {
+      setBetError("Minimum stake is 10 points.");
+      return;
+    }
+
+    setPlacing(true);
+    setBetError(null);
+    try {
+      const result = await mobileApi.placeMultiChoicePosition(marketId, {
+        optionId: selectedOptionId,
+        amount: betAmount
+      });
+      setBetSuccess(true);
+      onRefresh();
+
+      const rewards = result?.questRewards ?? [];
+      if (rewards.length > 0) {
+        const totalPts = rewards.reduce((sum, r) => sum + r.reward, 0);
+        Alert.alert(
+          "Quest complete!",
+          `You earned +${totalPts} pts from daily quests.`,
+          [{ text: "Nice!" }]
+        );
+      }
+
+      setTimeout(() => {
+        onBetSuccess();
+      }, 1200);
+    } catch (err: unknown) {
+      setBetError(err instanceof Error ? err.message : "Failed to place stake.");
+    } finally {
+      setPlacing(false);
+    }
+  }
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={onClose}
+    >
+      <Pressable style={styles.sheetBackdrop} onPress={onClose} />
+      <View style={[styles.sheetContainer, { paddingBottom: Math.max(bottomInset, spacing.lg) }]}>
+        <View style={styles.sheetHandle} />
+
+        <View style={styles.sheetHeader}>
+          <Text style={styles.sheetTitle}>Choose an Option</Text>
+          <Pressable onPress={onClose} style={styles.sheetCloseBtn} hitSlop={12}>
+            <Text style={styles.sheetCloseBtnText}>Done</Text>
+          </Pressable>
+        </View>
+
+        {betSuccess ? (
+          <View style={styles.sheetSuccessSection}>
+            <Text style={styles.sheetSuccessTitle}>Stake placed!</Text>
+            <Text style={styles.sheetSuccessText}>
+              Your prediction has been recorded.
+            </Text>
+          </View>
+        ) : (
+          <>
+            {/* Options list */}
+            <ScrollView style={{ maxHeight: 220 }} showsVerticalScrollIndicator={false}>
+              {options.map((option) => {
+                const pct = totalStaked > 0 ? option.totalStaked / totalStaked : 0;
+                const isSelected = selectedOptionId === option.id;
+                return (
+                  <Pressable
+                    key={option.id}
+                    style={[
+                      styles.multiChoiceOption,
+                      isSelected && styles.multiChoiceOptionSelected
+                    ]}
+                    onPress={() => setSelectedOptionId(option.id)}
+                  >
+                    <View style={styles.multiChoiceOptionRow}>
+                      <Text
+                        style={[
+                          styles.multiChoiceOptionLabel,
+                          isSelected && styles.multiChoiceOptionLabelSelected
+                        ]}
+                        numberOfLines={2}
+                      >
+                        {option.label}
+                      </Text>
+                      <Text style={styles.multiChoiceOptionPct}>
+                        {Math.round(pct * 100)}%
+                      </Text>
+                    </View>
+                    <View style={styles.multiChoiceBar}>
+                      <View
+                        style={[
+                          styles.multiChoiceBarFill,
+                          isSelected && styles.multiChoiceBarFillSelected,
+                          { width: `${Math.round(pct * 100)}%` }
+                        ]}
+                      />
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+
+            {/* Amount selection */}
+            <Text style={[styles.inputLabel, { marginTop: spacing.md }]}>Amount</Text>
+            <View style={styles.presetRow}>
+              {[50, 100, 250, 500, 1000].map((preset) => (
+                <Pressable
+                  key={preset}
+                  style={[
+                    styles.presetPill,
+                    amount === String(preset) && !customAmount && styles.presetPillActive,
+                  ]}
+                  onPress={() => {
+                    setAmount(String(preset));
+                    setCustomAmount("");
+                  }}
+                >
+                  <Text
+                    style={[
+                      styles.presetText,
+                      amount === String(preset) && !customAmount && styles.presetTextActive,
+                    ]}
+                  >
+                    {preset}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+
+            <TextInput
+              style={styles.textInput}
+              placeholder="Custom amount (min 10)"
+              placeholderTextColor={colors.textMuted}
+              keyboardType="numeric"
+              value={customAmount}
+              onChangeText={(text) => {
+                setCustomAmount(text);
+                if (text) setAmount("");
+              }}
+            />
+
+            {betError ? <Text style={styles.betError}>{betError}</Text> : null}
+
+            <Pressable
+              style={[styles.placeBetBtn, placing && styles.btnDisabled]}
+              onPress={handlePlaceBet}
+              disabled={placing}
+            >
+              {placing ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.placeBetText}>
+                  Stake{betAmount >= 10 ? ` — ${betAmount} pts` : ""}
+                </Text>
+              )}
+            </Pressable>
+          </>
+        )}
+      </View>
+    </Modal>
+  );
+}
+
 // ─── ResolutionPayoffModal ────────────────────────────────────────────────────
 
 type ResolutionPayoffModalProps = {
@@ -953,6 +1213,11 @@ function MarketBody({
   const isNumeric = market.marketType === "NUMERIC";
   const isPoll = Boolean(market.storyId);
 
+  const isPendingReview = market.status === "DRAFT" || market.status === "PENDING_REVIEW";
+  const isCreatorViewing =
+    market.creator?.username != null && market.creator.username === session?.username;
+  const showPendingReviewBanner = isPendingReview && isCreatorViewing;
+
   // Host resolution panel visibility
   const isResolvable =
     (market.status === "CLOSED" || market.status === "AWAITING_RESOLUTION") &&
@@ -1054,6 +1319,14 @@ function MarketBody({
 
   return (
     <View style={styles.container}>
+      {showPendingReviewBanner ? (
+        <View style={styles.pendingReviewBanner}>
+          <Ionicons name="time-outline" size={18} color="#92400E" />
+          <Text style={styles.pendingReviewBannerText}>
+            Pending review — only you and moderators can see this market until it&apos;s approved.
+          </Text>
+        </View>
+      ) : null}
       {/* Market info */}
       <View style={styles.card}>
         <View style={styles.topRow}>
@@ -1665,6 +1938,24 @@ const styles = StyleSheet.create({
   },
   container: {
     gap: spacing.lg,
+  },
+  pendingReviewBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    backgroundColor: "#FEF3C7",
+    borderLeftWidth: 4,
+    borderLeftColor: "#D97706",
+    borderRadius: radius.sm,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.md,
+  },
+  pendingReviewBannerText: {
+    flex: 1,
+    color: "#92400E",
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "500",
   },
   centerState: {
     paddingTop: 100,
@@ -2702,5 +2993,54 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "700",
     color: colors.text,
+  },
+
+  // ── Multi-choice options ──
+  multiChoiceOption: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    padding: spacing.sm,
+    marginBottom: spacing.sm,
+    backgroundColor: colors.surface,
+  },
+  multiChoiceOptionSelected: {
+    borderColor: colors.accent,
+    backgroundColor: "#EFF6FF",
+  },
+  multiChoiceOptionRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 4,
+  },
+  multiChoiceOptionLabel: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: "600",
+    color: colors.text,
+  },
+  multiChoiceOptionLabelSelected: {
+    color: colors.accent,
+  },
+  multiChoiceOptionPct: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: colors.textMuted,
+    marginLeft: spacing.sm,
+  },
+  multiChoiceBar: {
+    height: 4,
+    backgroundColor: colors.border,
+    borderRadius: 2,
+    overflow: "hidden",
+  },
+  multiChoiceBarFill: {
+    height: "100%",
+    backgroundColor: colors.textMuted,
+    borderRadius: 2,
+  },
+  multiChoiceBarFillSelected: {
+    backgroundColor: colors.accent,
   },
 });

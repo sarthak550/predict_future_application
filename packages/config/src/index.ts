@@ -25,7 +25,8 @@ export const marketCategoryLabels: Record<MarketCategory, string> = {
   WEATHER: "Weather",
   ENTERTAINMENT: "Entertainment",
   PRODUCT: "Product Launches",
-  COMPANY: "Company News"
+  COMPANY: "Company News",
+  FINANCE: "Finance"
 };
 
 export const marketTemplateLabels: Record<MarketTemplate, string> = {
@@ -39,7 +40,8 @@ export const marketTemplateLabels: Record<MarketTemplate, string> = {
 
 export const marketTypeLabels: Record<MarketType, string> = {
   BINARY: "Yes / No",
-  NUMERIC: "Guess a number"
+  NUMERIC: "Guess a number",
+  MULTIPLE_CHOICE: "Multiple choice"
 };
 
 export const marketVisibilityLabels: Record<MarketVisibility, string> = {

@@ -81,7 +81,56 @@ const defaultRssSources: RssSource[] = [
     categoryHint: "TECH",
     fallbackCategory: "TECH",
     isActive: true
-  }
+  },
+
+  // ── Indian Finance Sources (Sprint 13) ──
+  // categoryHint is "BUSINESS" as the safe InternalNewsCategory default.
+  // The FINANCE tag is applied later by evaluateFinanceTag() in rss-ingestion-service.ts
+  // when the story's title/summary contains India-market keywords.
+  {
+    id: "moneycontrol-markets",
+    name: "Moneycontrol",
+    url: "https://www.moneycontrol.com/rss/marketreports.xml",
+    categoryHint: "BUSINESS",
+    fallbackCategory: "BUSINESS",
+    isActive: true
+  },
+  {
+    id: "economic-times-markets",
+    name: "Economic Times",
+    url: "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms",
+    categoryHint: "BUSINESS",
+    fallbackCategory: "BUSINESS",
+    isActive: true
+  },
+  {
+    id: "mint-markets",
+    name: "Mint",
+    url: "https://www.livemint.com/rss/markets",
+    categoryHint: "BUSINESS",
+    fallbackCategory: "BUSINESS",
+    isActive: true
+  },
+  {
+    id: "cnbctv18-markets",
+    name: "CNBC TV18",
+    url: "https://www.cnbctv18.com/commonfeeds/v1/cne/rss/market.xml",
+    categoryHint: "BUSINESS",
+    fallbackCategory: "BUSINESS",
+    isActive: true
+  },
+  // Bloomberg's public sitemap is a news sitemap (XML), not a standard RSS feed.
+  // The sitemap_news.xml format is not compatible with rss-parser and would need
+  // custom parsing. Adding as inactive until a Bloomberg-compatible RSS or API
+  // endpoint is confirmed. Do NOT use web scraping (ToS risk).
+  // {
+  //   id: "bloomberg-india",
+  //   name: "Bloomberg India",
+  //   url: "https://www.bloomberg.com/feeds/sitemap_news.xml",
+  //   categoryHint: "BUSINESS",
+  //   fallbackCategory: "BUSINESS",
+  //   isActive: false, // Requires sitemap XML parser — standard rss-parser won't work
+  // },
 ];
 
 const sourceNameCategoryRules: Array<{ pattern: RegExp; category: InternalNewsCategory }> = [

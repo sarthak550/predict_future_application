@@ -1,5 +1,5 @@
 import { useRouter } from "expo-router";
-import { Pressable, Share, StyleSheet, Text, View } from "react-native";
+import { Linking, Pressable, Share, StyleSheet, Text, View } from "react-native";
 
 import type { ApiMarketSummary } from "@predict-future/types";
 import { formatPercent, formatPoints, formatRelativeTime } from "@predict-future/utils";
@@ -48,6 +48,22 @@ export function MarketSummaryCard({ item }: Props) {
       </View>
 
       <Text style={styles.title} numberOfLines={2}>{item.title}</Text>
+
+      {item.originPlatform === "manifold" ? (
+        <Pressable
+          style={styles.manifoldBadge}
+          onPress={(e) => {
+            e.stopPropagation?.();
+            if (item.resolutionSourceUrl) {
+              void Linking.openURL(item.resolutionSourceUrl);
+            }
+          }}
+          hitSlop={4}
+        >
+          <Text style={styles.manifoldBadgeText}>Archived · Manifold</Text>
+        </Pressable>
+      ) : null}
+
       {item.description ? (
         <Text style={styles.description} numberOfLines={2}>{item.description}</Text>
       ) : null}
@@ -199,6 +215,22 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
     color: colors.textMuted,
+  },
+  manifoldBadge: {
+    alignSelf: "flex-start",
+    marginTop: spacing.xs,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 10,
+    backgroundColor: "#F3F4F6",
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+  },
+  manifoldBadgeText: {
+    fontSize: 10,
+    fontWeight: "600",
+    color: "#6B7280",
+    letterSpacing: 0.3,
   },
   numericSection: {
     marginTop: spacing.lg,

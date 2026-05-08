@@ -69,6 +69,16 @@ export async function GET(
             },
           },
         },
+      },
+      options: {
+        select: {
+          id: true,
+          label: true,
+          sortOrder: true,
+          totalStaked: true,
+          isWinner: true
+        },
+        orderBy: { sortOrder: "asc" }
       }
     }
   });
@@ -79,6 +89,20 @@ export async function GET(
 
   if (!canViewMarket(market, viewer)) {
     return NextResponse.json({ error: "Market not found." }, { status: 404 });
+  }
+
+  // Hide unapproved markets from non-creator, non-moderator viewers.
+  // Creators see their own pending review markets so they can track status.
+  const isUnapproved =
+    market.status === "DRAFT" ||
+    market.status === "PENDING_REVIEW" ||
+    market.status === "REJECTED";
+  if (isUnapproved) {
+    const isCreator = viewer?.id === market.creatorId;
+    const isModeratorRole = viewer?.role === "ADMIN" || viewer?.role === "MODERATOR";
+    if (!isCreator && !isModeratorRole) {
+      return NextResponse.json({ error: "Market not found." }, { status: 404 });
+    }
   }
 
   const userPositions = viewerId
@@ -96,6 +120,15 @@ export async function GET(
         orderBy: { createdAt: "desc" },
       })
     : [];
+
+  // For MULTIPLE_CHOICE markets, also return the viewer's per-option stakes.
+  const userMultiChoicePositions =
+    viewerId && market.marketType === "MULTIPLE_CHOICE"
+      ? await prisma.multiChoicePosition.findMany({
+          where: { marketId: market.id, userId: viewerId },
+          select: { optionId: true, amount: true },
+        })
+      : [];
 
   // For poll markets (storyId != null), also fetch the user's free vote
   const userVote =
@@ -121,7 +154,7 @@ export async function GET(
     resolution: shapedResolution,
   };
 
-  return NextResponse.json({ market: responseMarket, userPositions, userVote });
+  return NextResponse.json({ market: responseMarket, userPositions, userMultiChoicePositions, userVote });
 }
 
 export async function PATCH(

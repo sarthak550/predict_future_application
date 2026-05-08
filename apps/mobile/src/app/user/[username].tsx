@@ -1,7 +1,8 @@
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -18,6 +19,7 @@ import { colors, radius, spacing } from "@predict-future/ui-tokens";
 
 import { useApiQuery } from "@/hooks/useApiQuery";
 import { mobileApi } from "@/lib/api";
+import { useSession } from "@/providers/session-provider";
 
 // ── Badge helpers ─────────────────────────────────────────────────────────────
 
@@ -189,11 +191,81 @@ function CreatedMarketsSection({
   );
 }
 
+// ── Follow button ─────────────────────────────────────────────────────────────
+
+function FollowButton({
+  userId,
+  initialFollowing,
+  initialFollowerCount,
+}: {
+  userId: string;
+  initialFollowing: boolean;
+  initialFollowerCount: number;
+}) {
+  const [following, setFollowing] = useState(initialFollowing);
+  const [followerCount, setFollowerCount] = useState(initialFollowerCount);
+  const [loading, setLoading] = useState(false);
+
+  const handlePress = useCallback(async () => {
+    if (loading) return;
+
+    // Optimistic update
+    const wasFollowing = following;
+    setFollowing(!wasFollowing);
+    setFollowerCount((c) => (wasFollowing ? c - 1 : c + 1));
+    setLoading(true);
+
+    try {
+      if (wasFollowing) {
+        await mobileApi.unfollowUser(userId);
+      } else {
+        await mobileApi.followUser(userId);
+      }
+    } catch {
+      // Revert on error
+      setFollowing(wasFollowing);
+      setFollowerCount((c) => (wasFollowing ? c + 1 : c - 1));
+      Alert.alert("Error", "Could not update follow status. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  }, [following, loading, userId]);
+
+  return (
+    <View style={styles.followRow}>
+      <Text style={styles.followerCountText}>
+        {followerCount.toLocaleString()} {followerCount === 1 ? "follower" : "followers"}
+      </Text>
+      <Pressable
+        style={({ pressed }) => [
+          styles.followBtn,
+          following ? styles.followBtnOutlined : styles.followBtnFilled,
+          (pressed || loading) && styles.followBtnPressed,
+        ]}
+        onPress={handlePress}
+        disabled={loading}
+        accessibilityRole="button"
+        accessibilityLabel={following ? "Unfollow" : "Follow"}
+      >
+        <Text
+          style={[
+            styles.followBtnLabel,
+            following ? styles.followBtnLabelOutlined : styles.followBtnLabelFilled,
+          ]}
+        >
+          {following ? "Following" : "Follow"}
+        </Text>
+      </Pressable>
+    </View>
+  );
+}
+
 // ── Main screen ───────────────────────────────────────────────────────────────
 
 export default function UserProfileScreen() {
   const { username } = useLocalSearchParams<{ username: string }>();
   const router = useRouter();
+  const { session } = useSession();
 
   const fetcher = useCallback(
     () => mobileApi.getUserProfile(username),
@@ -268,6 +340,11 @@ export default function UserProfileScreen() {
   const createdMarkets = user.createdMarkets ?? [];
   const totalPredictions = user.stats?.totalPredictions ?? 0;
 
+  // Determine whether to show the follow button: only for other users when authenticated.
+  const isOwnProfile = session?.userId === user.id;
+  const isAuthenticated = session != null;
+  const showFollowButton = isAuthenticated && !isOwnProfile;
+
   return (
     <>
       <Stack.Screen
@@ -302,6 +379,15 @@ export default function UserProfileScreen() {
               </View>
             </View>
           </View>
+
+          {/* Follow button — only for other users when authenticated */}
+          {showFollowButton && (
+            <FollowButton
+              userId={user.id}
+              initialFollowing={user.isFollowedByMe ?? false}
+              initialFollowerCount={user.followerCount ?? 0}
+            />
+          )}
 
           {/* Reputation bar */}
           <View style={styles.repRow}>
@@ -338,6 +424,22 @@ export default function UserProfileScreen() {
             value={user.reputationScore.toLocaleString()}
           />
         </View>
+
+        {/* ── Calibration scorecard link ── */}
+        <Pressable
+          style={({ pressed }) => [
+            styles.calibrationRow,
+            pressed && styles.calibrationRowPressed,
+          ]}
+          onPress={() =>
+            router.push(
+              `/calibration/${user.id}` as Parameters<typeof router.push>[0]
+            )
+          }
+        >
+          <Text style={styles.calibrationText}>View calibration scorecard</Text>
+          <Text style={styles.calibrationChevron}>›</Text>
+        </Pressable>
 
         {/* ── Badges ── */}
         <BadgesSection badges={badges} />
@@ -448,6 +550,26 @@ const styles = StyleSheet.create({
     width: 1,
     height: 36,
     backgroundColor: colors.border as string,
+  },
+
+  // Calibration scorecard link row
+  calibrationRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: colors.surface as string,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+  },
+  calibrationRowPressed: { opacity: 0.6 },
+  calibrationText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: colors.accent as string,
+  },
+  calibrationChevron: {
+    fontSize: 20,
+    color: colors.textMuted as string,
   },
 
   // Generic card
@@ -579,5 +701,47 @@ const styles = StyleSheet.create({
     color: colors.textMuted as string,
     textAlign: "center",
     lineHeight: 20,
+  },
+
+  // Follow button
+  followRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: spacing.md,
+    marginBottom: spacing.xs,
+  },
+  followerCountText: {
+    fontSize: 13,
+    color: colors.textMuted as string,
+    fontWeight: "500",
+  },
+  followBtn: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.xs + 2,
+    borderRadius: radius.pill,
+    minWidth: 90,
+    alignItems: "center",
+  },
+  followBtnFilled: {
+    backgroundColor: colors.accent as string,
+  },
+  followBtnOutlined: {
+    backgroundColor: "transparent",
+    borderWidth: 1.5,
+    borderColor: colors.accent as string,
+  },
+  followBtnPressed: {
+    opacity: 0.65,
+  },
+  followBtnLabel: {
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  followBtnLabelFilled: {
+    color: "#FFFFFF",
+  },
+  followBtnLabelOutlined: {
+    color: colors.accent as string,
   },
 });

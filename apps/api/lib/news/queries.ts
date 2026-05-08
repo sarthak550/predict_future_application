@@ -18,6 +18,22 @@ export type PlainNewsItem = {
   status: StoryStatus;
 };
 
+export type NewsFeedExpertOpinion = {
+  id: string;
+  expertId: string;
+  expertName: string;
+  expertOrganization: string;
+  avatarUrl: string | null;
+  verified: boolean;
+  quote: string;
+  direction: string;
+  sourceUrl: string;
+  resolutionStatus: string;
+  resolvedAt: Date | null;
+  /** Nullable FK to event cluster for filter UX (S18-T4) */
+  eventClusterId: string | null;
+};
+
 export type NewsFeedItem = {
   id: string;
   slug: string;
@@ -50,6 +66,7 @@ export type NewsFeedItem = {
     averageNumericValue: number | null;
     closeAt: Date | null;
   } | null;
+  expertOpinions: NewsFeedExpertOpinion[];
 };
 
 export type NewsCursorPage = {
@@ -58,9 +75,22 @@ export type NewsCursorPage = {
   hasMore: boolean;
 };
 
+const UNAPPROVED_MARKET_STATUSES: MarketStatus[] = [
+  "DRAFT",
+  "PENDING_REVIEW",
+  "REJECTED",
+  "HOST_TIMEOUT",
+];
+
 const newsFeedInclude = () =>
   ({
     market: true,
+    expertOpinions: {
+      where: { suppressedAt: null },
+      include: { expert: true },
+      orderBy: { publishedAt: "desc" as const },
+      take: 3,
+    },
   }) satisfies Prisma.StoryInclude;
 
 function buildCursorWhere(cursor?: { publishedAt: Date; id: string } | null): Prisma.StoryWhereInput | undefined {
@@ -93,6 +123,7 @@ export async function getPublishedNewsPage(input?: {
   excludeCategory?: MarketCategory;
   cursor?: string | null;
   userId?: string | null;
+  requireExpertOpinions?: boolean;
 }) {
   const limit = Math.max(1, Math.min(20, input?.limit ?? 10));
   const decodedCursor = decodeNewsCursor(input?.cursor);
@@ -101,6 +132,7 @@ export async function getPublishedNewsPage(input?: {
       status: { in: visibleNewsStatuses },
       ...(input?.category ? { category: input.category } : {}),
       ...(input?.excludeCategory ? { category: { not: input.excludeCategory } } : {}),
+      ...(input?.requireExpertOpinions ? { expertOpinions: { some: { suppressedAt: null } } } : {}),
       ...(buildCursorWhere(decodedCursor) ?? {})
     },
     orderBy: [{ publishedAt: "desc" }, { id: "desc" }],
@@ -126,7 +158,7 @@ export async function getPublishedNewsPage(input?: {
       ingestedAt: item.ingestedAt.toISOString(),
       isFeatured: item.isFeatured,
       isTrending: item.isTrending,
-      market: item.market
+      market: item.market && !UNAPPROVED_MARKET_STATUSES.includes(item.market.status)
         ? {
             id: item.market.id,
             slug: item.market.slug,
@@ -146,7 +178,21 @@ export async function getPublishedNewsPage(input?: {
             averageNumericValue: item.market.averageNumericValue,
             closeAt: item.market.closeAt,
           }
-        : null
+        : null,
+      expertOpinions: (item.expertOpinions ?? []).map((opinion) => ({
+        id: opinion.id,
+        expertId: opinion.expertId,
+        expertName: opinion.expert.name,
+        expertOrganization: opinion.expert.organization,
+        avatarUrl: opinion.expert.avatarUrl ?? null,
+        verified: opinion.expert.verified,
+        quote: opinion.quote,
+        direction: opinion.direction,
+        sourceUrl: opinion.sourceUrl,
+        resolutionStatus: opinion.resolutionStatus,
+        resolvedAt: opinion.resolvedAt ?? null,
+        eventClusterId: opinion.eventClusterId ?? null,
+      })),
     })),
     nextCursor: hasMore && lastItem ? encodeNewsCursor(lastItem) : null,
     hasMore

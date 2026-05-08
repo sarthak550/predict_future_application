@@ -25,12 +25,15 @@ export async function GET(request: Request) {
       ? (rawExcludeCategory as MarketCategory)
       : undefined;
 
+  const requireExpertOpinions = searchParams.get("requireExpertOpinions") === "true";
+
   const page = await getPublishedNewsPage({
     limit,
     category,
     excludeCategory,
     cursor,
-    userId
+    userId,
+    requireExpertOpinions
   });
 
   // Batch-fetch user votes for all markets in this page
@@ -70,6 +73,7 @@ export async function GET(request: Request) {
             userVote: votesByMarket.get(item.market.id) ?? null,
           }
         : null,
+      expertOpinions: item.expertOpinions.length > 0 ? item.expertOpinions : undefined,
     })),
     nextCursor: page.nextCursor,
     hasMore: page.hasMore

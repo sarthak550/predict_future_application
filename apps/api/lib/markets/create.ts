@@ -20,8 +20,9 @@ import {
   normalizeHostCommissionBps,
   normalizePoolRewardMode
 } from "@/lib/markets/policies";
-import { createNotification, notifyMany } from "@/lib/notifications";
+import { createNotification, notifyMany, notifyFollowers, sendFollowerPushNotifications } from "@/lib/notifications";
 import { prisma } from "@/lib/prisma";
+import { checkAndCompleteQuests } from "@/lib/quests/engine";
 import { slugify } from "@/lib/utils";
 import type { CreateMarketInput } from "@/lib/validations/market";
 
@@ -194,7 +195,12 @@ export async function createPredictionMarket(input: {
     throw new Error("Insufficient virtual points to lock the host bond cap.");
   }
 
+  // Capture actor username before the transaction for use in follower notifications.
+  const actorUsername = input.actorUsername;
+
   const market = await prisma.$transaction(async (tx) => {
+    const marketType = input.payload.marketType ?? MarketType.BINARY;
+
     const createdMarket = await tx.market.create({
       data: {
         slug: buildMarketSlug(input.payload.title),
@@ -202,7 +208,7 @@ export async function createPredictionMarket(input: {
         description: input.payload.description,
         category: input.payload.category,
         template: input.payload.template ?? MarketTemplate.CUSTOM,
-        marketType: input.payload.marketType ?? MarketType.BINARY,
+        marketType,
         creatorId: actor.id,
         visibility,
         marketScope,
@@ -240,6 +246,17 @@ export async function createPredictionMarket(input: {
         approvedById: autoApproved ? actor.id : null
       }
     });
+
+    // For MULTIPLE_CHOICE markets, create the option rows in order.
+    if (marketType === MarketType.MULTIPLE_CHOICE && input.payload.options?.length) {
+      await tx.marketOption.createMany({
+        data: input.payload.options.map((opt, idx) => ({
+          marketId: createdMarket.id,
+          label: opt.label.trim(),
+          sortOrder: idx
+        }))
+      });
+    }
 
     if (bondCap > 0 && actor.wallet) {
       await tx.wallet.update({
@@ -330,8 +347,33 @@ export async function createPredictionMarket(input: {
           : undefined
     });
 
+    // Quest engine — check if CREATE_MARKET quest is now complete.
+    // Non-fatal: a quest engine error must never roll back the market creation.
+    try {
+      await checkAndCompleteQuests(actor.id, "MARKET_CREATE", tx);
+    } catch (questErr) {
+      console.error("[quest engine] non-fatal error:", questErr);
+    }
+
     return createdMarket;
   });
+
+  // For auto-approved markets (OPEN immediately), notify followers outside the
+  // transaction so notification fan-out never delays or rolls back the commit.
+  if (autoApproved && market.status === "OPEN" && market.visibility === "PUBLIC") {
+    const notifTitle = `${actorUsername} published a new market`;
+    void notifyFollowers(market.creatorId, {
+      type: "FOLLOWED_USER_MARKET",
+      title: notifTitle,
+      body: market.title,
+      href: `/markets/${market.id}`,
+      marketId: market.id,
+    }).catch((err) => console.error("[notifyFollowers market create]", err));
+
+    void sendFollowerPushNotifications(market.creatorId, notifTitle, market.title).catch(
+      (err) => console.error("[sendFollowerPushNotifications market create]", err)
+    );
+  }
 
   return market;
 }

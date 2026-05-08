@@ -2,10 +2,17 @@ import { randomUUID } from "crypto";
 import { type MarketCategory, type MarketType, StoryStatus } from "@prisma/client";
 
 import { generatePollWithAI } from "@/lib/ai/gemini";
+import {
+  extractExpertOpinionsFromStory,
+  isApprovedFinanceSource,
+  persistExpertOpinions,
+} from "@/lib/ai/extractExpertOpinions";
 import { getConfiguredIngestionCategories, shouldSeedTrendingStory } from "@/lib/news/config";
+import { evaluateFinanceTag } from "@/lib/news/financeTagging";
 import { ingestStories } from "@/lib/news/ingestion";
 import { fetchOgImage, isGoogleNewsUrl } from "@/lib/news/og-image";
 import { fetchTopHeadlines } from "@/lib/news/providers";
+import { fetchArticleBody } from "@/lib/news/articleBody";
 
 import { fetchRSSFeed } from "@/lib/news/rssProvider";
 import { getRssSources, type RssSource } from "@/lib/news/rssSources";
@@ -318,6 +325,131 @@ async function generatePollsInBackground(items: NormalizedNewsItem[], actorId: s
   console.info(`[news:ai-polls] done — ${generated}/${stories.length} polls created`);
 }
 
+const MAX_FINANCE_EXTRACTIONS_PER_BATCH = 5;
+
+/**
+ * Phase 3: Extract expert opinions from newly-ingested FINANCE stories from approved sources.
+ * Runs in the background after stories are saved — never blocks ingestion.
+ *
+ * For each story:
+ * 1. If bodyFetchFailed === true, skip (permanent failure already recorded).
+ * 2. If bodyText is null, attempt to fetch it now; persist bodyText or bodyFetchFailed.
+ * 3. Pass bodyText (if >= 200 chars) or summary to the extractor.
+ *
+ * Cost guardrail: only processes FINANCE-categorized stories whose source domain
+ * is in the approved Indian finance source list. All others are skipped.
+ */
+async function extractFinanceOpinionsInBackground(items: NormalizedNewsItem[]) {
+  const geminiKey = process.env.GEMINI_API_KEY;
+  if (!geminiKey) {
+    console.debug("[Finance AI] GEMINI_API_KEY not set — skipping expert opinion extraction");
+    return;
+  }
+
+  const sourceUrls = items.map((i) => i.source_url);
+
+  // Fetch stories that: (a) were just ingested, (b) are FINANCE-tagged, (c) have no opinions yet
+  const financeStories = await prisma.story.findMany({
+    where: {
+      sourceUrl: { in: sourceUrls },
+      category: "FINANCE",
+      expertOpinions: { none: {} },
+    },
+    select: {
+      id: true,
+      headline: true,
+      summary: true,
+      sourceUrl: true,
+      publishedAt: true,
+      bodyText: true,
+      bodyFetchedAt: true,
+      bodyFetchFailed: true,
+    },
+    orderBy: { publishedAt: "desc" },
+    take: MAX_FINANCE_EXTRACTIONS_PER_BATCH,
+  });
+
+  if (financeStories.length === 0) {
+    console.info("[Finance AI] No FINANCE stories need expert opinion extraction");
+    return;
+  }
+
+  let extracted = 0;
+
+  for (const story of financeStories) {
+    // Cost guardrail: skip if source domain is not in the approved list
+    if (!isApprovedFinanceSource(story.sourceUrl)) {
+      console.debug(`[Finance AI] Skipping extraction — source not in approved list: ${story.sourceUrl}`);
+      continue;
+    }
+
+    try {
+      // Step 1: ensure body text is present (fetch if needed)
+      let contentForExtraction: string;
+
+      if (story.bodyFetchFailed) {
+        // Permanent failure — use summary fallback
+        console.debug(`[Finance AI] Body fetch previously failed for story ${story.id} — using summary`);
+        contentForExtraction = `${story.headline}\n\n${story.summary}`;
+      } else if (!story.bodyText) {
+        // Body not yet fetched — attempt fetch now
+        console.info(`[Finance AI] Fetching article body for story ${story.id}: ${story.sourceUrl}`);
+        const bodyResult = await fetchArticleBody(story.sourceUrl);
+
+        if (bodyResult.text) {
+          await prisma.story.update({
+            where: { id: story.id },
+            data: {
+              bodyText: bodyResult.text,
+              bodyFetchedAt: new Date(),
+              bodyFetchFailed: false,
+            },
+          });
+          contentForExtraction = bodyResult.text;
+          console.info(`[Finance AI] Body fetched (${bodyResult.text.length} chars) for story ${story.id}`);
+        } else {
+          // Fetch failed — mark and fall back to summary
+          await prisma.story.update({
+            where: { id: story.id },
+            data: {
+              bodyFetchFailed: true,
+              bodyFetchedAt: new Date(),
+            },
+          });
+          console.warn(`[Finance AI] Body fetch failed for story ${story.id}: ${bodyResult.error}`);
+          contentForExtraction = `${story.headline}\n\n${story.summary}`;
+        }
+      } else if (story.bodyText.length >= 200) {
+        // Body already present and sufficient
+        contentForExtraction = story.bodyText;
+      } else {
+        // Body present but too short (edge case) — use summary
+        contentForExtraction = `${story.headline}\n\n${story.summary}`;
+      }
+
+      // Step 2: extract expert opinions using body text (preferred) or summary fallback
+      const opinions = await extractExpertOpinionsFromStory({
+        id: story.id,
+        title: story.headline,
+        content: contentForExtraction,
+        sourceUrl: story.sourceUrl,
+        publishedAt: story.publishedAt,
+      });
+
+      if (opinions.length > 0) {
+        await persistExpertOpinions(prisma, story.id, story.sourceUrl, story.publishedAt, opinions);
+        extracted += opinions.length;
+      }
+    } catch (err) {
+      // Never block ingestion — log and continue
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[Finance AI] Extraction loop failed for story ${story.id}: ${msg}`);
+    }
+  }
+
+  console.info(`[Finance AI] done — ${extracted} opinions extracted from ${financeStories.length} FINANCE stories`);
+}
+
 export class RSSIngestionService {
   static async run(actorId?: string): Promise<NewsIngestionResult> {
     const { fetchedItems: rssItems, errors, failedFallbackCategories, feeds } = await collectRssItems();
@@ -415,30 +547,40 @@ export class RSSIngestionService {
       console.info(`[news:og-fetch] fetched ${ogImages.size}/${needsImage.length} og:images inline`);
     }
 
-    const storiesToIngest: StoryInput[] = newStories.map((item) => ({
-      headline: item.title,
-      summary: item.summary,
-      category: item.category as MarketCategory,
-      sourceName: item.source_name,
-      sourceUrl: item.source_url,
-      sourceHomepageUrl: getSourceHomepageUrl(item.source_url),
-      imageUrl: item.image_url ?? ogImages.get(item.source_url) ?? "",
-      publishedAt: item.published_at.toISOString(),
-      ingestedAt: ingestedAt.toISOString(),
-      language: "en",
-      status: StoryStatus.PUBLISHED,
-      ingestionType: item.external_id.startsWith("rss:") ? "RSS" : "API",
-      ingestionFeedId: item.feed_id ?? "",
-      ingestionFeedName: item.feed_name ?? "",
-      externalId: item.external_id,
-      dedupeKey: item.dedupe_key,
-      rawPayloadJson: item.raw_payload_json,
-      isTrending: shouldSeedTrendingStory({
-        category: item.category as MarketCategory,
-        publishedAt: item.published_at,
-        hasPrediction: false
-      }),
-    }));
+    const storiesToIngest: StoryInput[] = newStories.map((item) => {
+      // Apply FINANCE category override: if the source is an approved Indian finance source
+      // AND the title/summary contains India-market keywords, tag as FINANCE.
+      // Otherwise fall back to the RSS-inferred category.
+      const financeDecision = evaluateFinanceTag(item.title, item.summary, item.source_url);
+      const resolvedCategory: MarketCategory = financeDecision.isFinance
+        ? "FINANCE"
+        : (item.category as MarketCategory);
+
+      return {
+        headline: item.title,
+        summary: item.summary,
+        category: resolvedCategory,
+        sourceName: item.source_name,
+        sourceUrl: item.source_url,
+        sourceHomepageUrl: getSourceHomepageUrl(item.source_url),
+        imageUrl: item.image_url ?? ogImages.get(item.source_url) ?? "",
+        publishedAt: item.published_at.toISOString(),
+        ingestedAt: ingestedAt.toISOString(),
+        language: "en",
+        status: StoryStatus.PUBLISHED,
+        ingestionType: item.external_id.startsWith("rss:") ? "RSS" : "API",
+        ingestionFeedId: item.feed_id ?? "",
+        ingestionFeedName: item.feed_name ?? "",
+        externalId: item.external_id,
+        dedupeKey: item.dedupe_key,
+        rawPayloadJson: item.raw_payload_json,
+        isTrending: shouldSeedTrendingStory({
+          category: resolvedCategory,
+          publishedAt: item.published_at,
+          hasPrediction: false
+        }),
+      };
+    });
 
     await ingestStories(storiesToIngest, staffActorId);
     console.info(`[news:ingestion] phase 1 done — ${storiesToIngest.length} stories inserted`);
@@ -448,6 +590,20 @@ export class RSSIngestionService {
     if (aiEnabled) {
       void generatePollsInBackground(newStories, staffActorId).catch((err) =>
         console.error("[news:ai-polls] background poll generation failed:", err)
+      );
+    }
+
+    // ---- Phase 3: Extract expert opinions for FINANCE stories from approved sources ----
+    // Cost guardrail: only runs when GEMINI_API_KEY is set AND at least one story is from
+    // an approved Indian finance source (which may have been saved as FINANCE after tagging).
+    // The background job queries the DB for actual FINANCE-categorized stories, so the pre-check
+    // here just avoids spawning the coroutine when no finance sources were in this batch.
+    const hasApprovedFinanceSourceStory = newStories.some((item) =>
+      isApprovedFinanceSource(item.source_url)
+    );
+    if (process.env.GEMINI_API_KEY && hasApprovedFinanceSourceStory) {
+      void extractFinanceOpinionsInBackground(newStories).catch((err) =>
+        console.error("[Finance AI] background expert opinion extraction failed:", err)
       );
     }
 

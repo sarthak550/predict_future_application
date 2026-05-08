@@ -65,6 +65,7 @@ export default function SportsScreen() {
   const [selectedLeague, setSelectedLeague] = useState<string | null>(null);
   const [selectedMatch, setSelectedMatch] = useState<ApiLiveScore | null>(null);
   const [selectedStory, setSelectedStory] = useState<ApiNewsFeedItem | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -75,9 +76,13 @@ export default function SportsScreen() {
   const fetchScores = useCallback(async () => {
     try {
       const res = await mobileApi.getLiveScores();
-      if (mountedRef.current) setScores(res.scores);
+      if (mountedRef.current) {
+        setScores(res.scores);
+        setError(null);
+      }
     } catch (e) {
       console.warn("[sports] fetchScores error:", e);
+      if (mountedRef.current) setError("Couldn't load sports content. Check your connection and tap Retry.");
     }
     if (mountedRef.current) setLoadingScores(false);
   }, []);
@@ -85,12 +90,24 @@ export default function SportsScreen() {
   const fetchNews = useCallback(async () => {
     try {
       const res = await mobileApi.getNews({ limit: 20, category: "SPORTS" });
-      if (mountedRef.current) setNews(res.items);
+      if (mountedRef.current) {
+        setNews(res.items);
+        setError(null);
+      }
     } catch (e) {
       console.warn("[sports] fetchNews error:", e);
+      if (mountedRef.current) setError("Couldn't load sports content. Check your connection and tap Retry.");
     }
     if (mountedRef.current) setLoadingNews(false);
   }, []);
+
+  const retryAll = useCallback(() => {
+    setLoadingScores(true);
+    setLoadingNews(true);
+    setError(null);
+    void fetchScores();
+    void fetchNews();
+  }, [fetchScores, fetchNews]);
 
   useEffect(() => {
     fetchScores();
@@ -196,6 +213,28 @@ export default function SportsScreen() {
       )}
     </>
   );
+
+  // Show full-screen error state when both fetches failed and there's no data yet
+  if (error && scores.length === 0 && news.length === 0) {
+    return (
+      <View style={[styles.screen, styles.errorScreen]}>
+        <View style={styles.header}>
+          <Feather name="activity" size={22} color={colors.text} />
+          <Text style={styles.headerTitle}>Sports</Text>
+        </View>
+        <View style={styles.errorBox}>
+          <Feather name="wifi-off" size={32} color={colors.textMuted} />
+          <Text style={styles.errorText}>{error}</Text>
+          <Pressable
+            style={({ pressed }) => [styles.retryBtn, pressed && { opacity: 0.7 }]}
+            onPress={retryAll}
+          >
+            <Text style={styles.retryBtnText}>Retry</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.screen}>
@@ -1386,6 +1425,28 @@ const storyModal = StyleSheet.create({
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
+  errorScreen: { justifyContent: "flex-start" },
+  errorBox: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: spacing.xl,
+    gap: spacing.md,
+  },
+  errorText: {
+    fontSize: 14,
+    color: colors.textMuted,
+    textAlign: "center",
+    lineHeight: 20,
+  },
+  retryBtn: {
+    marginTop: spacing.sm,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: colors.accent,
+  },
+  retryBtnText: { color: "#FFFFFF", fontWeight: "700", fontSize: 14 },
   header: {
     flexDirection: "row",
     alignItems: "center",

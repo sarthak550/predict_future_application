@@ -1,6 +1,7 @@
 import bcrypt from "bcryptjs";
 import {
   GroupRole,
+  LeagueTier,
   MarketCategory,
   MarketStatus,
   MarketTemplate,
@@ -21,6 +22,7 @@ import {
   submitMarketChallenge
 } from "../lib/markets/resolution";
 import { prisma } from "../lib/prisma";
+import { backfillReferralCodes } from "../lib/referrals/backfill";
 import { refreshUserStats } from "../lib/stats";
 import type { StoryInput } from "../lib/validations/story";
 import { ingestStories } from "../lib/news/ingestion";
@@ -337,11 +339,99 @@ async function upsertGroup(input: {
   return group;
 }
 
+/**
+ * Returns the current IST month as 'YYYY-MM'.
+ * IST = UTC+5:30.
+ */
+function getIstMonthString(now?: Date): string {
+  const d = now ?? new Date();
+  const istMs = d.getTime() + 5.5 * 60 * 60 * 1000;
+  const istDate = new Date(istMs);
+  const yyyy = istDate.getUTCFullYear();
+  const mm = String(istDate.getUTCMonth() + 1).padStart(2, "0");
+  return `${yyyy}-${mm}`;
+}
+
+/**
+ * Seed MonthlyLeagueEntry for every user that has ever made at least one prediction.
+ * Places them all in BRONZE for the current IST month.
+ * Also sets User.currentLeagueTier = BRONZE for each seeded user.
+ * Uses upsert so it is idempotent.
+ */
+async function seedMonthlyLeagues() {
+  const month = getIstMonthString();
+
+  // Find all users with at least one prediction recorded
+  const activeUserStats = await prisma.userStat.findMany({
+    where: { totalPredictions: { gte: 1 } },
+    select: { userId: true }
+  });
+
+  // Also seed all users regardless (even with 0 predictions) so the tier badge shows on seed
+  const allUsers = await prisma.user.findMany({
+    select: { id: true }
+  });
+
+  const userIds = allUsers.map((u) => u.id);
+
+  for (const userId of userIds) {
+    await prisma.monthlyLeagueEntry.upsert({
+      where: { userId_month: { userId, month } },
+      update: {},
+      create: {
+        userId,
+        month,
+        tier: LeagueTier.BRONZE,
+        startingTier: LeagueTier.BRONZE,
+        netPointsMonth: 0
+      }
+    });
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: { currentLeagueTier: LeagueTier.BRONZE }
+    });
+  }
+
+  console.log(`Seeded MonthlyLeagueEntry for ${userIds.length} user(s) in BRONZE for month ${month}.`);
+
+  // Suppress unused variable warning for activeUserStats
+  void activeUserStats;
+}
+
+async function seedFinanceExperts() {
+  const v1Organizations = [
+    { name: "", organization: "CNBC TV18" },
+    { name: "", organization: "HDFC Securities" },
+    { name: "", organization: "ICICI Securities" },
+    { name: "", organization: "Morgan Stanley India" },
+    { name: "", organization: "Goldman Sachs India" },
+  ];
+
+  for (const org of v1Organizations) {
+    await prisma.expert.upsert({
+      where: { name_organization: { name: org.name, organization: org.organization } },
+      update: {},
+      create: { name: org.name, organization: org.organization, verified: true },
+    });
+  }
+}
+
 async function main() {
   const adminEmail = process.env.SEED_ADMIN_EMAIL ?? "admin@predictfuture.local";
   const adminPassword = process.env.SEED_ADMIN_PASSWORD ?? "Admin12345!";
 
   await seedBadges();
+  await seedFinanceExperts();
+
+  // System bot user that owns all markets imported from Manifold.
+  // The import script uses this account as creatorId / approvedById.
+  await upsertUser({
+    email: "archive@manifold.internal",
+    username: "manifold-archive",
+    password: "ManifoldArchive1!",
+    role: "ADMIN"
+  });
 
   const admin = await upsertUser({
     email: adminEmail,
@@ -1394,6 +1484,173 @@ async function main() {
       await refreshUserStats(tx, user.id);
     });
   }
+
+  // ── Monthly Leagues: seed all users into BRONZE for current IST month ────────
+  await seedMonthlyLeagues();
+
+  // ── Finance: Market Event Clusters (demo data) ──────────────────────────────
+  const clusters = [
+    {
+      slug: "q4-fy25-earnings",
+      name: "Q4 FY25 Earnings Week",
+      description: "Quarterly results for Nifty 50 companies. Watch for surprises.",
+      startsAt: new Date("2026-04-15"),
+      endsAt: new Date("2026-05-15"),
+      bannerEmoji: "📊",
+      category: "FINANCE" as const,
+    },
+    {
+      slug: "may-2026-rbi-policy",
+      name: "May 2026 RBI Policy Day",
+      description: "Reserve Bank of India MPC rate decision and forward guidance.",
+      startsAt: new Date("2026-06-04"),
+      endsAt: new Date("2026-06-06"),
+      bannerEmoji: "🏦",
+      category: "FINANCE" as const,
+    },
+    {
+      slug: "union-budget-2026",
+      name: "Union Budget 2026",
+      description: "Full-year Union Budget presentation and market reaction.",
+      startsAt: new Date("2026-07-01"),
+      endsAt: new Date("2026-07-03"),
+      bannerEmoji: "📋",
+      category: "FINANCE" as const,
+    },
+  ];
+
+  // Data panels for each cluster (S18-T2)
+  const clusterDataPoints: Record<string, Prisma.InputJsonValue> = {
+    "q4-fy25-earnings": [
+      { label: "Reliance Industries", value: "EPS consensus ₹22.4", date: "2026-05-09" },
+      { label: "TCS", value: "EPS consensus ₹118.6", date: "2026-05-12" },
+      { label: "HDFC Bank", value: "EPS consensus ₹22.1", date: "2026-05-10" },
+      { label: "Infosys", value: "Revenue guidance: flat to +1%", date: "2026-05-14" },
+      { label: "Bajaj Finance", value: "AUM growth est. 26% YoY", date: "2026-05-15" },
+    ],
+    "may-2026-rbi-policy": [
+      { label: "Decision date", value: "4 Jun 2026" },
+      { label: "Repo rate held since", value: "Aug 2024" },
+      { label: "Last move", value: "+0.25% to 6.50%" },
+      { label: "Market consensus", value: "Hold (78% probability)" },
+    ],
+    "union-budget-2026": [
+      { label: "Budget date", value: "1 Feb 2026", subtext: "Already presented" },
+      { label: "GDP growth target", value: "6.5%" },
+      { label: "Fiscal deficit target", value: "4.5% of GDP" },
+      { label: "Key sectors", value: "Infra, Defence, Green Energy" },
+    ],
+  };
+
+  for (const cluster of clusters) {
+    await prisma.marketEventCluster.upsert({
+      where: { slug: cluster.slug },
+      update: { dataPoints: clusterDataPoints[cluster.slug] ?? Prisma.JsonNull },
+      create: { ...cluster, dataPoints: clusterDataPoints[cluster.slug] ?? Prisma.JsonNull },
+    });
+  }
+  console.log("Seeded 3 MarketEventCluster rows with dataPoints.");
+
+  // Backfill: assign any existing FINANCE markets to the Q4 FY25 cluster if closeAt falls in window
+  // TODO: assign to cluster manually via admin UI for production data
+  const q4Cluster = await prisma.marketEventCluster.findUnique({
+    where: { slug: "q4-fy25-earnings" },
+  });
+  if (q4Cluster) {
+    await prisma.market.updateMany({
+      where: {
+        category: "FINANCE",
+        eventClusterId: null,
+        closeAt: { gte: q4Cluster.startsAt, lte: q4Cluster.endsAt },
+      },
+      data: { eventClusterId: q4Cluster.id },
+    });
+  }
+
+  // ── S18-T4: Backfill expert opinions → event cluster tags ─────────────────
+  const rbiCluster = await prisma.marketEventCluster.findUnique({
+    where: { slug: "may-2026-rbi-policy" },
+  });
+  const earningsCluster = await prisma.marketEventCluster.findUnique({
+    where: { slug: "q4-fy25-earnings" },
+  });
+
+  if (rbiCluster) {
+    // Tag opinions whose story headline mentions RBI / repo rate / monetary policy
+    const rbiOpinions = await prisma.expertOpinion.findMany({
+      where: {
+        eventClusterId: null,
+        story: {
+          headline: {
+            contains: "RBI",
+            mode: "insensitive",
+          },
+        },
+      },
+      select: { id: true },
+    });
+    const rbiOpinions2 = await prisma.expertOpinion.findMany({
+      where: {
+        eventClusterId: null,
+        story: {
+          headline: {
+            contains: "repo rate",
+            mode: "insensitive",
+          },
+        },
+      },
+      select: { id: true },
+    });
+    const rbiOpinions3 = await prisma.expertOpinion.findMany({
+      where: {
+        eventClusterId: null,
+        story: {
+          headline: {
+            contains: "monetary policy",
+            mode: "insensitive",
+          },
+        },
+      },
+      select: { id: true },
+    });
+    const rbiIds = [...new Set([...rbiOpinions, ...rbiOpinions2, ...rbiOpinions3].map((o) => o.id))];
+    if (rbiIds.length > 0) {
+      await prisma.expertOpinion.updateMany({
+        where: { id: { in: rbiIds } },
+        data: { eventClusterId: rbiCluster.id },
+      });
+      console.log(`Tagged ${rbiIds.length} opinion(s) to RBI Policy cluster.`);
+    }
+  }
+
+  if (earningsCluster) {
+    // Tag opinions whose story headline mentions Reliance / Q4 / earnings
+    const earningsKeywords = ["Reliance", "Q4", "earnings", "Earnings"];
+    const earningsOpinionSets = await Promise.all(
+      earningsKeywords.map((keyword) =>
+        prisma.expertOpinion.findMany({
+          where: {
+            eventClusterId: null,
+            story: {
+              headline: { contains: keyword, mode: "insensitive" },
+            },
+          },
+          select: { id: true },
+        })
+      )
+    );
+    const earningsIds = [...new Set(earningsOpinionSets.flat().map((o) => o.id))];
+    if (earningsIds.length > 0) {
+      await prisma.expertOpinion.updateMany({
+        where: { id: { in: earningsIds } },
+        data: { eventClusterId: earningsCluster.id },
+      });
+      console.log(`Tagged ${earningsIds.length} opinion(s) to Q4 Earnings cluster.`);
+    }
+  }
+
+  // Backfill referral codes for any users that were created before S24-T6.
+  await backfillReferralCodes();
 
   console.log("Seed complete.");
 }

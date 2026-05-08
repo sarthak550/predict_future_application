@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getSession } from "@/lib/auth";
-import { createNotification } from "@/lib/notifications";
+import { createNotification, notifyFollowers, sendFollowerPushNotifications } from "@/lib/notifications";
 import { prisma } from "@/lib/prisma";
 
 export async function POST(
@@ -20,10 +20,14 @@ export async function POST(
     return NextResponse.json({ error: "Admin access required." }, { status: 403 });
   }
 
+  let approvedMarket: { id: string; title: string; creatorId: string } | null = null;
+  let creatorUsername = "";
+
   try {
     await prisma.$transaction(async (tx) => {
       const market = await tx.market.findUnique({
-        where: { id: params.marketId }
+        where: { id: params.marketId },
+        include: { creator: { select: { username: true } } }
       });
       if (!market) {
         throw new Error("Market not found.");
@@ -57,7 +61,29 @@ export async function POST(
         body: `${market.title} is now live for forecasting.`,
         href: `/markets/${market.id}`
       });
+
+      approvedMarket = { id: market.id, title: market.title, creatorId: market.creatorId };
+      creatorUsername = market.creator.username;
     });
+
+    // Fire-and-forget follower notifications outside the transaction so they
+    // never delay or roll back the approval commit.
+    if (approvedMarket) {
+      const { id: marketId, title: marketTitle, creatorId } = approvedMarket;
+      const notifTitle = `${creatorUsername} published a new market`;
+
+      void notifyFollowers(creatorId, {
+        type: "FOLLOWED_USER_MARKET",
+        title: notifTitle,
+        body: marketTitle,
+        href: `/markets/${marketId}`,
+        marketId,
+      }).catch((err) => console.error("[notifyFollowers market]", err));
+
+      void sendFollowerPushNotifications(creatorId, notifTitle, marketTitle).catch(
+        (err) => console.error("[sendFollowerPushNotifications market]", err)
+      );
+    }
 
     return NextResponse.json({ ok: true });
   } catch (error) {

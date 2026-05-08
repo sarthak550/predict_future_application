@@ -10,7 +10,16 @@
       "Bash(curl -s http://localhost:*)",
       "Bash(curl -s -X POST http://localhost:*)",
       "Bash(curl -s -X PATCH http://localhost:*)",
-      "Bash(curl -s -X DELETE http://localhost:*)"
+      "Bash(curl -s -X DELETE http://localhost:*)",
+      "Bash(npx prisma validate)",
+      "Bash(npx prisma format --check)",
+      "Bash(npm ls *)",
+      "Bash(npm list *)",
+      "Bash(cat apps/mobile/package.json)",
+      "Bash(cat apps/api/package.json)",
+      "Bash(cat packages/*/package.json)",
+      "Bash(npm --version)",
+      "Bash(node --version)"
     ]
   }
 }
