@@ -710,6 +710,9 @@ model ExpertOpinion {
   resolvedAt       DateTime?
   resolutionNote   String?
   suppressedAt     DateTime?
+  /// When true, opinion is sourced from trusted publication (not attributed to named analyst).
+  /// Display as "Market Analysis from [Source]" instead of "Expert: [Analyst Name]"
+  isSourceAttribution Boolean               @default(false)
   createdAt        DateTime                @default(now())
   updatedAt        DateTime                @updatedAt
   eventCluster     MarketEventCluster?     @relation(fields: [eventClusterId], references: [id])
@@ -718,6 +721,7 @@ model ExpertOpinion {
   votes            ExpertOpinionVote[]
 
   @@index([expertId, publishedAt])
+  @@index([isSourceAttribution])
   @@index([eventClusterId])
 }
 

@@ -46,6 +46,8 @@ export type RawExpertOpinion = {
   paraphrasedQuote: string;
   direction: "BULLISH" | "BEARISH" | "NEUTRAL";
   confidence: number;
+  /** When true, opinion is from trusted source but lacks named analyst attribution */
+  isSourceAttribution?: boolean;
   /** Optional: model-provided reason for rejection, logged but never persisted. */
   rejectionReason?: string | null;
 };
@@ -76,35 +78,36 @@ export function isApprovedFinanceSource(sourceUrl: string): boolean {
   }
 }
 
-const EXTRACTION_SYSTEM_PROMPT = `You are an Indian-equity-market research analyst extracting forward-looking analyst calls from financial commentary articles.
+const EXTRACTION_SYSTEM_PROMPT = `You are an Indian-equity-market research analyst extracting forward-looking market calls from financial commentary articles.
 
-Extract ONLY quotes that meet ALL of these criteria. If a quote fails ANY criterion, reject it.
+Extract quotes that meet the criteria below. Two extraction modes:
 
-CRITERIA FOR EXTRACTION:
-1. NAMED ANALYST: The speaker must be a named analyst, strategist, fund manager, or research head (e.g., "Ridham Desai of Morgan Stanley India", "Dhiraj Relli of HDFC Securities"). REJECT if the speaker is:
-   - A company CEO/CFO/founder talking about their own business
-   - A regulator (RBI Governor, SEBI chair) making policy statements
-   - A government official
-   - The article author/journalist (unattributed commentary)
-   - An anonymous "market participant" or "industry source"
+MODE 1: ANALYST-ATTRIBUTED (preferred, higher credibility)
+Quotes from NAMED analysts, strategists, fund managers, or research heads (e.g., "Ridham Desai of Morgan Stanley").
+Set "isSourceAttribution": false
 
-2. FORWARD-LOOKING MARKET CALL: The quote must contain a specific prediction with:
-   - A specific instrument: Nifty 50, Sensex, Bank Nifty, a specific Indian-listed stock, or a clearly named sector
-   - A direction with conviction: explicit bullish/bearish stance
-   - A rationale: at least one reason supporting the call
-   - A rough timeframe: this week, this quarter, FY26, "near term", etc.
-   REJECT if the quote is just descriptive ("the market fell today") or general commentary without a specific call.
+MODE 2: SOURCE-ATTRIBUTED (when no named analyst available)
+Market analysis/calls from the article's trusted publication itself (e.g., "Mint analysis suggests...", "Seeking Alpha sees...").
+Use publication name for expertOrganization, leave expertName blank or use publication.
+Set "isSourceAttribution": true
 
-3. NOT CORPORATE / NOT REGULATORY: Reject quotes that are:
-   - About a company's own business strategy ("we're expanding retail")
-   - Regulatory updates ("RBI announced new guidelines")
-   - Earnings reports without forward guidance
-   - General "market mood" observations without conviction
+REJECTION CRITERIA (applies to both modes):
+- CEO/CFO talking about own company strategy
+- Regulator/government policy statements
+- Anonymous/unattributed commentary
+- Purely descriptive (no forward call or conviction)
+- General mood observations without specific prediction
 
-OUTPUT FORMAT (JSON array, no other text):
-[{"expertName": "Full Name", "expertOrganization": "Firm", "paraphrasedQuote": "≤220 char paraphrase preserving the call + rationale + timeframe", "direction": "BULLISH|BEARISH|NEUTRAL", "confidence": 0.0-1.0, "rejectionReason": null}]
+REQUIRED FOR BOTH MODES:
+- Specific instrument (Nifty 50, Sensex, Bank Nifty, specific Indian stock, or sector)
+- Direction with conviction (bullish/bearish/neutral)
+- Rationale (reason supporting the call)
+- Timeframe (rough: week, quarter, FY, "near term", etc.)
 
-If NO quotes meet all criteria, return []. Do not invent quotes.
+OUTPUT FORMAT (JSON array):
+[{"expertName": "Name or blank", "expertOrganization": "Firm/Publication", "paraphrasedQuote": "≤220 chars with call+rationale+timeframe", "direction": "BULLISH|BEARISH|NEUTRAL", "confidence": 0.0-1.0, "isSourceAttribution": false or true, "rejectionReason": null}]
+
+Return [] if no qualifying calls found. Do not invent quotes.
 
 GOOD EXAMPLE:
 "Ridham Desai of Morgan Stanley India sees Nifty 50 reaching 26,000 by FY26-end, citing stable FII flows and earnings growth above consensus."
@@ -142,10 +145,12 @@ function validateRawOpinions(raw: unknown): RawExpertOpinion[] {
     const paraphrasedQuote = typeof obj.paraphrasedQuote === "string" ? obj.paraphrasedQuote.trim() : "";
     const directionRaw = typeof obj.direction === "string" ? obj.direction.toUpperCase() : "";
     const confidence = typeof obj.confidence === "number" ? Math.min(1, Math.max(0, obj.confidence)) : 0.5;
+    const isSourceAttribution = typeof obj.isSourceAttribution === "boolean" ? obj.isSourceAttribution : false;
     const rejectionReason =
       typeof obj.rejectionReason === "string" ? obj.rejectionReason : null;
 
-    if (!expertOrganization && !expertName) continue;
+    // Must have organization (expert or source), and quote must exist
+    if (!expertOrganization) continue;
     if (!paraphrasedQuote || paraphrasedQuote.length < 10) continue;
     if (!["BULLISH", "BEARISH", "NEUTRAL"].includes(directionRaw)) continue;
     if (paraphrasedQuote.length > 220) continue;
@@ -164,6 +169,7 @@ function validateRawOpinions(raw: unknown): RawExpertOpinion[] {
       paraphrasedQuote,
       direction: directionRaw as "BULLISH" | "BEARISH" | "NEUTRAL",
       confidence,
+      isSourceAttribution,
       rejectionReason,
     });
   }
@@ -398,26 +404,29 @@ export async function persistExpertOpinions(
 ): Promise<void> {
   for (const opinion of opinions) {
     try {
-      // Upsert expert: if (name, organization) pair doesn't exist, create with verified=false
+      // For source attributions, use publication as name; for analyst attributions, use analyst name
+      const displayName = opinion.isSourceAttribution
+        ? `${opinion.expertOrganization} Analysis`
+        : opinion.expertName;
+
+      // Upsert expert: if (name, organization) pair doesn't exist, create with appropriate verified flag
       const expert = await prisma.expert.upsert({
         where: {
           name_organization: {
-            name: opinion.expertName,
+            name: displayName,
             organization: opinion.expertOrganization,
           },
         },
         update: {}, // Don't overwrite verified=true experts
         create: {
-          name: opinion.expertName,
+          name: displayName,
           organization: opinion.expertOrganization,
-          verified: false,
+          // Source attributions are pre-verified (trusted publications), named analysts are not
+          verified: opinion.isSourceAttribution,
         },
       });
 
       // Create the ExpertOpinion linked to the story
-      // TODO S24-T3: notify followers when new expert opinion is published
-      // (Analyst-follow notifications deferred to a future sprint — requires
-      //  an Expert->User FK and per-expert follow graph.)
       await prisma.expertOpinion.create({
         data: {
           expertId: expert.id,
@@ -427,11 +436,13 @@ export async function persistExpertOpinions(
           sourceUrl,
           publishedAt,
           resolutionStatus: "PENDING",
+          isSourceAttribution: opinion.isSourceAttribution ?? false,
         },
       });
 
+      const typeLabel = opinion.isSourceAttribution ? "Market Analysis from" : "Expert Opinion by";
       console.info(
-        `[Finance AI] Persisted opinion for "${opinion.expertName || opinion.expertOrganization}" — ${opinion.direction}`
+        `[Finance AI] Persisted ${typeLabel} "${displayName}" — ${opinion.direction}`
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
