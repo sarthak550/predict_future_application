@@ -115,6 +115,8 @@ export type ApiExpertOpinionItem = {
   resolvedAt?: string | null;
   /** Nullable FK to a MarketEventCluster (S18-T4) */
   eventClusterId?: string | null;
+  /** True when sourced from a trusted publication (no named analyst) — display as "Market Analysis" instead of "Expert Opinion" */
+  isSourceAttribution?: boolean;
 };
 
 export type ApiNewsFeedItem = {

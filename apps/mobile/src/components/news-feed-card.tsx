@@ -508,8 +508,16 @@ export function ExpertOpinionRow({ opinion }: { opinion: ApiExpertOpinionItem })
     setTallies(updated);
   }, []);
 
+  const isSourceAttribution = opinion.isSourceAttribution === true;
+
   return (
     <View>
+      {/* Type label — "MARKET ANALYSIS" for source-attributed, nothing for named experts */}
+      {isSourceAttribution && (
+        <View style={expertStyles.sourceAttributionBadge}>
+          <Text style={expertStyles.sourceAttributionLabel}>MARKET ANALYSIS</Text>
+        </View>
+      )}
       <View style={expertStyles.opinionRow}>
         {/* Avatar / initials */}
         {opinion.avatarUrl ? (
@@ -521,27 +529,40 @@ export function ExpertOpinionRow({ opinion }: { opinion: ApiExpertOpinionItem })
         )}
 
         <View style={expertStyles.opinionBody}>
-          {/* Expert byline + direction badge row */}
+          {/* Byline + direction badge row */}
           <View style={expertStyles.bylineRow}>
             <View style={expertStyles.bylineInfo}>
-              {/* Expert name — tappable to expert profile */}
-              <Pressable
-                onPress={() => router.push(`/expert/${opinion.expertId}` as Parameters<typeof router.push>[0])}
-                hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
-              >
+              {isSourceAttribution ? (
+                /* Source attribution — not tappable to expert profile */
                 <View style={expertStyles.expertNameRow}>
                   <Text style={expertStyles.expertName} numberOfLines={1}>
-                    {opinion.expertName || opinion.expertOrganization}
+                    {opinion.expertOrganization}
                   </Text>
-                  {opinion.verified && (
-                    <View style={expertStyles.verifiedBadge}>
-                      <Text style={expertStyles.verifiedBadgeText}>✓</Text>
-                    </View>
-                  )}
+                  {/* Trusted source gets auto-verified badge */}
+                  <View style={expertStyles.verifiedBadge}>
+                    <Text style={expertStyles.verifiedBadgeText}>✓</Text>
+                  </View>
                 </View>
-              </Pressable>
+              ) : (
+                /* Named analyst — tappable to expert profile */
+                <Pressable
+                  onPress={() => router.push(`/expert/${opinion.expertId}` as Parameters<typeof router.push>[0])}
+                  hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+                >
+                  <View style={expertStyles.expertNameRow}>
+                    <Text style={expertStyles.expertName} numberOfLines={1}>
+                      {opinion.expertName || opinion.expertOrganization}
+                    </Text>
+                    {opinion.verified && (
+                      <View style={expertStyles.verifiedBadge}>
+                        <Text style={expertStyles.verifiedBadgeText}>✓</Text>
+                      </View>
+                    )}
+                  </View>
+                </Pressable>
+              )}
               <Text style={expertStyles.expertOrg} numberOfLines={1}>
-                {opinion.expertOrganization}
+                {isSourceAttribution ? "Trusted Source" : opinion.expertOrganization}
               </Text>
             </View>
 
@@ -1370,6 +1391,22 @@ const expertStyles = StyleSheet.create({
   bylineInfo: {
     flex: 1,
     gap: 2,
+  },
+  sourceAttributionBadge: {
+    alignSelf: "flex-start",
+    backgroundColor: "#F0F9FF",
+    borderWidth: 1,
+    borderColor: "#BAE6FD",
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    marginBottom: 6,
+  },
+  sourceAttributionLabel: {
+    fontSize: 9,
+    fontWeight: "700",
+    color: "#0369A1",
+    letterSpacing: 0.5,
   },
   expertNameRow: {
     flexDirection: "row",

@@ -32,6 +32,8 @@ export type NewsFeedExpertOpinion = {
   resolvedAt: Date | null;
   /** Nullable FK to event cluster for filter UX (S18-T4) */
   eventClusterId: string | null;
+  /** True when sourced from trusted publication (no named analyst) — display as "Market Analysis from [Source]" */
+  isSourceAttribution: boolean;
 };
 
 export type NewsFeedItem = {
@@ -192,6 +194,7 @@ export async function getPublishedNewsPage(input?: {
         resolutionStatus: opinion.resolutionStatus,
         resolvedAt: opinion.resolvedAt ?? null,
         eventClusterId: opinion.eventClusterId ?? null,
+        isSourceAttribution: opinion.isSourceAttribution,
       })),
     })),
     nextCursor: hasMore && lastItem ? encodeNewsCursor(lastItem) : null,
