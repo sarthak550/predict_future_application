@@ -426,16 +426,7 @@ export async function persistExpertOpinions(
         },
       });
 
-      // Skip if this expert already has an opinion on this story (prevents duplicates on re-ingestion)
-      const existing = await prisma.expertOpinion.findFirst({
-        where: { expertId: expert.id, storyId },
-        select: { id: true },
-      });
-      if (existing) {
-        console.debug(`[Finance AI] Skipping duplicate opinion for "${displayName}" on story ${storyId}`);
-        continue;
-      }
-
+      // Create the ExpertOpinion linked to the story
       await prisma.expertOpinion.create({
         data: {
           expertId: expert.id,
