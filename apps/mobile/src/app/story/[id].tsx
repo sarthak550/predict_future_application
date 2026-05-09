@@ -173,14 +173,12 @@ export default function StoryScreen() {
               </Text>
             </View>
 
-            {story.expertOpinions.map((opinion) => (
-              <ExpertOpinionCard
-                key={opinion.id}
-                opinion={opinion}
-                storyHeadline={story.headline}
-                storyId={story.id}
-              />
-            ))}
+            <ExpertOpinionCard
+              storyId={story.id}
+              storyHeadline={story.headline}
+              storySourceName={story.sourceName}
+              opinions={story.expertOpinions}
+            />
           </View>
         )}
 

@@ -422,20 +422,18 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
         })() : null}
 
         {(() => {
-          const flatOpinions = financeNews.flatMap((item) =>
-            (item.expertOpinions ?? []).map((op) => ({
-              opinion: op,
-              storyId: item.id,
-              storyHeadline: item.headline,
-            }))
-          );
+          // Group opinions by story — one card per article, all takes inside
+          const storyCards = financeNews
+            .map((item) => {
+              const opinions = (item.expertOpinions ?? []).filter(
+                (op) =>
+                  !selectedClusterFilter || op.eventClusterId === selectedClusterFilter
+              );
+              return { storyId: item.id, storyHeadline: item.headline, storySourceName: item.sourceName, opinions };
+            })
+            .filter((s) => s.opinions.length > 0);
 
-          // Apply cluster filter if active
-          const displayedOpinions = selectedClusterFilter
-            ? flatOpinions.filter((op) => op.opinion.eventClusterId === selectedClusterFilter)
-            : flatOpinions;
-
-          if (flatOpinions.length === 0) {
+          if (financeNews.every((item) => (item.expertOpinions ?? []).length === 0)) {
             return (
               <View style={financeStyles.expertEmptyCard}>
                 <Text style={financeStyles.expertEmptyIcon}>📊</Text>
@@ -453,7 +451,7 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
             );
           }
 
-          if (displayedOpinions.length === 0 && selectedClusterFilter !== null) {
+          if (storyCards.length === 0 && selectedClusterFilter !== null) {
             return (
               <View style={financeStyles.expertEmptyCard}>
                 <Text style={financeStyles.expertEmptyTitle}>No opinions tagged to this cluster yet</Text>
@@ -464,12 +462,13 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
             );
           }
 
-          return displayedOpinions.map(({ opinion, storyId, storyHeadline }) => (
+          return storyCards.map(({ storyId, storyHeadline, storySourceName, opinions }) => (
             <ExpertOpinionCard
-              key={opinion.id}
-              opinion={opinion}
-              storyHeadline={storyHeadline}
+              key={storyId}
               storyId={storyId}
+              storyHeadline={storyHeadline}
+              storySourceName={storySourceName}
+              opinions={opinions}
             />
           ));
         })()}
