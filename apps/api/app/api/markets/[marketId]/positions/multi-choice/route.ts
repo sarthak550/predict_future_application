@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 
 import { getUserIdFromRequest } from "@/lib/auth";
+import { notifyFollowersOnPosition } from "@/lib/notifications";
+import { recordProbabilitySnapshot } from "@/lib/markets/probabilitySnapshot";
 import { prisma } from "@/lib/prisma";
 import { checkAndCompleteQuests, type CompletedQuestReward } from "@/lib/quests/engine";
 import { multiChoicePositionSchema } from "@/lib/validations/market";
@@ -19,6 +21,7 @@ export async function POST(
       where: { id: userId },
       select: {
         id: true,
+        username: true,
         isSuspended: true,
         wallet: {
           select: { id: true, balance: true }
@@ -40,6 +43,7 @@ export async function POST(
       where: { id: params.marketId },
       select: {
         id: true,
+        title: true,
         status: true,
         marketType: true,
         closeAt: true
@@ -67,7 +71,7 @@ export async function POST(
 
     const option = await prisma.marketOption.findUnique({
       where: { id: payload.optionId },
-      select: { id: true, marketId: true }
+      select: { id: true, label: true, marketId: true }
     });
 
     if (!option || option.marketId !== market.id) {
@@ -155,6 +159,21 @@ export async function POST(
         console.error("[quest engine] multi-choice non-fatal error:", questErr);
       }
     });
+
+    // Fire-and-forget: notify followers that this analyst placed a multi-choice position.
+    // Must run OUTSIDE the transaction — uses a fresh prisma client internally.
+    void notifyFollowersOnPosition(
+      user.id,
+      user.username,
+      { id: market.id, title: market.title },
+      option.label,
+      payload.amount
+    ).catch((err) => console.error("[notifyFollowersOnPosition multi-choice]", err));
+
+    // Fire-and-forget: record a probability snapshot so the chart updates on every bet.
+    void recordProbabilitySnapshot(params.marketId, prisma).catch((err) =>
+      console.error("[probability-snapshot on multi-choice position]", err)
+    );
 
     return NextResponse.json({ ok: true, questRewards });
   } catch (err: unknown) {

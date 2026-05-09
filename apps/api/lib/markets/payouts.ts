@@ -4,6 +4,7 @@ import {
   calculateNumericWinnerPayouts,
   parseNumericPayoutDistribution
 } from "@/lib/markets/numeric";
+import { buildPercentileSuffix, computePercentileRank } from "@/lib/markets/percentile";
 import { calculateHostReward, isHostResolvedMode } from "@/lib/markets/policies";
 import { updateLeagueMonthPoints } from "@/lib/leagues/processing";
 import { createNotification } from "@/lib/notifications";
@@ -49,6 +50,7 @@ async function createUniqueWalletTransaction(
     amount: number;
     description: string;
     positionId?: string;
+    percentileRank?: number | null;
   }
 ) {
   const existing = await tx.walletTransaction.findFirst({
@@ -64,8 +66,12 @@ async function createUniqueWalletTransaction(
     return existing;
   }
 
+  const { percentileRank, ...rest } = input;
   return tx.walletTransaction.create({
-    data: input
+    data: {
+      ...rest,
+      ...(percentileRank != null ? { percentileRank } : {})
+    }
   });
 }
 
@@ -248,6 +254,9 @@ export async function settleMarket(
   if (!market) {
     throw new Error("Market not found.");
   }
+
+  // Fetch category separately (not in the include above to avoid breaking existing shape).
+  const marketCategory = market.category;
 
   if (market.marketType === "BINARY" && market.outcome === MarketOutcome.UNRESOLVED) {
     throw new Error("Cannot settle a market without an outcome.");
@@ -533,6 +542,18 @@ export async function settleMarket(
     distributableLosingPool
   );
 
+  // Compute percentile rank once for the whole market (same rank for all winners).
+  let binaryPercentileRank: number | null = null;
+  if (winners.length > 0) {
+    try {
+      const sampleWinnerId = winners[0].userId;
+      const rank = await computePercentileRank(market.id, sampleWinnerId, tx);
+      binaryPercentileRank = rank >= 0 ? rank : null;
+    } catch (percentileErr) {
+      console.error("[percentile] computePercentileRank failed (binary):", percentileErr);
+    }
+  }
+
   for (const winner of winners) {
     if (!winner.user.wallet) {
       continue;
@@ -554,7 +575,8 @@ export async function settleMarket(
       amount: payout,
       description: `Payout for winning "${market.title}"`,
       marketId: market.id,
-      positionId: winner.id
+      positionId: winner.id,
+      percentileRank: binaryPercentileRank
     });
 
     // League points: net gain only (payout minus original stake)
@@ -616,13 +638,17 @@ export async function settleMarket(
 
   for (const userId of participants) {
     const won = winners.some((winner) => winner.userId === userId);
+    const percentileSuffix =
+      won && binaryPercentileRank != null
+        ? buildPercentileSuffix(binaryPercentileRank, marketCategory)
+        : "";
     await createNotification(tx, {
       userId,
       marketId: market.id,
       type: "MARKET_RESOLVED",
       title: won ? "Winning forecast" : "Market resolved",
       body: won
-        ? `${market.title} resolved in your favor. Your wallet has been updated.`
+        ? `${market.title} resolved in your favor. Your wallet has been updated.${percentileSuffix}`
         : `${market.title} has resolved. Review the final result and updated rankings.`,
       href: `/markets/${market.id}`
     });
@@ -665,6 +691,7 @@ export async function settleMultiChoiceMarket(
       creator: { include: { wallet: true } }
     }
   });
+  const multiChoiceCategory = market?.category ?? "GENERAL";
 
   if (!market) {
     throw new Error("Market not found.");
@@ -775,6 +802,18 @@ export async function settleMultiChoiceMarket(
     }
   }
 
+  // Compute percentile rank once for the whole market (same rank for all winners).
+  let multiChoicePercentileRank: number | null = null;
+  if (winningTotal > 0 && winningPositions.length > 0) {
+    try {
+      const sampleWinnerId = winningPositions[0].userId;
+      const rank = await computePercentileRank(marketId, sampleWinnerId, tx);
+      multiChoicePercentileRank = rank >= 0 ? rank : null;
+    } catch (percentileErr) {
+      console.error("[percentile] computePercentileRank failed (multi-choice):", percentileErr);
+    }
+  }
+
   // Credit wallets.
   const settledUserIds = new Set<string>();
   for (const [positionId, entry] of payoutMap.entries()) {
@@ -786,13 +825,17 @@ export async function settleMultiChoiceMarket(
       data: { balance: { increment: entry.payout } }
     });
 
+    const isWinnerEntry = winningPositions.some((p) => p.id === positionId);
     await tx.walletTransaction.create({
       data: {
         walletId: position.user.wallet.id,
         type: "MARKET_WIN",
         amount: entry.payout,
         description: `Payout for multi-choice market "${market.title}"`,
-        marketId: market.id
+        marketId: market.id,
+        ...(isWinnerEntry && multiChoicePercentileRank != null
+          ? { percentileRank: multiChoicePercentileRank }
+          : {})
       }
     });
 
@@ -835,6 +878,10 @@ export async function settleMultiChoiceMarket(
   const allParticipantIds = Array.from(new Set(allPositions.map((p) => p.userId)));
   for (const userId of allParticipantIds) {
     const won = settledUserIds.has(userId);
+    const percentileSuffix =
+      won && multiChoicePercentileRank != null
+        ? buildPercentileSuffix(multiChoicePercentileRank, multiChoiceCategory)
+        : "";
     try {
       await createNotification(tx, {
         userId,
@@ -842,7 +889,7 @@ export async function settleMultiChoiceMarket(
         type: "MARKET_RESOLVED",
         title: won ? "Winning prediction" : "Market resolved",
         body: won
-          ? `${market.title} resolved and you won!`
+          ? `${market.title} resolved and you won!${percentileSuffix}`
           : `${market.title} has resolved. Better luck next time.`,
         href: `/markets/${market.id}`
       });

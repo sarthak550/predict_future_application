@@ -15,3 +15,8 @@
 - [project_admin_resolution_scope.md](project_admin_resolution_scope.md) — Admin HIT/MISS UI gaps: no evidenceUrl field, no NOT_GRADED in UI, no audit trail FK, no reversal path, take:100 cap, no pagination/filter
 - [project_sprint24.md](project_sprint24.md) — Sprint 24: T1 done, T2 done, T3 qa-review, T4 (daily quests) qa-review; T5-T11 PENDING.
 - [external_market_sources.md](external_market_sources.md) — originPlatform (String?) + externalId (String? @unique) on Market for external imports; String not enum; externalId = 'platform:remoteId' idempotency key
+- [project_seo_public_profiles.md](project_seo_public_profiles.md) — S25-T3: public /profile/[username] server component in apps/api; og: meta; CSS module styling; no Tailwind in API app
+- [project_sprint26_t2.md](project_sprint26_t2.md) — S26-T2: Comment Tips — schema fields, IST day-cap pattern, tip route (429 for cap), mobile gift-icon button
+- [project_sprint26_t5.md](project_sprint26_t5.md) — S26-T5: UserDisplayMode enum, getDisplayName() in lib/users/displayName.ts, applied to all public surfaces, own-view exception on /me
+- [project_sprint27_t1.md](project_sprint27_t1.md) — S27-T1: Big Call daily market — schema fields, admin route, cron push (CRON_SECRET bearer), GET today-big-call, mobile BigCallCard, types, api-client (COMPLETE)
+- [project_sprint27_t2.md](project_sprint27_t2.md) — S27-T2: Probability chart — MarketProbabilitySnapshot, hourly cron, fire-and-forget on positions, history API, pure View chart on market detail (COMPLETE)

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getUserIdFromRequest } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getDisplayName } from "@/lib/users/displayName";
 
 /**
  * GET /api/users/[userId]
@@ -28,6 +29,7 @@ export async function GET(
     select: {
       id: true,
       username: true,
+      displayMode: true,
       avatarUrl: true,
       reputationScore: true,
       accuracyScore: true,
@@ -75,7 +77,7 @@ export async function GET(
   return NextResponse.json({
     user: {
       id: user.id,
-      username: user.username,
+      username: getDisplayName(user),
       avatarUrl: user.avatarUrl,
       reputationScore: user.reputationScore,
       accuracyScore: user.accuracyScore,

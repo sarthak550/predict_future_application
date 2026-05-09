@@ -4,6 +4,7 @@ import { getSession, getUserIdFromRequest } from "@/lib/auth";
 import { canManageMarket, canViewMarket } from "@/lib/markets/access";
 import { finalizeMarketResolution } from "@/lib/markets/resolution";
 import { prisma } from "@/lib/prisma";
+import { getDisplayName } from "@/lib/users/displayName";
 import { updateMarketSchema } from "@/lib/validations/market";
 
 export async function GET(
@@ -45,15 +46,20 @@ export async function GET(
           },
       creator: {
         select: {
+          id: true,
           username: true,
-          reputationScore: true
+          displayMode: true,
+          reputationScore: true,
+          isVerifiedAnalyst: true,
         }
       },
       comments: {
         include: {
           user: {
             select: {
-              username: true
+              id: true,
+              username: true,
+              displayMode: true,
             }
           }
         }
@@ -121,6 +127,32 @@ export async function GET(
       })
     : [];
 
+  // Retrieve userPercentileRank from the user's MARKET_WIN wallet transaction, if any.
+  let userPercentileRank: number | null = null;
+  if (viewerId && market.status === "RESOLVED") {
+    try {
+      const viewerWallet = await prisma.wallet.findUnique({
+        where: { userId: viewerId },
+        select: { id: true }
+      });
+      if (viewerWallet) {
+        const winTx = await prisma.walletTransaction.findFirst({
+          where: {
+            walletId: viewerWallet.id,
+            marketId: market.id,
+            type: "MARKET_WIN"
+          },
+          select: { percentileRank: true }
+        });
+        if (winTx && winTx.percentileRank != null) {
+          userPercentileRank = winTx.percentileRank;
+        }
+      }
+    } catch (percentileErr) {
+      console.error("[market-detail] userPercentileRank lookup failed:", percentileErr);
+    }
+  }
+
   // For MULTIPLE_CHOICE markets, also return the viewer's per-option stakes.
   const userMultiChoicePositions =
     viewerId && market.marketType === "MULTIPLE_CHOICE"
@@ -149,12 +181,30 @@ export async function GET(
       }
     : null;
 
+  // Apply displayMode pseudonym to creator and all comment authors.
+  const shapedCreator = market.creator
+    ? {
+        ...market.creator,
+        username: getDisplayName(market.creator),
+      }
+    : market.creator;
+
+  const shapedComments = market.comments.map((c) => ({
+    ...c,
+    user: {
+      ...c.user,
+      username: getDisplayName(c.user),
+    },
+  }));
+
   const responseMarket = {
     ...market,
+    creator: shapedCreator,
+    comments: shapedComments,
     resolution: shapedResolution,
   };
 
-  return NextResponse.json({ market: responseMarket, userPositions, userMultiChoicePositions, userVote });
+  return NextResponse.json({ market: responseMarket, userPositions, userMultiChoicePositions, userVote, userPercentileRank });
 }
 
 export async function PATCH(

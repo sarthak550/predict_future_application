@@ -18,6 +18,7 @@ model User {
   role                       Role                 @default(USER)
   isSuspended                Boolean              @default(false)
   suspendedReason            String?
+  isVerifiedAnalyst          Boolean              @default(false)
   reputationScore            Int                  @default(50)
   expoPushToken              String?
   accuracyScore              Float                @default(0)
@@ -28,6 +29,12 @@ model User {
   referralCode               String?              @unique
   referredById               String?
   currentLeagueTier          LeagueTier?
+  phone                      String?              @unique
+  phoneVerified              Boolean              @default(false)
+  /// Lifetime tip points received across all comments. Incremented atomically on each tip transaction.
+  tipsReceivedTotal          Int                  @default(0)
+  /// Controls whether the user appears under their real username or an anonymised pseudonym on public surfaces.
+  displayMode                UserDisplayMode      @default(USERNAME)
   accounts                   Account[]
   adminActions               AdminAction[]        @relation("AdminActor")
   targetAdminActions         AdminAction[]        @relation("AdminTargetUser")
@@ -95,6 +102,9 @@ model WalletTransaction {
   marketId      String?
   positionId    String?
   adminActionId String?
+  /// Percentile rank stored at market resolution for MARKET_WIN transactions.
+  /// Represents the % of other participants the user beat (0–99). Null for non-WIN transactions or solo markets.
+  percentileRank Int?
   createdAt     DateTime              @default(now())
   adminAction   AdminAction?          @relation(fields: [adminActionId], references: [id])
   market        Market?               @relation(fields: [marketId], references: [id])
@@ -382,6 +392,12 @@ model Market {
   originPlatform             String?
   /// Composite idempotency key in the form '<platform>:<remoteId>'. Unique so re-running import scripts is safe.
   externalId                 String?                @unique
+  /// Date this market was marked as 'Today's Big Call' (stored as IST midnight UTC). Null = not designated.
+  isBigCallDate              DateTime?
+  /// Timestamp when the Big Call push notification was sent — used as idempotency guard to prevent double-sends.
+  bigCallNotificationSentAt  DateTime?
+  /// Engagement analytics: total opens of this market from Big Call notifications/card.
+  bigCallNotificationOpenedCount Int               @default(0)
   adminActions               AdminAction[]
   challenges                 Challenge[]
   approvedBy                 User?                  @relation("ApprovedMarkets", fields: [approvedById], references: [id])
@@ -394,6 +410,7 @@ model Market {
   positions                  MarketPosition[]
   options                    MarketOption[]
   multiChoicePositions       MultiChoicePosition[]
+  probabilitySnapshots       MarketProbabilitySnapshot[]
   reports                    MarketReport[]
   resolution                 MarketResolution?
   notifications              Notification[]
@@ -410,6 +427,19 @@ model Market {
   @@index([marketType, visibility, status])
   @@index([eventClusterId, status])
   @@index([originPlatform, externalId])
+  @@index([isBigCallDate])
+}
+
+/// Hourly snapshot of binary/multi-choice market probability for the consensus-line chart.
+model MarketProbabilitySnapshot {
+  id            String   @id @default(cuid())
+  marketId      String
+  /// Probability of YES (or highest-staked option) as a fraction 0.0–1.0.
+  probability   Float
+  snapshotAt    DateTime @default(now())
+  market        Market   @relation(fields: [marketId], references: [id], onDelete: Cascade)
+
+  @@index([marketId, snapshotAt])
 }
 
 model MarketEventCluster {
@@ -502,14 +532,16 @@ model MultiChoicePosition {
 }
 
 model MarketComment {
-  id        String   @id @default(cuid())
-  userId    String
-  marketId  String
-  body      String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  market    Market   @relation(fields: [marketId], references: [id], onDelete: Cascade)
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id           String   @id @default(cuid())
+  userId       String
+  marketId     String
+  body         String
+  /// Lifetime tip total received on this comment (incremented on each tip).
+  tipsReceived Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  market       Market   @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([marketId, createdAt])
 }
@@ -939,6 +971,8 @@ enum WalletTransactionType {
   QUEST_REWARD
   REFERRAL_BONUS_REFEREE
   REFERRAL_BONUS_REFERRER
+  TIP_GIVEN
+  TIP_RECEIVED
 }
 
 enum NotificationType {
@@ -951,9 +985,11 @@ enum NotificationType {
   LEVEL_UP
   FOLLOWED_USER_MARKET
   FOLLOWED_USER_OPINION
+  FOLLOWED_USER_PREDICTION
   QUEST_COMPLETED
   STREAK_MILESTONE
   REFERRAL_REWARD
+  COMMENT_TIPPED
 }
 
 enum ReportStatus {
@@ -982,4 +1018,12 @@ enum AdminActionType {
   FEATURE_MARKET
   FEATURE_STORY
   CURATE_FEED
+}
+
+/// Controls whether a user's identity is shown as their real username or a deterministic anonymous pseudonym.
+enum UserDisplayMode {
+  /// Show real username on all public surfaces (default).
+  USERNAME
+  /// Show anonymised pseudonym (AnonymousAnalyst_XXXXXX) on all public surfaces.
+  ANONYMOUS
 }

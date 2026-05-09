@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/prisma";
+import { getDisplayName } from "@/lib/users/displayName";
 
 const PAGE_SIZE = 20;
 
@@ -42,6 +43,7 @@ export async function GET(
         select: {
           id: true,
           username: true,
+          displayMode: true,
           avatarUrl: true,
           accuracyScore: true,
         },
@@ -55,7 +57,7 @@ export async function GET(
 
   const items = page.map((f) => ({
     userId: f.follower.id,
-    username: f.follower.username,
+    username: getDisplayName(f.follower),
     avatarUrl: f.follower.avatarUrl,
     accuracyScore: f.follower.accuracyScore,
   }));

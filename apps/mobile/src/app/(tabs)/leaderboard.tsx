@@ -22,6 +22,7 @@ import { colors, radius, spacing } from "@predict-future/ui-tokens";
 import { useApiQuery } from "@/hooks/useApiQuery";
 import { mobileApi } from "@/lib/api";
 import { useSession } from "@/providers/session-provider";
+import { VerifiedBadge } from "@/components/verified-badge";
 
 const CATEGORIES: Array<{ label: string; value: AppMarketCategory | undefined }> = [
   { label: "All", value: undefined },
@@ -51,6 +52,12 @@ function formatAccuracy(score: number): string {
   // If score is between 0 and 1, treat as decimal fraction; otherwise treat as percentage
   const pct = score > 0 && score <= 1 ? Math.round(score * 100) : Math.round(score);
   return `${pct}%`;
+}
+
+function formatFollowerCount(count: number): string {
+  if (count >= 10000) return `${Math.floor(count / 1000)}K followers`;
+  if (count >= 1000) return `${(count / 1000).toFixed(1)}K followers`;
+  return `${count} followers`;
 }
 
 function getPredictionCount(entry: ApiLeaderboardEntry): number | undefined {
@@ -262,8 +269,10 @@ function LeaderboardRow({ item, rank, isMe, rankStyle, predictions, onPress }: L
       <View style={styles.userInfo}>
         <View style={styles.usernameRow}>
           <Text style={styles.username}>@{item.username}</Text>
+          {item.isVerifiedAnalyst && <VerifiedBadge compact />}
           {isMe && <Text style={styles.youLabel}> (You)</Text>}
         </View>
+        <Text style={styles.followerLine}>{formatFollowerCount(item.followerCount ?? 0)}</Text>
         <View style={styles.statsRow}>
           <Text style={styles.statLabel}>Rep </Text>
           <Text style={styles.statValue}>{item.reputationScore.toLocaleString()}</Text>
@@ -449,6 +458,12 @@ const styles = StyleSheet.create({
   usernameRow: { flexDirection: "row", alignItems: "center" },
   username: { fontSize: 15, fontWeight: "600", color: colors.text },
   youLabel: { fontSize: 13, fontWeight: "600", color: colors.accent },
+  followerLine: {
+    fontSize: 11,
+    color: colors.textMuted,
+    opacity: 0.7,
+    marginTop: 1,
+  },
   statsRow: {
     flexDirection: "row",
     alignItems: "center",

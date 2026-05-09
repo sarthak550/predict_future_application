@@ -16,7 +16,10 @@ export default function FinanceTabScreen() {
       </View>
       <FinanceMode
         onNavigateToFeed={() =>
-          router.push("/(tabs)/feed?category=FINANCE" as Parameters<typeof router.push>[0])
+          router.push({
+            pathname: "/(tabs)/feed",
+            params: { category: "FINANCE" },
+          } as Parameters<typeof router.push>[0])
         }
       />
     </View>

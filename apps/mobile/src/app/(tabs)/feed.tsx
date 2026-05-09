@@ -5,7 +5,6 @@ import {
   FlatList,
   Pressable,
   RefreshControl,
-  ScrollView,
   StyleSheet,
   Text,
   useWindowDimensions,
@@ -13,11 +12,17 @@ import {
 } from "react-native";
 import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 
-import type { ApiNewsFeedItem, AppMarketCategory } from "@predict-future/types";
+import type { ApiBigCallMarket, ApiNewsFeedItem, AppMarketCategory } from "@predict-future/types";
 import { colors, radius, spacing } from "@predict-future/ui-tokens";
 
+import {
+  CategoryFilterBar,
+  FILTER_BAR_CATEGORIES,
+  type CategoryKey,
+} from "@/components/category-filter-bar";
 import { InsightCard } from "@/components/insight-card";
 import { NewsFeedCard } from "@/components/news-feed-card";
+import { PlatformTrustBanner } from "@/components/platform-trust-banner";
 import { SkeletonFeedCard } from "@/components/skeleton-feed-card";
 import { StreakBadge } from "@/components/streak-reminder";
 import { mobileApi } from "@/lib/api";
@@ -29,17 +34,128 @@ const CATEGORY_BAR_HEIGHT = 52;
 // Inject an insight card every N news cards (for items that have a market with votes)
 const INSIGHT_INTERVAL = 4;
 
-type CategoryFilter = { key: AppMarketCategory | "ALL"; label: string; emoji: string };
-const CATEGORIES: CategoryFilter[] = [
-  { key: "ALL",           label: "All",           emoji: "🌐" },
-  { key: "FINANCE",       label: "Finance",       emoji: "₹" },
-  { key: "TECH",          label: "Tech",          emoji: "💻" },
-  { key: "BUSINESS",      label: "Business",      emoji: "📈" },
-  { key: "SPORTS",        label: "Sports",        emoji: "⚽" },
-  { key: "ENTERTAINMENT", label: "Entertainment", emoji: "🎬" },
-  { key: "GENERAL",       label: "General",       emoji: "📰" },
-  { key: "WEATHER",       label: "Weather",       emoji: "🌤️" },
-];
+// ── Big Call Card ──────────────────────────────────────────────────────────────
+
+function BigCallCard({ market }: { market: ApiBigCallMarket }) {
+  const router = useRouter();
+
+  const handlePress = () => {
+    // Fire-and-forget analytics tap — never block navigation
+    void mobileApi.trackBigCallOpened(market.id).catch(() => {});
+    router.push(`/market/${market.id}`);
+  };
+
+  const totalVotes = market.yesCount + market.noCount;
+  const yesPercent = totalVotes > 0 ? Math.round((market.yesCount / totalVotes) * 100) : null;
+
+  return (
+    <Pressable onPress={handlePress} accessibilityRole="button" accessibilityLabel={`Today's Big Call: ${market.title}`} style={bigCallStyles.card}>
+      {/* Badge row */}
+      <View style={bigCallStyles.badgeRow}>
+        <Text style={bigCallStyles.badge}>Today's Big Call</Text>
+        {market.status === "OPEN" && (
+          <View style={bigCallStyles.liveDot} />
+        )}
+      </View>
+
+      {/* Market title */}
+      <Text style={bigCallStyles.title} numberOfLines={2}>{market.title}</Text>
+
+      {/* Mini stats row */}
+      <View style={bigCallStyles.statsRow}>
+        {yesPercent !== null && (
+          <Text style={bigCallStyles.stat}>
+            {`${yesPercent}% YES`}
+          </Text>
+        )}
+        <Text style={bigCallStyles.stat}>
+          {`${market.totalParticipants.toLocaleString()} analysts`}
+        </Text>
+        <Text style={bigCallStyles.stat}>
+          {`${market.totalVolume.toLocaleString()} pts`}
+        </Text>
+      </View>
+
+      {/* CTA */}
+      <View style={bigCallStyles.ctaButton}>
+        <Text style={bigCallStyles.ctaLabel}>Make Your Call</Text>
+      </View>
+    </Pressable>
+  );
+}
+
+const bigCallStyles = StyleSheet.create({
+  card: {
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.sm,
+    marginBottom: spacing.xs,
+    padding: spacing.lg,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    borderWidth: 1.5,
+    borderColor: colors.accent,
+    shadowColor: colors.accent,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  badgeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: spacing.sm,
+    gap: spacing.sm,
+  },
+  badge: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: colors.accent,
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
+  liveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.success,
+  },
+  title: {
+    fontSize: 17,
+    fontWeight: "700",
+    color: colors.text,
+    lineHeight: 23,
+    marginBottom: spacing.sm,
+  },
+  statsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.md,
+    marginBottom: spacing.md,
+  },
+  stat: {
+    fontSize: 12,
+    color: colors.textMuted,
+    fontWeight: "500",
+  },
+  ctaButton: {
+    backgroundColor: colors.accent,
+    borderRadius: radius.md,
+    paddingVertical: spacing.sm,
+    alignItems: "center",
+  },
+  ctaLabel: {
+    color: colors.surface,
+    fontWeight: "700",
+    fontSize: 14,
+  },
+});
+
+// Feed-specific category list: use the shared FILTER_BAR_CATEGORIES,
+// but SPORTS is omitted because sports stories are surfaced in the Sports tab.
+// (The API query already applies excludeCategory="SPORTS" when category=ALL.)
+const FEED_CATEGORIES = FILTER_BAR_CATEGORIES.filter(
+  (c) => c.key !== "SPORTS"
+);
 
 type NewsListItem =
   | { _type: "news"; _key: string; item: ApiNewsFeedItem }
@@ -78,30 +194,30 @@ export default function FeedScreen() {
   const listRef = useRef<FlatList<NewsListItem>>(null);
   const [streakCount, setStreakCount] = useState(0);
 
+  // Today's Big Call market — null while loading, undefined if no market set today
+  const [bigCallMarket, setBigCallMarket] = useState<ApiBigCallMarket | null | undefined>(null);
+
   const [items, setItems] = useState<ApiNewsFeedItem[]>([]);
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [category, setCategory] = useState<AppMarketCategory | "ALL">(() => {
-    const validCategories: Array<AppMarketCategory | "ALL"> = [
-      "ALL", "FINANCE", "TECH", "BUSINESS", "SPORTS", "ENTERTAINMENT", "GENERAL", "WEATHER",
-    ];
-    if (categoryParam && validCategories.includes(categoryParam as AppMarketCategory | "ALL")) {
-      return categoryParam as AppMarketCategory | "ALL";
+  const [category, setCategory] = useState<CategoryKey>(() => {
+    const validKeys = FEED_CATEGORIES.map((c) => c.key);
+    if (categoryParam && validKeys.includes(categoryParam as CategoryKey)) {
+      return categoryParam as CategoryKey;
     }
     return "ALL";
   });
 
   // Sync `category` state whenever the URL param changes (e.g., navigating from
-  // the Finance tab via a deep link). useState initializer only fires on first
-  // render, so without this effect the param is ignored on subsequent navigations.
+  // the Finance tab via "Read Finance News"). useState initializer only fires on
+  // first render, so without this effect the param is ignored on subsequent
+  // navigations.
   useEffect(() => {
-    const validCategories: Array<AppMarketCategory | "ALL"> = [
-      "ALL", "FINANCE", "TECH", "BUSINESS", "SPORTS", "ENTERTAINMENT", "GENERAL", "WEATHER",
-    ];
-    if (categoryParam && validCategories.includes(categoryParam as AppMarketCategory | "ALL")) {
-      setCategory(categoryParam as AppMarketCategory | "ALL");
+    const validKeys = FEED_CATEGORIES.map((c) => c.key);
+    if (categoryParam && validKeys.includes(categoryParam as CategoryKey)) {
+      setCategory(categoryParam as CategoryKey);
     }
   }, [categoryParam]);
 
@@ -120,6 +236,19 @@ export default function FeedScreen() {
     }).catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authStatus]);
+
+  // Fetch today's Big Call market on mount — no auth required.
+  // Runs once per tab mount; re-fetches on pull-to-refresh via onRefresh.
+  useEffect(() => {
+    let cancelled = false;
+    void mobileApi.getTodayBigCall().then((res) => {
+      if (!cancelled) setBigCallMarket(res.market ?? undefined);
+    }).catch(() => {
+      if (!cancelled) setBigCallMarket(undefined);
+    });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Skeleton 150ms delay: only fires when loading is true and no items have
   // arrived yet AND we have never successfully loaded data before.
@@ -161,7 +290,9 @@ export default function FeedScreen() {
   const hasMoreRef = useRef(true);
   const inFlightRef = useRef(false);
   const mountedRef = useRef(true);
-  const categoryRef = useRef<AppMarketCategory | "ALL">("ALL");
+  // Initialise from the same source the state initialiser used so the very first
+  // loadPage call honours the URL param (otherwise it always fetches "ALL").
+  const categoryRef = useRef<CategoryKey>(category);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -189,7 +320,7 @@ export default function FeedScreen() {
         // Sports has its own dedicated tab — exclude from the main feed
         query.excludeCategory = "SPORTS";
       } else {
-        query.category = cat;
+        query.category = cat as AppMarketCategory;
       }
 
       const response = await mobileApi.getNews(query);
@@ -222,6 +353,24 @@ export default function FeedScreen() {
     void loadPage("replace");
   }, [loadPage]);
 
+  // When the category state changes (URL param, chip tap, etc.), reset paging
+  // and refetch with the new filter. Skipped on first mount because the loadPage
+  // mount effect above already issues the initial fetch.
+  const isFirstCategoryRender = useRef(true);
+  useEffect(() => {
+    if (isFirstCategoryRender.current) {
+      isFirstCategoryRender.current = false;
+      return;
+    }
+    if (categoryRef.current === category) return;
+    categoryRef.current = category;
+    setItems([]);
+    cursorRef.current = null;
+    hasMoreRef.current = true;
+    inFlightRef.current = false;
+    void loadPage("replace");
+  }, [category, loadPage]);
+
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     cursorRef.current = null;
@@ -239,16 +388,26 @@ export default function FeedScreen() {
     return unsubscribe;
   }, [navigation, onRefresh]);
 
-  // Silently reload feed every 3 minutes while tab is focused — picks up AI-generated polls
+  // Silently reload feed every 3 minutes while tab is focused — picks up AI-generated polls.
+  // Also re-applies the category URL param on focus so navigation from the Finance tab
+  // ("Read Finance News") flips the filter even when this tab is already mounted.
   useFocusEffect(
     useCallback(() => {
+      const validKeys = FEED_CATEGORIES.map((c) => c.key);
+      if (
+        categoryParam &&
+        validKeys.includes(categoryParam as CategoryKey) &&
+        categoryRef.current !== categoryParam
+      ) {
+        setCategory(categoryParam as CategoryKey);
+      }
       const interval = setInterval(() => {
         if (!inFlightRef.current) {
           void loadPage("replace");
         }
       }, 3 * 60 * 1000);
       return () => clearInterval(interval);
-    }, [loadPage])
+    }, [loadPage, categoryParam])
   );
 
   const onEndReached = useCallback(() => {
@@ -257,7 +416,7 @@ export default function FeedScreen() {
     }
   }, [loadPage]);
 
-  function handleCategoryChange(cat: AppMarketCategory | "ALL") {
+  function handleCategoryChange(cat: CategoryKey) {
     if (cat === category) return;
     categoryRef.current = cat;
     setCategory(cat);
@@ -286,43 +445,28 @@ export default function FeedScreen() {
 
   return (
     <View style={styles.screen}>
-      {/* Category filter bar */}
+      {/* Category filter bar — sticky above the feed cards.
+          StreakBadge is appended at the trailing end of the same scroll row. */}
       <View style={[styles.categoryBar, { height: CATEGORY_BAR_HEIGHT }]}>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.categoryScroll}
-        >
-          {CATEGORIES.map((cat) => {
-            const active = category === cat.key;
-            return (
-              <Pressable
-                key={cat.key}
-                style={[styles.categoryChip, active && styles.categoryChipActive]}
-                onPress={() => handleCategoryChange(cat.key)}
-              >
-                <Text style={styles.categoryChipEmoji}>{cat.emoji}</Text>
-                <Text style={[styles.categoryChipLabel, active && styles.categoryChipLabelActive]}>
-                  {cat.label}
-                </Text>
-              </Pressable>
-            );
-          })}
-          <StreakBadge
-            streak={streakCount}
-            onPress={() => router.push("/(tabs)/profile")}
-          />
-        </ScrollView>
+        <CategoryFilterBar
+          selected={category}
+          onSelect={handleCategoryChange}
+          categories={FEED_CATEGORIES}
+          trailingNode={
+            <StreakBadge
+              streak={streakCount}
+              onPress={() => router.push("/(tabs)/profile")}
+            />
+          }
+        />
       </View>
 
-      {/* Finance cross-tab discovery banner */}
-      {category === "FINANCE" && (
-        <Pressable
-          style={styles.financeBanner}
-          onPress={() => router.push("/(tabs)/markets?mode=finance" as Parameters<typeof router.push>[0])}
-        >
-          <Text style={styles.financeBannerText}>Predict on Finance Markets →</Text>
-        </Pressable>
+      {/* Platform trust banner — compact accuracy pill below the category bar */}
+      <PlatformTrustBanner />
+
+      {/* Today's Big Call — shown only when a market is designated for today */}
+      {bigCallMarket != null && (
+        <BigCallCard market={bigCallMarket} />
       )}
 
       <FlatList
@@ -366,6 +510,24 @@ export default function FeedScreen() {
               <Text style={styles.stateText}>{error}</Text>
               <Pressable onPress={() => void loadPage("replace")} style={styles.retry}>
                 <Text style={styles.retryLabel}>Retry</Text>
+              </Pressable>
+            </View>
+          ) : category !== "ALL" ? (
+            // Category-filtered empty state
+            <View style={styles.centerState}>
+              <Text style={styles.stateTitle}>
+                {`No stories in ${FEED_CATEGORIES.find((c) => c.key === category)?.label ?? category}`}
+              </Text>
+              <Text style={styles.stateText}>
+                No recent stories in this category.
+              </Text>
+              <Pressable
+                onPress={() => handleCategoryChange("ALL")}
+                style={styles.retry}
+                accessibilityRole="button"
+                accessibilityLabel="Show all categories"
+              >
+                <Text style={styles.retryLabel}>Show All</Text>
               </Pressable>
             </View>
           ) : (
@@ -431,54 +593,12 @@ function mergeUniqueItems(current: ApiNewsFeedItem[], next: ApiNewsFeedItem[]) {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
 
-  // Category bar
+  // Category bar — wraps the shared CategoryFilterBar
   categoryBar: {
     backgroundColor: colors.surface,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
     justifyContent: "center",
-  },
-  categoryScroll: {
-    paddingHorizontal: spacing.lg,
-    alignItems: "center",
-    gap: spacing.sm,
-  },
-  categoryChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: radius.pill,
-    backgroundColor: colors.background,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  categoryChipActive: {
-    backgroundColor: colors.text,
-    borderColor: colors.text,
-  },
-  categoryChipEmoji: { fontSize: 13 },
-  categoryChipLabel: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: colors.textMuted,
-  },
-  categoryChipLabelActive: { color: "#FFFFFF" },
-
-  // Finance cross-tab banner
-  financeBanner: {
-    backgroundColor: "#EEF2FF",
-    borderBottomWidth: 1,
-    borderBottomColor: "#C7D2FE",
-    paddingVertical: 8,
-    paddingHorizontal: spacing.lg,
-    alignItems: "flex-end",
-  },
-  financeBannerText: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#4338CA",
   },
 
   // List states

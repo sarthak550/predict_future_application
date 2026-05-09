@@ -9,8 +9,9 @@ import {
   isHostResolvedMode,
   supportsProjectedPool
 } from "@/lib/markets/policies";
-import { createNotification } from "@/lib/notifications";
+import { createNotification, notifyFollowersOnPosition } from "@/lib/notifications";
 import { calculateEstimatedReturn, calculateProbabilities } from "@/lib/markets/probability";
+import { recordProbabilitySnapshot } from "@/lib/markets/probabilitySnapshot";
 import { prisma } from "@/lib/prisma";
 import { checkAndCompleteQuests, type CompletedQuestReward } from "@/lib/quests/engine";
 import { marketPositionSchema } from "@/lib/validations/market";
@@ -43,6 +44,10 @@ export async function POST(
     const payload = marketPositionSchema.parse(await request.json());
 
     let questRewards: CompletedQuestReward[] = [];
+
+    // Captured inside the transaction; used for fire-and-forget notification after tx commits.
+    let positionMarketSnapshot: { id: string; title: string } | null = null;
+    let positionSideLabel: string | null = null;
 
     await prisma.$transaction(async (tx) => {
       const market = await tx.market.findUnique({
@@ -135,6 +140,9 @@ export async function POST(
 
         numericValue = payload.numericValue;
         side = null;
+        // Capture for follower notification outside the transaction.
+        positionMarketSnapshot = { id: market.id, title: market.title };
+        positionSideLabel = String(payload.numericValue);
       } else {
         if (!payload.side) {
           throw new Error("Binary markets require YES or NO.");
@@ -149,6 +157,9 @@ export async function POST(
           market.yesPool,
           market.noPool
         );
+        // Capture for follower notification outside the transaction.
+        positionMarketSnapshot = { id: market.id, title: market.title };
+        positionSideLabel = payload.side;
       }
 
       const position = await tx.marketPosition.create({
@@ -307,6 +318,24 @@ export async function POST(
         console.error("[referral reward] non-fatal error:", referralErr);
       }
     });
+
+    // Fire-and-forget: notify followers that this analyst placed a position.
+    // Must run OUTSIDE the transaction — uses a fresh prisma client internally.
+    if (positionMarketSnapshot && positionSideLabel) {
+      void notifyFollowersOnPosition(
+        user.id,
+        user.username,
+        positionMarketSnapshot,
+        positionSideLabel,
+        payload.amount
+      ).catch((err) => console.error("[notifyFollowersOnPosition binary/numeric]", err));
+    }
+
+    // Fire-and-forget: record a probability snapshot so the chart updates on every bet.
+    // Must run OUTSIDE the transaction to avoid extending the transaction window.
+    void recordProbabilitySnapshot(params.marketId, prisma).catch((err) =>
+      console.error("[probability-snapshot on position]", err)
+    );
 
     return NextResponse.json({ ok: true, questRewards }, { status: 201 });
   } catch (error) {

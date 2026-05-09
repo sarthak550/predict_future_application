@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 
 import { getUserIdFromRequest } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getDisplayName } from "@/lib/users/displayName";
 
 type TimeWindow = "week" | "month" | "all";
 
@@ -37,7 +38,13 @@ export async function GET(request: Request) {
       },
       include: {
         user: {
-          select: { username: true },
+          select: {
+            id: true,
+            username: true,
+            displayMode: true,
+            isVerifiedAnalyst: true,
+            _count: { select: { followers: true } },
+          },
         },
       },
       orderBy: [{ accuracyScore: "desc" }, { totalPredictions: "desc" }],
@@ -47,9 +54,11 @@ export async function GET(request: Request) {
     const entries = rows.map((row, idx) => ({
       rank: idx + 1,
       id: row.userId,
-      username: row.user.username,
+      username: getDisplayName(row.user),
+      isVerifiedAnalyst: row.user.isVerifiedAnalyst,
       accuracyScore: row.accuracyScore,
       totalPredictions: row.totalPredictions,
+      followerCount: row.user._count.followers,
     }));
 
     return NextResponse.json(
@@ -89,8 +98,12 @@ export async function GET(request: Request) {
       include: {
         user: {
           select: {
+            id: true,
             username: true,
+            displayMode: true,
             reputationScore: true,
+            isVerifiedAnalyst: true,
+            _count: { select: { followers: true } },
           },
         },
       },
@@ -103,10 +116,12 @@ export async function GET(request: Request) {
     // so the mobile renderer can use one row component).
     const entries = rawCategoryEntries.map((row) => ({
       id: row.userId,
-      username: row.user.username,
+      username: getDisplayName(row.user),
       reputationScore: row.user.reputationScore,
+      isVerifiedAnalyst: row.user.isVerifiedAnalyst,
       accuracyScore: row.accuracyScore,
       totalNetPoints: row.totalNetPoints,
+      followerCount: row.user._count.followers,
     }));
 
     // Compute user's rank within this category if authenticated
@@ -151,7 +166,7 @@ export async function GET(request: Request) {
                     },
                   ],
                 },
-                include: { user: { select: { username: true } } },
+                include: { user: { select: { id: true, username: true, displayMode: true } } },
                 orderBy: [{ accuracyScore: "asc" }, { totalNetPoints: "asc" }],
               })
             : null;
@@ -159,7 +174,7 @@ export async function GET(request: Request) {
         userContext = {
           rank: userRank,
           score: userCatStat.accuracyScore,
-          targetUsername: targetEntry?.user.username ?? null,
+          targetUsername: targetEntry ? getDisplayName(targetEntry.user) : null,
           targetRank: userRank > 1 ? userRank - 1 : null,
           targetScore: targetEntry?.accuracyScore ?? null,
           gap:
@@ -185,25 +200,62 @@ export async function GET(request: Request) {
     userIdsInWindow = activeStats.map((s) => s.userId);
   }
 
-  const entries = await prisma.user.findMany({
+  const rawEntries = await prisma.user.findMany({
     where: userIdsInWindow != null ? { id: { in: userIdsInWindow } } : undefined,
     // SECURITY: explicit select — never include the full User row, which would
     // leak email, passwordHash, expoPushToken, etc.
     select: {
       id: true,
       username: true,
+      displayMode: true,
       reputationScore: true,
       accuracyScore: true,
+      isVerifiedAnalyst: true,
       stats: {
         select: {
           totalPredictions: true,
           totalNetPoints: true,
         },
       },
+      _count: { select: { followers: true } },
     },
     orderBy: [{ reputationScore: "desc" }, { accuracyScore: "desc" }],
     take: 50,
   });
+
+  // Flatten _count into followerCount; apply displayMode pseudonym; fall back to 0 on count error.
+  type LeaderboardEntry = {
+    id: string;
+    username: string;
+    reputationScore: number;
+    accuracyScore: number;
+    isVerifiedAnalyst: boolean;
+    followerCount: number;
+    stats: { totalPredictions: number; totalNetPoints: number } | null;
+  };
+  let entries: LeaderboardEntry[];
+  try {
+    entries = rawEntries.map((u) => ({
+      id: u.id,
+      username: getDisplayName(u),
+      reputationScore: u.reputationScore,
+      accuracyScore: u.accuracyScore,
+      isVerifiedAnalyst: u.isVerifiedAnalyst,
+      followerCount: u._count.followers,
+      stats: u.stats,
+    }));
+  } catch (countErr) {
+    console.error("[leaderboard] follower count mapping failed, falling back to 0", countErr);
+    entries = rawEntries.map((u) => ({
+      id: u.id,
+      username: getDisplayName(u),
+      reputationScore: u.reputationScore,
+      accuracyScore: u.accuracyScore,
+      isVerifiedAnalyst: u.isVerifiedAnalyst,
+      followerCount: 0,
+      stats: u.stats,
+    }));
+  }
 
   // Compute user's overall rank if authenticated
   let userRank: number | null = null;
@@ -245,7 +297,7 @@ export async function GET(request: Request) {
                   },
                 ],
               },
-              select: { username: true, reputationScore: true },
+              select: { id: true, username: true, displayMode: true, reputationScore: true },
               orderBy: [{ reputationScore: "asc" }, { accuracyScore: "asc" }],
             })
           : null;
@@ -253,7 +305,7 @@ export async function GET(request: Request) {
       userContext = {
         rank: userRank,
         score: currentUser.reputationScore,
-        targetUsername: targetEntry?.username ?? null,
+        targetUsername: targetEntry ? getDisplayName(targetEntry) : null,
         targetRank: userRank > 1 ? userRank - 1 : null,
         targetScore: targetEntry?.reputationScore ?? null,
         gap:

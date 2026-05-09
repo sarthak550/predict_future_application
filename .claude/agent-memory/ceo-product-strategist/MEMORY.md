@@ -14,3 +14,4 @@
 - [Repositioning Copy & Landing Page](project_repositioning_copy.md) — Finalized tagline, elevator pitch, App Store copy, onboarding screens, Twitter bio, WhatsApp share line, press pitch, and landing page wireframe. Locked 2026-05-06.
 - [Manifold Gap Analysis — Post Sprint 24](manifold_gap_analysis_sprint24.md) — Feature-level gap list vs Manifold after S24 shipped; used to sequence Sprint 25 (2026-05-07).
 - [Competitive Intelligence — Sprint 25 Planning](competitive_intel_sprint25.md) — Manifold verdict table + Metaculus/Kalshi/Polymarket/GJOpen/Probo/MPL Opinio findings; Probo shutdown = acquisition window (2026-05-08).
+- [Sprint 25-26-27 Roadmap](sprints_25_26_27_roadmap.md) — 14 formal tickets across Credibility (S25), Social Layer (S26), Engagement (S27); key design decisions locked (2026-05-09).

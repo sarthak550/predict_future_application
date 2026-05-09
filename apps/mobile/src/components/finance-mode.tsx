@@ -444,7 +444,7 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
                   Trusted analyst opinions are extracted daily from leading finance sources. Check back soon.
                 </Text>
                 <Pressable
-                  onPress={() => onNavigateToFeed?.()}
+                  onPress={() => router.push("/(tabs)/markets" as Parameters<typeof router.push>[0])}
                   style={financeStyles.expertEmptyLink}
                 >
                   <Text style={financeStyles.expertEmptyLinkText}>View all finance markets ↓</Text>

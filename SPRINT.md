@@ -2,8 +2,8 @@
 
 > Human-readable view of `.claude/sprint-board.json`. Auto-maintained by the CEO/CTO/QA agents — do not edit by hand.
 
-**Current sprint:** 24
-**Status:** Sprint 24 COMPLETE — all 11 tickets passed QA (2026-05-06).
+**Current sprint:** 25
+**Status:** Sprint 25 PENDING — 14 tickets across Sprints 25, 26, 27 queued (2026-05-09).
 
 ---
 
@@ -257,3 +257,47 @@
 | S24-T9 | MED | ✅ done | Monthly leagues: mobile UI — tier badge, standings screen, promotion/relegation banners | Tier badge in Profile stats strip; leagues.tsx with zone bar and tier standings list; one-time promotion/relegation banners; Leagues entry row in Profile tab |
 | S24-T10 | MED | ✅ done | Multi-choice markets: schema, creation API, stake flow, mobile UI | MULTIPLE_CHOICE MarketType; MarketOption + MultiChoicePosition models; creation validation (2-10 options); stake route; proportional payout on resolution; mobile create wizard Options step + options-list betting panel |
 | S24-T11 | MED | ✅ done | Seed markets from Manifold API for credibility bootstrapping | originPlatform + externalId fields on Market; one-shot import script pages Manifold API, filters to BINARY resolved markets in mapped categories, creates read-only archived markets with attribution badge on mobile MarketCard |
+
+---
+
+## Sprint 25
+
+**Theme:** Credibility & Trust — make the platform feel credible to new users
+**Status:** COMPLETE — all 7 tickets passed QA (2026-05-09)
+
+| ID | Pri | Status | Title | One-line summary |
+|---|---|---|---|---|
+| S25-T1 | HIGH | ✅ | Platform Brier Score — aggregate accuracy trust banner | New GET /api/platform/stats (no auth); totalResolvedMarkets + avgAccuracyScore + topCategoryByAccuracy + totalActiveAnalysts; trust banner on Feed tab; platform avg footnote on public profile |
+| S25-T2 | HIGH | ✅ | Verified Analyst Badge — admin-toggled credential with public display | isVerifiedAnalyst Boolean on User; POST /api/admin/users/[userId]/verify-analyst toggle; shared VerifiedBadge component on profile, leaderboard, market detail creator, comment rows |
+| S25-T3 | HIGH | ✅ | SEO-Indexed Public Profiles — web page with og: meta for link previews | apps/api/app/profile/[username]/page.tsx server component; no login required; accuracy/predictions/streak/followers/recent markets; og: + twitter: meta; notFound() on unknown user |
+| S25-T4 | HIGH | ✅ | "You beat X% of predictors" — percentile ranking on market resolution | computePercentileRank helper; percentileRank Int? on WalletTransaction; appended to resolution notification body; userPercentileRank on GET /api/markets/[marketId]; stat line on mobile resolved market detail |
+| S25-T5 | MED | ✅ | Follower Count on Leaderboard — social proof in rank rows | Follow _count join on GET /api/leaderboard; followerCount on ApiLeaderboardEntry; '1.2K followers' secondary line on leaderboard rows for all tabs |
+| S25-T6 | MED | ✅ | Phone Verification Bonus — +100 pts trust incentive with OTP flow | phoneVerified + phone on User; in-memory OTP store (PHONE_VERIFY_MODE=dev logs OTP); POST verify-phone + confirm routes; +100 DAILY_BONUS on confirm; dismissable prompt card on Profile tab |
+| S25-T7 | MED | ✅ | Category Filter Tabs — horizontal pill filter on Markets and Feed tabs | Shared CategoryFilterBar component; ALL/SPORTS/FINANCE/POLITICS/CRICKET/BOLLYWOOD/STARTUPS/GENERAL pills; client-side filter on Markets tab; same on Feed tab with FINANCE pill navigating to Finance tab |
+
+---
+
+## Sprint 26
+
+**Theme:** Social Layer — make following, commenting, and sharing effortless
+**Status:** PENDING
+
+| ID | Pri | Status | Title | One-line summary |
+|---|---|---|---|---|
+| S26-T1 | HIGH | ✅ done | Position-Linked Comments — 'skin in the game' badge on comment rows | Comment list query joins MarketPosition/MultiChoicePosition; position: { side, amount } on ApiComment; 'Holds YES — 50 pts' pill badge on comment rows across all comment surfaces |
+| S26-T2 | HIGH | ✅ done | Comment Tips — micro-reward quality analysis with daily cap | TIP_GIVEN + TIP_RECEIVED wallet types; tipsReceived on Comment + tipsReceivedTotal on User; POST /api/comments/[commentId]/tip; 50 pts/day cap; fixed 5 pt gift icon on comment rows; lifetime tips on analyst profile |
+| S26-T3 | HIGH | ✅ done | Follow + Push on Analyst Position — notify when followed analyst makes a call | FOLLOWED_USER_PREDICTION notification type; notifyFollowersOnPosition helper with 3-push/day/followee throttle; wired to binary + multi-choice + numeric position creation paths; all fire-and-forget outside transactions |
+| S26-T4 | MED | ✅ done | Shareable Portfolio Link — public URL + mobile share button | GET /api/users/[username]/portfolio (no auth); apps/api/app/portfolio/[username]/page.tsx server component with og: meta; 'Share my portfolio' button in Profile tab using Share.share with predictfuture.app/portfolio URL |
+| S26-T5 | MED | ✅ done | Anonymous Calls + Track Record — persistent pseudonym with full accuracy accrual | UserDisplayMode enum (USERNAME/ANONYMOUS) on User; getDisplayName() using sha256(userId)[0:6] pseudonym; applied to all public-facing responses; PATCH /api/users/me/display-mode to toggle; 'Show as anonymous' toggle on Profile tab settings |
+
+---
+
+## Sprint 27
+
+**Theme:** Engagement & Retention — bring users back daily and help them make better decisions
+**Status:** COMPLETE — all 2 tickets passed QA (2026-05-09)
+
+| ID | Pri | Status | Title | One-line summary |
+|---|---|---|---|---|
+| S27-T1 | HIGH | ✅ done | Today's Big Call — admin-curated daily market with 8am push to all users | isBigCallDate + bigCallNotificationOpenedCount on Market; POST /api/admin/markets/[marketId]/mark-big-call; GET /api/markets/big-call/today; POST /api/cron/big-call-notification (CRON_SECRET guarded); prominent card at top of Feed tab |
+| S27-T2 | HIGH | ✅ done | Probability Chart Over Lifetime — consensus line on market detail | New MarketProbabilitySnapshot model; hourly cron POST /api/cron/probability-snapshot; snapshot on every position placement; GET /api/markets/[marketId]/probability-history with 7-day hourly / older daily aggregation; pure View-based line chart on market detail screen |

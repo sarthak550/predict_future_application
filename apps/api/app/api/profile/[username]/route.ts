@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getUserIdFromRequest } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getDisplayName } from "@/lib/users/displayName";
 
 export async function GET(
   request: Request,
@@ -13,6 +14,7 @@ export async function GET(
   const user = await prisma.user.findUnique({
     where: { username: params.username },
     include: {
+      // displayMode is needed to compute getDisplayName for public responses.
       stats: {
         select: {
           totalPredictions: true,
@@ -22,6 +24,7 @@ export async function GET(
           cleanStreakCount: true,
         },
       },
+
       badges: {
         include: {
           badge: true,
@@ -62,14 +65,22 @@ export async function GET(
     isFollowedByMe = followRow !== null;
   }
 
+  // Resolve the public display name. When displayMode=ANONYMOUS, the username
+  // field in the response is replaced with the deterministic pseudonym. The
+  // URL continues to resolve via the real username (anonymity is display-only).
+  const displayName = getDisplayName(user);
+
   return NextResponse.json({
     user: {
       id: user.id,
-      username: user.username,
+      username: displayName,
+      displayMode: user.displayMode,
       reputationScore: user.reputationScore,
       accuracyScore: user.accuracyScore,
       level: user.level,
       streak: user.streak,
+      isVerifiedAnalyst: user.isVerifiedAnalyst,
+      tipsReceivedTotal: user.tipsReceivedTotal,
       stats: user.stats
         ? {
             totalPredictions: user.stats.totalPredictions,

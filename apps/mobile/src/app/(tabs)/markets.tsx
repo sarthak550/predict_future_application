@@ -14,9 +14,14 @@ import {
   View,
 } from "react-native";
 
-import type { ApiGroupSummary, ApiMarketSummary, ApiPollListItem, AppMarketCategory } from "@predict-future/types";
+import type { ApiGroupSummary, ApiMarketSummary, ApiPollListItem } from "@predict-future/types";
 import { colors, radius, shadows, spacing } from "@predict-future/ui-tokens";
 
+import {
+  CategoryFilterBar,
+  FILTER_BAR_CATEGORIES,
+  type CategoryKey,
+} from "@/components/category-filter-bar";
 import { MarketSummaryCard } from "@/components/market-summary-card";
 import { useApiQuery } from "@/hooks/useApiQuery";
 import { mobileApi } from "@/lib/api";
@@ -40,18 +45,7 @@ const SORT_OPTIONS: { key: MarketSort; label: string }[] = [
   { key: "volume", label: "Most Active" },
 ];
 
-const CATEGORIES: { key: AppMarketCategory | "ALL"; label: string }[] = [
-  { key: "ALL", label: "All" },
-  { key: "FINANCE", label: "Finance" },
-  { key: "SPORTS", label: "Sports" },
-  { key: "TECH", label: "Tech" },
-  { key: "BUSINESS", label: "Business" },
-  { key: "ENTERTAINMENT", label: "Entertainment" },
-  { key: "WEATHER", label: "Weather" },
-  { key: "PRODUCT", label: "Product" },
-  { key: "COMPANY", label: "Company" },
-  { key: "GENERAL", label: "General" },
-];
+// CATEGORIES is provided by the shared CategoryFilterBar via FILTER_BAR_CATEGORIES.
 
 const LIVE_STATUSES = new Set(["OPEN"]);
 const ENDED_STATUSES = new Set(["CLOSED", "CANCELLED", "AWAITING_RESOLUTION"]);
@@ -70,7 +64,7 @@ export default function MarketsScreen() {
   const router = useRouter();
   const [mode, setMode] = useState<MarketMode>("public");
   const [statusTab, setStatusTab] = useState<StatusTab>("live");
-  const [category, setCategory] = useState<AppMarketCategory | "ALL">("ALL");
+  const [category, setCategory] = useState<CategoryKey>("ALL");
   const [selectedGroupId, setSelectedGroupId] = useState<string>("ALL");
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [pollFilter, setPollFilter] = useState<"all" | "voted" | "not_voted">("all");
@@ -80,7 +74,7 @@ export default function MarketsScreen() {
   const [trendingMarkets, setTrendingMarkets] = useState<ApiMarketSummary[]>([]);
   const [loadingTrending, setLoadingTrending] = useState(false);
 
-  // Reset category when switching status tabs (categories only shown for "live")
+  // Reset category filter when switching status tabs (category filter only applies on "live")
   useEffect(() => {
     setCategory("ALL");
   }, [statusTab]);
@@ -243,11 +237,11 @@ export default function MarketsScreen() {
     return { live, ended, settled };
   }, [allMarkets]);
 
-  // Filter: status → category
+  // Filter: status → category (client-side; no re-fetch on category change)
   const filteredMarkets = useMemo(() => {
     let result = allMarkets.filter((m) => matchesStatusTab(m.status, statusTab));
     if (mode === "public" && statusTab === "live" && category !== "ALL") {
-      result = result.filter((m) => m.category === category);
+      result = result.filter((m) => (m.category as string) === category);
     }
     return result;
   }, [allMarkets, statusTab, category]);
@@ -462,6 +456,16 @@ export default function MarketsScreen() {
         </View>
       ) : null}
 
+      {/* ── Sticky category filter bar (public Explore mode, live tab, not searching) ── */}
+      {mode === "public" && statusTab === "live" && !isSearchMode ? (
+        <CategoryFilterBar
+          selected={category}
+          onSelect={setCategory}
+          categories={FILTER_BAR_CATEGORIES}
+          elevated
+        />
+      ) : null}
+
       {/* ── Market list ── */}
       <FlatList
         data={isSearchMode ? (searchQuery_result.data?.markets ?? []) : filteredMarkets}
@@ -523,30 +527,6 @@ export default function MarketsScreen() {
                   )}
                 </View>
               ) : null}
-
-              {/* Category filter pills */}
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.categoryRow}
-              >
-                {CATEGORIES.map((cat) => (
-                  <Pressable
-                    key={cat.key}
-                    style={[styles.categoryPill, category === cat.key && styles.categoryPillActive]}
-                    onPress={() => setCategory(cat.key)}
-                  >
-                    <Text
-                      style={[
-                        styles.categoryPillText,
-                        category === cat.key && styles.categoryPillTextActive,
-                      ]}
-                    >
-                      {cat.label}
-                    </Text>
-                  </Pressable>
-                ))}
-              </ScrollView>
             </>
           ) : null
         }
@@ -571,6 +551,24 @@ export default function MarketsScreen() {
                 <Text style={styles.retryLabel}>Retry</Text>
               </Pressable>
             </View>
+          ) : category !== "ALL" ? (
+            // Category-filtered empty state with Show All CTA
+            <View style={[styles.emptyCard, { alignItems: "center" }]}>
+              <Text style={styles.emptyTitle}>
+                {`No markets in ${FILTER_BAR_CATEGORIES.find((c) => c.key === category)?.label ?? category}`}
+              </Text>
+              <Text style={styles.emptyText}>
+                No live markets in this category right now.
+              </Text>
+              <Pressable
+                onPress={() => setCategory("ALL")}
+                style={[styles.retry, { marginTop: 12 }]}
+                accessibilityRole="button"
+                accessibilityLabel="Show all categories"
+              >
+                <Text style={styles.retryLabel}>Show All</Text>
+              </Pressable>
+            </View>
           ) : (
             <View style={styles.emptyCard}>
               <Text style={styles.emptyTitle}>
@@ -585,9 +583,7 @@ export default function MarketsScreen() {
               <Text style={styles.emptyText}>
                 {mode === "private" && !selectedGroupId
                   ? "Select a group above to browse its markets."
-                  : statusTab === "live" && category !== "ALL"
-                    ? `No live ${category.toLowerCase()} markets right now.`
-                    : "Check back later."}
+                  : "Check back later."}
               </Text>
             </View>
           )
@@ -1384,31 +1380,6 @@ const styles = StyleSheet.create({
   },
   statusBadgeTextActive: {
     color: "#fff",
-  },
-
-  // ── Level 3: category pills ───────────────────────────────────────
-
-  categoryRow: {
-    paddingBottom: spacing.sm,
-    gap: spacing.sm,
-  },
-  categoryPill: {
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: radius.pill,
-    backgroundColor: "#F1F5F9",
-  },
-  categoryPillActive: {
-    backgroundColor: colors.accent,
-  },
-  categoryPillText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: colors.textMuted,
-  },
-  categoryPillTextActive: {
-    color: "#fff",
-    fontWeight: "700",
   },
 
   // ── List ──────────────────────────────────────────────────────────

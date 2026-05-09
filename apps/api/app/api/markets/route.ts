@@ -5,6 +5,7 @@ import { getSession, getUserIdFromRequest } from "@/lib/auth";
 import { createPredictionMarket } from "@/lib/markets/create";
 import { computeMarketRankScore, rankMarkets } from "@/lib/markets/ranking";
 import { prisma } from "@/lib/prisma";
+import { getDisplayName } from "@/lib/users/displayName";
 import { createMarketSchema } from "@/lib/validations/market";
 
 /** Statuses hidden from public market lists by default — unmoderated or removed. */
@@ -87,7 +88,9 @@ export async function GET(request: Request) {
     include: {
       creator: {
         select: {
+          id: true,
           username: true,
+          displayMode: true,
           reputationScore: true,
           stats: {
             select: {
@@ -130,6 +133,9 @@ export async function GET(request: Request) {
   return NextResponse.json({
     markets: resultMarkets.map((market) => ({
       ...market,
+      creator: market.creator
+        ? { ...market.creator, username: getDisplayName(market.creator) }
+        : market.creator,
       marketRankScore: computeMarketRankScore(market)
     }))
   });

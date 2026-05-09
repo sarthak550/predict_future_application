@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 
 import { computeMarketRankScore } from "@/lib/markets/ranking";
 import { prisma } from "@/lib/prisma";
+import { getDisplayName } from "@/lib/users/displayName";
 
 export const dynamic = "force-dynamic";
 
@@ -46,7 +47,9 @@ const MARKET_SELECT = {
   creatorReputationSnapshot: true,
   creator: {
     select: {
+      id: true,
       username: true,
+      displayMode: true,
       reputationScore: true,
     },
   },
@@ -59,6 +62,9 @@ const MARKET_SELECT = {
 function formatMarketSummary(market: any) {
   return {
     ...market,
+    creator: market.creator
+      ? { ...market.creator, username: getDisplayName(market.creator) }
+      : market.creator,
     closeAt: market.closeAt.toISOString(),
     resolveAt: market.resolveAt.toISOString(),
     finalResolutionDeadline: market.finalResolutionDeadline?.toISOString() ?? null,

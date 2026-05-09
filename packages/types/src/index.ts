@@ -5,6 +5,14 @@ export type AppLeagueTier =
   | "PLATINUM"
   | "DIAMOND";
 
+/**
+ * Controls whether a user's identity is shown as their real username or a
+ * deterministic anonymous pseudonym ("AnonymousAnalyst_XXXXXX") on all
+ * public-facing surfaces. Accuracy, league points, and quests accrue to the
+ * real userId regardless of this setting.
+ */
+export type AppUserDisplayMode = "USERNAME" | "ANONYMOUS";
+
 export type ApiLeagueEntry = {
   month: string;        // 'YYYY-MM'
   tier: AppLeagueTier;
@@ -163,6 +171,7 @@ export type ApiMarketSummary = {
   creator?: {
     username: string;
     reputationScore?: number;
+    isVerifiedAnalyst?: boolean;
     stats?: {
       hostTrustScore?: number;
       cleanStreakCount?: number;
@@ -185,13 +194,33 @@ export type ApiMarketSummary = {
   resolutionSourceUrl?: string | null;
 };
 
+/**
+ * Commenter's active position on the market this comment belongs to.
+ * Discriminated union by `kind`:
+ *   - 'binary'      → side (YES|NO) + amount
+ *   - 'multi-choice' → optionId + optionLabel + amount
+ *   - 'numeric'     → value (predicted float) + amount
+ */
+export type ApiCommenterPosition =
+  | { kind: 'binary'; side: 'YES' | 'NO'; amount: number }
+  | { kind: 'multi-choice'; optionId: string; optionLabel: string; amount: number }
+  | { kind: 'numeric'; value: number; amount: number };
+
 export type ApiMarketComment = {
   id: string;
-  body: string;
+  /** The comment text. Wire field name: "content". */
+  content: string;
   createdAt: string;
+  /** Lifetime tip points received on this comment (S26-T2). */
+  tipsReceived: number;
   user: {
+    id: string;
+    /** Display name — pseudonym when displayMode=ANONYMOUS, real username otherwise. */
     username: string;
+    isVerifiedAnalyst: boolean;
   };
+  /** Present when the commenter holds an active position on this market (S26-T1). */
+  commenterPosition?: ApiCommenterPosition | null;
 };
 
 export type ApiMarketDetailMarket = ApiMarketSummary & {
@@ -218,6 +247,8 @@ export type ApiMarketDetailMarket = ApiMarketSummary & {
 
 export type ApiMarketDetail = {
   market: ApiMarketDetailMarket;
+  /** Percentile rank for the authenticated user on this market (only set when market is RESOLVED and user won). */
+  userPercentileRank?: number | null;
 };
 
 export type ApiHostEligibility = {
@@ -433,9 +464,12 @@ export type ApiLeaderboardTimeWindow = "week" | "month" | "all";
 
 export type ApiLeaderboardEntry = {
   id: string;
+  /** Display name — pseudonym when displayMode=ANONYMOUS, real username otherwise. */
   username: string;
   reputationScore: number;
   accuracyScore: number;
+  isVerifiedAnalyst: boolean;
+  followerCount: number;
   totalPredictions?: number;
   totalNetPoints?: number;
   stats?: {
@@ -503,12 +537,22 @@ export type ApiPnlSummary = {
 
 export type ApiUserProfile = {
   id: string;
+  /** Display name — pseudonym when displayMode=ANONYMOUS, real username otherwise. */
   username: string;
+  /**
+   * The user's current display preference. Present on all profile responses.
+   * When ANONYMOUS, username is replaced with the deterministic pseudonym.
+   */
+  displayMode?: AppUserDisplayMode;
   reputationScore: number;
   accuracyScore: number;
   level?: number;
   streak?: number;
   lastPredictionAt?: string | null;
+  /** Whether this analyst has been credentialed by an admin (S25-T2). */
+  isVerifiedAnalyst?: boolean;
+  /** Whether the user has completed phone verification (S25-T6). */
+  phoneVerified?: boolean;
   stats?: {
     totalPredictions?: number;
     totalNetPoints?: number;
@@ -531,6 +575,27 @@ export type ApiUserProfile = {
   followingCount?: number;
   /** Whether the currently-authenticated viewer follows this user. False when unauthenticated. */
   isFollowedByMe?: boolean;
+  /** Lifetime tip points received across all comments (S26-T2). */
+  tipsReceivedTotal?: number;
+};
+
+// ── Phone verification (S25-T6) ───────────────────────────────────────────────
+
+export type ApiPhoneVerifyRequest = {
+  phone: string;
+};
+
+export type ApiPhoneVerifyResponse = {
+  ok: boolean;
+  /** Present only in dev mode (PHONE_VERIFY_MODE != "prod"). */
+  otp?: string;
+};
+
+export type ApiPhoneVerifyConfirmResponse = {
+  ok: boolean;
+  phoneVerified: boolean;
+  bonusCredited: number;
+  alreadyVerified?: boolean;
 };
 
 export type ApiMyProfile = {
@@ -772,6 +837,7 @@ export type ApiCategoryTopEntry = {
   username: string;
   accuracyScore: number;
   totalPredictions: number;
+  followerCount: number;
 };
 
 export type ApiCategoryTopResponse = {
@@ -867,4 +933,122 @@ export type ApiReferralInfo = {
   referralCode: string;
   referralCount: number;
   totalEarned: number;
+};
+
+/**
+ * Response shape of GET /api/portfolio/[username] (S26-T4).
+ * Public endpoint — no auth required. Cache-Control: public, max-age=120.
+ */
+export type ApiUserPortfolio = {
+  username: string;
+  isVerifiedAnalyst: boolean;
+  /** Displayed name (username, or pseudonym when anonymous mode is active in a future sprint). */
+  displayName: string;
+  accuracyScore: number;
+  totalPredictions: number;
+  totalNetPoints: number;
+  bestStreak: number;
+  followerCount: number;
+  recentResolvedMarkets: Array<{
+    id: string;
+    title: string;
+    outcome: string;
+    resolvedAt: string;
+    /** The user's own position on this market, if any. */
+    userCall: { side: string; amount: number } | null;
+  }>;
+  openMarkets: Array<{
+    id: string;
+    title: string;
+    /** The user's own position on this market, if any. */
+    userCall: { side: string; amount: number } | null;
+  }>;
+  /** ISO timestamp at which this payload was assembled on the server. */
+  generatedAt: string;
+};
+
+/**
+ * Response shape of GET /api/platform/stats (S25-T1).
+ * Public endpoint — no auth required. Cache-Control: public, max-age=600.
+ */
+export type ApiPlatformStats = {
+  /** Count of Market rows where resolutionStatus = FINALIZED. */
+  totalResolvedMarkets: number;
+  /** Count of users with totalPredictions >= 5. */
+  totalActiveAnalysts: number;
+  /** Average accuracyScore across UserStat rows with totalPredictions >= 5 (4 decimal places). */
+  avgAccuracyScore: number;
+  /** Sum of UserStat.totalPredictions across all active analysts. */
+  totalPredictions: number;
+  /** Category with the highest average accuracy (UserCategoryStat, totalPredictions >= 10). */
+  topCategoryByAccuracy: { category: string; avgAccuracy: number } | null;
+  /** ISO timestamp when this payload was computed. */
+  lastUpdatedAt: string;
+};
+
+// ─── Big Call (S27-T1) ────────────────────────────────────────────────────────
+
+/**
+ * A Big Call market as returned by GET /api/markets/today-big-call.
+ * Extends ApiMarketSummary with Big-Call-specific fields.
+ */
+export type ApiBigCallMarket = {
+  id: string;
+  title: string;
+  description: string | null;
+  category: AppMarketCategory;
+  status: AppMarketStatus;
+  marketType: AppMarketType;
+  yesPool: number;
+  noPool: number;
+  totalVolume: number;
+  totalParticipants: number;
+  yesCount: number;
+  noCount: number;
+  totalVotes: number;
+  closeAt: string;
+  resolveAt: string;
+  /** ISO string of the IST midnight UTC when this market was designated as a Big Call. */
+  isBigCallDate: string;
+  /** Number of times users have tapped through from the Big Call card or notification. */
+  bigCallNotificationOpenedCount: number;
+  creator: {
+    username: string;
+    isVerifiedAnalyst: boolean;
+  };
+};
+
+/**
+ * Response shape of GET /api/markets/today-big-call (S27-T1).
+ * Public endpoint — no auth required. Cache-Control: public, max-age=60.
+ * `market` is null if no Big Call has been designated for today.
+ */
+export type ApiBigCallResponse = {
+  market: ApiBigCallMarket | null;
+};
+
+// ────────────────────────────────────────────────────────────────────────────
+// S27-T2: Probability history — consensus-line chart
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A single point in the probability history timeline.
+ * `at` is an ISO-8601 string; `probability` is a fraction 0.0–1.0.
+ */
+export type ApiProbabilitySnapshot = {
+  at: string;
+  probability: number;
+};
+
+/**
+ * Response shape of GET /api/markets/[marketId]/probability-history (S27-T2).
+ * Public endpoint — no auth required. Cache-Control: public, max-age=300.
+ *
+ * - `snapshots`: ordered array of probability points.
+ * - `resolvedProbability`: 1.0 (YES) or 0.0 (NO) for resolved markets; null otherwise.
+ */
+export type ApiProbabilityHistory = {
+  marketId: string;
+  snapshots: ApiProbabilitySnapshot[];
+  resolvedProbability: number | null;
 };

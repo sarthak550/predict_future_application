@@ -5,6 +5,7 @@ import {
   Alert,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   View,
@@ -17,6 +18,8 @@ import type {
 } from "@predict-future/types";
 import { colors, radius, spacing } from "@predict-future/ui-tokens";
 
+import { PlatformTrustBanner } from "@/components/platform-trust-banner";
+import { VerifiedBadge } from "@/components/verified-badge";
 import { useApiQuery } from "@/hooks/useApiQuery";
 import { mobileApi } from "@/lib/api";
 import { useSession } from "@/providers/session-provider";
@@ -370,7 +373,10 @@ export default function UserProfileScreen() {
               </Text>
             </View>
             <View style={styles.headerRight}>
-              <Text style={styles.username}>@{user.username}</Text>
+              <View style={styles.usernameRow}>
+                <Text style={styles.username}>@{user.username}</Text>
+                {user.isVerifiedAnalyst === true && <VerifiedBadge />}
+              </View>
               <View style={styles.tagRow}>
                 {user.level != null && <Tag label={`Lv ${user.level}`} />}
                 {(user.streak ?? 0) > 0 && (
@@ -407,6 +413,9 @@ export default function UserProfileScreen() {
           </View>
         </View>
 
+        {/* ── Platform trust banner — contextualises user's accuracy vs platform ── */}
+        <PlatformTrustBanner />
+
         {/* ── Stats Row ── */}
         <View style={styles.statsCard}>
           <StatBox
@@ -424,6 +433,36 @@ export default function UserProfileScreen() {
             value={user.reputationScore.toLocaleString()}
           />
         </View>
+
+        {/* ── Tips received (S26-T2) ── shown when user has received at least one tip */}
+        {(user.tipsReceivedTotal ?? 0) > 0 && (
+          <View style={styles.tipsCard}>
+            <Text style={styles.tipsText}>
+              {`🎁 ${(user.tipsReceivedTotal ?? 0).toLocaleString()} tips received lifetime`}
+            </Text>
+          </View>
+        )}
+
+        {/* ── Share portfolio button (S26-T4) ── */}
+        <Pressable
+          style={({ pressed }) => [
+            styles.sharePortfolioBtn,
+            pressed && styles.sharePortfolioBtnPressed,
+          ]}
+          onPress={async () => {
+            const portfolioUrl = `https://predictfuture.app/portfolio/${user.username}`;
+            try {
+              await Share.share({
+                title: `${user.username}'s Predict Future Portfolio`,
+                message: `Check out @${user.username} on Predict Future: ${portfolioUrl}\n\n${(user.accuracyScore ?? 0).toFixed(0)}% accuracy · ${totalPredictions} predictions`,
+              });
+            } catch {
+              // User cancelled or share unavailable — silently ignore.
+            }
+          }}
+        >
+          <Text style={styles.sharePortfolioBtnLabel}>Share portfolio</Text>
+        </Pressable>
 
         {/* ── Calibration scorecard link ── */}
         <Pressable
@@ -501,6 +540,7 @@ const styles = StyleSheet.create({
   },
   avatarText: { fontSize: 20, fontWeight: "700", color: "#FFFFFF" },
   headerRight: { flex: 1 },
+  usernameRow: { flexDirection: "row", alignItems: "center" },
   username: { fontSize: 20, fontWeight: "700", color: colors.text as string },
   tagRow: { flexDirection: "row", gap: spacing.xs, marginTop: spacing.xs, flexWrap: "wrap" },
   tag: {
@@ -550,6 +590,39 @@ const styles = StyleSheet.create({
     width: 1,
     height: 36,
     backgroundColor: colors.border as string,
+  },
+
+  // Tips received card (S26-T2)
+  tipsCard: {
+    backgroundColor: colors.surface as string,
+    borderRadius: radius.lg,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    alignItems: "center",
+  },
+  tipsText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: colors.textMuted as string,
+  },
+
+  // Share portfolio button (S26-T4)
+  sharePortfolioBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.surface as string,
+    borderRadius: radius.lg,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.border as string,
+  },
+  sharePortfolioBtnPressed: { opacity: 0.65 },
+  sharePortfolioBtnLabel: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: colors.accent as string,
   },
 
   // Calibration scorecard link row

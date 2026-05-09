@@ -1,17 +1,23 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
   Share,
   StyleSheet,
+  Switch,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { resetOnboarding } from "@/components/onboarding-walkthrough";
 
 import type {
@@ -25,6 +31,7 @@ import type {
   ApiReferralInfo,
   AppLeagueTier,
   AppMarketStatus,
+  AppUserDisplayMode,
 } from "@predict-future/types";
 import { formatPoints, formatRelativeTime } from "@predict-future/utils";
 import { colors, radius, spacing } from "@predict-future/ui-tokens";
@@ -190,6 +197,17 @@ export default function ProfileScreen() {
 
   const [activeTab, setActiveTab] = useState<ProfileTab>("activity");
 
+  // ── Phone verify prompt state ──
+  const [phoneVerifyDismissed, setPhoneVerifyDismissed] = useState<boolean>(true);
+  const [showPhoneModal, setShowPhoneModal] = useState(false);
+  const phoneVerifyChecked = useRef(false);
+
+  // ── Anonymous mode toggle state (S26-T5) ──
+  // Initialised from the profile response; optimistically updated on toggle.
+  const [displayMode, setDisplayModeState] = useState<AppUserDisplayMode>("USERNAME");
+  // Track whether we have synced displayMode from the server response yet.
+  const displayModeSynced = useRef(false);
+
   const fetcher = useCallback(
     () => mobileApi.getMyProfile(),
     []
@@ -236,6 +254,34 @@ export default function ProfileScreen() {
     [userId],
     { enabled }
   );
+
+  // ── Sync displayMode from server on first data load ──
+  useEffect(() => {
+    if (displayModeSynced.current) return;
+    const serverMode = data?.user?.displayMode as AppUserDisplayMode | undefined;
+    if (serverMode) {
+      setDisplayModeState(serverMode);
+      displayModeSynced.current = true;
+    }
+  }, [data]);
+
+  // ── Check if phone verify card should show ──
+  useEffect(() => {
+    if (!userId || phoneVerifyChecked.current) return;
+
+    void (async () => {
+      try {
+        const key = `phone_verify_dismissed_${userId}`;
+        const dismissed = await AsyncStorage.getItem(key);
+        setPhoneVerifyDismissed(dismissed === "true");
+        phoneVerifyChecked.current = true;
+      } catch {
+        // Best-effort — default to dismissed=true to avoid noise on storage errors.
+        setPhoneVerifyDismissed(true);
+        phoneVerifyChecked.current = true;
+      }
+    })();
+  }, [userId]);
 
   if (sessionStatus !== "authenticated" || !userId) {
     return (
@@ -417,6 +463,33 @@ export default function ProfileScreen() {
             (Leaderboard + Groups + Notifications/Logout footer)
         ──────────────────────────────────────────────────────────────────── */}
 
+        {/* ── Phone Verification prompt card (S25-T6) ── */}
+        {user.phoneVerified === false && !phoneVerifyDismissed && (
+          <PhoneVerifyCard
+            userId={userId}
+            onVerifyNow={() => setShowPhoneModal(true)}
+            onDismiss={async () => {
+              try {
+                await AsyncStorage.setItem(`phone_verify_dismissed_${userId}`, "true");
+              } catch {
+                // Ignore storage errors.
+              }
+              setPhoneVerifyDismissed(true);
+            }}
+          />
+        )}
+
+        {/* ── Phone Verification Modal ── */}
+        <PhoneVerifyModal
+          visible={showPhoneModal}
+          onClose={() => setShowPhoneModal(false)}
+          onSuccess={() => {
+            setShowPhoneModal(false);
+            setPhoneVerifyDismissed(true);
+            void refetch();
+          }}
+        />
+
         {/* ── Social card: Daily Quests + Leaderboard + Groups ── */}
         <View style={styles.socialCard}>
           <Pressable
@@ -516,8 +589,49 @@ export default function ProfileScreen() {
           <InviteFriendsCard referral={referralData} />
         )}
 
+        {/* ── Anonymous mode toggle (S26-T5) ── */}
+        <AnonymousToggleCard
+          displayMode={displayMode}
+          userId={user.id}
+          onToggle={async (enabled) => {
+            const newMode: AppUserDisplayMode = enabled ? "ANONYMOUS" : "USERNAME";
+            // Optimistic update.
+            setDisplayModeState(newMode);
+            try {
+              await mobileApi.setDisplayMode(newMode);
+            } catch {
+              // Revert on error.
+              setDisplayModeState(enabled ? "USERNAME" : "ANONYMOUS");
+              Alert.alert(
+                "Could not update",
+                "Failed to change display mode. Please try again.",
+                [{ text: "OK" }]
+              );
+            }
+          }}
+        />
+
         {/* ── Actions ── */}
         <View style={styles.actionsCard}>
+          <ActionRow
+            icon="share-social-outline"
+            label="Share my portfolio"
+            sublabel="Share your track record with friends"
+            onPress={async () => {
+              const portfolioUrl = `https://predictfuture.app/portfolio/${user.username}`;
+              const accuracyDisplay = accuracyScore.toFixed(0);
+              const predictionsDisplay = positions.length;
+              try {
+                await Share.share({
+                  title: "My Predict Future Portfolio",
+                  message: `Check out my Predict Future portfolio: ${portfolioUrl}\n\n${accuracyDisplay}% accuracy · ${predictionsDisplay} predictions`,
+                });
+              } catch {
+                // User cancelled or share unavailable — silently ignore.
+              }
+            }}
+          />
+          <View style={styles.actionDivider} />
           <ActionRow
             icon="notifications-outline"
             label="Notifications"
@@ -1698,6 +1812,11 @@ const styles = StyleSheet.create({
   actionTextWrap: { flex: 1 },
   actionLabel: { fontSize: 15, fontWeight: "600", color: colors.text },
   actionSublabel: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
+  actionDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.border,
+    marginHorizontal: spacing.md,
+  },
 
   // ── Unauthenticated ──
   unauthCard: {
@@ -1928,5 +2047,504 @@ const inviteStyles = StyleSheet.create({
     fontSize: 12,
     color: colors.textMuted,
     textAlign: "center",
+  },
+});
+
+// ── AnonymousToggleCard (S26-T5) ─────────────────────────────────────────────
+
+/**
+ * "Show as anonymous" toggle card.
+ *
+ * When enabled the user's calls appear as "AnonymousAnalyst_XXXXXX" on all
+ * public-facing surfaces (leaderboard, market detail, comments, etc.). Their
+ * accuracy record, league tier, and quest rewards continue to accrue to their
+ * real account regardless of this setting.
+ *
+ * Own-view exception: the user always sees their real username on this screen.
+ */
+function AnonymousToggleCard({
+  displayMode,
+  userId: _userId,
+  onToggle,
+}: {
+  displayMode: AppUserDisplayMode;
+  userId: string;
+  onToggle: (enabled: boolean) => Promise<void>;
+}) {
+  const isAnonymous = displayMode === "ANONYMOUS";
+
+  function handleValueChange(value: boolean) {
+    if (value) {
+      // Show confirmation dialog before enabling anonymous mode.
+      Alert.alert(
+        "Show as anonymous?",
+        "Your calls will appear as AnonymousAnalyst_XXXXXX on leaderboards, comments, and market details. Your accuracy record still accrues to your account and is fully preserved when you switch back.",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Enable",
+            style: "default",
+            onPress: () => { void onToggle(true); },
+          },
+        ]
+      );
+    } else {
+      void onToggle(false);
+    }
+  }
+
+  return (
+    <View style={anonStyles.card}>
+      <View style={anonStyles.row}>
+        <View style={anonStyles.iconWrap}>
+          <Ionicons name="eye-off-outline" size={18} color={colors.textMuted} />
+        </View>
+        <View style={anonStyles.textWrap}>
+          <Text style={anonStyles.label}>Show as anonymous</Text>
+          <Text style={anonStyles.sublabel}>
+            {isAnonymous
+              ? "Public view: AnonymousAnalyst_XXXXXX (tap to reveal)"
+              : "Your real username is visible publicly"}
+          </Text>
+        </View>
+        <Switch
+          value={isAnonymous}
+          onValueChange={handleValueChange}
+          trackColor={{ false: colors.border, true: colors.accent }}
+          thumbColor="#FFFFFF"
+        />
+      </View>
+      {isAnonymous && (
+        <Text style={anonStyles.hint}>
+          Your calls will appear as AnonymousAnalyst_XXXXXX. Your accuracy and
+          track record still count.
+        </Text>
+      )}
+    </View>
+  );
+}
+
+const anonStyles = StyleSheet.create({
+  card: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    marginTop: spacing.lg,
+    padding: spacing.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+  },
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+  },
+  iconWrap: {
+    width: 32,
+    alignItems: "center",
+  },
+  textWrap: {
+    flex: 1,
+  },
+  label: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: colors.text,
+  },
+  sublabel: {
+    fontSize: 12,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  hint: {
+    marginTop: spacing.sm,
+    fontSize: 12,
+    color: colors.textMuted,
+    lineHeight: 17,
+    paddingLeft: 32 + spacing.md,
+  },
+});
+
+// ── PhoneVerifyCard (S25-T6) ──────────────────────────────────────────────────
+
+function PhoneVerifyCard({
+  userId: _userId,
+  onVerifyNow,
+  onDismiss,
+}: {
+  userId: string;
+  onVerifyNow: () => void;
+  onDismiss: () => void | Promise<void>;
+}) {
+  return (
+    <View style={pvCardStyles.card}>
+      <View style={pvCardStyles.headerRow}>
+        <Ionicons name="shield-checkmark-outline" size={18} color={colors.accent} />
+        <Text style={pvCardStyles.title}>Verify your phone number</Text>
+        <Pressable
+          onPress={onDismiss}
+          hitSlop={12}
+          style={({ pressed }) => [pvCardStyles.dismissBtn, pressed && { opacity: 0.6 }]}
+        >
+          <Ionicons name="close" size={16} color={colors.textMuted} />
+        </Pressable>
+      </View>
+      <Text style={pvCardStyles.body}>
+        Earn{" "}
+        <Text style={pvCardStyles.highlight}>+100 pts</Text>
+        {" "}and secure your account by verifying your phone number.
+      </Text>
+      <View style={pvCardStyles.ctaRow}>
+        <Pressable
+          style={({ pressed }) => [pvCardStyles.verifyBtn, pressed && { opacity: 0.8 }]}
+          onPress={onVerifyNow}
+        >
+          <Text style={pvCardStyles.verifyBtnText}>Verify Now</Text>
+        </Pressable>
+        <Pressable
+          style={({ pressed }) => [pvCardStyles.laterBtn, pressed && { opacity: 0.7 }]}
+          onPress={onDismiss}
+        >
+          <Text style={pvCardStyles.laterBtnText}>Maybe later</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+const pvCardStyles = StyleSheet.create({
+  card: {
+    marginTop: spacing.md,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+  },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  title: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: "700",
+    color: colors.text,
+  },
+  dismissBtn: {
+    padding: 2,
+  },
+  body: {
+    fontSize: 13,
+    color: colors.textMuted,
+    lineHeight: 19,
+    marginBottom: spacing.md,
+  },
+  highlight: {
+    color: colors.text,
+    fontWeight: "700",
+  },
+  ctaRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    alignItems: "center",
+  },
+  verifyBtn: {
+    backgroundColor: colors.accent,
+    borderRadius: radius.md,
+    paddingVertical: spacing.sm + 2,
+    paddingHorizontal: spacing.lg,
+  },
+  verifyBtnText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  laterBtn: {
+    paddingVertical: spacing.sm + 2,
+    paddingHorizontal: spacing.md,
+  },
+  laterBtnText: {
+    color: colors.textMuted,
+    fontSize: 13,
+    fontWeight: "500",
+  },
+});
+
+// ── PhoneVerifyModal (S25-T6) ─────────────────────────────────────────────────
+
+type VerifyStep = "phone" | "otp" | "success";
+
+function PhoneVerifyModal({
+  visible,
+  onClose,
+  onSuccess,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const [step, setStep] = useState<VerifyStep>("phone");
+  const [phone, setPhone] = useState("");
+  const [otp, setOtp] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Reset on open.
+  useEffect(() => {
+    if (visible) {
+      setStep("phone");
+      setPhone("");
+      setOtp("");
+      setLoading(false);
+      setErrorMsg(null);
+    }
+  }, [visible]);
+
+  async function handleSendOtp() {
+    if (!phone.trim()) {
+      setErrorMsg("Please enter your phone number.");
+      return;
+    }
+    setLoading(true);
+    setErrorMsg(null);
+    try {
+      await mobileApi.requestPhoneVerification(phone.trim());
+      setStep("otp");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to send OTP. Please try again.";
+      setErrorMsg(msg);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleConfirmOtp() {
+    if (!otp.trim()) {
+      setErrorMsg("Please enter the OTP.");
+      return;
+    }
+    setLoading(true);
+    setErrorMsg(null);
+    try {
+      await mobileApi.confirmPhoneVerification(otp.trim());
+      setStep("success");
+      // Auto-close after brief success display.
+      setTimeout(() => {
+        onSuccess();
+      }, 1500);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Invalid or expired OTP. Please try again.";
+      setErrorMsg(msg);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent
+      onRequestClose={onClose}
+    >
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        style={pvModalStyles.overlay}
+      >
+        <Pressable style={pvModalStyles.backdrop} onPress={onClose} />
+        <View style={pvModalStyles.sheet}>
+          <View style={pvModalStyles.handle} />
+
+          {/* Close button */}
+          <Pressable
+            style={({ pressed }) => [pvModalStyles.closeBtn, pressed && { opacity: 0.6 }]}
+            onPress={onClose}
+            hitSlop={12}
+          >
+            <Ionicons name="close" size={22} color={colors.textMuted} />
+          </Pressable>
+
+          {step === "phone" && (
+            <>
+              <Text style={pvModalStyles.heading}>Verify your phone</Text>
+              <Text style={pvModalStyles.subheading}>
+                Enter your 10-digit Indian mobile number to receive a one-time code.
+              </Text>
+              <TextInput
+                style={pvModalStyles.input}
+                placeholder="e.g. 9876543210"
+                placeholderTextColor={colors.textMuted}
+                keyboardType="phone-pad"
+                maxLength={13}
+                value={phone}
+                onChangeText={(t) => { setPhone(t); setErrorMsg(null); }}
+                autoFocus
+              />
+              {errorMsg ? <Text style={pvModalStyles.error}>{errorMsg}</Text> : null}
+              <Pressable
+                style={({ pressed }) => [pvModalStyles.primaryBtn, pressed && { opacity: 0.8 }, loading && pvModalStyles.btnDisabled]}
+                onPress={handleSendOtp}
+                disabled={loading}
+              >
+                {loading
+                  ? <ActivityIndicator color="#FFFFFF" size="small" />
+                  : <Text style={pvModalStyles.primaryBtnText}>Send OTP</Text>
+                }
+              </Pressable>
+            </>
+          )}
+
+          {step === "otp" && (
+            <>
+              <Text style={pvModalStyles.heading}>Enter OTP</Text>
+              <Text style={pvModalStyles.subheading}>
+                A 6-digit code was sent to {phone}. Enter it below.
+              </Text>
+              <TextInput
+                style={pvModalStyles.input}
+                placeholder="6-digit code"
+                placeholderTextColor={colors.textMuted}
+                keyboardType="number-pad"
+                maxLength={6}
+                value={otp}
+                onChangeText={(t) => { setOtp(t); setErrorMsg(null); }}
+                autoFocus
+              />
+              {errorMsg ? <Text style={pvModalStyles.error}>{errorMsg}</Text> : null}
+              <Pressable
+                style={({ pressed }) => [pvModalStyles.primaryBtn, pressed && { opacity: 0.8 }, loading && pvModalStyles.btnDisabled]}
+                onPress={handleConfirmOtp}
+                disabled={loading}
+              >
+                {loading
+                  ? <ActivityIndicator color="#FFFFFF" size="small" />
+                  : <Text style={pvModalStyles.primaryBtnText}>Confirm</Text>
+                }
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [pvModalStyles.secondaryBtn, pressed && { opacity: 0.7 }]}
+                onPress={() => { setStep("phone"); setOtp(""); setErrorMsg(null); }}
+              >
+                <Text style={pvModalStyles.secondaryBtnText}>Change number</Text>
+              </Pressable>
+            </>
+          )}
+
+          {step === "success" && (
+            <View style={pvModalStyles.successContainer}>
+              <Ionicons name="checkmark-circle" size={56} color="#22C55E" />
+              <Text style={pvModalStyles.successHeading}>Phone verified!</Text>
+              <Text style={pvModalStyles.successBody}>+100 pts have been added to your account.</Text>
+            </View>
+          )}
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
+const pvModalStyles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    justifyContent: "flex-end",
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.5)",
+  },
+  sheet: {
+    backgroundColor: colors.background,
+    borderTopLeftRadius: radius.lg,
+    borderTopRightRadius: radius.lg,
+    padding: spacing.xl,
+    paddingBottom: spacing.xl + 16,
+    minHeight: 280,
+  },
+  handle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.border,
+    alignSelf: "center",
+    marginBottom: spacing.lg,
+  },
+  closeBtn: {
+    position: "absolute",
+    top: spacing.lg,
+    right: spacing.lg,
+    padding: 4,
+  },
+  heading: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: colors.text,
+    marginBottom: spacing.sm,
+  },
+  subheading: {
+    fontSize: 14,
+    color: colors.textMuted,
+    lineHeight: 20,
+    marginBottom: spacing.lg,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingVertical: 12,
+    paddingHorizontal: spacing.md,
+    fontSize: 16,
+    color: colors.text,
+    backgroundColor: colors.surface,
+    marginBottom: spacing.md,
+  },
+  error: {
+    color: "#EF4444",
+    fontSize: 13,
+    marginBottom: spacing.sm,
+  },
+  primaryBtn: {
+    backgroundColor: colors.accent,
+    borderRadius: radius.md,
+    paddingVertical: 13,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: spacing.sm,
+  },
+  btnDisabled: {
+    opacity: 0.6,
+  },
+  primaryBtnText: {
+    color: "#FFFFFF",
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  secondaryBtn: {
+    paddingVertical: spacing.md,
+    alignItems: "center",
+    marginTop: spacing.sm,
+  },
+  secondaryBtnText: {
+    color: colors.textMuted,
+    fontSize: 14,
+    fontWeight: "500",
+  },
+  successContainer: {
+    alignItems: "center",
+    paddingTop: spacing.xl,
+    paddingBottom: spacing.lg,
+    gap: spacing.md,
+  },
+  successHeading: {
+    fontSize: 22,
+    fontWeight: "800",
+    color: colors.text,
+  },
+  successBody: {
+    fontSize: 15,
+    color: colors.textMuted,
+    textAlign: "center",
+    lineHeight: 22,
   },
 });

@@ -20,7 +20,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import type { Session } from "@/providers/session-provider";
 
-import type { ApiMarketDetail } from "@predict-future/types";
+import type { ApiMarketDetail, ApiProbabilityHistory } from "@predict-future/types";
 import { formatPercent, formatPoints, formatRelativeTime } from "@predict-future/utils";
 import { colors, radius, shadows, spacing } from "@predict-future/ui-tokens";
 
@@ -28,6 +28,7 @@ import { useApiQuery } from "@/hooks/useApiQuery";
 import { useInterval } from "@/hooks/useInterval";
 import { mobileApi } from "@/lib/api";
 import { useSession } from "@/providers/session-provider";
+import { VerifiedBadge } from "@/components/verified-badge";
 
 type UserPosition = {
   id: string;
@@ -1235,6 +1236,22 @@ function MarketBody({
     }).start();
   }, [yesProbability]);
 
+  // Probability history chart state (S27-T2)
+  const [probHistory, setProbHistory] = useState<ApiProbabilityHistory | null>(null);
+  const [probHistoryLoading, setProbHistoryLoading] = useState(false);
+
+  useEffect(() => {
+    if (!marketId || market.marketType !== "BINARY") return;
+    setProbHistoryLoading(true);
+    mobileApi.getProbabilityHistory(marketId)
+      .then((data) => setProbHistory(data))
+      .catch(() => {
+        // Non-fatal — chart simply won't render
+        setProbHistory(null);
+      })
+      .finally(() => setProbHistoryLoading(false));
+  }, [marketId, market.marketType]);
+
   // Numeric poll vote state (for numeric polls that remain in scroll body)
   const existingVote = data.userVote ?? null;
   const [pollGuess, setPollGuess] = useState(
@@ -1418,7 +1435,10 @@ function MarketBody({
         </View>
 
         {market.creator?.username ? (
-          <Text style={styles.hostLabel}>Hosted by @{market.creator.username}</Text>
+          <View style={styles.hostRow}>
+            <Text style={styles.hostLabel}>Hosted by @{market.creator.username}</Text>
+            {market.creator.isVerifiedAnalyst === true && <VerifiedBadge compact />}
+          </View>
         ) : null}
 
         {isOpen ? (
@@ -1478,6 +1498,17 @@ function MarketBody({
         >
           <Text style={styles.shareBtnText}>Share Result</Text>
         </Pressable>
+      ) : null}
+
+      {/* Percentile rank — resolved markets where the user won */}
+      {market.status === "RESOLVED" && data.userPercentileRank != null ? (
+        <View style={styles.percentileCard}>
+          <Text style={styles.percentileText}>
+            {market.category === "FINANCE"
+              ? `You beat ${100 - data.userPercentileRank}% of analysts on this call`
+              : `You beat ${100 - data.userPercentileRank}% of predictors on this call`}
+          </Text>
+        </View>
       ) : null}
 
       {/* Poll notice — no staking for AI-generated polls */}
@@ -1552,6 +1583,15 @@ function MarketBody({
         <ResolutionSection
           resolution={market.resolution}
           winningSide={market.winningSide ?? null}
+        />
+      ) : null}
+
+      {/* Probability chart — BINARY markets only, shown when snapshots are available (S27-T2) */}
+      {market.marketType === "BINARY" && !probHistoryLoading ? (
+        <ProbabilityChart
+          history={probHistory}
+          isResolved={market.status === "RESOLVED"}
+          outcome={market.winningSide ?? null}
         />
       ) : null}
 
@@ -1769,14 +1809,237 @@ function InfoItem({ label, value }: { label: string; value: string }) {
   );
 }
 
+// ─── ProbabilityChart (S27-T2) ────────────────────────────────────────────────
+// Pure View-based consensus-line chart. No external charting library.
+// Renders a segmented polyline using absolutely positioned Views in a fixed 120px container.
+// Only shown for BINARY markets with >= 2 snapshots.
+
+const CHART_HEIGHT = 120;
+const CHART_LABEL_WIDTH = 30; // px reserved for Y-axis labels
+const CHART_PADDING_V = 12; // vertical breathing room
+
+function ProbabilityChart({
+  history,
+  isResolved,
+  outcome,
+}: {
+  history: ApiProbabilityHistory | null;
+  isResolved: boolean;
+  outcome: string | null;
+}) {
+  const [chartWidth, setChartWidth] = useState(0);
+
+  if (!history || history.snapshots.length < 2) {
+    return (
+      <View style={styles.probChartCard}>
+        <Text style={styles.probChartTitle}>Consensus shift</Text>
+        <Text style={styles.probChartEmpty}>Probability history not yet available</Text>
+      </View>
+    );
+  }
+
+  // Build display snapshots — if resolved, append the final outcome point
+  const displayPoints = [...history.snapshots];
+  if (isResolved && history.resolvedProbability !== null) {
+    // Append final outcome point with the same timestamp as the last snapshot
+    // (it will be rendered as a special marker at the right edge)
+    displayPoints.push({
+      at: displayPoints[displayPoints.length - 1]?.at ?? new Date().toISOString(),
+      probability: history.resolvedProbability,
+    });
+  }
+
+  const n = displayPoints.length;
+  const firstAt = new Date(displayPoints[0]!.at).getTime();
+  const lastAt = new Date(displayPoints[n - 1]!.at).getTime();
+  const totalDuration = Math.max(lastAt - firstAt, 1);
+
+  const innerH = CHART_HEIGHT - CHART_PADDING_V * 2;
+  const innerW = chartWidth - CHART_LABEL_WIDTH;
+
+  // Convert snapshots to X/Y in chart coordinate space
+  function toXY(snap: { at: string; probability: number }, index: number) {
+    const t = new Date(snap.at).getTime();
+    const x =
+      n <= 1
+        ? (index === 0 ? 0 : innerW)
+        : ((t - firstAt) / totalDuration) * innerW;
+    // Y: probability 1.0 = top of chart (y=0 in absolute), 0.0 = bottom
+    const y = CHART_PADDING_V + (1 - snap.probability) * innerH;
+    return { x, y };
+  }
+
+  const points = displayPoints.map((s, i) => ({ ...toXY(s, i), prob: s.probability }));
+
+  // Build line segments
+  const segments: Array<{ x1: number; y1: number; x2: number; y2: number }> = [];
+  for (let i = 0; i < points.length - 1; i++) {
+    segments.push({
+      x1: points[i]!.x,
+      y1: points[i]!.y,
+      x2: points[i + 1]!.x,
+      y2: points[i + 1]!.y,
+    });
+  }
+
+  // 50% threshold line Y position
+  const thresholdY = CHART_PADDING_V + (1 - 0.5) * innerH;
+
+  const firstDate = new Date(displayPoints[0]!.at).toLocaleDateString("en-IN", {
+    month: "short",
+    day: "numeric",
+  });
+  const lastDate = new Date(displayPoints[n - 1]!.at).toLocaleDateString("en-IN", {
+    month: "short",
+    day: "numeric",
+  });
+
+  const lastPoint = points[n - 1]!;
+
+  return (
+    <View style={styles.probChartCard}>
+      <Text style={styles.probChartTitle}>Consensus shift</Text>
+
+      <View
+        style={[styles.probChartArea, { height: CHART_HEIGHT + 24 }]}
+        onLayout={(e) => setChartWidth(e.nativeEvent.layout.width)}
+      >
+        {/* Y-axis labels */}
+        <View
+          style={[
+            styles.probChartYLabels,
+            { width: CHART_LABEL_WIDTH, height: CHART_HEIGHT },
+          ]}
+        >
+          <Text style={styles.probChartYLabel}>100%</Text>
+          <Text style={[styles.probChartYLabel, { marginTop: "auto" }]}>0%</Text>
+        </View>
+
+        {/* Chart canvas */}
+        {chartWidth > 0 ? (
+          <View
+            style={[
+              styles.probChartCanvas,
+              { width: innerW, height: CHART_HEIGHT },
+            ]}
+          >
+            {/* 50% dashed threshold line */}
+            {Array.from({ length: Math.floor(innerW / 10) }).map((_, i) => (
+              <View
+                key={`dash-${i}`}
+                style={[
+                  styles.probChartDash,
+                  { left: i * 10, top: thresholdY - 0.5 },
+                ]}
+              />
+            ))}
+
+            {/* Line segments */}
+            {segments.map((seg, i) => {
+              const dx = seg.x2 - seg.x1;
+              const dy = seg.y2 - seg.y1;
+              const length = Math.sqrt(dx * dx + dy * dy);
+              const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+              return (
+                <View
+                  key={`seg-${i}`}
+                  style={[
+                    styles.probChartSegment,
+                    {
+                      left: seg.x1,
+                      top: seg.y1,
+                      width: length,
+                      transform: [{ rotate: `${angle}deg` }],
+                    },
+                  ]}
+                />
+              );
+            })}
+
+            {/* Data dots — only first and last */}
+            <View
+              style={[
+                styles.probChartDot,
+                { left: (points[0]?.x ?? 0) - 3, top: (points[0]?.y ?? 0) - 3 },
+              ]}
+            />
+            <View
+              style={[
+                styles.probChartDot,
+                { left: lastPoint.x - 3, top: lastPoint.y - 3 },
+              ]}
+            />
+
+            {/* Resolved outcome marker */}
+            {isResolved && outcome ? (
+              <View
+                style={[
+                  styles.probChartOutcomeMarker,
+                  {
+                    left: Math.max(0, lastPoint.x - 20),
+                    top: lastPoint.y - 22,
+                    backgroundColor: outcome === "YES" ? "#16a34a" : "#dc2626",
+                  },
+                ]}
+              >
+                <Text style={styles.probChartOutcomeText}>{outcome}</Text>
+              </View>
+            ) : null}
+          </View>
+        ) : null}
+      </View>
+
+      {/* X-axis labels */}
+      <View style={[styles.probChartXLabels, { paddingLeft: CHART_LABEL_WIDTH }]}>
+        <Text style={styles.probChartXLabel}>{firstDate}</Text>
+        <Text style={styles.probChartXLabel}>{lastDate}</Text>
+      </View>
+    </View>
+  );
+}
+
 // ─── CommentsSection ──────────────────────────────────────────────────────────
+
+type CommenterPosition =
+  | { kind: "binary"; side: "YES" | "NO"; amount: number }
+  | { kind: "multi-choice"; optionId: string; optionLabel: string; amount: number }
+  | { kind: "numeric"; value: number; amount: number };
 
 type CommentItem = {
   id: string;
   content: string;
   createdAt: string;
-  user: { username: string };
+  tipsReceived: number;
+  user: { id: string; username: string; isVerifiedAnalyst?: boolean };
+  commenterPosition?: CommenterPosition | null;
 };
+
+/** Small pill badge showing commenter's market position ('skin in the game'). */
+function PositionBadge({ pos }: { pos: CommenterPosition }) {
+  let label: string;
+  let bgColor: string;
+  let textColor: string;
+
+  if (pos.kind === "binary") {
+    label = `Holds ${pos.side} — ${pos.amount} pts`;
+    bgColor = pos.side === "YES" ? "#D1FAE5" : "#FEE2E2";
+    textColor = pos.side === "YES" ? "#065F46" : "#991B1B";
+  } else if (pos.kind === "multi-choice") {
+    label = `Holds ${pos.optionLabel} — ${pos.amount} pts`;
+    bgColor = "#EDE9FE";
+    textColor = "#4C1D95";
+  } else {
+    label = `Predicted ${pos.value} — ${pos.amount} pts`;
+    bgColor = "#E0F2FE";
+    textColor = "#0C4A6E";
+  }
+
+  return (
+    <View style={{ backgroundColor: bgColor, borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2, alignSelf: "flex-start", marginTop: 2 }}>
+      <Text style={{ fontSize: 11, fontWeight: "600", color: textColor }}>{label}</Text>
+    </View>
+  );
+}
 
 const AVATAR_COLORS = ["#6366F1", "#EC4899", "#F59E0B", "#10B981", "#3B82F6", "#EF4444"];
 
@@ -1808,6 +2071,8 @@ function CommentsSection({
   const [localComments, setLocalComments] = useState<CommentItem[]>([]);
   const [commentText, setCommentText] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [tippingCommentId, setTippingCommentId] = useState<string | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Sync local list from server data
   useEffect(() => {
@@ -1815,6 +2080,14 @@ function CommentsSection({
       setLocalComments(data.comments);
     }
   }, [data]);
+
+  // Auto-dismiss toast after 2 seconds
+  useEffect(() => {
+    if (toastMessage) {
+      const timer = setTimeout(() => setToastMessage(null), 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [toastMessage]);
 
   const canPost = isOpen && session != null;
   const charsLeft = 500 - commentText.length;
@@ -1826,7 +2099,8 @@ function CommentsSection({
       id: `optimistic-${Date.now()}`,
       content: commentText.trim(),
       createdAt: new Date().toISOString(),
-      user: { username: session.username },
+      tipsReceived: 0,
+      user: { id: session.userId, username: session.username, isVerifiedAnalyst: false },
     };
 
     const textToPost = commentText.trim();
@@ -1846,43 +2120,112 @@ function CommentsSection({
     }
   }
 
+  async function handleTip(commentId: string) {
+    if (!session || tippingCommentId === commentId) return;
+    setTippingCommentId(commentId);
+    try {
+      const result = await mobileApi.tipComment(commentId, 5);
+      if (result.ok) {
+        // Update local tipsReceived count
+        setLocalComments((prev) =>
+          prev.map((c) =>
+            c.id === commentId
+              ? { ...c, tipsReceived: result.newTipsReceived }
+              : c
+          )
+        );
+        setToastMessage("+5 pts tipped!");
+      }
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error ? err.message : "Could not send tip.";
+      if (message.toLowerCase().includes("daily tip limit")) {
+        Alert.alert("Daily tip limit reached", "You've used all 50 tip pts for today.");
+      } else {
+        setToastMessage(message);
+      }
+    } finally {
+      setTippingCommentId(null);
+    }
+  }
+
   return (
     <View style={styles.card}>
       <Text style={styles.sectionTitle}>
         Comments ({localComments.length})
       </Text>
 
+      {/* Toast overlay */}
+      {toastMessage != null && (
+        <View style={styles.commentToast}>
+          <Text style={styles.commentToastText}>{toastMessage}</Text>
+        </View>
+      )}
+
       {localComments.length === 0 ? (
         <Text style={styles.commentsEmpty}>No comments yet. Be the first!</Text>
       ) : (
-        localComments.map((comment) => (
-          <View key={comment.id} style={styles.commentRow}>
-            <View
-              style={[
-                styles.commentAvatar,
-                { backgroundColor: avatarColorForUsername(comment.user.username) },
-              ]}
-            >
-              <Text style={styles.commentAvatarText}>
-                {comment.user.username.charAt(0).toUpperCase()}
-              </Text>
-            </View>
-            <View style={styles.commentBody}>
-              <View style={styles.commentMeta}>
-                <Pressable
-                  onPress={() => router.push(`/user/${comment.user.username}`)}
-                  hitSlop={4}
-                >
-                  <Text style={styles.commentUsername}>@{comment.user.username}</Text>
-                </Pressable>
-                <Text style={styles.commentTime}>
-                  {formatRelativeTime(comment.createdAt)}
+        localComments.map((comment) => {
+          // Show tip button only when: authenticated AND not the comment author
+          const canTip = session != null && comment.user.id !== session.userId;
+          const isTipping = tippingCommentId === comment.id;
+
+          return (
+            <View key={comment.id} style={styles.commentRow}>
+              <View
+                style={[
+                  styles.commentAvatar,
+                  { backgroundColor: avatarColorForUsername(comment.user.username) },
+                ]}
+              >
+                <Text style={styles.commentAvatarText}>
+                  {comment.user.username.charAt(0).toUpperCase()}
                 </Text>
               </View>
-              <Text style={styles.commentContent}>{comment.content}</Text>
+              <View style={styles.commentBody}>
+                <View style={styles.commentMeta}>
+                  <View style={styles.commentAuthorRow}>
+                    <Pressable
+                      onPress={() => router.push(`/user/${comment.user.username}`)}
+                      hitSlop={4}
+                    >
+                      <Text style={styles.commentUsername}>@{comment.user.username}</Text>
+                    </Pressable>
+                    {comment.user.isVerifiedAnalyst === true && <VerifiedBadge compact />}
+                  </View>
+                  <View style={styles.commentTimeRow}>
+                    <Text style={styles.commentTime}>
+                      {formatRelativeTime(comment.createdAt)}
+                    </Text>
+                    {canTip && (
+                      <Pressable
+                        style={[styles.tipBtn, isTipping && styles.tipBtnDisabled]}
+                        onPress={() => { void handleTip(comment.id); }}
+                        disabled={isTipping}
+                        hitSlop={6}
+                      >
+                        {isTipping ? (
+                          <ActivityIndicator size="small" color={colors.textMuted as string} />
+                        ) : (
+                          <Ionicons name="gift-outline" size={15} color={colors.textMuted as string} />
+                        )}
+                      </Pressable>
+                    )}
+                  </View>
+                </View>
+                {comment.commenterPosition != null && (
+                  <PositionBadge pos={comment.commenterPosition} />
+                )}
+                <Text style={styles.commentContent}>{comment.content}</Text>
+                {comment.tipsReceived > 0 && (
+                  <Text style={styles.commentTipsLine}>
+                    {`🎁 ${comment.tipsReceived} pts received`}
+                  </Text>
+                )}
+              </View>
             </View>
-          </View>
-        ))
+          );
+        })
       )}
 
       {canPost ? (
@@ -2117,8 +2460,12 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     marginTop: 2,
   },
-  hostLabel: {
+  hostRow: {
+    flexDirection: "row",
+    alignItems: "center",
     marginTop: spacing.lg,
+  },
+  hostLabel: {
     fontSize: 14,
     fontWeight: "600",
     color: colors.accent,
@@ -2601,8 +2948,12 @@ const styles = StyleSheet.create({
   commentMeta: {
     flexDirection: "row",
     alignItems: "center",
-    gap: spacing.sm,
+    justifyContent: "space-between",
     marginBottom: 2,
+  },
+  commentAuthorRow: {
+    flexDirection: "row",
+    alignItems: "center",
   },
   commentUsername: {
     fontSize: 13,
@@ -2669,6 +3020,41 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.textMuted,
     textAlign: "center",
+  },
+  commentTimeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  tipBtn: {
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+    borderRadius: radius.sm,
+    alignItems: "center",
+    justifyContent: "center",
+    minWidth: 22,
+    minHeight: 22,
+  },
+  tipBtnDisabled: {
+    opacity: 0.5,
+  },
+  commentTipsLine: {
+    fontSize: 11,
+    color: colors.textMuted,
+    marginTop: 4,
+  },
+  commentToast: {
+    backgroundColor: "#1F2937",
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    alignSelf: "center",
+    marginBottom: spacing.sm,
+  },
+  commentToastText: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "600",
   },
 
   // ── Sticky betting bar ──
@@ -3042,5 +3428,105 @@ const styles = StyleSheet.create({
   },
   multiChoiceBarFillSelected: {
     backgroundColor: colors.accent,
+  },
+
+  // ── Percentile rank (S25-T4) ──
+  percentileCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.xl,
+    borderLeftWidth: 3,
+    borderLeftColor: colors.accent,
+    ...shadows.card,
+  },
+  percentileText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: colors.accent,
+    letterSpacing: 0.1,
+  },
+
+  // ── Probability Chart (S27-T2) ──
+  probChartCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.md,
+    marginHorizontal: spacing.md,
+    marginBottom: spacing.md,
+    ...shadows.card,
+  },
+  probChartTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: colors.text,
+    marginBottom: spacing.sm,
+    letterSpacing: 0.2,
+  },
+  probChartEmpty: {
+    fontSize: 13,
+    color: colors.textMuted,
+    textAlign: "center",
+    paddingVertical: spacing.md,
+  },
+  probChartArea: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+  },
+  probChartYLabels: {
+    flexDirection: "column",
+    justifyContent: "space-between",
+    paddingVertical: 0,
+  },
+  probChartYLabel: {
+    fontSize: 10,
+    color: colors.textMuted,
+  },
+  probChartCanvas: {
+    position: "relative",
+    overflow: "hidden",
+    flex: 1,
+  },
+  probChartDash: {
+    position: "absolute",
+    width: 5,
+    height: 1,
+    backgroundColor: colors.textMuted,
+    opacity: 0.4,
+  },
+  probChartSegment: {
+    position: "absolute",
+    height: 2,
+    backgroundColor: colors.accent,
+    borderRadius: 1,
+    transformOrigin: "left center",
+  },
+  probChartDot: {
+    position: "absolute",
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.accent,
+  },
+  probChartOutcomeMarker: {
+    position: "absolute",
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+  },
+  probChartOutcomeText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#ffffff",
+  },
+  probChartXLabels: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 4,
+  },
+  probChartXLabel: {
+    fontSize: 10,
+    color: colors.textMuted,
   },
 });

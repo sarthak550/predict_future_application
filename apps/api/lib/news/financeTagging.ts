@@ -10,12 +10,13 @@
  */
 
 /** Approved Indian finance news source domains for FINANCE tagging.
- *  Must be kept in sync with `APPROVED_FINANCE_DOMAINS` in extractExpertOpinions.ts. */
+ *  Must be kept in sync with `ANALYST_OPINION_SOURCES` domains in extractExpertOpinions.ts. */
 const FINANCE_SOURCE_DOMAINS = [
   "moneycontrol.com",
   "economictimes.indiatimes.com",
   "livemint.com",
   "cnbctv18.com",
+  "businesstoday.in",
   "bloomberg.com",
   "reuters.com",
 ] as const;

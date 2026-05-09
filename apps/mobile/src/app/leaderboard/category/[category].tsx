@@ -32,6 +32,12 @@ function RankBadge({ rank }: { rank: number }) {
   );
 }
 
+function formatFollowerCount(count: number): string {
+  if (count >= 10000) return `${Math.floor(count / 1000)}K followers`;
+  if (count >= 1000) return `${(count / 1000).toFixed(1)}K followers`;
+  return `${count} followers`;
+}
+
 // ── List row ──────────────────────────────────────────────────────────────────
 
 function EntryRow({ entry }: { entry: ApiCategoryTopEntry }) {
@@ -40,6 +46,7 @@ function EntryRow({ entry }: { entry: ApiCategoryTopEntry }) {
       <RankBadge rank={entry.rank} />
       <View style={styles.rowMain}>
         <Text style={styles.username}>@{entry.username}</Text>
+        <Text style={styles.followerLine}>{formatFollowerCount(entry.followerCount ?? 0)}</Text>
         <Text style={styles.predictions}>{entry.totalPredictions} predictions</Text>
       </View>
       <Text style={styles.accuracy}>{entry.accuracyScore.toFixed(0)}%</Text>
@@ -163,6 +170,12 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "600",
     color: colors.text as string,
+  },
+  followerLine: {
+    fontSize: 11,
+    color: colors.textMuted as string,
+    opacity: 0.7,
+    marginTop: 1,
   },
   predictions: {
     fontSize: 12,

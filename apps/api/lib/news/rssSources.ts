@@ -119,6 +119,49 @@ const defaultRssSources: RssSource[] = [
     fallbackCategory: "BUSINESS",
     isActive: true
   },
+
+  // ── Indian Finance Opinion / Analyst Columns (added to feed isApprovedFinanceSource allowlist) ──
+  // These feeds publish articles whose URL paths match the strict analyst-opinion allowlist in
+  // apps/api/lib/ai/extractExpertOpinions.ts, enabling AI extraction of expert opinions.
+  //
+  // Verified 2026-05-09:
+  //   - ET expert-view (50649960): 50 items, all at /markets/expert-view/ — 100% allowlist match
+  //   - CNBC TV18 views.xml: 200 items, ~54 at /views/ — matches cnbctv18.com /views/ allowlist
+  //   - Business Today home feed: articles at /india/story/, /magazine/deep-dive/story/, /markets/stocks/story/
+  //     — /india/story/ is in allowlist for AI extraction
+  //
+  // Feeds investigated but discarded:
+  //   - moneycontrol.com: all RSS endpoints return 403 (Akamai blocks non-browser requests)
+  //   - dbs.com: no public RSS feed available
+  //   - ET opinion/columns (897228639): articles land at /opinion/et-commentary/ and /opinion/et-editorial/,
+  //     NOT /opinion/columns/ — no matching allowlist path, no feed found that produces /opinion/columns/ URLs
+  //   - livemint.com/rss/opinion: articles land at /opinion/online-views/, not /opinion/columns/
+  //     or /market/mark-to-market — no specific RSS feed exists for either of those sections
+  //   - ndtvprofit.com RSS: 403 (bqprime.com/rss/* redirects to ndtvprofit.com which also 403s)
+  {
+    id: "et-expert-view",
+    name: "Economic Times Expert View",
+    url: "https://economictimes.indiatimes.com/markets/expert-view/rssfeeds/50649960.cms",
+    categoryHint: "BUSINESS",
+    fallbackCategory: "BUSINESS",
+    isActive: true
+  },
+  {
+    id: "cnbctv18-views",
+    name: "CNBC TV18 Views",
+    url: "https://www.cnbctv18.com/commonfeeds/v1/cne/rss/views.xml",
+    categoryHint: "BUSINESS",
+    fallbackCategory: "BUSINESS",
+    isActive: true
+  },
+  {
+    id: "businesstoday-home",
+    name: "Business Today",
+    url: "https://www.businesstoday.in/rssfeeds/?id=home",
+    categoryHint: "BUSINESS",
+    fallbackCategory: "BUSINESS",
+    isActive: true
+  },
   // Bloomberg's public sitemap is a news sitemap (XML), not a standard RSS feed.
   // The sitemap_news.xml format is not compatible with rss-parser and would need
   // custom parsing. Adding as inactive until a Bloomberg-compatible RSS or API

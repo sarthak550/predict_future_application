@@ -1,5 +1,6 @@
 import { buildAuthHeaders, type AuthTokenProvider } from "@predict-future/auth-shared";
 import type {
+  ApiBigCallResponse,
   ApiCategoryTopResponse,
   ApiCricketMatchDetail,
   ApiDailyQuests,
@@ -20,21 +21,28 @@ import type {
   ApiLeagueEntry,
   ApiLeagueStandingsPage,
   ApiLiveScore,
+  ApiMarketComment,
   ApiMarketDetail,
   ApiMarketSummary,
   ApiMyProfile,
   ApiNewsFeedItem,
   ApiNotification,
+  ApiPhoneVerifyConfirmResponse,
+  ApiPhoneVerifyResponse,
   ApiPlacePositionResponse,
+  ApiPlatformStats,
   ApiPollListItem,
+  ApiProbabilityHistory,
   ApiReferralInfo,
   ApiStory,
   ApiUserCalibration,
+  ApiUserPortfolio,
   ApiUserProfile,
   ApiVote,
   AppLeagueTier,
   AppMarketCategory,
-  AppMarketStatus
+  AppMarketStatus,
+  AppUserDisplayMode
 } from "@predict-future/types";
 
 export type { ApiLeaderboardTimeWindow };
@@ -338,12 +346,12 @@ export function createApiClient(options: ApiClientOptions) {
       );
     },
     getMarketComments(marketId: string) {
-      return request<{ comments: Array<{ id: string; content: string; createdAt: string; user: { username: string } }> }>(
+      return request<{ comments: ApiMarketComment[] }>(
         `/api/markets/${marketId}/comments`
       );
     },
     postMarketComment(marketId: string, body: { content: string }) {
-      return request<{ comment: { id: string; content: string; createdAt: string; user: { username: string } } }>(
+      return request<{ comment: ApiMarketComment }>(
         `/api/markets/${marketId}/comments`,
         undefined,
         { method: "POST", body: JSON.stringify(body), auth: true }
@@ -565,6 +573,167 @@ export function createApiClient(options: ApiClientOptions) {
           body: JSON.stringify(params ?? {}),
           auth: true,
         }
+      );
+    },
+
+    // ─── Platform stats (S25-T1) ───────────────────────────────────────────────
+
+    /**
+     * Fetch aggregate platform accuracy stats.
+     * Public endpoint — no auth required. Cached for 10 minutes.
+     */
+    getPlatformStats() {
+      return request<ApiPlatformStats>("/api/platform/stats");
+    },
+
+    // ─── Phone verification (S25-T6) ──────────────────────────────────────────
+
+    /**
+     * Initiate phone verification: generate + store OTP, save phone on user.
+     * In dev mode (PHONE_VERIFY_MODE != "prod") the response includes the OTP.
+     * Auth: required.
+     */
+    requestPhoneVerification(phone: string) {
+      return request<ApiPhoneVerifyResponse>(
+        "/api/users/me/verify-phone",
+        undefined,
+        {
+          method: "POST",
+          body: JSON.stringify({ phone }),
+          auth: true,
+        }
+      );
+    },
+
+    /**
+     * Confirm a phone verification OTP.
+     * On success awards +100 DAILY_BONUS pts and sets phoneVerified=true.
+     * Idempotent — returns { alreadyVerified: true } if already verified.
+     * Auth: required.
+     */
+    confirmPhoneVerification(otp: string) {
+      return request<ApiPhoneVerifyConfirmResponse>(
+        "/api/users/me/verify-phone/confirm",
+        undefined,
+        {
+          method: "POST",
+          body: JSON.stringify({ otp }),
+          auth: true,
+        }
+      );
+    },
+
+    // ─── Comment tips (S26-T2) ────────────────────────────────────────────────
+
+    /**
+     * Tip a comment a fixed amount of points.
+     * Default amount: 5 pts. Max: 50 pts. Daily cap: 50 pts total given.
+     * Returns updated tipsReceived on the comment and remaining daily budget.
+     * Auth: required.
+     */
+    tipComment(commentId: string, amount?: number) {
+      return request<{ ok: boolean; newTipsReceived: number; dailyTipsRemaining: number }>(
+        `/api/comments/${commentId}/tip`,
+        undefined,
+        {
+          method: "POST",
+          body: JSON.stringify({ amount }),
+          auth: true,
+        }
+      );
+    },
+
+    // ─── Shareable Portfolio (S26-T4) ─────────────────────────────────────────
+
+    /**
+     * Fetch a user's public portfolio snapshot.
+     * Public endpoint — no auth required.
+     * Contains accuracy, predictions, net points, streak, followers,
+     * recent resolved markets, and open markets.
+     * Sensitive fields (email, phone, wallet balance, referral code) are
+     * deliberately excluded by the server.
+     */
+    getUserPortfolio(username: string) {
+      return request<ApiUserPortfolio>(`/api/portfolio/${username}`);
+    },
+
+    // ─── Anonymous mode (S26-T5) ──────────────────────────────────────────────
+
+    /**
+     * Update the authenticated user's display mode.
+     *
+     * When set to ANONYMOUS, the user appears as "AnonymousAnalyst_XXXXXX"
+     * (a deterministic pseudonym based on sha256(userId)) across all public
+     * surfaces: leaderboard, market creator, comment author, followers/following
+     * lists, and public profiles.
+     *
+     * Accuracy, league tier, quests, and wallet balance are unaffected — they
+     * continue to accrue to the real userId regardless of this setting.
+     *
+     * Auth: required.
+     */
+    setDisplayMode(displayMode: AppUserDisplayMode) {
+      return request<{ displayMode: AppUserDisplayMode }>(
+        "/api/users/me/display-mode",
+        undefined,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ displayMode }),
+          auth: true,
+        }
+      );
+    },
+
+    // ─── Big Call (S27-T1) ────────────────────────────────────────────────────
+
+    /**
+     * Fetch today's Big Call market (IST day).
+     * Returns { market: null } if no Big Call has been designated today.
+     * Public endpoint — no auth required. Cached for 60s on the CDN.
+     */
+    getTodayBigCall() {
+      return request<ApiBigCallResponse>("/api/markets/today-big-call");
+    },
+
+    /**
+     * Fire-and-forget tap tracking for the Big Call card.
+     * Increments bigCallNotificationOpenedCount on the market by 1.
+     * No auth required. Failures are swallowed — analytics must not block navigation.
+     */
+    trackBigCallOpened(marketId: string) {
+      return request<{ count: number }>(
+        `/api/markets/${marketId}/big-call-tap`,
+        undefined,
+        { method: "POST" }
+      );
+    },
+
+    /**
+     * Designate a market as today's Big Call. Admin only.
+     * Clears any existing Big Call for the same date first.
+     * Optional body: { date?: string } (YYYY-MM-DD) — defaults to today IST.
+     * Auth: required (admin).
+     */
+    markMarketAsBigCall(marketId: string, date?: string) {
+      return request<{ marketId: string; isBigCallDate: string | null }>(
+        `/api/admin/markets/${marketId}/mark-big-call`,
+        undefined,
+        {
+          method: "POST",
+          body: JSON.stringify(date ? { date } : {}),
+          auth: true,
+        }
+      );
+    },
+
+    /**
+     * Fetch probability history snapshots for the consensus-line chart.
+     * Returns all hourly points for markets <= 7 days old; daily aggregates for older markets.
+     * Public endpoint — no auth required. Cached for 5 minutes on the CDN.
+     */
+    getProbabilityHistory(marketId: string) {
+      return request<ApiProbabilityHistory>(
+        `/api/markets/${marketId}/probability-history`
       );
     },
   };

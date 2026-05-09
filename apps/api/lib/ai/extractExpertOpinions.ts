@@ -36,6 +36,10 @@ const ANALYST_OPINION_SOURCES: AllowedSourcePath[] = [
     domain: "cnbctv18.com",
     pathPrefixes: ["/views/", "/market/expert-views/"],
   },
+  {
+    domain: "businesstoday.in",
+    pathPrefixes: ["/analysis/", "/columns/", "/market-expert/", "/india/story/"],
+  },
   { domain: "bqprime.com", pathPrefixes: ["/markets/", "/opinion/"] },
   { domain: "ndtvprofit.com", pathPrefixes: ["/markets/", "/opinion/"] },
 ];

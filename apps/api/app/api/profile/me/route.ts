@@ -128,12 +128,18 @@ export async function GET(request: Request) {
   return NextResponse.json({
     user: {
       id: user.id,
+      // Own-view exception (S26-T5): always return the real username for the
+      // authenticated user's own profile. Anonymity affects public-facing
+      // surfaces only — the user always sees their actual username.
       username: user.username,
+      displayMode: user.displayMode,
       reputationScore: user.reputationScore,
       accuracyScore: user.accuracyScore,
       level: user.level,
       streak: user.streak,
       lastPredictionAt: user.stats?.lastPredictionAt?.toISOString() ?? null,
+      isVerifiedAnalyst: user.isVerifiedAnalyst,
+      phoneVerified: user.phoneVerified,
       stats: user.stats ? {
         totalPredictions: user.stats.totalPredictions,
         totalNetPoints: user.stats.totalNetPoints,
