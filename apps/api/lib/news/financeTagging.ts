@@ -16,7 +16,7 @@ const FINANCE_SOURCE_DOMAINS = [
   "economictimes.indiatimes.com",
   "livemint.com",
   "cnbctv18.com",
-  "businesstoday.in",
+  "seekingalpha.com",
   "bloomberg.com",
   "reuters.com",
 ] as const;

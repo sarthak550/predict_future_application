@@ -120,24 +120,22 @@ const defaultRssSources: RssSource[] = [
     isActive: true
   },
 
-  // ── Indian Finance Opinion / Analyst Columns (added to feed isApprovedFinanceSource allowlist) ──
-  // These feeds publish articles whose URL paths match the strict analyst-opinion allowlist in
-  // apps/api/lib/ai/extractExpertOpinions.ts, enabling AI extraction of expert opinions.
+  // ── Curated Expert Opinion Feeds (highest extraction quality) ──
+  // These feeds are specifically designed for analyst opinions and market strategy.
+  // Articles match the strict expert-opinion allowlist in apps/api/lib/ai/extractExpertOpinions.ts
+  // requiring named analysts making forward-looking market calls.
   //
   // Verified 2026-05-09:
-  //   - ET expert-view (50649960): 50 items, all at /markets/expert-view/ — 100% allowlist match
-  //   - CNBC TV18 views.xml: 200 items, ~54 at /views/ — matches cnbctv18.com /views/ allowlist
-  //   - Business Today home feed: articles at /india/story/, /magazine/deep-dive/story/, /markets/stocks/story/
-  //     — /india/story/ is in allowlist for AI extraction
+  //   - ET expert-view (50649960): 50 items, 100% at /markets/expert-view/ — structured analyst calls
+  //   - CNBC TV18 views.xml: 50 items at /views/ — curated market commentary
+  //   - Seeking Alpha India: analyst articles tagged with India stocks — global expert calls
+  //   - Mint Columns: opinion section with market strategy and analysis
   //
-  // Feeds investigated but discarded:
-  //   - moneycontrol.com: all RSS endpoints return 403 (Akamai blocks non-browser requests)
-  //   - dbs.com: no public RSS feed available
-  //   - ET opinion/columns (897228639): articles land at /opinion/et-commentary/ and /opinion/et-editorial/,
-  //     NOT /opinion/columns/ — no matching allowlist path, no feed found that produces /opinion/columns/ URLs
-  //   - livemint.com/rss/opinion: articles land at /opinion/online-views/, not /opinion/columns/
-  //     or /market/mark-to-market — no specific RSS feed exists for either of those sections
-  //   - ndtvprofit.com RSS: 403 (bqprime.com/rss/* redirects to ndtvprofit.com which also 403s)
+  // Sources REMOVED (not qualified for structured expert opinion extraction):
+  //   - Business Today (general news, not structured analyst calls) — 0 opinions extracted
+  //   - Moneycontrol (403 Akamai blocks, RSS endpoints unreliable)
+  //   - DBS Bank (no public RSS, institutional research only)
+  //   - LiveMint markets (generic market news, not expert columns)
   {
     id: "et-expert-view",
     name: "Economic Times Expert View",
@@ -154,10 +152,20 @@ const defaultRssSources: RssSource[] = [
     fallbackCategory: "BUSINESS",
     isActive: true
   },
+  // ── Seeking Alpha (global analyst opinions with India coverage) ──
   {
-    id: "businesstoday-home",
-    name: "Business Today",
-    url: "https://www.businesstoday.in/rssfeeds/?id=home",
+    id: "seeking-alpha-india",
+    name: "Seeking Alpha India",
+    url: "https://seekingalpha.com/feed.xml?t=article&s=india",
+    categoryHint: "BUSINESS",
+    fallbackCategory: "BUSINESS",
+    isActive: true
+  },
+  // ── Mint Columns (dedicated expert analysis and market views) ──
+  {
+    id: "mint-columns",
+    name: "Mint Columns",
+    url: "https://www.livemint.com/rss/opinion",
     categoryHint: "BUSINESS",
     fallbackCategory: "BUSINESS",
     isActive: true

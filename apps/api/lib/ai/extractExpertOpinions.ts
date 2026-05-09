@@ -16,30 +16,26 @@ import { OpinionDirection, type PrismaClient } from "@prisma/client";
 type AllowedSourcePath = { domain: string; pathPrefixes: string[] };
 
 const ANALYST_OPINION_SOURCES: AllowedSourcePath[] = [
-  {
-    domain: "moneycontrol.com",
-    pathPrefixes: [
-      "/news/business/markets/expert-views/",
-      "/news/opinion/",
-      "/news/business/markets/opinion/",
-    ],
-  },
+  // Curated expert opinion feeds (highest quality)
   {
     domain: "economictimes.indiatimes.com",
     pathPrefixes: ["/markets/expert-view", "/opinion/columns/"],
   },
   {
-    domain: "livemint.com",
-    pathPrefixes: ["/market/mark-to-market", "/opinion/columns/"],
-  },
-  {
     domain: "cnbctv18.com",
     pathPrefixes: ["/views/", "/market/expert-views/"],
   },
+  // Expert analyst feeds
   {
-    domain: "businesstoday.in",
-    pathPrefixes: ["/analysis/", "/columns/", "/market-expert/", "/india/story/"],
+    domain: "livemint.com",
+    pathPrefixes: ["/opinion/online-views/", "/opinion/", "/market/mark-to-market"],
   },
+  {
+    domain: "seekingalpha.com",
+    pathPrefixes: ["/article/", "/instablog/"],
+  },
+  // Regional analysts and brokerage research syndicated on news sites
+  { domain: "moneycontrol.com", pathPrefixes: ["/news/business/markets/expert-views/"] },
   { domain: "bqprime.com", pathPrefixes: ["/markets/", "/opinion/"] },
   { domain: "ndtvprofit.com", pathPrefixes: ["/markets/", "/opinion/"] },
 ];
