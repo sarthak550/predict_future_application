@@ -18,25 +18,44 @@ export async function GET(
     return NextResponse.json({ error: "Expert not found." }, { status: 404 });
   }
 
+  // Decode cursor: "publishedAt_ISO::id"
+  let cursorWhere = {};
+  if (cursor) {
+    const [tsStr, cursorId] = cursor.split("::");
+    const ts = tsStr ? new Date(tsStr) : null;
+    if (ts && cursorId) {
+      cursorWhere = {
+        OR: [
+          { publishedAt: { lt: ts } },
+          { AND: [{ publishedAt: ts }, { id: { lt: cursorId } }] },
+        ],
+      };
+    }
+  }
+
   const opinions = await prisma.expertOpinion.findMany({
     where: {
       expertId: params.id,
       suppressedAt: null,
-      ...(cursor ? { id: { lt: cursor } } : {}),
+      ...cursorWhere,
     },
-    orderBy: { publishedAt: "desc" },
+    orderBy: [{ publishedAt: "desc" }, { id: "desc" }],
     take: PAGE_SIZE + 1,
     include: {
       votes: {
         where: { pollType: "RETROSPECTIVE" },
         select: { choice: true },
       },
+      story: { select: { id: true, headline: true } },
     },
   });
 
   const hasMore = opinions.length > PAGE_SIZE;
   const items = hasMore ? opinions.slice(0, PAGE_SIZE) : opinions;
-  const nextCursor = hasMore ? items[items.length - 1].id : null;
+  const last = items[items.length - 1];
+  const nextCursor = hasMore && last
+    ? `${last.publishedAt.toISOString()}::${last.id}`
+    : null;
 
   return NextResponse.json({
     items: items.map((o) => {
@@ -50,6 +69,8 @@ export async function GET(
         resolutionStatus: o.resolutionStatus,
         resolvedAt: o.resolvedAt?.toISOString() ?? null,
         resolutionNote: o.resolutionNote,
+        storyId: o.story?.id ?? null,
+        storyHeadline: o.story?.headline ?? null,
         retrospectiveTallies: {
           hit: hitCount,
           miss: missCount,

@@ -49,6 +49,7 @@ const RESOLUTION_COLOR: Record<string, string> = {
 };
 
 function CallRow({ call }: { call: ApiExpertCall }) {
+  const router = useRouter();
   const dirColor = DIRECTION_COLOR[call.direction] ?? "#6b7280";
   const dirLabel = DIRECTION_LABEL[call.direction] ?? call.direction;
   const resColor = RESOLUTION_COLOR[call.resolutionStatus] ?? "#6b7280";
@@ -58,9 +59,24 @@ function CallRow({ call }: { call: ApiExpertCall }) {
     ? Math.round(((call.retrospectiveTallies!.hit ?? 0) / call.retrospectiveTallies!.total) * 100)
     : null;
 
+  const handlePress = () => {
+    if (call.storyId) {
+      router.push(`/story/${call.storyId}` as Parameters<typeof router.push>[0]);
+    }
+  };
+
   return (
-    <View style={expertProfileStyles.callRow}>
-      <Text style={expertProfileStyles.callQuote} numberOfLines={2}>
+    <Pressable
+      style={({ pressed }) => [expertProfileStyles.callRow, pressed && { opacity: 0.75 }]}
+      onPress={handlePress}
+      disabled={!call.storyId}
+    >
+      {call.storyHeadline ? (
+        <Text style={expertProfileStyles.callStoryHeadline} numberOfLines={1}>
+          {call.storyHeadline}
+        </Text>
+      ) : null}
+      <Text style={expertProfileStyles.callQuote}>
         {call.quote}
       </Text>
       <View style={expertProfileStyles.callMeta}>
@@ -74,10 +90,15 @@ function CallRow({ call }: { call: ApiExpertCall }) {
           <Text style={expertProfileStyles.crowdNote}>Crowd: {hitPct}% HIT</Text>
         )}
       </View>
-      <Text style={expertProfileStyles.callDate}>
-        {new Date(call.publishedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
-      </Text>
-    </View>
+      <View style={expertProfileStyles.callFooter}>
+        <Text style={expertProfileStyles.callDate}>
+          {new Date(call.publishedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+        </Text>
+        {call.storyId ? (
+          <Text style={expertProfileStyles.callReadMore}>Read article →</Text>
+        ) : null}
+      </View>
+    </Pressable>
   );
 }
 
@@ -116,7 +137,10 @@ export default function ExpertProfileScreen() {
     setLoadingMore(true);
     try {
       const data = await mobileApi.getExpertCalls(id, { cursor: nextCursor });
-      setCalls((prev) => [...prev, ...data.items]);
+      setCalls((prev) => {
+        const existingIds = new Set(prev.map((c) => c.id));
+        return [...prev, ...data.items.filter((c) => !existingIds.has(c.id))];
+      });
       setNextCursor(data.nextCursor);
     } finally {
       setLoadingMore(false);
@@ -323,12 +347,20 @@ const expertProfileStyles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
+  callStoryHeadline: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: colors.accent,
+    marginBottom: 4,
+  },
   callQuote: { fontSize: 13, color: colors.text, lineHeight: 18, marginBottom: 6 },
   callMeta: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 4 },
   badge: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: radius.pill },
   badgeText: { fontSize: 10, fontWeight: "700" },
   crowdNote: { fontSize: 10, color: colors.textMuted, alignSelf: "center" },
+  callFooter: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   callDate: { fontSize: 10, color: colors.textMuted },
+  callReadMore: { fontSize: 10, fontWeight: "700", color: colors.accent },
   emptyText: { textAlign: "center", color: colors.textMuted, padding: spacing.lg },
   loadMoreBtn: { margin: spacing.lg, alignItems: "center" },
   loadMoreText: { fontSize: 13, fontWeight: "700", color: colors.accent },

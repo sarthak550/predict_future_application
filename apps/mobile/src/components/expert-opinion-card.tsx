@@ -7,13 +7,13 @@ import { colors, radius, spacing } from "@predict-future/ui-tokens";
 import { ExpertOpinionRow } from "@/components/news-feed-card";
 
 /**
- * Expert-opinion-first card for the Finance tab.
+ * Expert-opinion-first card for the Finance tab and story detail page.
  *
- * Hero: the expert's take + dual polls. The story is shown as small context below.
- * This is distinct from NewsFeedCard which is news-first (used in the Feed tab).
+ * When multiple opinions from the same analyst on the same article are passed,
+ * the analyst byline is shown once and each take's quote+polls is stacked below.
  */
 type Props = {
-  opinion: ApiExpertOpinionItem;
+  opinions: ApiExpertOpinionItem[];
   storyHeadline?: string;
   storyId?: string;
 };
@@ -26,16 +26,22 @@ function getSourceDomain(url: string): string {
   }
 }
 
-export function ExpertOpinionCard({ opinion, storyHeadline, storyId }: Props) {
+export function ExpertOpinionCard({ opinions, storyHeadline, storyId }: Props) {
   const router = useRouter();
-  const sourceDomain = getSourceDomain(opinion.sourceUrl);
+
+  if (opinions.length === 0) return null;
+
+  const sourceDomain = getSourceDomain(opinions[0].sourceUrl);
 
   return (
     <View style={styles.card}>
-      {/* Expert opinion content */}
-      <ExpertOpinionRow opinion={opinion} />
+      {opinions.map((opinion, index) => (
+        <View key={opinion.id}>
+          {index > 0 && <View style={styles.takeDivider} />}
+          <ExpertOpinionRow opinion={opinion} hideByline={index > 0} />
+        </View>
+      ))}
 
-      {/* Related story row — at the bottom, restyled */}
       {storyHeadline ? (
         <Pressable
           onPress={() =>
@@ -64,6 +70,11 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     borderWidth: 1,
     borderColor: "#E5E7EB",
+  },
+  takeDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: "#E5E7EB",
+    marginVertical: spacing.md,
   },
   storyContext: {
     marginTop: spacing.sm,

@@ -19,7 +19,8 @@ const ANALYST_OPINION_SOURCES: AllowedSourcePath[] = [
   // Curated expert opinion feeds (highest quality)
   {
     domain: "economictimes.indiatimes.com",
-    pathPrefixes: ["/markets/expert-view", "/opinion/columns/"],
+    // expert-view = dedicated analyst column; stocks/news often has named brokerage calls
+    pathPrefixes: ["/markets/expert-view", "/opinion/columns/", "/markets/stocks/news/"],
   },
   {
     domain: "cnbctv18.com",
@@ -28,7 +29,8 @@ const ANALYST_OPINION_SOURCES: AllowedSourcePath[] = [
   // Expert analyst feeds
   {
     domain: "livemint.com",
-    pathPrefixes: ["/opinion/online-views/", "/opinion/", "/market/mark-to-market"],
+    // stock-market-news regularly features named analysts with buy/sell calls
+    pathPrefixes: ["/opinion/online-views/", "/opinion/", "/market/mark-to-market", "/market/stock-market-news/"],
   },
   {
     domain: "seekingalpha.com",
@@ -82,44 +84,64 @@ const EXTRACTION_SYSTEM_PROMPT = `You are an Indian-equity-market research analy
 
 Extract quotes that meet the criteria below. Two extraction modes:
 
-MODE 1: ANALYST-ATTRIBUTED (preferred, higher credibility)
-Quotes from NAMED analysts, strategists, fund managers, or research heads (e.g., "Ridham Desai of Morgan Stanley").
-Set "isSourceAttribution": false
+MODE 1: ANALYST-ATTRIBUTED (always preferred — use this whenever a person's name is mentioned)
+Quotes from NAMED analysts, strategists, fund managers, or research heads.
+Set "isSourceAttribution": false.
+If the article names the expert but does NOT mention their firm, use "Independent" as expertOrganization.
+Examples: "Ridham Desai of Morgan Stanley" → org = "Morgan Stanley". "Sudip Bandyopadhyay, market expert" → org = "Independent".
 
-MODE 2: SOURCE-ATTRIBUTED (when no named analyst available)
-Market analysis/calls from the article's trusted publication itself (e.g., "Mint analysis suggests...", "Seeking Alpha sees...").
-Use publication name for expertOrganization, leave expertName blank or use publication.
-Set "isSourceAttribution": true
+MODE 2: SOURCE-ATTRIBUTED (only when NO individual's name appears anywhere in the article)
+Market analysis/calls attributed to the publication as a whole (e.g., ETMarkets editorial, Mint Explainer).
+Use publication name for expertOrganization, leave expertName blank.
+Set "isSourceAttribution": true.
+Do NOT use Mode 2 if any individual analyst name is present — use Mode 1 instead.
 
 REJECTION CRITERIA (applies to both modes):
 - CEO/CFO talking about own company strategy
 - Regulator/government policy statements
-- Anonymous/unattributed commentary
-- Purely descriptive (no forward call or conviction)
+- Purely descriptive market recap (no forward call or conviction)
 - General mood observations without specific prediction
 
 REQUIRED FOR BOTH MODES:
-- Specific instrument (Nifty 50, Sensex, Bank Nifty, specific Indian stock, or sector)
+- Specific instrument (Nifty 50, Sensex, Bank Nifty, specific Indian stock, sector, or asset class)
 - Direction with conviction (bullish/bearish/neutral)
-- Rationale (reason supporting the call)
-- Timeframe (rough: week, quarter, FY, "near term", etc.)
+- Rationale: the concrete reason(s) behind the call — cite earnings numbers, macro factors, technicals, catalysts, or risks mentioned in the article
+- Timeframe (rough: this week, near term, Q2FY27, FY27-end, 12-18 months, etc.)
+- Price targets or specific levels if the article mentions them (e.g. "Nifty target 25,500", "buy below ₹450")
+
+QUOTE QUALITY STANDARD:
+Write paraphrasedQuote as a 2-3 sentence summary that preserves the full substance of the analyst's view.
+Include: the specific instrument(s) + direction + conviction level, the key reason(s) cited, the timeframe, and any price targets or risk factors mentioned.
+A reader who hasn't seen the article should come away with a clear, actionable understanding of the call.
+Do NOT truncate to a single vague sentence. Do NOT omit price targets or specific catalysts if present.
 
 OUTPUT FORMAT (JSON array):
-[{"expertName": "Name or blank", "expertOrganization": "Firm/Publication", "paraphrasedQuote": "≤220 chars with call+rationale+timeframe", "direction": "BULLISH|BEARISH|NEUTRAL", "confidence": 0.0-1.0, "isSourceAttribution": false or true, "rejectionReason": null}]
+[{"expertName": "Name or blank", "expertOrganization": "Firm or Independent or Publication", "paraphrasedQuote": "substantive 2-3 sentence summary", "direction": "BULLISH|BEARISH|NEUTRAL", "confidence": 0.0-1.0, "isSourceAttribution": false or true, "rejectionReason": null}]
 
 Return [] if no qualifying calls found. Do not invent quotes.
 
-GOOD EXAMPLE:
-"Ridham Desai of Morgan Stanley India sees Nifty 50 reaching 26,000 by FY26-end, citing stable FII flows and earnings growth above consensus."
-→ {"expertName":"Ridham Desai","expertOrganization":"Morgan Stanley India","paraphrasedQuote":"Sees Nifty 50 reaching 26,000 by FY26-end on stable FII flows and earnings beats","direction":"BULLISH","confidence":0.9}
+GOOD EXAMPLE (rich, substantive quote with price target and rationale):
+Article: "Sudip Bandyopadhyay of Inditrade Capital is bullish on capital goods. He sees L&T at ₹4,200 in 12 months, driven by the government's ₹11 lakh cr capex push and strong order book visibility. He recommends buying on every dip below ₹3,800."
+→ {"expertName":"Sudip Bandyopadhyay","expertOrganization":"Inditrade Capital","paraphrasedQuote":"Bullish on L&T; targets ₹4,200 in 12 months on ₹11 lakh cr govt capex cycle and strong order book. Recommends accumulating on dips below ₹3,800. Broader capital goods sector is his top overweight for FY27.","direction":"BULLISH","confidence":0.92,"isSourceAttribution":false}
 
-BAD EXAMPLE (must reject):
+GOOD EXAMPLE (named expert, no firm, multiple stocks):
+Article: "Sudip Bandyopadhyay, market expert, is bullish on capital goods for the long term, citing L&T and BHEL as top picks."
+→ {"expertName":"Sudip Bandyopadhyay","expertOrganization":"Independent","paraphrasedQuote":"Bullish on capital goods for the long term; L&T and BHEL are top picks. Post-correction levels offer good entry given intact government capex cycle and improving order inflows.","direction":"BULLISH","confidence":0.88,"isSourceAttribution":false}
+
+GOOD EXAMPLE (source attribution with sector analysis):
+Article: "ETMarkets analysis: Private banks look attractive after the recent 8% correction. HDFC Bank and Kotak Mahindra Bank trade at multi-year low valuations. Credit growth is expected to recover to 14% in H2FY27 as RBI rate cuts flow through."
+→ {"expertName":"","expertOrganization":"ETMarkets","paraphrasedQuote":"Private banks attractive after 8% correction; HDFC Bank and Kotak at multi-year low valuations. Credit growth seen recovering to 14% in H2FY27 as RBI rate cuts take effect — a re-rating catalyst for the sector.","direction":"BULLISH","confidence":0.85,"isSourceAttribution":true}
+
+BAD EXAMPLE (too vague — must improve or reject):
+→ {"paraphrasedQuote":"Bullish on markets for the long term."} ← NO — no instrument, no rationale, no timeframe
+
+BAD EXAMPLE (must reject entirely):
 "Reliance CEO Mukesh Ambani said the company is investing ₹50,000 cr in retail expansion."
 → [] (CEO talking about own business strategy, not a market call)
 
 BAD EXAMPLE (must reject):
 "Sensex closed 200 points lower today as IT stocks weighed on the index."
-→ [] (descriptive news, no named analyst, no forward call)`;
+→ [] (descriptive news recap, no forward call)`;
 
 function buildExtractionPrompt(story: { title: string; content: string }): string {
   return `Article title: ${story.title}
@@ -149,11 +171,11 @@ function validateRawOpinions(raw: unknown): RawExpertOpinion[] {
     const rejectionReason =
       typeof obj.rejectionReason === "string" ? obj.rejectionReason : null;
 
-    // Must have organization (expert or source), and quote must exist
-    if (!expertOrganization) continue;
-    if (!paraphrasedQuote || paraphrasedQuote.length < 10) continue;
+    // Named experts without a firm get "Independent" as org; pure source attributions must have org
+    const effectiveOrg = expertName && !expertOrganization ? "Independent" : expertOrganization;
+    if (!effectiveOrg) continue;
+    if (!paraphrasedQuote || paraphrasedQuote.length < 20) continue;
     if (!["BULLISH", "BEARISH", "NEUTRAL"].includes(directionRaw)) continue;
-    if (paraphrasedQuote.length > 220) continue;
 
     // Confidence floor: reject any opinion below 0.75
     if (confidence < 0.75) {
@@ -165,7 +187,7 @@ function validateRawOpinions(raw: unknown): RawExpertOpinion[] {
 
     valid.push({
       expertName,
-      expertOrganization,
+      expertOrganization: effectiveOrg,
       paraphrasedQuote,
       direction: directionRaw as "BULLISH" | "BEARISH" | "NEUTRAL",
       confidence,
@@ -426,7 +448,17 @@ export async function persistExpertOpinions(
         },
       });
 
-      // Create the ExpertOpinion linked to the story
+      // Skip if this exact (expert, story, quote) already exists — prevents re-ingestion dupes
+      // while still allowing the same analyst to have genuinely different takes on the same story
+      const existing = await prisma.expertOpinion.findFirst({
+        where: { expertId: expert.id, storyId, quote: opinion.paraphrasedQuote },
+        select: { id: true },
+      });
+      if (existing) {
+        console.info(`[Finance AI] Skipping duplicate opinion for "${displayName}" — already stored`);
+        continue;
+      }
+
       await prisma.expertOpinion.create({
         data: {
           expertId: expert.id,

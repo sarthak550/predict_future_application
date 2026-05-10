@@ -461,7 +461,7 @@ function PollB({
 }
 
 /** Single expert opinion row — renders avatar, name, quote, direction badge, footer, and polls. */
-export function ExpertOpinionRow({ opinion }: { opinion: ApiExpertOpinionItem }) {
+export function ExpertOpinionRow({ opinion, hideByline }: { opinion: ApiExpertOpinionItem; hideByline?: boolean }) {
   const router = useRouter();
   const dirConfig = DIRECTION_CONFIG[opinion.direction] ?? DIRECTION_CONFIG.NEUTRAL;
   const displayName = opinion.expertName
@@ -512,77 +512,97 @@ export function ExpertOpinionRow({ opinion }: { opinion: ApiExpertOpinionItem })
 
   return (
     <View>
-      {/* Type label — "MARKET ANALYSIS" for source-attributed, nothing for named experts */}
-      {isSourceAttribution && (
-        <View style={expertStyles.sourceAttributionBadge}>
-          <Text style={expertStyles.sourceAttributionLabel}>MARKET ANALYSIS</Text>
-        </View>
-      )}
-      <View style={expertStyles.opinionRow}>
-        {/* Avatar / initials */}
-        {opinion.avatarUrl ? (
-          <Image source={{ uri: opinion.avatarUrl }} style={expertStyles.avatar} />
-        ) : (
-          <View style={[expertStyles.avatarFallback, { backgroundColor: initialsColor }]}>
-            <Text style={expertStyles.avatarInitials}>{initials}</Text>
-          </View>
-        )}
-
-        <View style={expertStyles.opinionBody}>
-          {/* Byline + direction badge row */}
-          <View style={expertStyles.bylineRow}>
-            <View style={expertStyles.bylineInfo}>
-              {isSourceAttribution ? (
-                /* Source attribution — not tappable to expert profile */
-                <View style={expertStyles.expertNameRow}>
-                  <Text style={expertStyles.expertName} numberOfLines={1}>
-                    {opinion.expertOrganization}
-                  </Text>
-                  {/* Trusted source gets auto-verified badge */}
-                  <View style={expertStyles.verifiedBadge}>
-                    <Text style={expertStyles.verifiedBadgeText}>✓</Text>
-                  </View>
-                </View>
-              ) : (
-                /* Named analyst — tappable to expert profile */
-                <Pressable
-                  onPress={() => router.push(`/expert/${opinion.expertId}` as Parameters<typeof router.push>[0])}
-                  hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
-                >
-                  <View style={expertStyles.expertNameRow}>
-                    <Text style={expertStyles.expertName} numberOfLines={1}>
-                      {opinion.expertName || opinion.expertOrganization}
-                    </Text>
-                    {opinion.verified && (
-                      <View style={expertStyles.verifiedBadge}>
-                        <Text style={expertStyles.verifiedBadgeText}>✓</Text>
-                      </View>
-                    )}
-                  </View>
-                </Pressable>
-              )}
-              <Text style={expertStyles.expertOrg} numberOfLines={1}>
-                {isSourceAttribution ? "Trusted Source" : opinion.expertOrganization}
-              </Text>
+      {/* Full analyst byline — hidden for subsequent takes in a grouped card */}
+      {!hideByline && (
+        <>
+          {isSourceAttribution && (
+            <View style={expertStyles.sourceAttributionBadge}>
+              <Text style={expertStyles.sourceAttributionLabel}>MARKET ANALYSIS</Text>
             </View>
-
-            {/* Direction badge — top-right, larger with prefix */}
-            <View
-              style={[
-                expertStyles.directionBadge,
-                {
-                  backgroundColor: dirConfig.color,
-                  borderColor: dirConfig.color,
-                },
-              ]}
+          )}
+          <View style={expertStyles.opinionRow}>
+            <Pressable
+              onPress={() => router.push(`/expert/${opinion.expertId}` as Parameters<typeof router.push>[0])}
+              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
             >
-              <Text style={expertStyles.directionLabel}>
-                {dirConfig.prefix} {dirConfig.label}
-              </Text>
+              {opinion.avatarUrl ? (
+                <Image source={{ uri: opinion.avatarUrl }} style={expertStyles.avatar} />
+              ) : (
+                <View style={[expertStyles.avatarFallback, { backgroundColor: initialsColor }]}>
+                  <Text style={expertStyles.avatarInitials}>{initials}</Text>
+                </View>
+              )}
+            </Pressable>
+
+            <View style={expertStyles.opinionBody}>
+              <View style={expertStyles.bylineRow}>
+                <View style={expertStyles.bylineInfo}>
+                  <Pressable
+                    onPress={() => router.push(`/expert/${opinion.expertId}` as Parameters<typeof router.push>[0])}
+                    hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+                  >
+                    <View style={expertStyles.expertNameRow}>
+                      <Text style={expertStyles.expertName} numberOfLines={1}>
+                        {isSourceAttribution
+                          ? opinion.expertOrganization
+                          : (opinion.expertName || opinion.expertOrganization)}
+                      </Text>
+                      {(isSourceAttribution || opinion.verified) && (
+                        <View style={expertStyles.verifiedBadge}>
+                          <Text style={expertStyles.verifiedBadgeText}>✓</Text>
+                        </View>
+                      )}
+                    </View>
+                  </Pressable>
+                  <Text style={expertStyles.expertOrg} numberOfLines={1}>
+                    {isSourceAttribution ? "Trusted Source" : opinion.expertOrganization}
+                  </Text>
+                </View>
+
+                <View
+                  style={[
+                    expertStyles.directionBadge,
+                    { backgroundColor: dirConfig.color, borderColor: dirConfig.color },
+                  ]}
+                >
+                  <Text style={expertStyles.directionLabel}>
+                    {dirConfig.prefix} {dirConfig.label}
+                  </Text>
+                </View>
+              </View>
+
+              <View
+                style={[
+                  expertStyles.quoteBlock,
+                  { borderLeftColor: dirConfig.color, backgroundColor: dirConfig.color + "08" },
+                ]}
+              >
+                <Text style={expertStyles.quoteText}>{opinion.quote}</Text>
+              </View>
+
+              <Pressable onPress={() => void Linking.openURL(opinion.sourceUrl)}>
+                <Text style={expertStyles.footer}>
+                  AI-summarized from {sourceDomain}. For educational discussion only. Not investment advice.
+                </Text>
+              </Pressable>
             </View>
           </View>
+        </>
+      )}
 
-          {/* Quote block with left-edge accent bar */}
+      {/* Subsequent-take body — direction chip + quote, no avatar/byline */}
+      {hideByline && (
+        <View style={expertStyles.opinionBody}>
+          <View
+            style={[
+              expertStyles.directionBadge,
+              { backgroundColor: dirConfig.color, borderColor: dirConfig.color, alignSelf: "flex-start", marginBottom: 6 },
+            ]}
+          >
+            <Text style={expertStyles.directionLabel}>
+              {dirConfig.prefix} {dirConfig.label}
+            </Text>
+          </View>
           <View
             style={[
               expertStyles.quoteBlock,
@@ -591,25 +611,20 @@ export function ExpertOpinionRow({ opinion }: { opinion: ApiExpertOpinionItem })
           >
             <Text style={expertStyles.quoteText}>{opinion.quote}</Text>
           </View>
-
-          {/* Footer: AI disclaimer + tappable source */}
           <Pressable onPress={() => void Linking.openURL(opinion.sourceUrl)}>
             <Text style={expertStyles.footer}>
               AI-summarized from {sourceDomain}. For educational discussion only. Not investment advice.
             </Text>
           </Pressable>
         </View>
-      </View>
+      )}
 
-      {/* Poll A — Implication */}
       <PollA
         opinion={opinion}
         tallies={tallies}
         loadingTallies={loadingTallies && showSkeleton}
         onVoted={handleTalliesUpdate}
       />
-
-      {/* Poll B — Retrospective */}
       <PollB opinion={opinion} tallies={tallies} onVoted={handleTalliesUpdate} />
     </View>
   );
@@ -799,7 +814,7 @@ export function NewsFeedCard({ item, viewportHeight, showHint, onVoted }: Props)
               <Pressable
                 style={styles.financeChip}
                 onPress={() =>
-                  router.push("/(tabs)/finance" as Parameters<typeof router.push>[0])
+                  router.push(`/story/${item.id}` as Parameters<typeof router.push>[0])
                 }
                 hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
               >

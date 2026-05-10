@@ -91,7 +91,7 @@ const newsFeedInclude = () =>
       where: { suppressedAt: null },
       include: { expert: true },
       orderBy: { publishedAt: "desc" as const },
-      take: 3,
+      take: 10,
     },
   }) satisfies Prisma.StoryInclude;
 
@@ -127,7 +127,7 @@ export async function getPublishedNewsPage(input?: {
   userId?: string | null;
   requireExpertOpinions?: boolean;
 }) {
-  const limit = Math.max(1, Math.min(20, input?.limit ?? 10));
+  const limit = Math.max(1, Math.min(50, input?.limit ?? 10));
   const decodedCursor = decodeNewsCursor(input?.cursor);
   const items = await prisma.story.findMany({
     where: {

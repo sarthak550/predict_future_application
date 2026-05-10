@@ -173,14 +173,27 @@ export default function StoryScreen() {
               </Text>
             </View>
 
-            {story.expertOpinions.map((opinion) => (
-              <ExpertOpinionCard
-                key={opinion.id}
-                opinion={opinion}
-                storyHeadline={story.headline}
-                storyId={story.id}
-              />
-            ))}
+            {(() => {
+              const grouped: { key: string; opinions: typeof story.expertOpinions }[] = [];
+              const seen = new Map<string, number>();
+              for (const op of story.expertOpinions) {
+                const idx = seen.get(op.expertId);
+                if (idx !== undefined) {
+                  grouped[idx].opinions.push(op);
+                } else {
+                  seen.set(op.expertId, grouped.length);
+                  grouped.push({ key: op.expertId, opinions: [op] });
+                }
+              }
+              return grouped.map(({ key, opinions }) => (
+                <ExpertOpinionCard
+                  key={key}
+                  opinions={opinions}
+                  storyHeadline={story.headline}
+                  storyId={story.id}
+                />
+              ));
+            })()}
           </View>
         )}
 

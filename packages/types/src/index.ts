@@ -749,6 +749,8 @@ export interface ApiExpertCall {
   resolutionStatus: string;
   resolvedAt?: string | null;
   resolutionNote?: string | null;
+  storyId?: string | null;
+  storyHeadline?: string | null;
   retrospectiveTallies?: { hit: number; miss: number; total: number };
 }
 

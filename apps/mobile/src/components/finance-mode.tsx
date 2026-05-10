@@ -225,6 +225,9 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
   // Cluster filter state: when set, only opinions with matching eventClusterId are shown (S18-T4)
   const [selectedClusterFilter, setSelectedClusterFilter] = useState<string | null>(null);
 
+  // Toggle between named-analyst expert opinions and trusted-source market analysis
+  const [opinionTab, setOpinionTab] = useState<"expert" | "analysis">("expert");
+
   const router = useRouter();
 
   const load = async (isRefresh = false) => {
@@ -233,7 +236,7 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
     try {
       const [marketsResult, newsResult, sentimentResult] = await Promise.all([
         mobileApi.getFinanceMarkets(),
-        mobileApi.getNews({ category: "FINANCE", limit: 10, requireExpertOpinions: true }),
+        mobileApi.getNews({ category: "FINANCE", limit: 30, requireExpertOpinions: true }),
         mobileApi.getFinanceExpertSentiment().catch(() => null),
       ]);
       setData(marketsResult);
@@ -398,14 +401,11 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
         </Pressable>
       )}
 
-      {/* Section 3: Expert Opinions (the heart of the Finance tab —
-          extracted from trusted India-finance sources) */}
+      {/* Section 3: Expert Opinions + Market Analysis */}
       <View
         style={financeStyles.unclusteredSection}
         onLayout={(e) => { expertSectionY.current = e.nativeEvent.layout.y; }}
       >
-        <Text style={financeStyles.sectionHeader}>Expert Opinions</Text>
-
         {/* Active cluster filter banner */}
         {selectedClusterFilter !== null ? (() => {
           const activeCluster = data?.eventClusters.find((c) => c.id === selectedClusterFilter);
@@ -422,20 +422,38 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
         })() : null}
 
         {(() => {
-          const flatOpinions = financeNews.flatMap((item) =>
-            (item.expertOpinions ?? []).map((op) => ({
-              opinion: op,
-              storyId: item.id,
-              storyHeadline: item.headline,
-            }))
-          );
+          // Group opinions by (storyId, expertId) so same analyst's takes on one article share a card
+          interface GroupedCard {
+            key: string;
+            storyId: string;
+            storyHeadline: string;
+            opinions: NonNullable<ApiNewsFeedItem["expertOpinions"]>;
+          }
+          const grouped: GroupedCard[] = [];
+          const seen = new Map<string, number>();
+          for (const item of financeNews) {
+            for (const op of (item.expertOpinions ?? [])) {
+              const key = `${item.id}::${op.expertId}`;
+              const idx = seen.get(key);
+              if (idx !== undefined) {
+                grouped[idx].opinions.push(op);
+              } else {
+                seen.set(key, grouped.length);
+                grouped.push({ key, storyId: item.id, storyHeadline: item.headline, opinions: [op] });
+              }
+            }
+          }
 
-          // Apply cluster filter if active
-          const displayedOpinions = selectedClusterFilter
-            ? flatOpinions.filter((op) => op.opinion.eventClusterId === selectedClusterFilter)
-            : flatOpinions;
+          // Apply cluster filter: show group if any opinion matches the selected cluster
+          const allGroups = selectedClusterFilter
+            ? grouped.filter((g) => g.opinions.some((op) => op.eventClusterId === selectedClusterFilter))
+            : grouped;
 
-          if (flatOpinions.length === 0) {
+          // Split into named-analyst opinions vs trusted-source market analysis
+          const expertGroups = allGroups.filter((g) => !g.opinions[0].isSourceAttribution);
+          const analysisGroups = allGroups.filter((g) => g.opinions[0].isSourceAttribution);
+
+          if (grouped.length === 0) {
             return (
               <View style={financeStyles.expertEmptyCard}>
                 <Text style={financeStyles.expertEmptyIcon}>📊</Text>
@@ -453,7 +471,7 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
             );
           }
 
-          if (displayedOpinions.length === 0 && selectedClusterFilter !== null) {
+          if (allGroups.length === 0 && selectedClusterFilter !== null) {
             return (
               <View style={financeStyles.expertEmptyCard}>
                 <Text style={financeStyles.expertEmptyTitle}>No opinions tagged to this cluster yet</Text>
@@ -464,14 +482,51 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
             );
           }
 
-          return displayedOpinions.map(({ opinion, storyId, storyHeadline }) => (
-            <ExpertOpinionCard
-              key={opinion.id}
-              opinion={opinion}
-              storyHeadline={storyHeadline}
-              storyId={storyId}
-            />
-          ));
+          const activeGroups = opinionTab === "expert" ? expertGroups : analysisGroups;
+
+          return (
+            <>
+              {/* Toggle pill */}
+              <View style={financeStyles.opinionToggle}>
+                <Pressable
+                  style={[financeStyles.toggleBtn, opinionTab === "expert" && financeStyles.toggleBtnActive]}
+                  onPress={() => setOpinionTab("expert")}
+                >
+                  <Text style={[financeStyles.toggleBtnText, opinionTab === "expert" && financeStyles.toggleBtnTextActive]}>
+                    Expert Opinions
+                    {expertGroups.length > 0 ? ` (${expertGroups.length})` : ""}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={[financeStyles.toggleBtn, opinionTab === "analysis" && financeStyles.toggleBtnActive]}
+                  onPress={() => setOpinionTab("analysis")}
+                >
+                  <Text style={[financeStyles.toggleBtnText, opinionTab === "analysis" && financeStyles.toggleBtnTextActive]}>
+                    Market Analysis
+                    {analysisGroups.length > 0 ? ` (${analysisGroups.length})` : ""}
+                  </Text>
+                </Pressable>
+              </View>
+
+              {/* Subheader for analysis tab */}
+              {opinionTab === "analysis" && (
+                <Text style={financeStyles.sectionSubheader}>From trusted India-finance publications</Text>
+              )}
+
+              {/* Cards for the active tab */}
+              {activeGroups.length === 0 ? (
+                <View style={financeStyles.expertEmptyCard}>
+                  <Text style={financeStyles.expertEmptyTitle}>
+                    {opinionTab === "expert" ? "No expert opinions yet" : "No market analysis yet"}
+                  </Text>
+                </View>
+              ) : (
+                activeGroups.map(({ key, storyId, storyHeadline, opinions }) => (
+                  <ExpertOpinionCard key={key} opinions={opinions} storyHeadline={storyHeadline} storyId={storyId} />
+                ))
+              )}
+            </>
+          );
         })()}
       </View>
 
@@ -795,6 +850,44 @@ const financeStyles = StyleSheet.create({
     color: colors.text ?? "#111827",
     marginHorizontal: spacing.lg,
     marginBottom: spacing.sm,
+  },
+  sectionSubheader: {
+    fontSize: 11,
+    color: colors.textMuted ?? "#6b7280",
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.sm,
+    marginTop: -2,
+  },
+  opinionToggle: {
+    flexDirection: "row",
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.md,
+    borderRadius: 10,
+    backgroundColor: "#F3F4F6",
+    padding: 3,
+  },
+  toggleBtn: {
+    flex: 1,
+    paddingVertical: 7,
+    alignItems: "center",
+    borderRadius: 8,
+  },
+  toggleBtnActive: {
+    backgroundColor: "#fff",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  toggleBtnText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: colors.textMuted ?? "#6b7280",
+  },
+  toggleBtnTextActive: {
+    color: colors.text ?? "#111827",
+    fontWeight: "700",
   },
   unclusteredSection: { marginTop: spacing.sm },
   filterBanner: {
