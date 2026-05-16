@@ -2,6 +2,7 @@ import { type MarketCategory, Prisma } from "@prisma/client";
 
 import { calculateLevel } from "@/lib/constants";
 import { buildHostPlatformBenchmarks, computeHostMetrics } from "@/lib/hosts/trust";
+import { checkStreakMilestone } from "@/lib/quests/engine";
 
 type TxClient = Prisma.TransactionClient;
 
@@ -225,6 +226,15 @@ export async function refreshUserStats(tx: TxClient, userId: string) {
     }
   });
 
+  // Check for streak milestone rewards after the streak field is updated.
+  // Awaited inside the same transaction so the payout runs on the live tx
+  // client before it closes. Errors are absorbed to avoid blocking stats refresh.
+  try {
+    await checkStreakMilestone(userId, streakData.current, tx);
+  } catch (err) {
+    console.error("[refreshUserStats] checkStreakMilestone error:", err);
+  }
+
   await syncCategoryStats(tx, userId, positions);
   await syncBadges(tx, userId);
 }
@@ -233,9 +243,9 @@ function didPositionWin(position: {
   amount: number;
   payoutAmount: number | null;
   side: "YES" | "NO" | null;
-  market: { marketType: "BINARY" | "NUMERIC"; outcome: "YES" | "NO" | "CANCELLED" | "UNRESOLVED" };
+  market: { marketType: "BINARY" | "NUMERIC" | "MULTIPLE_CHOICE"; outcome: "YES" | "NO" | "CANCELLED" | "UNRESOLVED" };
 }) {
-  if (position.market.marketType === "NUMERIC") {
+  if (position.market.marketType === "NUMERIC" || position.market.marketType === "MULTIPLE_CHOICE") {
     return (position.payoutAmount ?? 0) > 0;
   }
 
@@ -254,7 +264,7 @@ async function syncCategoryStats(
     side: "YES" | "NO" | null;
     market: {
       category: MarketCategory;
-      marketType: "BINARY" | "NUMERIC";
+      marketType: "BINARY" | "NUMERIC" | "MULTIPLE_CHOICE";
       outcome: "YES" | "NO" | "CANCELLED" | "UNRESOLVED";
     };
   }>

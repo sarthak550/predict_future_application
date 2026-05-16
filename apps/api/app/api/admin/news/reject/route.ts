@@ -44,11 +44,11 @@ export async function POST(request: Request) {
         }
       });
 
-      if (story.market && story.market.status !== "RESOLVED" && story.market.status !== "CANCELLED") {
+      if (story.market && story.market.status !== "CANCELLED") {
         await tx.market.update({
           where: { id: story.market.id },
           data: {
-            status: "REJECTED",
+            status: "CANCELLED",
             isFeatured: false,
             approvedAt: null,
             approvedById: null

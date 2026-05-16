@@ -1,19 +1,19 @@
 import { NextResponse } from "next/server";
 
-import { getSession } from "@/lib/auth";
+import { getUserIdFromRequest } from "@/lib/auth";
 import { getUserGroups, joinGroupByInviteCode } from "@/lib/groups/service";
 import { prisma } from "@/lib/prisma";
-import { joinGroupSchema } from "@/lib/validations/group";
+import { joinGroupFlexSchema } from "@predict-future/validation/group";
 
 export async function POST(request: Request) {
   try {
-    const session = await getSession();
-    if (!session?.user?.id) {
+    const userId = await getUserIdFromRequest(request);
+    if (!userId) {
       return NextResponse.json({ error: "Authentication required." }, { status: 401 });
     }
 
     const actor = await prisma.user.findUnique({
-      where: { id: session.user.id },
+      where: { id: userId },
       select: {
         id: true,
         isSuspended: true
@@ -24,11 +24,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Account cannot join groups." }, { status: 403 });
     }
 
-    const payload = joinGroupSchema.parse(await request.json());
+    const payload = joinGroupFlexSchema.parse(await request.json());
+
     const joinedGroup = await joinGroupByInviteCode({
       userId: actor.id,
       inviteCode: payload.inviteCode
     });
+
     const groups = await getUserGroups(actor.id);
     const group = groups.find((item) => item.id === joinedGroup.id);
 

@@ -1,4 +1,4 @@
-import { Prisma, type MarketCategory, type MarketStatus, type PositionSide, type StoryStatus } from "@prisma/client";
+import { Prisma, type MarketCategory, type MarketStatus, type StoryStatus } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { approvedStoryStatuses } from "@/lib/validations/news";
@@ -18,6 +18,24 @@ export type PlainNewsItem = {
   status: StoryStatus;
 };
 
+export type NewsFeedExpertOpinion = {
+  id: string;
+  expertId: string;
+  expertName: string;
+  expertOrganization: string;
+  avatarUrl: string | null;
+  verified: boolean;
+  quote: string;
+  direction: string;
+  sourceUrl: string;
+  resolutionStatus: string;
+  resolvedAt: Date | null;
+  /** Nullable FK to event cluster for filter UX (S18-T4) */
+  eventClusterId: string | null;
+  /** True when sourced from trusted publication (no named analyst) — display as "Market Analysis from [Source]" */
+  isSourceAttribution: boolean;
+};
+
 export type NewsFeedItem = {
   id: string;
   slug: string;
@@ -33,16 +51,24 @@ export type NewsFeedItem = {
   isTrending: boolean;
   market: {
     id: string;
+    slug: string;
     title: string;
     status: MarketStatus;
+    marketType: string;
     yesPool: number;
     noPool: number;
     totalVolume: number;
-    positions: Array<{
-      side: PositionSide;
-      amount: number;
-    }>;
+    totalParticipants: number;
+    yesCount: number;
+    noCount: number;
+    totalVotes: number;
+    unit: string | null;
+    minValue: number | null;
+    maxValue: number | null;
+    averageNumericValue: number | null;
+    closeAt: Date | null;
   } | null;
+  expertOpinions: NewsFeedExpertOpinion[];
 };
 
 export type NewsCursorPage = {
@@ -51,45 +77,31 @@ export type NewsCursorPage = {
   hasMore: boolean;
 };
 
-const newsFeedInclude = (userId?: string | null) =>
+const UNAPPROVED_MARKET_STATUSES: MarketStatus[] = [
+  "DRAFT",
+  "PENDING_REVIEW",
+  "REJECTED",
+  "HOST_TIMEOUT",
+];
+
+const newsFeedInclude = () =>
   ({
-    market: {
-      include: {
-        positions: {
-          where: {
-            userId: userId ?? "__anonymous__"
-          },
-          orderBy: { createdAt: "desc" },
-          take: 1
-        }
-      }
-    }
+    market: true,
+    expertOpinions: {
+      where: { suppressedAt: null },
+      include: { expert: true },
+      orderBy: { publishedAt: "desc" as const },
+      take: 10,
+    },
   }) satisfies Prisma.StoryInclude;
 
 function buildCursorWhere(cursor?: { publishedAt: Date; id: string } | null): Prisma.StoryWhereInput | undefined {
-  if (!cursor) {
-    return undefined;
-  }
+  if (!cursor) return undefined;
 
   return {
     OR: [
-      {
-        publishedAt: {
-          lt: cursor.publishedAt
-        }
-      },
-      {
-        AND: [
-          {
-            publishedAt: cursor.publishedAt
-          },
-          {
-            id: {
-              lt: cursor.id
-            }
-          }
-        ]
-      }
+      { publishedAt: { lt: cursor.publishedAt } },
+      { AND: [{ publishedAt: cursor.publishedAt }, { id: { lt: cursor.id } }] }
     ]
   };
 }
@@ -99,44 +111,34 @@ export function encodeNewsCursor(input: { publishedAt: Date | string; id: string
 }
 
 export function decodeNewsCursor(cursor?: string | null) {
-  if (!cursor) {
-    return null;
-  }
-
+  if (!cursor) return null;
   const [publishedAt, id] = cursor.split("::");
-  if (!publishedAt || !id) {
-    return null;
-  }
-
+  if (!publishedAt || !id) return null;
   const parsedDate = new Date(publishedAt);
-  if (Number.isNaN(parsedDate.getTime())) {
-    return null;
-  }
-
-  return {
-    publishedAt: parsedDate,
-    id
-  };
+  if (Number.isNaN(parsedDate.getTime())) return null;
+  return { publishedAt: parsedDate, id };
 }
 
 export async function getPublishedNewsPage(input?: {
   limit?: number;
   category?: MarketCategory;
+  excludeCategory?: MarketCategory;
   cursor?: string | null;
   userId?: string | null;
+  requireExpertOpinions?: boolean;
 }) {
-  const limit = Math.max(1, Math.min(20, input?.limit ?? 10));
+  const limit = Math.max(1, Math.min(50, input?.limit ?? 10));
   const decodedCursor = decodeNewsCursor(input?.cursor);
   const items = await prisma.story.findMany({
     where: {
-      status: {
-        in: visibleNewsStatuses
-      },
+      status: { in: visibleNewsStatuses },
       ...(input?.category ? { category: input.category } : {}),
+      ...(input?.excludeCategory ? { category: { not: input.excludeCategory } } : {}),
+      ...(input?.requireExpertOpinions ? { expertOpinions: { some: { suppressedAt: null } } } : {}),
       ...(buildCursorWhere(decodedCursor) ?? {})
     },
     orderBy: [{ publishedAt: "desc" }, { id: "desc" }],
-    include: newsFeedInclude(input?.userId),
+    include: newsFeedInclude(),
     take: limit + 1
   });
 
@@ -158,20 +160,42 @@ export async function getPublishedNewsPage(input?: {
       ingestedAt: item.ingestedAt.toISOString(),
       isFeatured: item.isFeatured,
       isTrending: item.isTrending,
-      market: item.market
+      market: item.market && !UNAPPROVED_MARKET_STATUSES.includes(item.market.status)
         ? {
             id: item.market.id,
+            slug: item.market.slug,
             title: item.market.title,
             status: item.market.status,
+            marketType: item.market.marketType,
             yesPool: item.market.yesPool,
             noPool: item.market.noPool,
             totalVolume: item.market.totalVolume,
-            positions: item.market.positions.map((position) => ({
-              side: position.side ?? "YES",
-              amount: position.amount
-            }))
+            totalParticipants: item.market.totalParticipants,
+            yesCount: item.market.yesCount,
+            noCount: item.market.noCount,
+            totalVotes: item.market.totalVotes,
+            unit: item.market.unit,
+            minValue: item.market.minValue,
+            maxValue: item.market.maxValue,
+            averageNumericValue: item.market.averageNumericValue,
+            closeAt: item.market.closeAt,
           }
-        : null
+        : null,
+      expertOpinions: (item.expertOpinions ?? []).map((opinion) => ({
+        id: opinion.id,
+        expertId: opinion.expertId,
+        expertName: opinion.expert.name,
+        expertOrganization: opinion.expert.organization,
+        avatarUrl: opinion.expert.avatarUrl ?? null,
+        verified: opinion.expert.verified,
+        quote: opinion.quote,
+        direction: opinion.direction,
+        sourceUrl: opinion.sourceUrl,
+        resolutionStatus: opinion.resolutionStatus,
+        resolvedAt: opinion.resolvedAt ?? null,
+        eventClusterId: opinion.eventClusterId ?? null,
+        isSourceAttribution: opinion.isSourceAttribution,
+      })),
     })),
     nextCursor: hasMore && lastItem ? encodeNewsCursor(lastItem) : null,
     hasMore
@@ -185,9 +209,7 @@ export async function getPublishedNewsItems(input?: {
   const limit = Math.max(1, Math.min(100, input?.limit ?? 20));
   const items = await prisma.story.findMany({
     where: {
-      status: {
-        in: visibleNewsStatuses
-      },
+      status: { in: visibleNewsStatuses },
       ...(input?.category ? { category: input.category } : {})
     },
     orderBy: [{ publishedAt: "desc" }, { ingestedAt: "desc" }],
@@ -210,85 +232,42 @@ export async function getPublishedNewsItems(input?: {
 
 export async function getNewsDebugSnapshot() {
   const [totalItems, latestItems, latestIngestion, feedBreakdown] = await Promise.all([
-    prisma.story.count({
-      where: {
-        status: {
-          in: visibleNewsStatuses
-        }
-      }
-    }),
+    prisma.story.count({ where: { status: { in: visibleNewsStatuses } } }),
     prisma.story.findMany({
-      where: {
-        status: {
-          in: visibleNewsStatuses
-        }
-      },
+      where: { status: { in: visibleNewsStatuses } },
       orderBy: [{ ingestedAt: "desc" }, { publishedAt: "desc" }],
       take: 10,
       select: {
-        id: true,
-        headline: true,
-        sourceName: true,
-        sourceUrl: true,
-        category: true,
-        publishedAt: true,
-        ingestedAt: true,
-        status: true,
-        ingestionFeedId: true,
-        ingestionFeedName: true
+        id: true, headline: true, sourceName: true, sourceUrl: true,
+        category: true, publishedAt: true, ingestedAt: true, status: true,
+        ingestionFeedId: true, ingestionFeedName: true
       }
     }),
     prisma.story.findFirst({
-      where: {
-        status: {
-          in: visibleNewsStatuses
-        }
-      },
-      orderBy: {
-        ingestedAt: "desc"
-      },
-      select: {
-        ingestedAt: true
-      }
+      where: { status: { in: visibleNewsStatuses } },
+      orderBy: { ingestedAt: "desc" },
+      select: { ingestedAt: true }
     }),
     prisma.story.groupBy({
       by: ["ingestionFeedId", "ingestionFeedName"],
-      where: {
-        status: {
-          in: visibleNewsStatuses
-        },
-        ingestionFeedId: {
-          not: null
-        }
-      },
-      _count: {
-        _all: true
-      },
-      _max: {
-        ingestedAt: true,
-        publishedAt: true
-      }
+      where: { status: { in: visibleNewsStatuses }, ingestionFeedId: { not: null } },
+      _count: { _all: true },
+      _max: { ingestedAt: true, publishedAt: true }
     })
   ]);
 
   return {
     totalItems,
     latestItems: latestItems.map((item) => ({
-      id: item.id,
-      title: item.headline,
-      sourceName: item.sourceName,
-      sourceUrl: item.sourceUrl,
-      category: item.category,
+      id: item.id, title: item.headline, sourceName: item.sourceName,
+      sourceUrl: item.sourceUrl, category: item.category,
       publishedAt: item.publishedAt.toISOString(),
       ingestedAt: item.ingestedAt.toISOString(),
-      status: item.status,
-      feedId: item.ingestionFeedId,
-      feedName: item.ingestionFeedName
+      status: item.status, feedId: item.ingestionFeedId, feedName: item.ingestionFeedName
     })),
     lastIngestionTime: latestIngestion?.ingestedAt.toISOString() ?? null,
     feedStatuses: feedBreakdown.map((feed) => ({
-      feedId: feed.ingestionFeedId,
-      feedName: feed.ingestionFeedName,
+      feedId: feed.ingestionFeedId, feedName: feed.ingestionFeedName,
       totalItems: feed._count._all,
       lastIngestedAt: feed._max.ingestedAt?.toISOString() ?? null,
       latestPublishedAt: feed._max.publishedAt?.toISOString() ?? null

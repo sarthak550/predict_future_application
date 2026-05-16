@@ -13,8 +13,11 @@ function trimSummary(input: string, maxWords = 48) {
   return words.length > maxWords ? `${trimmed}...` : trimmed;
 }
 
+const NULL_STRINGS = new Set(["null", "undefined", "NULL", "Null"]);
+
 export function normalizeSummary(summary: string | null | undefined, title: string) {
-  const candidate = (summary ?? "").trim().replace(/\s+/g, " ");
+  const raw = (summary ?? "").trim().replace(/\s+/g, " ");
+  const candidate = NULL_STRINGS.has(raw) ? "" : raw;
   if (!candidate) {
     return trimSummary(title, 20);
   }

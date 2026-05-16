@@ -61,6 +61,20 @@ function extractImageUrl(item: ParserItem) {
     return item.enclosure.url;
   }
 
+  // Check for media:content or media:thumbnail (common in Google News RSS)
+  const media = (item as Record<string, unknown>)["media:content"] ??
+    (item as Record<string, unknown>)["media:thumbnail"];
+  if (media) {
+    const mediaUrl = typeof media === "string"
+      ? media
+      : (media as Record<string, unknown>)?.["$"]
+        ? ((media as Record<string, unknown>)["$"] as Record<string, unknown>)?.url as string | undefined
+        : (media as Record<string, unknown>)?.url as string | undefined;
+    if (typeof mediaUrl === "string" && mediaUrl.startsWith("http")) {
+      return mediaUrl;
+    }
+  }
+
   const html = item.content ?? item.description ?? "";
   const imageMatch = html.match(/<img[^>]+src=["']([^"']+)["']/i);
   return imageMatch?.[1];

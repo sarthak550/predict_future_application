@@ -827,7 +827,7 @@ export default async function MarketDetailPage({
           <Card>
             <CardHeader>
               <CardTitle>
-                {trustedHostMarket ? "Trusted host resolution" : normalizedResolutionMode === "GROUP_VOTE" ? "Group result" : "Host resolution"}
+                {trustedHostMarket ? "Trusted host resolution" : normalizedResolutionMode === "GROUP_VOTE" ? "Community consensus" : "Host resolution"}
               </CardTitle>
               <CardDescription>
                 {trustedHostMarket

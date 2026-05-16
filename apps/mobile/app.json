@@ -8,13 +8,23 @@
     "userInterfaceStyle": "light",
     "primaryColor": "#0EA5E9",
     "backgroundColor": "#F6F7FB",
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "experiments": {
       "tsconfigPaths": true,
       "autolinkingModuleResolution": true,
       "typedRoutes": true
     },
-    "plugins": ["expo-router"],
+    "plugins": [
+      [
+        "expo-router",
+        {
+          "root": "./src/app"
+        }
+      ],
+      "expo-secure-store"
+    ],
     "splash": {
       "backgroundColor": "#F6F7FB",
       "resizeMode": "contain"
@@ -30,23 +40,36 @@
       "adaptiveIcon": {
         "backgroundColor": "#F6F7FB"
       },
-      "permissions": ["INTERNET"],
+      "permissions": [
+        "INTERNET",
+        "WAKE_LOCK"
+      ],
       "intentFilters": [
         {
           "action": "VIEW",
           "autoVerify": true,
           "data": [
-            { "scheme": "predictfuture" },
-            { "scheme": "https", "host": "predictfuture.app" }
+            {
+              "scheme": "predictfuture"
+            },
+            {
+              "scheme": "https",
+              "host": "predictfuture.app"
+            }
           ],
-          "category": ["BROWSABLE", "DEFAULT"]
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
         }
       ]
     },
     "ios": {
       "bundleIdentifier": "com.predictfuture.mobile",
       "supportsTablet": false,
-      "associatedDomains": ["applinks:predictfuture.app"]
+      "associatedDomains": [
+        "applinks:predictfuture.app"
+      ]
     }
   }
 }

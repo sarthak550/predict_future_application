@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc --noEmit -p apps/mobile/tsconfig.json)",
+      "Bash(npx tsc --noEmit -p apps/api/tsconfig.json)",
+      "Bash(npx tsc --noEmit -p packages/api-client/tsconfig.json)",
+      "Bash(npx tsc --noEmit -p packages/validation/tsconfig.json)",
+      "Bash(npx tsc --noEmit -p packages/types/tsconfig.json)",
+      "Bash(npx tsc --noEmit *)",
+      "Bash(curl -s http://localhost:*)",
+      "Bash(curl -s -X POST http://localhost:*)",
+      "Bash(curl -s -X PATCH http://localhost:*)",
+      "Bash(curl -s -X DELETE http://localhost:*)",
+      "Bash(npx prisma validate)",
+      "Bash(npx prisma format --check)",
+      "Bash(npm ls *)",
+      "Bash(npm list *)",
+      "Bash(cat apps/mobile/package.json)",
+      "Bash(cat apps/api/package.json)",
+      "Bash(cat packages/*/package.json)",
+      "Bash(npm --version)",
+      "Bash(node --version)"
+    ]
+  }
+}

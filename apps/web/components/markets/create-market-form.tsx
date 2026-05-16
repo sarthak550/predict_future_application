@@ -112,7 +112,7 @@ export function CreateMarketForm({
   const [customSourceName, setCustomSourceName] = useState("");
   const [customResolutionRule, setCustomResolutionRule] = useState("");
   const [customFallbackRule, setCustomFallbackRule] = useState("");
-  const [publicResolutionMode, setPublicResolutionMode] = useState<ResolutionMode>(ResolutionMode.VERIFIED);
+  const [publicResolutionMode, setPublicResolutionMode] = useState<ResolutionMode>(ResolutionMode.HOST);
   const [privateResolutionMode, setPrivateResolutionMode] = useState<ResolutionMode>(ResolutionMode.HOST);
 
   const [unit, setUnit] = useState("");
@@ -151,10 +151,6 @@ export function CreateMarketForm({
     trustedHostEligibility.eligible;
 
   const effectiveResolutionMode = useMemo(() => {
-    if (!isCustomTemplate) {
-      return ResolutionMode.VERIFIED;
-    }
-
     if (effectiveMarketType === MarketType.NUMERIC) {
       return ResolutionMode.HOST;
     }
@@ -164,17 +160,19 @@ export function CreateMarketForm({
         return ResolutionMode.TRUSTED_HOST;
       }
 
-      return ResolutionMode.VERIFIED;
+      return publicResolutionMode === ResolutionMode.GROUP_VOTE
+        ? ResolutionMode.GROUP_VOTE
+        : ResolutionMode.HOST;
     }
 
     return privateResolutionMode;
-  }, [effectiveMarketType, isCustomTemplate, privateResolutionMode, publicResolutionMode, trustedHostSelectable, visibility]);
+  }, [effectiveMarketType, privateResolutionMode, publicResolutionMode, trustedHostSelectable, visibility]);
 
   const parsedPayoutDistribution = useMemo(
     () => parseDistributionInput(payoutDistributionInput),
     [payoutDistributionInput]
   );
-  const showVerifiedSourceInputs = isCustomTemplate && effectiveResolutionMode === ResolutionMode.VERIFIED;
+  const showVerifiedSourceInputs = false; // VERIFIED no longer offered for new markets
   const showHostSettings =
     isCustomTemplate &&
     (effectiveResolutionMode === ResolutionMode.TRUSTED_HOST || effectiveResolutionMode === ResolutionMode.HOST);
@@ -216,11 +214,9 @@ export function CreateMarketForm({
     const sourceName =
       effectiveResolutionMode === ResolutionMode.TRUSTED_HOST
         ? "Trusted host resolution"
-        : effectiveResolutionMode === ResolutionMode.HOST
-          ? "Host resolution"
-          : effectiveResolutionMode === ResolutionMode.GROUP_VOTE
-            ? "Group vote"
-            : customSourceName || "[named source]";
+        : effectiveResolutionMode === ResolutionMode.GROUP_VOTE
+          ? "Community consensus"
+          : "Host resolution";
 
     if (effectiveMarketType === MarketType.NUMERIC) {
       return {
@@ -261,13 +257,11 @@ export function CreateMarketForm({
           : effectiveResolutionMode === ResolutionMode.HOST
             ? "Resolve using the pre-written host rule once the outcome is known."
             : effectiveResolutionMode === ResolutionMode.GROUP_VOTE
-              ? "Resolve based on the written group-vote rule after the event window ends."
-              : "Resolve YES or NO using the named public source and the exact rule written below."),
+              ? "Resolve based on community consensus after the event window ends."
+              : "Resolve using the host's pre-written rule once the outcome is known."),
       fallbackRuleText:
         customFallbackRule ||
-        (effectiveResolutionMode === ResolutionMode.VERIFIED
-        ? "If the primary source fails, use the closest official or equally authoritative source and apply the same wording."
-          : "If the chosen resolution process fails, cancel the market and refund all committed points."),
+        "If the chosen resolution process fails, cancel the market and refund all committed points.",
       structuredData:
         visibility === MarketVisibility.PRIVATE && groupId
           ? {
@@ -321,8 +315,8 @@ export function CreateMarketForm({
                   <p className="font-medium">{marketVisibilityLabels[option]}</p>
                   <p className={`mt-2 text-sm ${visibility === option ? "text-white/70" : "text-ink-500"}`}>
                     {option === MarketVisibility.PUBLIC
-                      ? "Visible to everyone after moderation. Public markets use verified or trusted-host resolution."
-                      : "Visible only inside a group. Private markets can use verified, host, or group-vote resolution, including numeric guesses."}
+                      ? "Visible to everyone after moderation. Public markets use host or community consensus resolution."
+                      : "Visible only inside a group. Private markets can use host or community consensus resolution, including numeric guesses."}
                   </p>
                 </button>
               ))}
@@ -401,7 +395,6 @@ export function CreateMarketForm({
                   value={privateResolutionMode}
                   onChange={(event) => setPrivateResolutionMode(event.target.value as ResolutionMode)}
                 >
-                  <option value={ResolutionMode.VERIFIED}>{resolutionModeLabels.VERIFIED}</option>
                   <option value={ResolutionMode.HOST}>{resolutionModeLabels.HOST}</option>
                   <option value={ResolutionMode.GROUP_VOTE}>{resolutionModeLabels.GROUP_VOTE}</option>
                 </Select>
@@ -437,7 +430,8 @@ export function CreateMarketForm({
                       value={effectiveResolutionMode}
                       onChange={(event) => setPublicResolutionMode(event.target.value as ResolutionMode)}
                     >
-                      <option value={ResolutionMode.VERIFIED}>{resolutionModeLabels.VERIFIED}</option>
+                      <option value={ResolutionMode.HOST}>{resolutionModeLabels.HOST}</option>
+                      <option value={ResolutionMode.GROUP_VOTE}>{resolutionModeLabels.GROUP_VOTE}</option>
                       <option value={ResolutionMode.TRUSTED_HOST} disabled={!trustedHostEligibility.eligible}>
                         {resolutionModeLabels.TRUSTED_HOST}
                       </option>
@@ -456,7 +450,7 @@ export function CreateMarketForm({
                   <div className="rounded-[20px] bg-ink-50 p-4 text-sm text-ink-600 sm:col-span-2">
                     {effectiveMarketType === MarketType.NUMERIC
                       ? "Numeric private markets always use host resolution. The host submits the actual value, but the system ranks guesses and allocates payouts automatically."
-                      : "Private host and group-vote markets stay inside the selected group and still need clear written rules."}
+                      : "Private host and community consensus markets stay inside the selected group and still need clear written rules."}
                   </div>
                 )}
 

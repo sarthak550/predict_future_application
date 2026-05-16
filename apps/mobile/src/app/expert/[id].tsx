@@ -1,0 +1,367 @@
+import { Stack, useLocalSearchParams, useRouter } from "expo-router";
+import { useEffect, useState } from "react";
+import {
+  ActivityIndicator,
+  FlatList,
+  Image,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
+
+import type { ApiExpertCall, ApiExpertProfile } from "@predict-future/types";
+import { colors, radius, spacing } from "@predict-future/ui-tokens";
+
+import { mobileApi } from "@/lib/api";
+import { getExpertInitials, getExpertInitialsColor } from "@/utils/expertAvatar";
+
+function credibilityColor(score: number): string {
+  if (score >= 0.6) return "#16a34a";
+  if (score >= 0.4) return "#d97706";
+  return "#dc2626";
+}
+
+const DIRECTION_LABEL: Record<string, string> = {
+  BULLISH: "Bullish",
+  BEARISH: "Bearish",
+  NEUTRAL: "Neutral",
+};
+
+const DIRECTION_COLOR: Record<string, string> = {
+  BULLISH: "#16a34a",
+  BEARISH: "#dc2626",
+  NEUTRAL: "#6b7280",
+};
+
+const RESOLUTION_LABEL: Record<string, string> = {
+  PENDING: "Pending",
+  RESOLVED_HIT: "Hit",
+  RESOLVED_MISS: "Miss",
+  NOT_GRADED: "Ungraded",
+};
+
+const RESOLUTION_COLOR: Record<string, string> = {
+  RESOLVED_HIT: "#16a34a",
+  RESOLVED_MISS: "#dc2626",
+  PENDING: "#6b7280",
+  NOT_GRADED: "#9ca3af",
+};
+
+function CallRow({ call }: { call: ApiExpertCall }) {
+  const router = useRouter();
+  const dirColor = DIRECTION_COLOR[call.direction] ?? "#6b7280";
+  const dirLabel = DIRECTION_LABEL[call.direction] ?? call.direction;
+  const resColor = RESOLUTION_COLOR[call.resolutionStatus] ?? "#6b7280";
+  const resLabel = RESOLUTION_LABEL[call.resolutionStatus] ?? call.resolutionStatus;
+  const hasTallies = (call.retrospectiveTallies?.total ?? 0) > 0;
+  const hitPct = hasTallies
+    ? Math.round(((call.retrospectiveTallies!.hit ?? 0) / call.retrospectiveTallies!.total) * 100)
+    : null;
+
+  const handlePress = () => {
+    if (call.storyId) {
+      router.push(`/story/${call.storyId}` as Parameters<typeof router.push>[0]);
+    }
+  };
+
+  return (
+    <Pressable
+      style={({ pressed }) => [expertProfileStyles.callRow, pressed && { opacity: 0.75 }]}
+      onPress={handlePress}
+      disabled={!call.storyId}
+    >
+      {call.storyHeadline ? (
+        <Text style={expertProfileStyles.callStoryHeadline} numberOfLines={1}>
+          {call.storyHeadline}
+        </Text>
+      ) : null}
+      <Text style={expertProfileStyles.callQuote}>
+        {call.quote}
+      </Text>
+      <View style={expertProfileStyles.callMeta}>
+        <View style={[expertProfileStyles.badge, { backgroundColor: dirColor + "20" }]}>
+          <Text style={[expertProfileStyles.badgeText, { color: dirColor }]}>{dirLabel}</Text>
+        </View>
+        <View style={[expertProfileStyles.badge, { backgroundColor: resColor + "20" }]}>
+          <Text style={[expertProfileStyles.badgeText, { color: resColor }]}>{resLabel}</Text>
+        </View>
+        {hitPct !== null && (
+          <Text style={expertProfileStyles.crowdNote}>Crowd: {hitPct}% HIT</Text>
+        )}
+      </View>
+      <View style={expertProfileStyles.callFooter}>
+        <Text style={expertProfileStyles.callDate}>
+          {new Date(call.publishedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+        </Text>
+        {call.storyId ? (
+          <Text style={expertProfileStyles.callReadMore}>Read article →</Text>
+        ) : null}
+      </View>
+    </Pressable>
+  );
+}
+
+export default function ExpertProfileScreen() {
+  const { id } = useLocalSearchParams<{ id: string }>();
+  const router = useRouter();
+
+  const [profile, setProfile] = useState<ApiExpertProfile | null>(null);
+  const [calls, setCalls] = useState<ApiExpertCall[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!id) return;
+    void (async () => {
+      try {
+        const [profileData, callsData] = await Promise.all([
+          mobileApi.getExpertProfile(id),
+          mobileApi.getExpertCalls(id),
+        ]);
+        setProfile(profileData);
+        setCalls(callsData.items);
+        setNextCursor(callsData.nextCursor);
+      } catch {
+        setError("Expert not found.");
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [id]);
+
+  const loadMore = async () => {
+    if (!nextCursor || loadingMore || !id) return;
+    setLoadingMore(true);
+    try {
+      const data = await mobileApi.getExpertCalls(id, { cursor: nextCursor });
+      setCalls((prev) => {
+        const existingIds = new Set(prev.map((c) => c.id));
+        return [...prev, ...data.items.filter((c) => !existingIds.has(c.id))];
+      });
+      setNextCursor(data.nextCursor);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  const displayName = profile ? (profile.name || profile.organization) : "Expert";
+
+  if (loading) {
+    return (
+      <View style={expertProfileStyles.center}>
+        <Stack.Screen options={{ title: "Expert Profile" }} />
+        <ActivityIndicator size="large" color={colors.accent} />
+      </View>
+    );
+  }
+
+  if (error || !profile) {
+    return (
+      <View style={expertProfileStyles.center}>
+        <Stack.Screen options={{ title: "Expert Profile" }} />
+        <Text style={expertProfileStyles.errorText}>{error ?? "Expert not found."}</Text>
+      </View>
+    );
+  }
+
+  const initials = getExpertInitials(profile.name, profile.organization);
+  const initialsColor = getExpertInitialsColor(profile.name || profile.organization);
+
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
+      <Stack.Screen options={{ title: displayName, headerBackTitle: "Back" }} />
+      <FlatList
+        data={calls}
+        keyExtractor={(c) => c.id}
+        ListHeaderComponent={
+          <View style={expertProfileStyles.headerSection}>
+            {/* Avatar */}
+            <View style={expertProfileStyles.avatarRow}>
+              {profile.avatarUrl ? (
+                <Image source={{ uri: profile.avatarUrl }} style={expertProfileStyles.avatar} />
+              ) : (
+                <View style={[expertProfileStyles.avatarFallback, { backgroundColor: initialsColor }]}>
+                  <Text style={expertProfileStyles.avatarInitials}>{initials}</Text>
+                </View>
+              )}
+              <View style={expertProfileStyles.nameBlock}>
+                <View style={expertProfileStyles.nameRow}>
+                  <Text style={expertProfileStyles.expertName}>{displayName}</Text>
+                  {profile.verified && (
+                    <View style={expertProfileStyles.verifiedInlineBadge}>
+                      <Text style={expertProfileStyles.verifiedInlineText}>✓</Text>
+                    </View>
+                  )}
+                </View>
+                {profile.name && profile.organization ? (
+                  <Text style={expertProfileStyles.orgName}>{profile.organization}</Text>
+                ) : null}
+                <View style={expertProfileStyles.badgeRow}>
+                  {profile.verified && (
+                    <View style={expertProfileStyles.verifiedBadge}>
+                      <Text style={expertProfileStyles.verifiedText}>Verified</Text>
+                    </View>
+                  )}
+                  {profile.credibilityScore !== null ? (
+                    <View
+                      style={[
+                        expertProfileStyles.credBadge,
+                        { backgroundColor: credibilityColor(profile.credibilityScore) + "20" },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          expertProfileStyles.credBadgeText,
+                          { color: credibilityColor(profile.credibilityScore) },
+                        ]}
+                      >
+                        {Math.round(profile.credibilityScore * 100)}% Hit Rate
+                      </Text>
+                    </View>
+                  ) : (
+                    <View style={expertProfileStyles.provisionalBadge}>
+                      <Text style={expertProfileStyles.provisionalText}>
+                        Provisional — fewer than 5 resolved calls
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              </View>
+            </View>
+
+            {/* Stats row */}
+            <View style={expertProfileStyles.statsRow}>
+              <View style={expertProfileStyles.statTile}>
+                <Text style={expertProfileStyles.statValue}>{profile.totalOpinions}</Text>
+                <Text style={expertProfileStyles.statLabel}>Total Calls</Text>
+              </View>
+              <View style={expertProfileStyles.statTile}>
+                <Text style={expertProfileStyles.statValue}>{profile.resolvedCount}</Text>
+                <Text style={expertProfileStyles.statLabel}>Resolved</Text>
+              </View>
+              <View style={expertProfileStyles.statTile}>
+                <Text style={expertProfileStyles.statValue}>
+                  {profile.credibilityScore !== null
+                    ? `${Math.round(profile.credibilityScore * 100)}%`
+                    : "—"}
+                </Text>
+                <Text style={expertProfileStyles.statLabel}>Hit Rate</Text>
+              </View>
+            </View>
+
+            <Text style={expertProfileStyles.sectionTitle}>Recent Calls</Text>
+          </View>
+        }
+        renderItem={({ item }) => <CallRow call={item} />}
+        ListEmptyComponent={
+          <Text style={expertProfileStyles.emptyText}>No calls yet.</Text>
+        }
+        ListFooterComponent={
+          nextCursor ? (
+            <Pressable style={expertProfileStyles.loadMoreBtn} onPress={() => void loadMore()} disabled={loadingMore}>
+              {loadingMore ? (
+                <ActivityIndicator size="small" color={colors.accent} />
+              ) : (
+                <Text style={expertProfileStyles.loadMoreText}>Load more</Text>
+              )}
+            </Pressable>
+          ) : null
+        }
+        contentContainerStyle={{ paddingBottom: 32 }}
+      />
+    </View>
+  );
+}
+
+const expertProfileStyles = StyleSheet.create({
+  center: { flex: 1, alignItems: "center", justifyContent: "center" },
+  errorText: { color: "#dc2626", fontSize: 15, padding: spacing.lg, textAlign: "center" },
+  headerSection: { padding: spacing.lg },
+  avatarRow: { flexDirection: "row", gap: spacing.md, marginBottom: spacing.lg, alignItems: "flex-start" },
+  avatar: { width: 56, height: 56, borderRadius: 28 },
+  avatarFallback: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarInitials: { fontSize: 18, fontWeight: "800", color: "#fff" },
+  nameBlock: { flex: 1, gap: 4 },
+  nameRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  expertName: { fontSize: 18, fontWeight: "800", color: colors.text, flexShrink: 1 },
+  verifiedInlineBadge: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: "#2563eb",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  verifiedInlineText: { fontSize: 9, fontWeight: "800", color: "#fff", lineHeight: 14 },
+  orgName: { fontSize: 13, color: colors.textMuted },
+  badgeRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 4 },
+  verifiedBadge: {
+    backgroundColor: "#eff6ff",
+    borderRadius: radius.pill,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  verifiedText: { fontSize: 11, fontWeight: "700", color: "#2563eb" },
+  credBadge: { borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 2 },
+  credBadgeText: { fontSize: 11, fontWeight: "700" },
+  provisionalBadge: {
+    backgroundColor: "#f3f4f6",
+    borderRadius: radius.pill,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  provisionalText: { fontSize: 10, color: "#6b7280", fontStyle: "italic" },
+  statsRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginBottom: spacing.lg,
+  },
+  statTile: {
+    flex: 1,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    padding: spacing.sm,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  statValue: { fontSize: 18, fontWeight: "800", color: colors.text },
+  statLabel: { fontSize: 10, color: colors.textMuted, marginTop: 2 },
+  sectionTitle: { fontSize: 14, fontWeight: "800", color: colors.text, marginBottom: spacing.sm },
+  callRow: {
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.sm,
+    padding: spacing.md,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  callStoryHeadline: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: colors.accent,
+    marginBottom: 4,
+  },
+  callQuote: { fontSize: 13, color: colors.text, lineHeight: 18, marginBottom: 6 },
+  callMeta: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 4 },
+  badge: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: radius.pill },
+  badgeText: { fontSize: 10, fontWeight: "700" },
+  crowdNote: { fontSize: 10, color: colors.textMuted, alignSelf: "center" },
+  callFooter: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  callDate: { fontSize: 10, color: colors.textMuted },
+  callReadMore: { fontSize: 10, fontWeight: "700", color: colors.accent },
+  emptyText: { textAlign: "center", color: colors.textMuted, padding: spacing.lg },
+  loadMoreBtn: { margin: spacing.lg, alignItems: "center" },
+  loadMoreText: { fontSize: 13, fontWeight: "700", color: colors.accent },
+});

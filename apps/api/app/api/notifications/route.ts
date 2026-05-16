@@ -1,36 +1,46 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
-import { getSession } from "@/lib/auth";
+import { getUserIdFromRequest } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
-export async function GET() {
-  const session = await getSession();
-  if (!session?.user?.id) {
+export async function GET(request: NextRequest) {
+  const userId = await getUserIdFromRequest(request);
+  if (!userId) {
     return NextResponse.json({ error: "Authentication required." }, { status: 401 });
   }
 
-  const notifications = await prisma.notification.findMany({
-    where: { userId: session.user.id },
-    orderBy: { createdAt: "desc" }
-  });
+  const { searchParams } = new URL(request.url);
+  const limitParam = searchParams.get("limit");
+  const take = limitParam ? Math.min(Number(limitParam), 100) : 20;
 
-  return NextResponse.json({ notifications });
+  const [notifications, unreadCount] = await Promise.all([
+    prisma.notification.findMany({
+      where: { userId },
+      orderBy: { createdAt: "desc" },
+      take,
+    }),
+    prisma.notification.count({
+      where: { userId, isRead: false },
+    }),
+  ]);
+
+  return NextResponse.json({ notifications, unreadCount });
 }
 
-export async function PATCH() {
-  const session = await getSession();
-  if (!session?.user?.id) {
+export async function PATCH(request: Request) {
+  const userId = await getUserIdFromRequest(request);
+  if (!userId) {
     return NextResponse.json({ error: "Authentication required." }, { status: 401 });
   }
 
   await prisma.notification.updateMany({
     where: {
-      userId: session.user.id,
-      isRead: false
+      userId,
+      isRead: false,
     },
     data: {
-      isRead: true
-    }
+      isRead: true,
+    },
   });
 
   return NextResponse.json({ ok: true });

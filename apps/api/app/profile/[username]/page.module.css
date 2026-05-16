@@ -1,0 +1,386 @@
+/* Public analyst profile page — mobile-first, minimal, shareable */
+
+/* ------------------------------------------------------------------ */
+/* Layout */
+/* ------------------------------------------------------------------ */
+
+.page {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: #111827;
+  background: #ffffff;
+  min-height: 100vh;
+}
+
+/* ------------------------------------------------------------------ */
+/* Header */
+/* ------------------------------------------------------------------ */
+
+.header {
+  margin-bottom: 24px;
+}
+
+.usernameRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.username {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  color: #111827;
+  margin: 0;
+}
+
+.verifiedBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #1d4ed8;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+
+.joinedAt {
+  font-size: 13px;
+  color: #6b7280;
+  margin: 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Stats strip */
+/* ------------------------------------------------------------------ */
+
+.statsStrip {
+  display: flex;
+  align-items: stretch;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 16px 0;
+  margin-bottom: 28px;
+  overflow: hidden;
+}
+
+.statItem {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+}
+
+.statValue {
+  font-size: 22px;
+  font-weight: 700;
+  color: #111827;
+  line-height: 1;
+}
+
+.statLabel {
+  font-size: 11px;
+  font-weight: 500;
+  color: #9ca3af;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.statDivider {
+  width: 1px;
+  background: #e5e7eb;
+  align-self: stretch;
+}
+
+/* ------------------------------------------------------------------ */
+/* Sections */
+/* ------------------------------------------------------------------ */
+
+.section {
+  margin-bottom: 28px;
+}
+
+.sectionTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  margin: 0 0 12px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Market list */
+/* ------------------------------------------------------------------ */
+
+.marketList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: #e5e7eb;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.marketRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  background: #ffffff;
+  padding: 14px 16px;
+}
+
+.marketInfo {
+  flex: 1;
+  min-width: 0;
+}
+
+.marketTitle {
+  font-size: 14px;
+  font-weight: 500;
+  color: #111827;
+  margin: 0 0 3px;
+  line-height: 1.4;
+  /* Clamp to 2 lines */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.marketDate {
+  font-size: 12px;
+  color: #9ca3af;
+  margin: 0;
+}
+
+.marketMeta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Chips */
+/* ------------------------------------------------------------------ */
+
+.chip {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+.chipYes {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.chipNo {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.chipCancelled {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.chipDefault {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.callChip {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 7px;
+  border-radius: 5px;
+  white-space: nowrap;
+}
+
+.callCorrect {
+  background: #f0fdf4;
+  color: #16a34a;
+  border: 1px solid #bbf7d0;
+}
+
+.callWrong {
+  background: #fff1f2;
+  color: #be123c;
+  border: 1px solid #fecdd3;
+}
+
+/* ------------------------------------------------------------------ */
+/* Category list */
+/* ------------------------------------------------------------------ */
+
+.categoryList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: #e5e7eb;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.categoryRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #ffffff;
+  padding: 12px 16px;
+}
+
+.categoryName {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 500;
+  color: #111827;
+}
+
+.categoryAccuracy {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1d4ed8;
+}
+
+.categoryPredictions {
+  font-size: 12px;
+  color: #9ca3af;
+  min-width: 52px;
+  text-align: right;
+}
+
+/* ------------------------------------------------------------------ */
+/* CTA */
+/* ------------------------------------------------------------------ */
+
+.ctaSection {
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  padding: 24px 20px;
+  text-align: center;
+  margin-bottom: 24px;
+  background: #f9fafb;
+}
+
+.ctaText {
+  font-size: 18px;
+  font-weight: 600;
+  color: #111827;
+  margin: 0 0 6px;
+}
+
+.ctaSubtext {
+  font-size: 13px;
+  color: #6b7280;
+  margin: 0 0 20px;
+  line-height: 1.5;
+}
+
+.ctaButtons {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.ctaButton {
+  display: block;
+  background: #111827;
+  color: #ffffff;
+  text-decoration: none;
+  padding: 13px 20px;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 600;
+  text-align: center;
+  transition: background 0.15s;
+}
+
+.ctaButton:hover {
+  background: #1f2937;
+}
+
+.ctaButtonSecondary {
+  background: #ffffff;
+  color: #111827;
+  border: 1.5px solid #d1d5db;
+}
+
+.ctaButtonSecondary:hover {
+  background: #f9fafb;
+}
+
+.deepLink {
+  display: block;
+  font-size: 13px;
+  color: #1d4ed8;
+  text-decoration: none;
+  margin-top: 4px;
+}
+
+.deepLink:hover {
+  text-decoration: underline;
+}
+
+/* ------------------------------------------------------------------ */
+/* Footer */
+/* ------------------------------------------------------------------ */
+
+.footer {
+  text-align: center;
+  border-top: 1px solid #f3f4f6;
+  padding-top: 20px;
+}
+
+.footerLink {
+  font-size: 13px;
+  color: #9ca3af;
+  text-decoration: none;
+}
+
+.footerLink:hover {
+  color: #6b7280;
+}
+
+/* ------------------------------------------------------------------ */
+/* Responsive tweaks */
+/* ------------------------------------------------------------------ */
+
+@media (max-width: 380px) {
+  .username {
+    font-size: 22px;
+  }
+
+  .statValue {
+    font-size: 18px;
+  }
+
+  .statLabel {
+    font-size: 10px;
+  }
+}

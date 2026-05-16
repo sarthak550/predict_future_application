@@ -244,13 +244,14 @@ export async function finalizeMarketResolution(input: {
   payHostReward?: boolean;
   releaseHostBond?: boolean;
   forfeitHostBond?: boolean;
+  forfeitBondAmount?: number;
   markChallengesAs?: "UPHELD" | "REJECTED" | "REVIEWED";
   finalizationActorId?: string;
   hostResolutionNote?: string | null;
   hostResolutionEvidenceJson?: Prisma.JsonValue;
   overturnedReason?: string | null;
 }) {
-  return prisma.$transaction(async (tx) => {
+  const market = await prisma.$transaction(async (tx) => {
     const market = await tx.market.findUnique({
       where: { id: input.marketId },
       include: {
@@ -361,7 +362,8 @@ export async function finalizeMarketResolution(input: {
     await settleMarket(tx, input.marketId, {
       payHostReward: Boolean(input.payHostReward),
       releaseHostBond: Boolean(input.releaseHostBond),
-      forfeitHostBond: Boolean(input.forfeitHostBond)
+      forfeitHostBond: Boolean(input.forfeitHostBond),
+      forfeitBondAmount: input.forfeitBondAmount
     });
 
     const participantIds = Array.from(
@@ -400,6 +402,72 @@ export async function finalizeMarketResolution(input: {
 
     return market;
   });
+
+  // Fire push notifications after the transaction commits — best-effort, non-blocking.
+  // Uses prisma directly (not tx) so it never holds the transaction open.
+  const finalResolutionStatus =
+    input.resolutionStatus ??
+    (input.outcome === "CANCELLED" ? "CANCELLED" : "FINALIZED");
+
+  const participantIds = Array.from(
+    new Set([
+      market.creatorId,
+      ...market.positions.map((p) => p.userId),
+      ...market.challenges.map((c) => c.challengerUserId)
+    ])
+  );
+
+  void sendExpoPushNotifications(participantIds, market.title, finalResolutionStatus).catch((err) => {
+    console.error("[push] resolution push failed:", err);
+  });
+
+  return market;
+}
+
+/**
+ * Sends best-effort Expo push notifications to a list of users after a market
+ * resolves. Called outside any Prisma transaction so it never delays commits.
+ * Failures are swallowed — push delivery is advisory, not transactional.
+ */
+async function sendExpoPushNotifications(
+  userIds: string[],
+  marketTitle: string,
+  resolutionStatus: string
+): Promise<void> {
+  const users = await prisma.user.findMany({
+    where: { id: { in: userIds }, expoPushToken: { not: null } },
+    select: { expoPushToken: true }
+  });
+
+  const tokens = users.map((u) => u.expoPushToken).filter(Boolean) as string[];
+  if (tokens.length === 0) return;
+
+  const body =
+    resolutionStatus === "CANCELLED"
+      ? `${marketTitle} was cancelled and your stake was refunded.`
+      : resolutionStatus === "HOST_TIMEOUT"
+        ? `${marketTitle} timed out and your stake was refunded.`
+        : `${marketTitle} has been finalized. Check your results!`;
+
+  // Expo Push API supports up to 100 messages per request
+  for (let i = 0; i < tokens.length; i += 100) {
+    const chunk = tokens.slice(i, i + 100);
+    const messages = chunk.map((to) => ({
+      to,
+      sound: "default" as const,
+      title: "Prediction resolved",
+      body
+    }));
+
+    await fetch("https://exp.host/--/api/v2/push/send", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json"
+      },
+      body: JSON.stringify(messages)
+    });
+  }
 }
 
 export async function submitHostMarketResolution(input: {
@@ -549,7 +617,7 @@ export async function submitHostMarketResolution(input: {
 
     const sourceName =
       normalizedMode === "GROUP_VOTE"
-        ? "Group vote"
+        ? "Community consensus"
         : `${market.creator.username} (host)`;
 
     if (isCancellation) {
@@ -941,6 +1009,17 @@ export async function processHostResolutionTimeouts() {
       continue;
     }
 
+    const hasBond = market.lockedBondAmount > 0;
+    // Commission-based: only forfeit pool × commissionBps / 10000 (capped at bond).
+    // Bond-based: forfeit the full bond (no partial relief).
+    const forfeitBondAmount =
+      hasBond && market.poolRewardMode === "COMMISSION_BASED" && market.hostCommissionBps > 0
+        ? Math.min(
+            Math.floor((market.totalVolume * market.hostCommissionBps) / 10_000),
+            market.lockedBondAmount
+          )
+        : market.lockedBondAmount;
+
     await finalizeMarketResolution({
       marketId: market.id,
       outcome: "CANCELLED",
@@ -950,7 +1029,8 @@ export async function processHostResolutionTimeouts() {
         "The host did not submit a resolution before the deadline. The market timed out and all participants were refunded.",
       resolutionStatus: "HOST_TIMEOUT",
       marketStatus: "HOST_TIMEOUT",
-      forfeitHostBond: market.lockedBondAmount > 0,
+      forfeitHostBond: hasBond,
+      forfeitBondAmount,
       finalizationActorId: market.creatorId,
       auditData: {
         timeout: true,

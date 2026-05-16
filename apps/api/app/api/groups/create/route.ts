@@ -1,19 +1,20 @@
 import { NextResponse } from "next/server";
 
-import { getSession } from "@/lib/auth";
+import { getSession, getUserIdFromRequest } from "@/lib/auth";
 import { createGroup, getUserGroups } from "@/lib/groups/service";
 import { prisma } from "@/lib/prisma";
 import { createGroupSchema } from "@/lib/validations/group";
 
 export async function POST(request: Request) {
   try {
-    const session = await getSession();
-    if (!session?.user?.id) {
+    const { searchParams } = new URL(request.url);
+  const userId = await getUserIdFromRequest(request);
+    if (!userId) {
       return NextResponse.json({ error: "Authentication required." }, { status: 401 });
     }
 
     const actor = await prisma.user.findUnique({
-      where: { id: session.user.id },
+      where: { id: userId },
       select: {
         id: true,
         isSuspended: true

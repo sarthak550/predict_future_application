@@ -16,7 +16,7 @@ const defaultRssSources: RssSource[] = [
     url: "https://news.google.com/rss?hl=en-IN&gl=IN&ceid=IN:en",
     categoryHint: "GENERAL",
     fallbackCategory: "GENERAL",
-    isActive: true
+    isActive: false
   },
   {
     id: "bbc-world",
@@ -56,8 +56,132 @@ const defaultRssSources: RssSource[] = [
     url: "https://news.google.com/rss/search?q=technology&hl=en-IN&gl=IN&ceid=IN:en",
     categoryHint: "TECH",
     fallbackCategory: "TECH",
+    isActive: false
+  },
+  {
+    id: "reuters-world",
+    name: "Reuters",
+    url: "https://www.reutersagency.com/feed/?taxonomy=best-sectors&post_type=best",
+    categoryHint: "GENERAL",
+    fallbackCategory: "GENERAL",
     isActive: true
-  }
+  },
+  {
+    id: "the-verge",
+    name: "The Verge",
+    url: "https://www.theverge.com/rss/index.xml",
+    categoryHint: "TECH",
+    fallbackCategory: "TECH",
+    isActive: true
+  },
+  {
+    id: "ars-technica",
+    name: "Ars Technica",
+    url: "https://feeds.arstechnica.com/arstechnica/index",
+    categoryHint: "TECH",
+    fallbackCategory: "TECH",
+    isActive: true
+  },
+
+  // ── Indian Finance Sources (Sprint 13) ──
+  // categoryHint is "BUSINESS" as the safe InternalNewsCategory default.
+  // The FINANCE tag is applied later by evaluateFinanceTag() in rss-ingestion-service.ts
+  // when the story's title/summary contains India-market keywords.
+  {
+    id: "moneycontrol-markets",
+    name: "Moneycontrol",
+    url: "https://www.moneycontrol.com/rss/marketreports.xml",
+    categoryHint: "BUSINESS",
+    fallbackCategory: "BUSINESS",
+    isActive: true
+  },
+  {
+    id: "economic-times-markets",
+    name: "Economic Times",
+    url: "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms",
+    categoryHint: "BUSINESS",
+    fallbackCategory: "BUSINESS",
+    isActive: true
+  },
+  {
+    id: "mint-markets",
+    name: "Mint",
+    url: "https://www.livemint.com/rss/markets",
+    categoryHint: "BUSINESS",
+    fallbackCategory: "BUSINESS",
+    isActive: true
+  },
+  {
+    id: "cnbctv18-markets",
+    name: "CNBC TV18",
+    url: "https://www.cnbctv18.com/commonfeeds/v1/cne/rss/market.xml",
+    categoryHint: "BUSINESS",
+    fallbackCategory: "BUSINESS",
+    isActive: true
+  },
+
+  // ── Curated Expert Opinion Feeds (highest extraction quality) ──
+  // These feeds are specifically designed for analyst opinions and market strategy.
+  // Articles match the strict expert-opinion allowlist in apps/api/lib/ai/extractExpertOpinions.ts
+  // requiring named analysts making forward-looking market calls.
+  //
+  // Verified 2026-05-09:
+  //   - ET expert-view (50649960): 50 items, 100% at /markets/expert-view/ — structured analyst calls
+  //   - CNBC TV18 views.xml: 50 items at /views/ — curated market commentary
+  //   - Seeking Alpha India: analyst articles tagged with India stocks — global expert calls
+  //   - Mint Columns: opinion section with market strategy and analysis
+  //
+  // Sources REMOVED (not qualified for structured expert opinion extraction):
+  //   - Business Today (general news, not structured analyst calls) — 0 opinions extracted
+  //   - Moneycontrol (403 Akamai blocks, RSS endpoints unreliable)
+  //   - DBS Bank (no public RSS, institutional research only)
+  //   - LiveMint markets (generic market news, not expert columns)
+  {
+    id: "et-expert-view",
+    name: "Economic Times Expert View",
+    url: "https://economictimes.indiatimes.com/markets/expert-view/rssfeeds/50649960.cms",
+    categoryHint: "BUSINESS",
+    fallbackCategory: "BUSINESS",
+    isActive: true
+  },
+  {
+    id: "cnbctv18-views",
+    name: "CNBC TV18 Views",
+    url: "https://www.cnbctv18.com/commonfeeds/v1/cne/rss/views.xml",
+    categoryHint: "BUSINESS",
+    fallbackCategory: "BUSINESS",
+    isActive: true
+  },
+  // ── Seeking Alpha (global analyst opinions with India coverage) ──
+  {
+    id: "seeking-alpha-india",
+    name: "Seeking Alpha India",
+    url: "https://seekingalpha.com/feed.xml?t=article&s=india",
+    categoryHint: "BUSINESS",
+    fallbackCategory: "BUSINESS",
+    isActive: true
+  },
+  // ── Mint Columns (dedicated expert analysis and market views) ──
+  {
+    id: "mint-columns",
+    name: "Mint Columns",
+    url: "https://www.livemint.com/rss/opinion",
+    categoryHint: "BUSINESS",
+    fallbackCategory: "BUSINESS",
+    isActive: true
+  },
+  // Bloomberg's public sitemap is a news sitemap (XML), not a standard RSS feed.
+  // The sitemap_news.xml format is not compatible with rss-parser and would need
+  // custom parsing. Adding as inactive until a Bloomberg-compatible RSS or API
+  // endpoint is confirmed. Do NOT use web scraping (ToS risk).
+  // {
+  //   id: "bloomberg-india",
+  //   name: "Bloomberg India",
+  //   url: "https://www.bloomberg.com/feeds/sitemap_news.xml",
+  //   categoryHint: "BUSINESS",
+  //   fallbackCategory: "BUSINESS",
+  //   isActive: false, // Requires sitemap XML parser — standard rss-parser won't work
+  // },
 ];
 
 const sourceNameCategoryRules: Array<{ pattern: RegExp; category: InternalNewsCategory }> = [

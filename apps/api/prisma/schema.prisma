@@ -7,10 +7,788 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model User {
+  id                         String               @id @default(cuid())
+  username                   String               @unique
+  email                      String               @unique
+  emailVerified              DateTime?
+  passwordHash               String?
+  image                      String?
+  avatarUrl                  String?
+  role                       Role                 @default(USER)
+  isSuspended                Boolean              @default(false)
+  suspendedReason            String?
+  isVerifiedAnalyst          Boolean              @default(false)
+  reputationScore            Int                  @default(50)
+  expoPushToken              String?
+  accuracyScore              Float                @default(0)
+  level                      Int                  @default(1)
+  streak                     Int                  @default(0)
+  createdAt                  DateTime             @default(now())
+  updatedAt                  DateTime             @updatedAt
+  referralCode               String?              @unique
+  referredById               String?
+  currentLeagueTier          LeagueTier?
+  phone                      String?              @unique
+  phoneVerified              Boolean              @default(false)
+  /// Lifetime tip points received across all comments. Incremented atomically on each tip transaction.
+  tipsReceivedTotal          Int                  @default(0)
+  /// Controls whether the user appears under their real username or an anonymised pseudonym on public surfaces.
+  displayMode                UserDisplayMode      @default(USERNAME)
+  accounts                   Account[]
+  adminActions               AdminAction[]        @relation("AdminActor")
+  targetAdminActions         AdminAction[]        @relation("AdminTargetUser")
+  challenges                 Challenge[]          @relation("UserChallenges")
+  reviewedChallenges         Challenge[]          @relation("UserReviewedChallenges")
+  dailyQuests                DailyQuest[]
+  expertOpinionVotes         ExpertOpinionVote[]
+  followers                  Follow[]             @relation("Followee")
+  following                  Follow[]             @relation("Follower")
+  ownedGroups                Group[]              @relation("OwnedGroups")
+  groupMemberships           GroupMembership[]
+  approvedMarkets            Market[]             @relation("ApprovedMarkets")
+  createdMarkets             Market[]             @relation("CreatedMarkets")
+  finalizedMarketResolutions Market[]             @relation("FinalizedMarketResolutions")
+  comments                   MarketComment[]
+  positions                  MarketPosition[]
+  reports                    MarketReport[]       @relation("ReportedByUser")
+  reviewedReports            MarketReport[]       @relation("ReviewedReports")
+  resolutions                MarketResolution[]   @relation("ResolvedByUser")
+  monthlyLeagueEntries       MonthlyLeagueEntry[]
+  notifications              Notification[]
+  sessions                   Session[]
+  reviewedStories            Story[]              @relation("ReviewedStories")
+  createdStories             Story[]              @relation("CreatedStories")
+  referredBy                 User?                @relation("Referrer", fields: [referredById], references: [id])
+  referrals                  User[]               @relation("Referrer")
+  badges                     UserBadge[]
+  categoryStats              UserCategoryStat[]
+  stats                      UserStat?
+  votes                      Vote[]
+  wallet                     Wallet?
+  multiChoicePositions       MultiChoicePosition[]
+}
+
+model Follow {
+  id         String   @id @default(cuid())
+  followerId String
+  followeeId String
+  createdAt  DateTime @default(now())
+  followee   User     @relation("Followee", fields: [followeeId], references: [id], onDelete: Cascade)
+  follower   User     @relation("Follower", fields: [followerId], references: [id], onDelete: Cascade)
+
+  @@unique([followerId, followeeId])
+  @@index([followerId, createdAt])
+  @@index([followeeId, createdAt])
+}
+
+model Wallet {
+  id              String              @id @default(cuid())
+  userId          String              @unique
+  balance         Int                 @default(0)
+  startingBalance Int                 @default(10000)
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  user            User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions    WalletTransaction[]
+}
+
+model WalletTransaction {
+  id            String                @id @default(cuid())
+  walletId      String
+  type          WalletTransactionType
+  amount        Int
+  description   String
+  marketId      String?
+  positionId    String?
+  adminActionId String?
+  /// Percentile rank stored at market resolution for MARKET_WIN transactions.
+  /// Represents the % of other participants the user beat (0–99). Null for non-WIN transactions or solo markets.
+  percentileRank Int?
+  createdAt     DateTime              @default(now())
+  adminAction   AdminAction?          @relation(fields: [adminActionId], references: [id])
+  market        Market?               @relation(fields: [marketId], references: [id])
+  position      MarketPosition?       @relation(fields: [positionId], references: [id])
+  wallet        Wallet                @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([walletId, createdAt])
+  @@index([marketId])
+}
+
+model UserStat {
+  id                               String    @id @default(cuid())
+  userId                           String    @unique
+  totalPredictions                 Int       @default(0)
+  totalWins                        Int       @default(0)
+  totalLosses                      Int       @default(0)
+  totalMarketsCreated              Int       @default(0)
+  resolvedMarketsCreated           Int       @default(0)
+  creatorReputation                Int       @default(0)
+  totalPointsStaked                Int       @default(0)
+  totalNetPoints                   Int       @default(0)
+  streak                           Int       @default(0)
+  bestStreak                       Int       @default(0)
+  accuracyScore                    Float     @default(0)
+  lastPredictionAt                 DateTime?
+  hostTrustScore                   Int       @default(30)
+  validFinalizedHostedMarketsCount Int       @default(0)
+  hostedMarketsCount               Int       @default(0)
+  finalizedHostedMarketsCount      Int       @default(0)
+  overturnedHostedMarketsCount     Int       @default(0)
+  hostTimeoutCount                 Int       @default(0)
+  recentHostTimeoutCount           Int       @default(0)
+  challengeCount                   Int       @default(0)
+  upheldChallengesCount            Int       @default(0)
+  cleanFinalizationCount           Int       @default(0)
+  upheldAfterChallengeCount        Int       @default(0)
+  successfulResolutionsCount       Int       @default(0)
+  moderationViolationCount         Int       @default(0)
+  avgParticipantsPerHostedMarket   Float     @default(0)
+  avgPoolPerHostedMarket           Float     @default(0)
+  repeatJoinRate                   Float     @default(0)
+  avgHostCommissionBps             Float     @default(0)
+  cleanStreakCount                 Int       @default(0)
+  publicHostingEligibility         Boolean   @default(false)
+  hostingLimit                     Int       @default(1)
+  currentActiveHostedMarketsCount  Int       @default(0)
+  reversalRate                     Float     @default(0)
+  hostingSuspendedUntil            DateTime?
+  updatedAt                        DateTime  @updatedAt
+  user                             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model UserCategoryStat {
+  id               String         @id @default(cuid())
+  userId           String
+  category         MarketCategory
+  totalPredictions Int            @default(0)
+  totalWins        Int            @default(0)
+  totalLosses      Int            @default(0)
+  totalNetPoints   Int            @default(0)
+  accuracyScore    Float          @default(0)
+  updatedAt        DateTime       @updatedAt
+  user             User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, category])
+  @@index([category, accuracyScore])
+}
+
+model Badge {
+  id          String          @id @default(cuid())
+  slug        String          @unique
+  name        String
+  description String
+  category    MarketCategory?
+  createdAt   DateTime        @default(now())
+  users       UserBadge[]
+}
+
+model UserBadge {
+  id         String   @id @default(cuid())
+  userId     String
+  badgeId    String
+  awardedAt  DateTime @default(now())
+  awardedFor String?
+  badge      Badge    @relation(fields: [badgeId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, badgeId])
+}
+
+model Source {
+  id               String          @id @default(cuid())
+  slug             String          @unique
+  name             String          @unique
+  homepageUrl      String?
+  attributionLabel String?
+  iconUrl          String?
+  language         String          @default("en")
+  trustTier        SourceTrustTier @default(REPUTABLE)
+  isActive         Boolean         @default(true)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  stories          Story[]
+}
+
+model Story {
+  id                String             @id @default(cuid())
+  slug              String             @unique
+  headline          String
+  summary           String
+  category          MarketCategory
+  sourceId          String?
+  sourceName        String
+  sourceUrl         String             @unique
+  imageUrl          String?
+  publishedAt       DateTime
+  ingestedAt        DateTime           @default(now())
+  language          String             @default("en")
+  status            StoryStatus        @default(DRAFT)
+  ingestionType     StoryIngestionType @default(MANUAL)
+  ingestionFeedId   String?
+  ingestionFeedName String?
+  externalId        String?            @unique
+  dedupeKey         String?
+  rawPayloadJson    Json?
+  readTimeSeconds   Int                @default(25)
+  isFeatured        Boolean            @default(false)
+  isTrending        Boolean            @default(false)
+  createdById       String?
+  approvedById      String?
+  /// Full article body text extracted via Readability (S21-T1). Null if not yet fetched.
+  bodyText          String?
+  /// Timestamp when body fetch was last attempted (success or failure).
+  bodyFetchedAt     DateTime?
+  /// True when all fetch attempts have failed (paywall, timeout, size, non-HTML, etc.).
+  bodyFetchFailed   Boolean            @default(false)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  adminActions      AdminAction[]
+  curatedItems      CuratedFeedItem[]
+  expertOpinions    ExpertOpinion[]
+  market            Market?
+  notifications     Notification[]
+  approvedBy        User?              @relation("ReviewedStories", fields: [approvedById], references: [id])
+  createdBy         User?              @relation("CreatedStories", fields: [createdById], references: [id])
+  source            Source?            @relation(fields: [sourceId], references: [id])
+
+  @@index([publishedAt(sort: Desc)])
+  @@index([ingestedAt(sort: Desc)])
+  @@index([status, publishedAt])
+  @@index([category, status, publishedAt])
+  @@index([isFeatured, isTrending, publishedAt])
+  @@index([dedupeKey])
+  @@index([ingestionFeedId, ingestedAt])
+}
+
+model CuratedFeed {
+  id          String            @id @default(cuid())
+  slug        String            @unique
+  title       String
+  description String?
+  feedType    CuratedFeedType
+  isActive    Boolean           @default(true)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  items       CuratedFeedItem[]
+}
+
+model CuratedFeedItem {
+  id        String      @id @default(cuid())
+  feedId    String
+  storyId   String
+  position  Int
+  createdAt DateTime    @default(now())
+  feed      CuratedFeed @relation(fields: [feedId], references: [id], onDelete: Cascade)
+  story     Story       @relation(fields: [storyId], references: [id], onDelete: Cascade)
+
+  @@unique([feedId, storyId])
+  @@unique([feedId, position])
+  @@index([storyId])
+}
+
+model Group {
+  id          String            @id @default(cuid())
+  slug        String            @unique
+  name        String
+  description String?
+  ownerId     String
+  inviteCode  String            @unique
+  isArchived  Boolean           @default(false)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  owner       User              @relation("OwnedGroups", fields: [ownerId], references: [id], onDelete: Cascade)
+  memberships GroupMembership[]
+  markets     Market[]
+
+  @@index([ownerId, createdAt])
+}
+
+model GroupMembership {
+  id        String    @id @default(cuid())
+  groupId   String
+  userId    String
+  role      GroupRole @default(MEMBER)
+  joinedAt  DateTime  @default(now())
+  createdAt DateTime  @default(now())
+  group     Group     @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+  @@index([userId, joinedAt])
+}
+
+model Market {
+  id                         String                 @id @default(cuid())
+  storyId                    String?                @unique
+  slug                       String                 @unique
+  title                      String
+  description                String
+  category                   MarketCategory
+  template                   MarketTemplate
+  marketType                 MarketType             @default(BINARY)
+  creatorId                  String
+  visibility                 MarketVisibility       @default(PUBLIC)
+  marketScope                MarketScope            @default(GLOBAL)
+  groupId                    String?
+  status                     MarketStatus           @default(DRAFT)
+  closeAt                    DateTime
+  resolveAt                  DateTime
+  resolutionMode             ResolutionMode         @default(SOURCE_BASED)
+  resolutionStatus           ResolutionStatus       @default(OPEN)
+  resolutionSourceType       ResolutionSourceType
+  resolutionSourceName       String
+  resolutionSourceUrl        String?
+  resolutionRuleText         String
+  fallbackRuleText           String?
+  unit                       String?
+  minValue                   Float?
+  maxValue                   Float?
+  precision                  Int?
+  winnersCount               Int                    @default(1)
+  payoutDistributionJson     Json?
+  tieBreakerRule             NumericTieBreakerRule?
+  rulesLockedAt              DateTime?
+  structuredData             Json?
+  outcome                    MarketOutcome          @default(UNRESOLVED)
+  actualValue                Float?
+  yesPool                    Int                    @default(0)
+  noPool                     Int                    @default(0)
+  totalParticipants          Int                    @default(0)
+  totalVolume                Int                    @default(0)
+  creatorReputationSnapshot  Int                    @default(0)
+  qualityScore               Int                    @default(0)
+  disputeCount               Int                    @default(0)
+  poolRewardMode             PoolRewardMode         @default(COMMISSION_BASED)
+  hostCommissionBps          Int                    @default(0)
+  bondCap                    Int                    @default(0)
+  lockedBondAmount           Int                    @default(0)
+  currentRequiredBond        Int                    @default(0)
+  dynamicPoolEnabled         Boolean                @default(false)
+  maxPoolAllowed             Int?
+  challengeWindowHours       Int                    @default(24)
+  challengeWindowEndsAt      DateTime?
+  gracePeriodHours           Int                    @default(48)
+  finalResolutionDeadline    DateTime?
+  finalizationAt             DateTime?
+  hostResolutionNote         String?
+  hostResolutionEvidenceJson Json?
+  resolutionFinalizedById    String?
+  overturnedReason           String?
+  yesCount                   Int                    @default(0)
+  noCount                    Int                    @default(0)
+  totalVotes                 Int                    @default(0)
+  averageNumericValue        Float?
+  isFlagged                  Boolean                @default(false)
+  isFeatured                 Boolean                @default(false)
+  approvedAt                 DateTime?
+  approvedById               String?
+  createdAt                  DateTime               @default(now())
+  updatedAt                  DateTime               @updatedAt
+  eventClusterId             String?
+  sumToHundred               Boolean                @default(false)
+  winningOptionId            String?
+  /// Free-text identifier for the originating platform (e.g. 'manifold'). Null for native markets.
+  originPlatform             String?
+  /// Composite idempotency key in the form '<platform>:<remoteId>'. Unique so re-running import scripts is safe.
+  externalId                 String?                @unique
+  /// Date this market was marked as 'Today's Big Call' (stored as IST midnight UTC). Null = not designated.
+  isBigCallDate              DateTime?
+  /// Timestamp when the Big Call push notification was sent — used as idempotency guard to prevent double-sends.
+  bigCallNotificationSentAt  DateTime?
+  /// Engagement analytics: total opens of this market from Big Call notifications/card.
+  bigCallNotificationOpenedCount Int               @default(0)
+  adminActions               AdminAction[]
+  challenges                 Challenge[]
+  approvedBy                 User?                  @relation("ApprovedMarkets", fields: [approvedById], references: [id])
+  creator                    User                   @relation("CreatedMarkets", fields: [creatorId], references: [id], onDelete: Cascade)
+  eventCluster               MarketEventCluster?    @relation(fields: [eventClusterId], references: [id])
+  group                      Group?                 @relation(fields: [groupId], references: [id])
+  resolutionFinalizedBy      User?                  @relation("FinalizedMarketResolutions", fields: [resolutionFinalizedById], references: [id])
+  story                      Story?                 @relation(fields: [storyId], references: [id])
+  comments                   MarketComment[]
+  positions                  MarketPosition[]
+  options                    MarketOption[]
+  multiChoicePositions       MultiChoicePosition[]
+  probabilitySnapshots       MarketProbabilitySnapshot[]
+  reports                    MarketReport[]
+  resolution                 MarketResolution?
+  notifications              Notification[]
+  votes                      Vote[]
+  walletTransactions         WalletTransaction[]
+
+  @@index([status, closeAt])
+  @@index([status, resolveAt])
+  @@index([category, status])
+  @@index([creatorId, createdAt])
+  @@index([visibility, status, closeAt])
+  @@index([groupId, status, createdAt])
+  @@index([resolutionStatus, challengeWindowEndsAt])
+  @@index([marketType, visibility, status])
+  @@index([eventClusterId, status])
+  @@index([originPlatform, externalId])
+  @@index([isBigCallDate])
+}
+
+/// Hourly snapshot of binary/multi-choice market probability for the consensus-line chart.
+model MarketProbabilitySnapshot {
+  id            String   @id @default(cuid())
+  marketId      String
+  /// Probability of YES (or highest-staked option) as a fraction 0.0–1.0.
+  probability   Float
+  snapshotAt    DateTime @default(now())
+  market        Market   @relation(fields: [marketId], references: [id], onDelete: Cascade)
+
+  @@index([marketId, snapshotAt])
+}
+
+model MarketEventCluster {
+  id          String          @id @default(cuid())
+  slug        String          @unique
+  name        String
+  description String?
+  startsAt    DateTime
+  endsAt      DateTime
+  bannerEmoji String?
+  category    MarketCategory  @default(FINANCE)
+  /// Array of { label: string, value: string, subtext?: string, date?: string }
+  dataPoints  Json?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  opinions    ExpertOpinion[]
+  markets     Market[]
+}
+
+model Vote {
+  id           String        @id @default(cuid())
+  userId       String
+  marketId     String
+  side         PositionSide?
+  numericValue Float?
+  createdAt    DateTime      @default(now())
+  market       Market        @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, marketId])
+  @@index([marketId, createdAt])
+  @@index([userId, createdAt])
+}
+
+model MarketPosition {
+  id                     String              @id @default(cuid())
+  userId                 String
+  marketId               String
+  side                   PositionSide?
+  numericValue           Float?
+  absoluteError          Float?
+  amount                 Int
+  probabilityAtEntry     Float?
+  estimatedReturnAtEntry Float?
+  payoutAmount           Int?
+  settledAt              DateTime?
+  createdAt              DateTime            @default(now())
+  market                 Market              @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  user                   User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  walletTransactions     WalletTransaction[]
+
+  @@index([marketId, createdAt])
+  @@index([userId, createdAt])
+  @@index([marketId, numericValue])
+}
+
+/// One selectable option in a MULTIPLE_CHOICE market.
+model MarketOption {
+  id           String              @id @default(cuid())
+  marketId     String
+  label        String
+  sortOrder    Int                 @default(0)
+  isWinner     Boolean             @default(false)
+  totalStaked  Int                 @default(0)
+  createdAt    DateTime            @default(now())
+  market       Market              @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  positions    MultiChoicePosition[]
+
+  @@unique([marketId, sortOrder])
+  @@index([marketId])
+}
+
+/// A user's stake on one option of a MULTIPLE_CHOICE market.
+model MultiChoicePosition {
+  id          String       @id @default(cuid())
+  userId      String
+  marketId    String
+  optionId    String
+  amount      Int
+  payoutAmount Int?        @default(0)
+  settledAt   DateTime?
+  createdAt   DateTime     @default(now())
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  market      Market       @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  option      MarketOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, marketId, optionId])
+  @@index([marketId, optionId])
+  @@index([userId, createdAt])
+}
+
+model MarketComment {
+  id           String   @id @default(cuid())
+  userId       String
+  marketId     String
+  body         String
+  /// Lifetime tip total received on this comment (incremented on each tip).
+  tipsReceived Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  market       Market   @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([marketId, createdAt])
+}
+
+model MarketReport {
+  id           String        @id @default(cuid())
+  reporterId   String
+  marketId     String
+  reason       String
+  details      String?
+  status       ReportStatus  @default(OPEN)
+  reviewerId   String?
+  explanation  String?
+  reviewedAt   DateTime?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  adminActions AdminAction[]
+  market       Market        @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  reporter     User          @relation("ReportedByUser", fields: [reporterId], references: [id], onDelete: Cascade)
+  reviewer     User?         @relation("ReviewedReports", fields: [reviewerId], references: [id])
+
+  @@index([status, createdAt])
+  @@index([marketId])
+}
+
+model MarketResolution {
+  id           String        @id @default(cuid())
+  marketId     String        @unique
+  resolvedById String?
+  outcome      MarketOutcome
+  actualValue  Float?
+  sourceName   String
+  sourceUrl    String?
+  explanation  String
+  auditData    Json?
+  resolvedAt   DateTime      @default(now())
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  market       Market        @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  resolvedBy   User?         @relation("ResolvedByUser", fields: [resolvedById], references: [id])
+}
+
+model Challenge {
+  id               String          @id @default(cuid())
+  marketId         String
+  challengerUserId String
+  reasonText       String?
+  evidenceText     String?
+  evidenceUrl      String?
+  status           ChallengeStatus @default(OPEN)
+  createdAt        DateTime        @default(now())
+  reviewedAt       DateTime?
+  reviewedById     String?
+  challenger       User            @relation("UserChallenges", fields: [challengerUserId], references: [id], onDelete: Cascade)
+  market           Market          @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  reviewedBy       User?           @relation("UserReviewedChallenges", fields: [reviewedById], references: [id])
+
+  @@index([marketId, status, createdAt])
+  @@index([challengerUserId, createdAt])
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  storyId   String?
+  marketId  String?
+  type      NotificationType
+  title     String
+  body      String
+  href      String?
+  isRead    Boolean          @default(false)
+  metadata  Json?
+  createdAt DateTime         @default(now())
+  market    Market?          @relation(fields: [marketId], references: [id])
+  story     Story?           @relation(fields: [storyId], references: [id])
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead, createdAt])
+}
+
+model AdminAction {
+  id                 String              @id @default(cuid())
+  actorId            String
+  targetUserId       String?
+  storyId            String?
+  marketId           String?
+  reportId           String?
+  type               AdminActionType
+  notes              String?
+  metadata           Json?
+  createdAt          DateTime            @default(now())
+  actor              User                @relation("AdminActor", fields: [actorId], references: [id], onDelete: Cascade)
+  market             Market?             @relation(fields: [marketId], references: [id])
+  report             MarketReport?       @relation(fields: [reportId], references: [id])
+  story              Story?              @relation(fields: [storyId], references: [id])
+  targetUser         User?               @relation("AdminTargetUser", fields: [targetUserId], references: [id])
+  walletTransactions WalletTransaction[]
+
+  @@index([type, createdAt])
+  @@index([marketId])
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Expert {
+  id           String          @id @default(cuid())
+  name         String
+  organization String
+  verified     Boolean         @default(false)
+  bio          String?
+  avatarUrl    String?
+  tipranksUrl  String?
+  linkedinUrl  String?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  opinions     ExpertOpinion[]
+
+  @@unique([name, organization])
+}
+
+model ExpertOpinion {
+  id               String                  @id @default(cuid())
+  expertId         String
+  storyId          String?
+  marketId         String?
+  /// Nullable FK to event cluster — used for expert-takes footer count and filter UX (S18-T4)
+  eventClusterId   String?
+  quote            String
+  direction        OpinionDirection
+  sourceUrl        String
+  extractedAt      DateTime                @default(now())
+  publishedAt      DateTime
+  resolutionStatus OpinionResolutionStatus @default(PENDING)
+  resolvedAt       DateTime?
+  resolutionNote   String?
+  suppressedAt     DateTime?
+  /// When true, opinion is sourced from trusted publication (not attributed to named analyst).
+  /// Display as "Market Analysis from [Source]" instead of "Expert: [Analyst Name]"
+  isSourceAttribution Boolean               @default(false)
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+  eventCluster     MarketEventCluster?     @relation(fields: [eventClusterId], references: [id])
+  expert           Expert                  @relation(fields: [expertId], references: [id])
+  story            Story?                  @relation(fields: [storyId], references: [id])
+  votes            ExpertOpinionVote[]
+
+  @@index([expertId, publishedAt])
+  @@index([isSourceAttribution])
+  @@index([eventClusterId])
+}
+
+model ExpertOpinionVote {
+  id        String                @id @default(cuid())
+  userId    String
+  opinionId String
+  pollType  ExpertOpinionPollType
+  choice    String
+  createdAt DateTime              @default(now())
+  updatedAt DateTime              @updatedAt
+  opinion   ExpertOpinion         @relation(fields: [opinionId], references: [id], onDelete: Cascade)
+  user      User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, opinionId, pollType])
+  @@index([opinionId, pollType])
+}
+
+/// Monthly league entry — one per (userId, month). Records tier standing and net points earned in the month.
+model MonthlyLeagueEntry {
+  id             String     @id @default(cuid())
+  userId         String
+  month          String
+  tier           LeagueTier
+  startingTier   LeagueTier
+  netPointsMonth Int        @default(0)
+  finalRank      Int?
+  promoted       Boolean    @default(false)
+  relegated      Boolean    @default(false)
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+  user           User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, month])
+  @@index([month, tier, netPointsMonth(sort: Desc)])
+}
+
+/// Daily quest progress row — one per (userId, date, questType). Completed when currentCount reaches goal.
+model DailyQuest {
+  id           String    @id @default(cuid())
+  userId       String
+  /// UTC date string in 'YYYY-MM-DD' format representing the quest day.
+  date         String
+  /// Quest type: 'PREDICT_3' | 'PREDICT_5' | 'VOTE_ON_POLL' | 'CREATE_MARKET'
+  questType    String
+  completed    Boolean   @default(false)
+  rewardAmount Int       @default(0)
+  completedAt  DateTime?
+  createdAt    DateTime  @default(now())
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, date, questType])
+  @@index([userId, date])
+}
+
 enum Role {
   USER
   ADMIN
   MODERATOR
+}
+
+enum LeagueTier {
+  BRONZE
+  SILVER
+  GOLD
+  PLATINUM
+  DIAMOND
 }
 
 enum MarketCategory {
@@ -22,6 +800,25 @@ enum MarketCategory {
   ENTERTAINMENT
   PRODUCT
   COMPANY
+  FINANCE
+}
+
+enum OpinionDirection {
+  BULLISH
+  BEARISH
+  NEUTRAL
+}
+
+enum OpinionResolutionStatus {
+  PENDING
+  RESOLVED_HIT
+  RESOLVED_MISS
+  NOT_GRADED
+}
+
+enum ExpertOpinionPollType {
+  IMPLICATION
+  RETROSPECTIVE
 }
 
 enum MarketTemplate {
@@ -48,6 +845,7 @@ enum MarketScope {
 enum MarketType {
   BINARY
   NUMERIC
+  MULTIPLE_CHOICE
 }
 
 enum PoolRewardMode {
@@ -173,6 +971,12 @@ enum WalletTransactionType {
   HOST_BOND_RELEASE
   HOST_BOND_FORFEIT
   HOST_BOND_COMPENSATION
+  DAILY_BONUS
+  QUEST_REWARD
+  REFERRAL_BONUS_REFEREE
+  REFERRAL_BONUS_REFERRER
+  TIP_GIVEN
+  TIP_RECEIVED
 }
 
 enum NotificationType {
@@ -183,6 +987,13 @@ enum NotificationType {
   COMMENT
   REPORT_UPDATE
   LEVEL_UP
+  FOLLOWED_USER_MARKET
+  FOLLOWED_USER_OPINION
+  FOLLOWED_USER_PREDICTION
+  QUEST_COMPLETED
+  STREAK_MILESTONE
+  REFERRAL_REWARD
+  COMMENT_TIPPED
 }
 
 enum ReportStatus {
@@ -213,524 +1024,10 @@ enum AdminActionType {
   CURATE_FEED
 }
 
-model User {
-  id                 String             @id @default(cuid())
-  username           String             @unique
-  email              String             @unique
-  emailVerified      DateTime?
-  passwordHash       String?
-  image              String?
-  avatarUrl          String?
-  role               Role               @default(USER)
-  isSuspended        Boolean            @default(false)
-  suspendedReason    String?
-  reputationScore    Int                @default(50)
-  accuracyScore      Float              @default(0)
-  level              Int                @default(1)
-  streak             Int                @default(0)
-  createdAt          DateTime           @default(now())
-  updatedAt          DateTime           @updatedAt
-  accounts           Account[]
-  sessions           Session[]
-  wallet             Wallet?
-  stats              UserStat?
-  categoryStats      UserCategoryStat[]
-  createdStories     Story[]            @relation("CreatedStories")
-  reviewedStories    Story[]            @relation("ReviewedStories")
-  createdMarkets     Market[]           @relation("CreatedMarkets")
-  approvedMarkets    Market[]           @relation("ApprovedMarkets")
-  positions          MarketPosition[]
-  comments           MarketComment[]
-  reports            MarketReport[]     @relation("ReportedByUser")
-  reviewedReports    MarketReport[]     @relation("ReviewedReports")
-  badges             UserBadge[]
-  notifications      Notification[]
-  adminActions       AdminAction[]      @relation("AdminActor")
-  targetAdminActions AdminAction[]      @relation("AdminTargetUser")
-  resolutions        MarketResolution[] @relation("ResolvedByUser")
-  finalizedMarketResolutions Market[]   @relation("FinalizedMarketResolutions")
-  challenges         Challenge[]        @relation("UserChallenges")
-  reviewedChallenges Challenge[]        @relation("UserReviewedChallenges")
-  ownedGroups        Group[]            @relation("OwnedGroups")
-  groupMemberships   GroupMembership[]
-}
-
-model Wallet {
-  id              String              @id @default(cuid())
-  userId          String              @unique
-  balance         Int                 @default(0)
-  startingBalance Int                 @default(10000)
-  createdAt       DateTime            @default(now())
-  updatedAt       DateTime            @updatedAt
-  user            User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  transactions    WalletTransaction[]
-}
-
-model WalletTransaction {
-  id            String                @id @default(cuid())
-  walletId      String
-  type          WalletTransactionType
-  amount        Int
-  description   String
-  marketId      String?
-  positionId    String?
-  adminActionId String?
-  createdAt     DateTime              @default(now())
-  wallet        Wallet                @relation(fields: [walletId], references: [id], onDelete: Cascade)
-  market        Market?               @relation(fields: [marketId], references: [id], onDelete: SetNull)
-  position      MarketPosition?       @relation(fields: [positionId], references: [id], onDelete: SetNull)
-  adminAction   AdminAction?          @relation(fields: [adminActionId], references: [id], onDelete: SetNull)
-
-  @@index([walletId, createdAt])
-  @@index([marketId])
-}
-
-model UserStat {
-  id                  String   @id @default(cuid())
-  userId              String   @unique
-  totalPredictions    Int      @default(0)
-  totalWins           Int      @default(0)
-  totalLosses         Int      @default(0)
-  totalMarketsCreated Int      @default(0)
-  resolvedMarketsCreated Int   @default(0)
-  creatorReputation   Int      @default(0)
-  totalPointsStaked   Int      @default(0)
-  totalNetPoints      Int      @default(0)
-  streak              Int      @default(0)
-  bestStreak          Int      @default(0)
-  accuracyScore       Float    @default(0)
-  lastPredictionAt    DateTime?
-  hostTrustScore      Int      @default(30)
-  validFinalizedHostedMarketsCount Int @default(0)
-  hostedMarketsCount  Int      @default(0)
-  finalizedHostedMarketsCount Int @default(0)
-  overturnedHostedMarketsCount Int @default(0)
-  hostTimeoutCount    Int      @default(0)
-  recentHostTimeoutCount Int   @default(0)
-  challengeCount      Int      @default(0)
-  upheldChallengesCount Int    @default(0)
-  cleanFinalizationCount Int   @default(0)
-  upheldAfterChallengeCount Int @default(0)
-  successfulResolutionsCount Int @default(0)
-  moderationViolationCount Int @default(0)
-  avgParticipantsPerHostedMarket Float @default(0)
-  avgPoolPerHostedMarket Float @default(0)
-  repeatJoinRate     Float    @default(0)
-  avgHostCommissionBps Float  @default(0)
-  cleanStreakCount   Int      @default(0)
-  publicHostingEligibility Boolean @default(false)
-  hostingLimit        Int      @default(1)
-  currentActiveHostedMarketsCount Int @default(0)
-  reversalRate        Float    @default(0)
-  hostingSuspendedUntil DateTime?
-  updatedAt           DateTime @updatedAt
-  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
-
-model UserCategoryStat {
-  id            String         @id @default(cuid())
-  userId        String
-  category      MarketCategory
-  totalPredictions Int         @default(0)
-  totalWins     Int            @default(0)
-  totalLosses   Int            @default(0)
-  totalNetPoints Int           @default(0)
-  accuracyScore Float          @default(0)
-  updatedAt     DateTime       @updatedAt
-  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, category])
-  @@index([category, accuracyScore])
-}
-
-model Badge {
-  id          String     @id @default(cuid())
-  slug        String     @unique
-  name        String
-  description String
-  category    MarketCategory?
-  createdAt   DateTime   @default(now())
-  users       UserBadge[]
-}
-
-model UserBadge {
-  id         String   @id @default(cuid())
-  userId     String
-  badgeId    String
-  awardedAt  DateTime @default(now())
-  awardedFor String?
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  badge      Badge    @relation(fields: [badgeId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, badgeId])
-}
-
-model Source {
-  id               String          @id @default(cuid())
-  slug             String          @unique
-  name             String          @unique
-  homepageUrl      String?
-  attributionLabel String?
-  iconUrl          String?
-  language         String          @default("en")
-  trustTier        SourceTrustTier @default(REPUTABLE)
-  isActive         Boolean         @default(true)
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
-  stories          Story[]
-}
-
-model Story {
-  id            String             @id @default(cuid())
-  slug          String             @unique
-  headline      String
-  summary       String
-  category      MarketCategory
-  sourceId      String?
-  sourceName    String
-  sourceUrl     String             @unique
-  imageUrl      String?
-  publishedAt   DateTime
-  ingestedAt    DateTime           @default(now())
-  language      String             @default("en")
-  status        StoryStatus        @default(DRAFT)
-  ingestionType StoryIngestionType @default(MANUAL)
-  ingestionFeedId String?
-  ingestionFeedName String?
-  externalId    String?            @unique
-  dedupeKey     String?
-  rawPayloadJson Json?
-  readTimeSeconds Int              @default(25)
-  isFeatured    Boolean            @default(false)
-  isTrending    Boolean            @default(false)
-  createdById   String?
-  approvedById  String?
-  createdAt     DateTime           @default(now())
-  updatedAt     DateTime           @updatedAt
-  source        Source?            @relation(fields: [sourceId], references: [id], onDelete: SetNull)
-  createdBy     User?              @relation("CreatedStories", fields: [createdById], references: [id], onDelete: SetNull)
-  approvedBy    User?              @relation("ReviewedStories", fields: [approvedById], references: [id], onDelete: SetNull)
-  market        Market?
-  notifications Notification[]
-  adminActions  AdminAction[]
-  curatedItems  CuratedFeedItem[]
-
-  @@index([publishedAt(sort: Desc)])
-  @@index([ingestedAt(sort: Desc)])
-  @@index([status, publishedAt])
-  @@index([category, status, publishedAt])
-  @@index([isFeatured, isTrending, publishedAt])
-  @@index([dedupeKey])
-  @@index([ingestionFeedId, ingestedAt])
-}
-
-model CuratedFeed {
-  id          String          @id @default(cuid())
-  slug        String          @unique
-  title       String
-  description String?
-  feedType    CuratedFeedType
-  isActive    Boolean         @default(true)
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
-  items       CuratedFeedItem[]
-}
-
-model CuratedFeedItem {
-  id        String      @id @default(cuid())
-  feedId    String
-  storyId   String
-  position  Int
-  createdAt DateTime    @default(now())
-  feed      CuratedFeed @relation(fields: [feedId], references: [id], onDelete: Cascade)
-  story     Story       @relation(fields: [storyId], references: [id], onDelete: Cascade)
-
-  @@unique([feedId, storyId])
-  @@unique([feedId, position])
-  @@index([storyId])
-}
-
-model Group {
-  id          String            @id @default(cuid())
-  slug        String            @unique
-  name        String
-  description String?
-  ownerId     String
-  inviteCode  String            @unique
-  isArchived  Boolean           @default(false)
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
-  owner       User              @relation("OwnedGroups", fields: [ownerId], references: [id], onDelete: Cascade)
-  memberships GroupMembership[]
-  markets     Market[]
-
-  @@index([ownerId, createdAt])
-}
-
-model GroupMembership {
-  id        String    @id @default(cuid())
-  groupId   String
-  userId    String
-  role      GroupRole @default(MEMBER)
-  joinedAt  DateTime  @default(now())
-  createdAt DateTime  @default(now())
-  group     Group     @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([groupId, userId])
-  @@index([userId, joinedAt])
-}
-
-model Market {
-  id                   String                @id @default(cuid())
-  storyId              String?               @unique
-  slug                 String                @unique
-  title                String
-  description          String
-  category             MarketCategory
-  template             MarketTemplate
-  marketType           MarketType            @default(BINARY)
-  creatorId            String
-  visibility           MarketVisibility      @default(PUBLIC)
-  marketScope          MarketScope           @default(GLOBAL)
-  groupId              String?
-  creator              User                  @relation("CreatedMarkets", fields: [creatorId], references: [id], onDelete: Cascade)
-  group                Group?                @relation(fields: [groupId], references: [id], onDelete: SetNull)
-  status               MarketStatus          @default(DRAFT)
-  closeAt              DateTime
-  resolveAt            DateTime
-  resolutionMode       ResolutionMode        @default(SOURCE_BASED)
-  resolutionStatus     ResolutionStatus      @default(OPEN)
-  resolutionSourceType ResolutionSourceType
-  resolutionSourceName String
-  resolutionSourceUrl  String?
-  resolutionRuleText   String
-  fallbackRuleText     String?
-  unit                 String?
-  minValue             Float?
-  maxValue             Float?
-  precision            Int?
-  winnersCount         Int                   @default(1)
-  payoutDistributionJson Json?
-  tieBreakerRule       NumericTieBreakerRule?
-  rulesLockedAt        DateTime?
-  structuredData       Json?
-  outcome              MarketOutcome         @default(UNRESOLVED)
-  actualValue          Float?
-  yesPool              Int                   @default(0)
-  noPool               Int                   @default(0)
-  totalParticipants    Int                   @default(0)
-  totalVolume          Int                   @default(0)
-  creatorReputationSnapshot Int              @default(0)
-  qualityScore         Int                   @default(0)
-  disputeCount         Int                   @default(0)
-  poolRewardMode       PoolRewardMode        @default(COMMISSION_BASED)
-  hostCommissionBps    Int                   @default(0)
-  bondCap              Int                   @default(0)
-  lockedBondAmount     Int                   @default(0)
-  currentRequiredBond  Int                   @default(0)
-  dynamicPoolEnabled   Boolean               @default(false)
-  maxPoolAllowed       Int?
-  challengeWindowHours Int                   @default(24)
-  challengeWindowEndsAt DateTime?
-  gracePeriodHours     Int                   @default(48)
-  finalResolutionDeadline DateTime?
-  finalizationAt       DateTime?
-  hostResolutionNote   String?
-  hostResolutionEvidenceJson Json?
-  resolutionFinalizedById String?
-  overturnedReason     String?
-  isFlagged            Boolean               @default(false)
-  isFeatured           Boolean               @default(false)
-  approvedAt           DateTime?
-  approvedById         String?
-  approvedBy           User?                 @relation("ApprovedMarkets", fields: [approvedById], references: [id], onDelete: SetNull)
-  createdAt            DateTime              @default(now())
-  updatedAt            DateTime              @updatedAt
-  story                Story?                @relation(fields: [storyId], references: [id], onDelete: SetNull)
-  positions            MarketPosition[]
-  comments             MarketComment[]
-  reports              MarketReport[]
-  resolution           MarketResolution?
-  challenges           Challenge[]
-  notifications        Notification[]
-  walletTransactions   WalletTransaction[]
-  adminActions         AdminAction[]
-  resolutionFinalizedBy User?                @relation("FinalizedMarketResolutions", fields: [resolutionFinalizedById], references: [id], onDelete: SetNull)
-
-  @@index([status, closeAt])
-  @@index([status, resolveAt])
-  @@index([category, status])
-  @@index([creatorId, createdAt])
-  @@index([visibility, status, closeAt])
-  @@index([groupId, status, createdAt])
-  @@index([resolutionStatus, challengeWindowEndsAt])
-  @@index([marketType, visibility, status])
-}
-
-model MarketPosition {
-  id                     String              @id @default(cuid())
-  userId                 String
-  marketId               String
-  side                   PositionSide?
-  numericValue           Float?
-  absoluteError          Float?
-  amount                 Int
-  probabilityAtEntry     Float?
-  estimatedReturnAtEntry Float?
-  payoutAmount           Int?
-  settledAt              DateTime?
-  createdAt              DateTime            @default(now())
-  user                   User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  market                 Market              @relation(fields: [marketId], references: [id], onDelete: Cascade)
-  walletTransactions     WalletTransaction[]
-
-  @@index([marketId, createdAt])
-  @@index([userId, createdAt])
-  @@index([marketId, numericValue])
-}
-
-model MarketComment {
-  id        String   @id @default(cuid())
-  userId    String
-  marketId  String
-  body      String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  market    Market   @relation(fields: [marketId], references: [id], onDelete: Cascade)
-
-  @@index([marketId, createdAt])
-}
-
-model MarketReport {
-  id          String       @id @default(cuid())
-  reporterId  String
-  marketId    String
-  reason      String
-  details     String?
-  status      ReportStatus @default(OPEN)
-  reviewerId  String?
-  explanation String?
-  reviewedAt  DateTime?
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-  reporter    User         @relation("ReportedByUser", fields: [reporterId], references: [id], onDelete: Cascade)
-  reviewer    User?        @relation("ReviewedReports", fields: [reviewerId], references: [id], onDelete: SetNull)
-  market      Market       @relation(fields: [marketId], references: [id], onDelete: Cascade)
-  adminActions AdminAction[]
-
-  @@index([status, createdAt])
-  @@index([marketId])
-}
-
-model MarketResolution {
-  id         String        @id @default(cuid())
-  marketId    String       @unique
-  resolvedById String?
-  outcome    MarketOutcome
-  actualValue Float?
-  sourceName String
-  sourceUrl  String?
-  explanation String
-  auditData  Json?
-  resolvedAt DateTime      @default(now())
-  createdAt  DateTime      @default(now())
-  updatedAt  DateTime      @updatedAt
-  market     Market        @relation(fields: [marketId], references: [id], onDelete: Cascade)
-  resolvedBy User?         @relation("ResolvedByUser", fields: [resolvedById], references: [id], onDelete: SetNull)
-}
-
-model Challenge {
-  id              String          @id @default(cuid())
-  marketId         String
-  challengerUserId String
-  reasonText       String?
-  evidenceText     String?
-  evidenceUrl      String?
-  status           ChallengeStatus @default(OPEN)
-  createdAt        DateTime        @default(now())
-  reviewedAt       DateTime?
-  reviewedById     String?
-  market           Market          @relation(fields: [marketId], references: [id], onDelete: Cascade)
-  challenger       User            @relation("UserChallenges", fields: [challengerUserId], references: [id], onDelete: Cascade)
-  reviewedBy       User?           @relation("UserReviewedChallenges", fields: [reviewedById], references: [id], onDelete: SetNull)
-
-  @@index([marketId, status, createdAt])
-  @@index([challengerUserId, createdAt])
-}
-
-model Notification {
-  id        String           @id @default(cuid())
-  userId    String
-  storyId   String?
-  marketId  String?
-  type      NotificationType
-  title     String
-  body      String
-  href      String?
-  isRead    Boolean          @default(false)
-  metadata  Json?
-  createdAt DateTime         @default(now())
-  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  story     Story?           @relation(fields: [storyId], references: [id], onDelete: SetNull)
-  market    Market?          @relation(fields: [marketId], references: [id], onDelete: SetNull)
-
-  @@index([userId, isRead, createdAt])
-}
-
-model AdminAction {
-  id          String          @id @default(cuid())
-  actorId     String
-  targetUserId String?
-  storyId     String?
-  marketId    String?
-  reportId    String?
-  type        AdminActionType
-  notes       String?
-  metadata    Json?
-  createdAt   DateTime        @default(now())
-  actor       User            @relation("AdminActor", fields: [actorId], references: [id], onDelete: Cascade)
-  targetUser  User?           @relation("AdminTargetUser", fields: [targetUserId], references: [id], onDelete: SetNull)
-  story       Story?          @relation(fields: [storyId], references: [id], onDelete: SetNull)
-  market      Market?         @relation(fields: [marketId], references: [id], onDelete: SetNull)
-  report      MarketReport?   @relation(fields: [reportId], references: [id], onDelete: SetNull)
-  walletTransactions WalletTransaction[]
-
-  @@index([type, createdAt])
-  @@index([marketId])
-}
-
-model Account {
-  id                String  @id @default(cuid())
-  userId            String
-  type              String
-  provider          String
-  providerAccountId String
-  refresh_token     String? @db.Text
-  access_token      String? @db.Text
-  expires_at        Int?
-  token_type        String?
-  scope             String?
-  id_token          String? @db.Text
-  session_state     String?
-  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([provider, providerAccountId])
-}
-
-model Session {
-  id           String   @id @default(cuid())
-  sessionToken String   @unique
-  userId       String
-  expires      DateTime
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
-
-model VerificationToken {
-  identifier String
-  token      String   @unique
-  expires    DateTime
-
-  @@unique([identifier, token])
+/// Controls whether a user's identity is shown as their real username or a deterministic anonymous pseudonym.
+enum UserDisplayMode {
+  /// Show real username on all public surfaces (default).
+  USERNAME
+  /// Show anonymised pseudonym (AnonymousAnalyst_XXXXXX) on all public surfaces.
+  ANONYMOUS
 }

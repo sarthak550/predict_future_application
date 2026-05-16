@@ -1,19 +1,20 @@
 import { NextResponse } from "next/server";
 
-import { getSession } from "@/lib/auth";
+import { getSession, getUserIdFromRequest } from "@/lib/auth";
 import { canManageMarket, canViewMarket } from "@/lib/markets/access";
 import { finalizeMarketResolution } from "@/lib/markets/resolution";
 import { prisma } from "@/lib/prisma";
+import { getDisplayName } from "@/lib/users/displayName";
 import { updateMarketSchema } from "@/lib/validations/market";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: { marketId: string } }
 ) {
-  const session = await getSession();
-  const viewer = session?.user?.id
+  const viewerId = (await getUserIdFromRequest(request)) ?? undefined;
+  const viewer = viewerId
     ? await prisma.user.findUnique({
-        where: { id: session.user.id },
+        where: { id: viewerId },
         select: {
           id: true,
           role: true
@@ -45,20 +46,46 @@ export async function GET(
           },
       creator: {
         select: {
+          id: true,
           username: true,
-          reputationScore: true
+          displayMode: true,
+          reputationScore: true,
+          isVerifiedAnalyst: true,
         }
       },
       comments: {
         include: {
           user: {
             select: {
-              username: true
+              id: true,
+              username: true,
+              displayMode: true,
             }
           }
         }
       },
-      resolution: true
+      resolution: {
+        select: {
+          explanation: true,
+          resolvedAt: true,
+          createdAt: true,
+          resolvedBy: {
+            select: {
+              username: true,
+            },
+          },
+        },
+      },
+      options: {
+        select: {
+          id: true,
+          label: true,
+          sortOrder: true,
+          totalStaked: true,
+          isWinner: true
+        },
+        orderBy: { sortOrder: "asc" }
+      }
     }
   });
 
@@ -70,7 +97,114 @@ export async function GET(
     return NextResponse.json({ error: "Market not found." }, { status: 404 });
   }
 
-  return NextResponse.json({ market });
+  // Hide unapproved markets from non-creator, non-moderator viewers.
+  // Creators see their own pending review markets so they can track status.
+  const isUnapproved =
+    market.status === "DRAFT" ||
+    market.status === "PENDING_REVIEW" ||
+    market.status === "REJECTED";
+  if (isUnapproved) {
+    const isCreator = viewer?.id === market.creatorId;
+    const isModeratorRole = viewer?.role === "ADMIN" || viewer?.role === "MODERATOR";
+    if (!isCreator && !isModeratorRole) {
+      return NextResponse.json({ error: "Market not found." }, { status: 404 });
+    }
+  }
+
+  const userPositions = viewerId
+    ? await prisma.marketPosition.findMany({
+        where: { marketId: market.id, userId: viewerId },
+        select: {
+          id: true,
+          side: true,
+          amount: true,
+          numericValue: true,
+          probabilityAtEntry: true,
+          estimatedReturnAtEntry: true,
+          createdAt: true,
+        },
+        orderBy: { createdAt: "desc" },
+      })
+    : [];
+
+  // Retrieve userPercentileRank from the user's MARKET_WIN wallet transaction, if any.
+  let userPercentileRank: number | null = null;
+  if (viewerId && market.status === "RESOLVED") {
+    try {
+      const viewerWallet = await prisma.wallet.findUnique({
+        where: { userId: viewerId },
+        select: { id: true }
+      });
+      if (viewerWallet) {
+        const winTx = await prisma.walletTransaction.findFirst({
+          where: {
+            walletId: viewerWallet.id,
+            marketId: market.id,
+            type: "MARKET_WIN"
+          },
+          select: { percentileRank: true }
+        });
+        if (winTx && winTx.percentileRank != null) {
+          userPercentileRank = winTx.percentileRank;
+        }
+      }
+    } catch (percentileErr) {
+      console.error("[market-detail] userPercentileRank lookup failed:", percentileErr);
+    }
+  }
+
+  // For MULTIPLE_CHOICE markets, also return the viewer's per-option stakes.
+  const userMultiChoicePositions =
+    viewerId && market.marketType === "MULTIPLE_CHOICE"
+      ? await prisma.multiChoicePosition.findMany({
+          where: { marketId: market.id, userId: viewerId },
+          select: { optionId: true, amount: true },
+        })
+      : [];
+
+  // For poll markets (storyId != null), also fetch the user's free vote
+  const userVote =
+    viewerId && market.storyId
+      ? await prisma.vote.findFirst({
+          where: { marketId: market.id, userId: viewerId },
+          select: { side: true, numericValue: true },
+        })
+      : null;
+
+  // Shape the resolution field: rename explanation → rationale, add wasOverturned
+  const shapedResolution = market.resolution
+    ? {
+        rationale: market.resolution.explanation,
+        resolvedBy: market.resolution.resolvedBy ?? null,
+        createdAt: market.resolution.createdAt,
+        wasOverturned: Boolean(market.overturnedReason),
+      }
+    : null;
+
+  // Apply displayMode pseudonym to creator and all comment authors.
+  const shapedCreator = market.creator
+    ? {
+        ...market.creator,
+        username: getDisplayName(market.creator),
+      }
+    : market.creator;
+
+  const shapedComments = market.comments.map((c) => ({
+    ...c,
+    user: {
+      ...c.user,
+      username: getDisplayName(c.user),
+    },
+  }));
+
+  const responseMarket = {
+    ...market,
+    creator: shapedCreator,
+    comments: shapedComments,
+    resolution: shapedResolution,
+  };
+
+  return NextResponse.json({ market: responseMarket, userPositions, userMultiChoicePositions, userVote, userPercentileRank });
 }
 
 export async function PATCH(
