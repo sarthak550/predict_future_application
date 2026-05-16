@@ -65,6 +65,79 @@ export async function GET(
     isFollowedByMe = followRow !== null;
   }
 
+  // Fetch recent calls (S30-T3): up to 5, preferring positions with reasoning.
+  // Query positions on public markets only.
+  const recentPositionsWithReasoning = await prisma.marketPosition.findMany({
+    where: {
+      userId: user.id,
+      reasoning: { not: null },
+      market: {
+        visibility: "PUBLIC",
+        status: { notIn: ["DRAFT", "PENDING_REVIEW", "REJECTED"] },
+      },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 5,
+    select: {
+      id: true,
+      side: true,
+      reasoning: true,
+      reasoningUpvotes: true,
+      createdAt: true,
+      market: {
+        select: {
+          id: true,
+          title: true,
+          status: true,
+          outcome: true,
+        },
+      },
+    },
+  });
+
+  // Fall back to recent positions regardless of reasoning if we have fewer than 5.
+  let recentCalls = recentPositionsWithReasoning;
+  if (recentCalls.length < 5) {
+    const existingIds = new Set(recentCalls.map((p) => p.id));
+    const fallbackPositions = await prisma.marketPosition.findMany({
+      where: {
+        userId: user.id,
+        id: { notIn: Array.from(existingIds) },
+        market: {
+          visibility: "PUBLIC",
+          status: { notIn: ["DRAFT", "PENDING_REVIEW", "REJECTED"] },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 5 - recentCalls.length,
+      select: {
+        id: true,
+        side: true,
+        reasoning: true,
+        reasoningUpvotes: true,
+        createdAt: true,
+        market: {
+          select: {
+            id: true,
+            title: true,
+            status: true,
+            outcome: true,
+          },
+        },
+      },
+    });
+    recentCalls = [...recentCalls, ...fallbackPositions]
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .slice(0, 5);
+  }
+
+  // Compute totalReasoningUpvotes (S30-T1): sum of upvotes across all user's positions.
+  const upvoteAggregate = await prisma.marketPosition.aggregate({
+    where: { userId: user.id },
+    _sum: { reasoningUpvotes: true },
+  });
+  const totalReasoningUpvotes = upvoteAggregate._sum.reasoningUpvotes ?? 0;
+
   // Resolve the public display name. When displayMode=ANONYMOUS, the username
   // field in the response is replaced with the deterministic pseudonym. The
   // URL continues to resolve via the real username (anonymity is display-only).
@@ -80,7 +153,9 @@ export async function GET(
       level: user.level,
       streak: user.streak,
       isVerifiedAnalyst: user.isVerifiedAnalyst,
+      analystTier: user.analystTier,
       tipsReceivedTotal: user.tipsReceivedTotal,
+      totalReasoningUpvotes,
       stats: user.stats
         ? {
             totalPredictions: user.stats.totalPredictions,
@@ -94,5 +169,15 @@ export async function GET(
       followingCount: user._count.following,
       isFollowedByMe,
     },
+    recentCalls: recentCalls.map((p) => ({
+      marketId: p.market.id,
+      marketTitle: p.market.title,
+      side: p.side ?? "UNKNOWN",
+      reasoning: p.reasoning,
+      reasoningUpvotes: p.reasoningUpvotes,
+      createdAt: p.createdAt.toISOString(),
+      marketStatus: p.market.status,
+      outcome: p.market.outcome === "UNRESOLVED" ? null : p.market.outcome,
+    })),
   });
 }

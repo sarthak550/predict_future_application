@@ -1,81 +1,85 @@
 /**
- * In-memory phone verification store.
+ * DB-backed phone verification store.
  *
- * Stores pending OTPs keyed by userId so that the confirm endpoint can look up
- * the phone number and OTP that were issued for a given authenticated user.
+ * OTPs are persisted in the `PhoneVerificationOtp` table so they survive
+ * process restarts and work correctly in horizontally-scaled deployments.
+ * Each userId can have at most one pending OTP at a time (unique constraint).
  *
- * TODO: Replace with Redis when moving to a production SMS provider (Twilio/MSG91).
- *       The in-memory approach works for a single-process dev/MVP deployment but
- *       will not survive process restarts or horizontal scaling.
+ * TTL: 10 minutes from creation.
  */
+
+import crypto from "crypto";
+
+import { prisma } from "@/lib/prisma";
 
 const OTP_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
-interface PendingVerification {
-  phone: string;
-  otp: string;
-  expiresAt: number;
-}
-
-// Module-level map keyed by userId.
-const pendingVerifications = new Map<string, PendingVerification>();
-
 /**
- * Generate a cryptographically-adequate 6-digit OTP string.
- * Uses Math.random for simplicity in this dev-mode implementation.
- * TODO: Replace with crypto.randomInt(100000, 999999) when shipping real SMS.
+ * Generate a cryptographically secure 6-digit OTP string.
  */
 export function generateOtp(): string {
-  return String(Math.floor(100000 + Math.random() * 900000));
+  return crypto.randomInt(100000, 999999).toString();
 }
 
 /**
  * Store a new OTP for the given user+phone pair.
- * Overwrites any existing pending verification for this userId.
+ * Upserts so repeated calls overwrite the previous pending OTP.
  *
- * @returns The generated OTP string (so the caller can log/return it in dev mode).
+ * @returns The generated OTP string (so the caller can dispatch it via SMS or log it in dev mode).
  */
-export function storeOtp(userId: string, phone: string): string {
+export async function storeOtp(userId: string, phone: string): Promise<string> {
   const otp = generateOtp();
-  pendingVerifications.set(userId, {
-    phone,
-    otp,
-    expiresAt: Date.now() + OTP_TTL_MS,
+  const expiresAt = new Date(Date.now() + OTP_TTL_MS);
+
+  await prisma.phoneVerificationOtp.upsert({
+    where: { userId },
+    create: { userId, phone, otp, expiresAt },
+    update: { phone, otp, expiresAt },
   });
+
   return otp;
 }
 
 /**
  * Retrieve the pending verification record for a userId without consuming it.
- * Returns null if no pending verification or if it has expired.
+ * Returns null if no pending verification exists or if it has expired.
  */
-export function getOtp(userId: string): PendingVerification | null {
-  const record = pendingVerifications.get(userId);
+export async function getOtp(
+  userId: string
+): Promise<{ phone: string; otp: string } | null> {
+  const record = await prisma.phoneVerificationOtp.findUnique({
+    where: { userId },
+    select: { phone: true, otp: true, expiresAt: true },
+  });
+
   if (!record) return null;
-  if (Date.now() > record.expiresAt) {
-    pendingVerifications.delete(userId);
+
+  if (new Date() > record.expiresAt) {
+    // Clean up the stale row.
+    await prisma.phoneVerificationOtp.delete({ where: { userId } }).catch(() => {
+      // Ignore if it was already deleted by a concurrent request.
+    });
     return null;
   }
-  return record;
+
+  return { phone: record.phone, otp: record.otp };
 }
 
 /**
  * Verify an OTP for the given userId.
- * Performs a constant-time-equivalent string comparison.
  *
  * @returns Object with valid flag and the phone number on success.
  */
-export function verifyOtp(
+export async function verifyOtp(
   userId: string,
   otp: string
-): { valid: boolean; phone: string | null } {
-  const record = getOtp(userId);
+): Promise<{ valid: boolean; phone: string | null }> {
+  const record = await getOtp(userId);
   if (!record) {
     return { valid: false, phone: null };
   }
 
-  const isMatch = record.otp === otp;
-  if (!isMatch) {
+  if (record.otp !== otp) {
     return { valid: false, phone: null };
   }
 
@@ -86,8 +90,10 @@ export function verifyOtp(
  * Remove the pending verification for a userId.
  * Call this after successful confirmation to prevent OTP reuse.
  */
-export function clearOtp(userId: string): void {
-  pendingVerifications.delete(userId);
+export async function clearOtp(userId: string): Promise<void> {
+  await prisma.phoneVerificationOtp.delete({ where: { userId } }).catch(() => {
+    // Ignore if already deleted (idempotent).
+  });
 }
 
 /**
@@ -95,17 +101,14 @@ export function clearOtp(userId: string): void {
  * Returns null if the resulting string is not exactly 10 digits.
  */
 export function normaliseIndianPhone(raw: string): string | null {
-  // Strip whitespace
   let phone = raw.trim();
 
-  // Strip leading +91 or 91 (India country code)
   if (phone.startsWith("+91")) {
     phone = phone.slice(3);
   } else if (phone.startsWith("91") && phone.length === 12) {
     phone = phone.slice(2);
   }
 
-  // Must now be exactly 10 digits
   if (!/^\d{10}$/.test(phone)) {
     return null;
   }

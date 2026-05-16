@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -15,7 +16,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { resetOnboarding } from "@/components/onboarding-walkthrough";
@@ -29,6 +30,8 @@ import type {
   ApiPnlSummary,
   ApiPositionSummary,
   ApiReferralInfo,
+  ApiTierProgress,
+  AppAnalystTier,
   AppLeagueTier,
   AppMarketStatus,
   AppUserDisplayMode,
@@ -125,6 +128,145 @@ const tierBadgeStyles = StyleSheet.create({
   },
 });
 
+// ── Analyst Tier helpers ───────────────────────────────────────────────────────
+
+const ANALYST_TIER_LABELS: Record<AppAnalystTier, string> = {
+  ROOKIE: "Rookie",
+  ANALYST: "Analyst",
+  SENIOR_ANALYST: "Senior Analyst",
+  CHIEF_ANALYST: "Chief Analyst",
+};
+
+// ── Tier Progress Section ─────────────────────────────────────────────────────
+
+function TierProgressSection({
+  tierProgress,
+  onUpgradeTap,
+}: {
+  tierProgress: ApiTierProgress;
+  onUpgradeTap: () => void;
+}) {
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    if (tierProgress.isEligible) {
+      const pulse = Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, { toValue: 1.06, duration: 700, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 1, duration: 700, useNativeDriver: true }),
+        ])
+      );
+      pulse.start();
+      return () => pulse.stop();
+    }
+  }, [tierProgress.isEligible, pulseAnim]);
+
+  if (tierProgress.nextTier === null) {
+    return (
+      <View style={tierProgressStyles.row}>
+        <Ionicons name="checkmark-circle" size={13} color={colors.success} />
+        <Text style={tierProgressStyles.topTierText}> Top tier reached</Text>
+      </View>
+    );
+  }
+
+  if (tierProgress.isEligible) {
+    return (
+      <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+        <Pressable onPress={onUpgradeTap} style={tierProgressStyles.eligibleChip}>
+          <Ionicons name="arrow-up-circle" size={13} color="#7C3AED" />
+          <Text style={tierProgressStyles.eligibleText}>
+            {" Upgrade available — make one more call"}
+          </Text>
+        </Pressable>
+      </Animated.View>
+    );
+  }
+
+  const currentPct = Math.round(tierProgress.currentAccuracy * 100);
+  const neededPct = Math.round(tierProgress.accuracyNeeded * 100);
+  const totalPredictions = tierProgress.predictionsNeeded - tierProgress.predictionsToGo;
+  const predFraction = tierProgress.predictionsNeeded > 0
+    ? Math.min(1, totalPredictions / tierProgress.predictionsNeeded)
+    : 1;
+  const accFraction = tierProgress.accuracyNeeded > 0
+    ? Math.min(1, tierProgress.currentAccuracy / tierProgress.accuracyNeeded)
+    : 1;
+
+  return (
+    <View style={tierProgressStyles.barsWrap}>
+      <View style={tierProgressStyles.barItem}>
+        <Text style={tierProgressStyles.barLabel}>
+          {`Predictions: ${totalPredictions}/${tierProgress.predictionsNeeded}`}
+        </Text>
+        <View style={tierProgressStyles.trackOuter}>
+          <View style={[tierProgressStyles.trackFill, { width: `${Math.round(predFraction * 100)}%` }]} />
+        </View>
+      </View>
+      <View style={tierProgressStyles.barItem}>
+        <Text style={tierProgressStyles.barLabel}>
+          {`Accuracy: ${currentPct}%/${neededPct}%`}
+        </Text>
+        <View style={tierProgressStyles.trackOuter}>
+          <View style={[tierProgressStyles.trackFill, { width: `${Math.round(accFraction * 100)}%` }]} />
+        </View>
+      </View>
+    </View>
+  );
+}
+
+const tierProgressStyles = StyleSheet.create({
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: spacing.xs,
+  },
+  topTierText: {
+    fontSize: 11,
+    color: colors.success,
+    fontWeight: "600",
+  },
+  eligibleChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: spacing.xs,
+    backgroundColor: "#F5F3FF",
+    borderRadius: radius.sm,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    alignSelf: "flex-start",
+  },
+  eligibleText: {
+    fontSize: 11,
+    color: "#7C3AED",
+    fontWeight: "700",
+  },
+  barsWrap: {
+    flexDirection: "row",
+    gap: spacing.md,
+    marginTop: spacing.xs,
+  },
+  barItem: {
+    flex: 1,
+  },
+  barLabel: {
+    fontSize: 10,
+    color: "rgba(255,255,255,0.6)",
+    marginBottom: 3,
+  },
+  trackOuter: {
+    height: 4,
+    backgroundColor: "rgba(255,255,255,0.15)",
+    borderRadius: 2,
+    overflow: "hidden",
+  },
+  trackFill: {
+    height: 4,
+    backgroundColor: colors.accent,
+    borderRadius: 2,
+  },
+});
+
 // ── Activity item types ───────────────────────────────────────────────────────
 
 type VoteItem = {
@@ -201,6 +343,9 @@ export default function ProfileScreen() {
   const [phoneVerifyDismissed, setPhoneVerifyDismissed] = useState<boolean>(true);
   const [showPhoneModal, setShowPhoneModal] = useState(false);
   const phoneVerifyChecked = useRef(false);
+
+  // ── Notification unread badge (S30-T4) ──
+  const [notifUnreadCount, setNotifUnreadCount] = useState(0);
 
   // ── Anonymous mode toggle state (S26-T5) ──
   // Initialised from the profile response; optimistically updated on toggle.
@@ -282,6 +427,18 @@ export default function ProfileScreen() {
       }
     })();
   }, [userId]);
+
+  // Fetch unread notification count whenever the Profile tab comes into focus (S30-T4).
+  useFocusEffect(
+    useCallback(() => {
+      if (sessionStatus !== "authenticated") return;
+      void mobileApi.getNotificationsUnreadCount().then((res) => {
+        setNotifUnreadCount(res.count);
+      }).catch(() => {
+        // Non-fatal — badge simply won't show on error
+      });
+    }, [sessionStatus])
+  );
 
   if (sessionStatus !== "authenticated" || !userId) {
     return (
@@ -412,6 +569,22 @@ export default function ProfileScreen() {
                 <Text style={styles.performanceStripCtaText}>Make your first prediction</Text>
                 <Ionicons name="arrow-forward" size={12} color="rgba(255,255,255,0.6)" />
               </Pressable>
+            )}
+            {/* ── Analyst Tier badge + progress ── */}
+            {user.analystTier && (
+              <View style={styles.analystTierRow}>
+                <View style={styles.analystTierBadge}>
+                  <Text style={styles.analystTierText}>
+                    {ANALYST_TIER_LABELS[user.analystTier as AppAnalystTier] ?? user.analystTier}
+                  </Text>
+                </View>
+                {user.tierProgress && (
+                  <TierProgressSection
+                    tierProgress={user.tierProgress}
+                    onUpgradeTap={() => router.push("/(tabs)/markets")}
+                  />
+                )}
+              </View>
             )}
           </View>
         </View>
@@ -632,11 +805,24 @@ export default function ProfileScreen() {
             }}
           />
           <View style={styles.actionDivider} />
-          <ActionRow
-            icon="notifications-outline"
-            label="Notifications"
-            onPress={() => router.push("/notifications")}
-          />
+          {/* Notifications row with unread badge (S30-T4) */}
+          <Pressable
+            style={styles.actionRow}
+            onPress={() => { setNotifUnreadCount(0); router.push("/notifications"); }}
+          >
+            <Ionicons name="notifications-outline" size={20} color={colors.text} />
+            <View style={styles.actionTextWrap}>
+              <Text style={styles.actionLabel}>Notifications</Text>
+            </View>
+            {notifUnreadCount > 0 && (
+              <View style={styles.notifBadge}>
+                <Text style={styles.notifBadgeText}>
+                  {notifUnreadCount > 99 ? "99+" : String(notifUnreadCount)}
+                </Text>
+              </View>
+            )}
+            <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+          </Pressable>
           <ActionRow
             icon="help-circle-outline"
             label="Replay Tutorial"
@@ -1660,6 +1846,25 @@ const styles = StyleSheet.create({
     color: "rgba(255,255,255,0.65)",
     fontWeight: "600",
   },
+  analystTierRow: {
+    marginTop: spacing.sm,
+    flexDirection: "column",
+    gap: 0,
+  },
+  analystTierBadge: {
+    backgroundColor: "rgba(255,255,255,0.15)",
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    alignSelf: "flex-start",
+  },
+  analystTierText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "rgba(255,255,255,0.9)",
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+  },
 
   // ── Generic card ──
   card: {
@@ -1816,6 +2021,21 @@ const styles = StyleSheet.create({
     height: StyleSheet.hairlineWidth,
     backgroundColor: colors.border,
     marginHorizontal: spacing.md,
+  },
+  // Notification unread badge (S30-T4)
+  notifBadge: {
+    backgroundColor: "#EF4444",
+    borderRadius: 999,
+    minWidth: 20,
+    height: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 5,
+  },
+  notifBadgeText: {
+    color: "#FFFFFF",
+    fontSize: 11,
+    fontWeight: "700",
   },
 
   // ── Unauthenticated ──

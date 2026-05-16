@@ -1,4 +1,4 @@
-import { Ionicons } from "@expo/vector-icons";
+import { Feather, Ionicons } from "@expo/vector-icons";
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -20,7 +20,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import type { Session } from "@/providers/session-provider";
 
-import type { ApiMarketDetail, ApiProbabilityHistory } from "@predict-future/types";
+import type { ApiAnalystPosition, ApiMarketDetail, ApiProbabilityHistory } from "@predict-future/types";
 import { formatPercent, formatPoints, formatRelativeTime } from "@predict-future/utils";
 import { colors, radius, shadows, spacing } from "@predict-future/ui-tokens";
 
@@ -579,6 +579,9 @@ function BettingSheet({
   const [placing, setPlacing] = useState(false);
   const [betError, setBetError] = useState<string | null>(null);
   const [betSuccess, setBetSuccess] = useState(false);
+  // Reasoning field — sticky within session once expanded
+  const [reasoningExpanded, setReasoningExpanded] = useState(false);
+  const [reasoning, setReasoning] = useState("");
 
   // Reset form when sheet opens
   useEffect(() => {
@@ -589,6 +592,8 @@ function BettingSheet({
       setCustomAmount("");
       setBetError(null);
       setBetSuccess(false);
+      setReasoningExpanded(false);
+      setReasoning("");
     }
   }, [visible]);
 
@@ -615,6 +620,7 @@ function BettingSheet({
     setBetError(null);
     try {
       const existingSide = positions[0]?.side as "YES" | "NO" | null;
+      const trimmedReasoning = reasoning.trim();
       const result = await mobileApi.placePosition(marketId, {
         side: isNumeric ? undefined : hasPosition ? (existingSide ?? undefined) : (selectedSide ?? undefined),
         numericValue: isNumeric
@@ -623,6 +629,7 @@ function BettingSheet({
             : parseFloat(numericGuess)
           : undefined,
         amount: betAmount,
+        reasoning: trimmedReasoning.length > 0 ? trimmedReasoning : undefined,
       });
       setBetSuccess(true);
       onRefresh();
@@ -810,6 +817,47 @@ function BettingSheet({
                 <Text style={styles.estimatedReturnLabel}>Estimated return</Text>
                 <Text style={styles.estimatedReturnValue}>
                   {formatPoints(calcEstimatedReturn(selectedSide, betAmount, yesPool, noPool))} pts
+                </Text>
+              </View>
+            ) : null}
+
+            {/* Reasoning field */}
+            <Pressable
+              style={styles.reasoningToggleRow}
+              onPress={() => setReasoningExpanded((prev) => !prev)}
+              accessibilityRole="button"
+              accessibilityLabel="Add reasoning"
+            >
+              <Ionicons
+                name="pencil-outline"
+                size={15}
+                color={colors.textMuted}
+                style={{ marginRight: spacing.xs }}
+              />
+              <Text style={styles.reasoningToggleLabel}>
+                Add your reasoning (optional)
+              </Text>
+              <Ionicons
+                name={reasoningExpanded ? "chevron-up" : "chevron-down"}
+                size={14}
+                color={colors.textMuted}
+              />
+            </Pressable>
+
+            {reasoningExpanded ? (
+              <View style={styles.reasoningInputWrapper}>
+                <TextInput
+                  style={styles.reasoningInput}
+                  placeholder="Why are you making this call?"
+                  placeholderTextColor={colors.textMuted}
+                  multiline
+                  maxLength={500}
+                  value={reasoning}
+                  onChangeText={setReasoning}
+                  textAlignVertical="top"
+                />
+                <Text style={styles.reasoningCounter}>
+                  {reasoning.length}/500
                 </Text>
               </View>
             ) : null}
@@ -1183,6 +1231,179 @@ function ResolutionPayoffModal({ modalData, onClose }: ResolutionPayoffModalProp
     </Modal>
   );
 }
+
+// ─── AnalystPositionsSection ──────────────────────────────────────────────────
+// Shows top-5 positions with reasoning from other analysts, with upvote UI.
+
+function AnalystPositionsSection({
+  positions,
+  currentUserId,
+}: {
+  positions: ApiAnalystPosition[];
+  currentUserId: string | null;
+}) {
+  const [localPositions, setLocalPositions] = useState<ApiAnalystPosition[]>(positions);
+
+  // Sync when parent re-renders with fresh data
+  const positionsKey = positions.map((p) => `${p.id}:${p.reasoningUpvotes}`).join(",");
+  const [lastKey, setLastKey] = useState(positionsKey);
+  if (positionsKey !== lastKey) {
+    setLocalPositions(positions);
+    setLastKey(positionsKey);
+  }
+
+  const filtered = localPositions.filter((p) => p.reasoning != null);
+  if (filtered.length === 0) return null;
+
+  async function handleUpvote(positionId: string) {
+    if (!currentUserId) return; // must be authenticated
+    // Optimistic toggle
+    setLocalPositions((prev) =>
+      prev.map((p) => {
+        if (p.id !== positionId) return p;
+        const wasUpvoted = p.iUpvotedReasoning;
+        return {
+          ...p,
+          iUpvotedReasoning: !wasUpvoted,
+          reasoningUpvotes: wasUpvoted
+            ? Math.max(0, p.reasoningUpvotes - 1)
+            : p.reasoningUpvotes + 1,
+        };
+      })
+    );
+
+    try {
+      await mobileApi.upvotePositionReasoning(positionId);
+    } catch {
+      // Revert on error
+      setLocalPositions((prev) =>
+        prev.map((p) => {
+          if (p.id !== positionId) return p;
+          const wasUpvoted = !p.iUpvotedReasoning; // reverted state
+          return {
+            ...p,
+            iUpvotedReasoning: wasUpvoted,
+            reasoningUpvotes: wasUpvoted
+              ? p.reasoningUpvotes + 1
+              : Math.max(0, p.reasoningUpvotes - 1),
+          };
+        })
+      );
+    }
+  }
+
+  return (
+    <View style={analystPosStyles.card}>
+      <Text style={analystPosStyles.title}>Analyst Reasoning</Text>
+      {filtered.map((p) => {
+        const isOwn = currentUserId != null && p.userId === currentUserId;
+        return (
+          <View key={p.id} style={analystPosStyles.row}>
+            <View style={analystPosStyles.rowHeader}>
+              <View style={[
+                analystPosStyles.sidePill,
+                p.side === "YES" ? analystPosStyles.pillYes : analystPosStyles.pillNo,
+              ]}>
+                <Text style={analystPosStyles.sidePillText}>{p.side ?? "?"}</Text>
+              </View>
+              <Text style={analystPosStyles.username} numberOfLines={1}>
+                @{p.user.username}
+              </Text>
+            </View>
+            <Text style={analystPosStyles.reasoning} numberOfLines={4}>
+              {p.reasoning}
+            </Text>
+            {!isOwn && (
+              <Pressable
+                style={analystPosStyles.upvoteRow}
+                onPress={() => void handleUpvote(p.id)}
+                accessibilityRole="button"
+                accessibilityLabel={p.iUpvotedReasoning ? "Remove upvote" : "Upvote reasoning"}
+              >
+                <Feather
+                  name="thumbs-up"
+                  size={13}
+                  color={p.iUpvotedReasoning ? colors.accent : (colors.textMuted as string)}
+                />
+                {p.reasoningUpvotes > 0 && (
+                  <Text style={[
+                    analystPosStyles.upvoteCount,
+                    p.iUpvotedReasoning && analystPosStyles.upvoteCountActive,
+                  ]}>
+                    {p.reasoningUpvotes}
+                  </Text>
+                )}
+              </Pressable>
+            )}
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+const analystPosStyles = StyleSheet.create({
+  card: {
+    backgroundColor: colors.surface as string,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    marginTop: spacing.sm,
+  },
+  title: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: colors.text as string,
+    marginBottom: spacing.md,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  row: {
+    marginBottom: spacing.md,
+    paddingBottom: spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border as string,
+  },
+  rowHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    marginBottom: spacing.xs,
+  },
+  sidePill: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  pillYes: { backgroundColor: "#DCFCE7" },
+  pillNo: { backgroundColor: "#FEE2E2" },
+  sidePillText: { fontSize: 11, fontWeight: "700", color: "#374151" },
+  username: {
+    fontSize: 12,
+    color: colors.textMuted as string,
+    flex: 1,
+  },
+  reasoning: {
+    fontSize: 13,
+    color: colors.text as string,
+    lineHeight: 19,
+    marginBottom: spacing.xs,
+  },
+  upvoteRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    alignSelf: "flex-start",
+    paddingVertical: 4,
+  },
+  upvoteCount: {
+    fontSize: 12,
+    color: colors.textMuted as string,
+    fontWeight: "600",
+  },
+  upvoteCountActive: {
+    color: colors.accent as string,
+  },
+});
 
 // ─── MarketBody ───────────────────────────────────────────────────────────────
 // Renders the scrollable content only — no betting panel; that's in the sticky bar.
@@ -1592,6 +1813,14 @@ function MarketBody({
           history={probHistory}
           isResolved={market.status === "RESOLVED"}
           outcome={market.winningSide ?? null}
+        />
+      ) : null}
+
+      {/* Analyst Reasoning section — top-5 other analysts' positions with reasoning (S30-T1) */}
+      {(data.analystPositions ?? []).length > 0 ? (
+        <AnalystPositionsSection
+          positions={data.analystPositions ?? []}
+          currentUserId={session?.userId ?? null}
         />
       ) : null}
 
@@ -2663,6 +2892,38 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
     fontSize: 13,
     color: "#DC2626",
+  },
+  reasoningToggleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: spacing.md,
+    paddingVertical: spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+  },
+  reasoningToggleLabel: {
+    flex: 1,
+    fontSize: 13,
+    color: colors.textMuted,
+  },
+  reasoningInputWrapper: {
+    marginTop: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.sm,
+    padding: spacing.sm,
+  },
+  reasoningInput: {
+    fontSize: 14,
+    color: colors.text,
+    minHeight: 72,
+    lineHeight: 20,
+  },
+  reasoningCounter: {
+    fontSize: 11,
+    color: colors.textMuted,
+    textAlign: "right",
+    marginTop: spacing.xs,
   },
   placeBetBtn: {
     marginTop: spacing.lg,

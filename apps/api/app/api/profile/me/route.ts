@@ -2,6 +2,66 @@ import { NextResponse } from "next/server";
 
 import { getUserIdFromRequest } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import type { AnalystTier } from "@prisma/client";
+
+// Tier thresholds — kept in sync with lib/analysts.ts
+const TIER_THRESHOLDS: Array<{
+  tier: AnalystTier;
+  predictionsNeeded: number;
+  accuracyNeeded: number;
+  requiresVerified: boolean;
+}> = [
+  { tier: "CHIEF_ANALYST", predictionsNeeded: 200, accuracyNeeded: 0.65, requiresVerified: true },
+  { tier: "SENIOR_ANALYST", predictionsNeeded: 50,  accuracyNeeded: 0.60, requiresVerified: false },
+  { tier: "ANALYST",        predictionsNeeded: 10,  accuracyNeeded: 0.55, requiresVerified: false },
+  { tier: "ROOKIE",         predictionsNeeded: 0,   accuracyNeeded: 0,    requiresVerified: false },
+];
+
+function computeTierProgress(
+  currentTier: AnalystTier,
+  totalPredictions: number,
+  currentAccuracy: number,
+  isVerifiedAnalyst: boolean
+) {
+  // CHIEF_ANALYST is the top tier — no next tier
+  if (currentTier === "CHIEF_ANALYST") {
+    return {
+      currentTier,
+      nextTier: null as AnalystTier | null,
+      predictionsNeeded: 200,
+      predictionsToGo: 0,
+      accuracyNeeded: 0.65,
+      currentAccuracy,
+      isEligible: false,
+    };
+  }
+
+  // Find the next tier up from current
+  const tierOrder: AnalystTier[] = ["ROOKIE", "ANALYST", "SENIOR_ANALYST", "CHIEF_ANALYST"];
+  const currentIdx = tierOrder.indexOf(currentTier);
+  const nextTier = tierOrder[currentIdx + 1] as AnalystTier;
+  const nextThreshold = TIER_THRESHOLDS.find((t) => t.tier === nextTier)!;
+
+  // Skip CHIEF_ANALYST if not verified (show SENIOR_ANALYST as next if not verified)
+  const effectiveNextTier =
+    nextTier === "CHIEF_ANALYST" && !isVerifiedAnalyst ? nextTier : nextTier;
+
+  const predictionsToGo = Math.max(0, nextThreshold.predictionsNeeded - totalPredictions);
+  const isEligible =
+    totalPredictions >= nextThreshold.predictionsNeeded &&
+    currentAccuracy >= nextThreshold.accuracyNeeded &&
+    (!nextThreshold.requiresVerified || isVerifiedAnalyst);
+
+  return {
+    currentTier,
+    nextTier: effectiveNextTier,
+    predictionsNeeded: nextThreshold.predictionsNeeded,
+    predictionsToGo,
+    accuracyNeeded: nextThreshold.accuracyNeeded,
+    currentAccuracy,
+    isEligible,
+  };
+}
 
 export async function GET(request: Request) {
   const userId = await getUserIdFromRequest(request);
@@ -46,6 +106,7 @@ export async function GET(request: Request) {
           id: true,
           side: true,
           amount: true,
+          reasoning: true,
           createdAt: true,
           market: {
             select: { id: true, title: true, status: true, outcome: true },
@@ -125,6 +186,22 @@ export async function GET(request: Request) {
   const netPnl = totalReturned - totalStaked;
   const resolvedMarketCount = resolvedMarketIds.size;
 
+  const totalPredictions = user.stats?.totalPredictions ?? 0;
+  const currentAccuracy = user.accuracyScore ?? 0;
+  const tierProgress = computeTierProgress(
+    user.analystTier,
+    totalPredictions,
+    currentAccuracy,
+    user.isVerifiedAnalyst
+  );
+
+  // Aggregate total reasoning upvotes across all of the user's positions (S30-T1).
+  const upvoteAggregate = await prisma.marketPosition.aggregate({
+    where: { userId },
+    _sum: { reasoningUpvotes: true },
+  });
+  const totalReasoningUpvotes = upvoteAggregate._sum.reasoningUpvotes ?? 0;
+
   return NextResponse.json({
     user: {
       id: user.id,
@@ -139,6 +216,7 @@ export async function GET(request: Request) {
       streak: user.streak,
       lastPredictionAt: user.stats?.lastPredictionAt?.toISOString() ?? null,
       isVerifiedAnalyst: user.isVerifiedAnalyst,
+      analystTier: user.analystTier,
       phoneVerified: user.phoneVerified,
       stats: user.stats ? {
         totalPredictions: user.stats.totalPredictions,
@@ -160,6 +238,8 @@ export async function GET(request: Request) {
         },
       })),
       createdMarkets: user.createdMarkets,
+      tierProgress,
+      totalReasoningUpvotes,
       hostStats: user.stats ? {
         hostTrustScore: user.stats.hostTrustScore,
         validFinalizedHostedMarketsCount: user.stats.validFinalizedHostedMarketsCount,

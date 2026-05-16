@@ -1,0 +1,36 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/news-ingestion",
+      "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/cron/probability-snapshot",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/market-lifecycle",
+      "schedule": "0 */2 * * *"
+    },
+    {
+      "path": "/api/cron/auto-resolve-opinions",
+      "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/cron/big-call-push",
+      "schedule": "30 2 * * *"
+    },
+    {
+      "path": "/api/cron/leaderboard-snapshot",
+      "schedule": "59 18 * * 0"
+    },
+    {
+      "path": "/api/cron/recalculate-analyst-tiers",
+      "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/cron/award-reasoning-badges",
+      "schedule": "30 3 * * *"
+    }
+  ]
+}

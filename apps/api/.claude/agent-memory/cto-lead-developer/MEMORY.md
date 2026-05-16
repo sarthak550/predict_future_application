@@ -1,0 +1,1 @@
+- [Sprint 29 implementation](project_s29_implementation.md) — S29 tickets implemented: tab layout, rank delta, reasoning field, personalized feed, analyst tier, MSG91 audit

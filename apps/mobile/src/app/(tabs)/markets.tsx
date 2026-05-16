@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -112,16 +112,79 @@ export default function MarketsScreen() {
     return allPolls;
   }, [allPolls, pollFilter]);
 
-  // ── public markets ────────────────────────────────────────────────
+  // ── public markets (cursor pagination, S30-T5) ────────────────────
 
-  const publicFetcher = useCallback(
-    () => mobileApi.getPublicMarkets({ sort }),
-    [sort]
-  );
-  const publicQuery = useApiQuery<{ markets: ApiMarketSummary[] }>(publicFetcher, [mode === "public", sort], {
-    enabled: mode === "public",
-    errorFallback: "Unable to load markets.",
-  });
+  const [publicMarkets, setPublicMarkets] = useState<ApiMarketSummary[]>([]);
+  const [publicLoading, setPublicLoading] = useState(false);
+  const [publicError, setPublicError] = useState<string | null>(null);
+  const [publicCursor, setPublicCursor] = useState<string | null>(null);
+  const [publicHasMore, setPublicHasMore] = useState(true);
+  const [publicStatus, setPublicStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
+  const publicInFlight = useRef(false);
+
+  const loadPublicMarkets = useCallback(async (mode_: "replace" | "append", cursorVal: string | null, sortVal: MarketSort) => {
+    if (publicInFlight.current) return;
+    publicInFlight.current = true;
+    if (mode_ === "replace") {
+      setPublicLoading(true);
+      setPublicError(null);
+      setPublicStatus("loading");
+    }
+    try {
+      const res = await mobileApi.getPublicMarkets({
+        sort: sortVal,
+        cursor: cursorVal ?? undefined,
+      });
+      const newMarkets = res.markets ?? [];
+      setPublicMarkets((prev) => mode_ === "replace" ? newMarkets : [...prev, ...newMarkets]);
+      setPublicCursor(res.nextCursor ?? null);
+      setPublicHasMore(res.hasMore ?? false);
+      setPublicError(null);
+      setPublicStatus("success");
+    } catch (err) {
+      setPublicError(err instanceof Error ? err.message : "Unable to load markets.");
+      setPublicStatus("error");
+    } finally {
+      setPublicLoading(false);
+      publicInFlight.current = false;
+    }
+  }, []);
+
+  // Initial fetch and re-fetch when sort changes.
+  const prevSort = useRef(sort);
+  useEffect(() => {
+    if (mode !== "public") return;
+    if (prevSort.current !== sort) {
+      prevSort.current = sort;
+      setPublicCursor(null);
+      setPublicHasMore(true);
+      void loadPublicMarkets("replace", null, sort);
+    } else {
+      void loadPublicMarkets("replace", null, sort);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, sort]);
+
+  function handlePublicEndReached() {
+    if (publicHasMore && !publicInFlight.current && mode === "public") {
+      void loadPublicMarkets("append", publicCursor, sort);
+    }
+  }
+
+  function handlePublicRefresh() {
+    setPublicCursor(null);
+    setPublicHasMore(true);
+    void loadPublicMarkets("replace", null, sort);
+  }
+
+  // Wrap in a publicQuery-compatible shape for the rest of the render logic.
+  const publicQuery = {
+    data: { markets: publicMarkets },
+    loading: publicLoading,
+    error: publicError,
+    status: publicStatus,
+    refetch: handlePublicRefresh,
+  };
 
   // ── trending shelf (top 3 by rank, parallel fetch) ────────────────
 
@@ -528,6 +591,19 @@ export default function MarketsScreen() {
                 </View>
               ) : null}
             </>
+          ) : null
+        }
+        onEndReachedThreshold={0.3}
+        onEndReached={() => {
+          if (mode === "public" && !isSearchMode) {
+            handlePublicEndReached();
+          }
+        }}
+        ListFooterComponent={
+          mode === "public" && !isSearchMode && publicHasMore && publicLoading ? (
+            <View style={styles.footerSpinner}>
+              <ActivityIndicator size="small" color={colors.accent} />
+            </View>
           ) : null
         }
         renderItem={({ item }) => <MarketSummaryCard item={item} />}
@@ -961,6 +1037,7 @@ const pollStyles = StyleSheet.create({
   filterChipText: { fontSize: 13, fontWeight: "600", color: colors.textMuted },
   filterChipTextActive: { color: "#fff" },
   listContent: { paddingHorizontal: spacing.xl, paddingBottom: 100, gap: spacing.md },
+  footerSpinner: { paddingVertical: spacing.xl, alignItems: "center" },
   card: {
     backgroundColor: colors.surface,
     borderRadius: radius.lg,
@@ -1420,5 +1497,9 @@ const styles = StyleSheet.create({
     color: colors.surface,
     fontWeight: "700",
     fontSize: 14,
+  },
+  footerSpinner: {
+    paddingVertical: spacing.lg,
+    alignItems: "center",
   },
 });

@@ -12,6 +12,7 @@ import { settleMarket } from "@/lib/markets/payouts";
 import { notifyMany } from "@/lib/notifications";
 import { prisma } from "@/lib/prisma";
 import { refreshUserStats } from "@/lib/stats";
+import { updateAnalystTier } from "@/lib/analysts";
 
 type TxClient = Prisma.TransactionClient;
 
@@ -420,6 +421,15 @@ export async function finalizeMarketResolution(input: {
   void sendExpoPushNotifications(participantIds, market.title, finalResolutionStatus).catch((err) => {
     console.error("[push] resolution push failed:", err);
   });
+
+  // Fire-and-forget: recompute analyst tiers for all participants after resolution.
+  void Promise.allSettled(
+    participantIds.map((uid) =>
+      updateAnalystTier(uid).catch((err) =>
+        console.error(`[analyst-tier] post-resolution update failed for userId=${uid}:`, err)
+      )
+    )
+  );
 
   return market;
 }

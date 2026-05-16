@@ -2,8 +2,8 @@
 
 > Human-readable view of `.claude/sprint-board.json`. Auto-maintained by the CEO/CTO/QA agents — do not edit by hand.
 
-**Current sprint:** 25
-**Status:** Sprint 25 PENDING — 14 tickets across Sprints 25, 26, 27 queued (2026-05-09).
+**Current sprint:** 30
+**Status:** Sprint 30 COMPLETE — All 6 tickets passed QA (2026-05-17). Sprints 12, 25–30 COMPLETE.
 
 ---
 
@@ -90,12 +90,14 @@
 
 ## Sprint 12
 
+**Status:** COMPLETE — All 4 tickets passed QA (2026-05-16).
+
 | ID | Pri | Status | Title |
 |---|---|---|---|
-| S12-T1 | CRIT | failed | Leaderboard: dynamic subtitle + sort-order consistency fix |
-| S12-T2 | HIGH | failed | Leaderboard: time-window selector (This Week / This Month / All Time) |
-| S12-T3 | HIGH | failed | Leaderboard: sticky 'Your Rank' card pinned below selectors |
-| S12-T4 | MED | failed | Leaderboard: row chevron, delta badge, and category-aware empty state |
+| S12-T1 | CRIT | ✅ done | Leaderboard: dynamic subtitle + sort-order consistency fix |
+| S12-T2 | HIGH | ✅ done | Leaderboard: time-window selector (This Week / This Month / All Time) |
+| S12-T3 | HIGH | ✅ done | Leaderboard: sticky 'Your Rank' card pinned below selectors |
+| S12-T4 | MED | ✅ done | Leaderboard: row chevron, delta badge, and category-aware empty state |
 
 ---
 
@@ -301,3 +303,49 @@
 |---|---|---|---|---|
 | S27-T1 | HIGH | ✅ done | Today's Big Call — admin-curated daily market with 8am push to all users | isBigCallDate + bigCallNotificationOpenedCount on Market; POST /api/admin/markets/[marketId]/mark-big-call; GET /api/markets/big-call/today; POST /api/cron/big-call-notification (CRON_SECRET guarded); prominent card at top of Feed tab |
 | S27-T2 | HIGH | ✅ done | Probability Chart Over Lifetime — consensus line on market detail | New MarketProbabilitySnapshot model; hourly cron POST /api/cron/probability-snapshot; snapshot on every position placement; GET /api/markets/[marketId]/probability-history with 7-day hourly / older daily aggregation; pure View-based line chart on market detail screen |
+
+---
+
+## Sprint 28
+
+**Theme:** Finance Tab UX — personalization, performance, and the Crowd-vs-Expert differentiator
+**Status:** COMPLETE — All 4 tickets passed QA (2026-05-16)
+
+| ID | Pri | Status | Title | One-line summary |
+|---|---|---|---|---|
+| S28-T1 | CRIT | ✅ | Finance: Analyst Follow System + My Analysts filter | ExpertFollow schema table; follow/unfollow API; Follow pill on opinion cards; My Analysts horizontal chip row in Finance tab filtering the expert feed |
+| S28-T2 | CRIT | ✅ | Finance: Infinite scroll pagination on expert opinions feed | Wire existing nextCursor/hasMore API response fields; 10-item pages; loadMore on scroll-to-bottom; footer spinner; pull-to-refresh resets cursor |
+| S28-T3 | HIGH | ✅ | Finance: Direction filter chips + tappable Sentiment Card | Bullish/Bearish/Neutral client-side filter chips above opinion toggle; Analyst Sentiment Card becomes Pressable and pre-filters on tap; filter banner with clear |
+| S28-T4 | HIGH | ✅ | Finance: Crowd-vs-Expert comparison card scaffolding | GET /api/finance/crowd-vs-experts endpoint; CrowdVsExpertsCard hidden until 10+ resolved opinions; segmented bar showing crowd vs analyst win rates; seed fixtures for QA |
+
+---
+
+## Sprint 29
+
+**Theme:** Make the Scoreboard Real — close first-impression gaps, activate personalization, give analyst identity a progression arc
+**Status:** COMPLETE — All 6 tickets passed QA (2026-05-16). S29-T1 reverted per user: tab bar stays Feed/Finance/Create/Markets/Profile; Leaderboard accessed from Profile.
+
+| ID | Pri | Status | Title |
+|---|---|---|---|
+| S29-T1 | CRIT | ✅ done | Leaderboard tab visibility (reverted — hidden, accessed via Profile) |
+| S29-T2 | CRIT | ✅ done | Leaderboard rank delta — compute and persist weekly rank movement |
+| S29-T3 | HIGH | ✅ done | Call Reasoning field — optional free-text rationale on market positions |
+| S29-T4 | HIGH | ✅ done | For You feed — personalized news feed weighted by analyst follows |
+| S29-T5 | HIGH | ✅ done | Analyst Tier system — Rookie / Analyst / Senior Analyst / Chief Analyst |
+| S29-T6 | MED | ✅ done | Phone verification live SMS via MSG91 — wire PHONE_VERIFY_MODE=prod |
+
+---
+
+## Sprint 30
+
+**Theme:** Analyst Identity 2.0 — upvote reasoning, show progression, surface daily call, infinite discovery
+**Status:** COMPLETE — All 6 tickets passed QA (2026-05-17). Prisma client regenerated + server restarted to unblock S30-T1; runtime verified totalReasoningUpvotes returns 200.
+
+| ID | Pri | Status | Title |
+|---|---|---|---|
+| S30-T1 | HIGH | ✅ done | Reasoning upvotes + Best Reasoner badge |
+| S30-T2 | HIGH | ✅ done | Tier Progress Bar on Profile + Feed nudge |
+| S30-T3 | HIGH | ✅ done | Call Reasoning on public profile + SEO pages |
+| S30-T4 | HIGH | ✅ done | Notification unread badge + mark-all-read |
+| S30-T5 | MED | ✅ done | Markets tab infinite scroll |
+| S30-T6 | MED | ✅ done | Admin Big Call performance dashboard |

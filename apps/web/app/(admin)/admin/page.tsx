@@ -72,6 +72,12 @@ export default async function AdminDashboardPage() {
             Resolve closed markets, review auto-resolution misses, and settle payouts.
           </p>
         </Link>
+        <Link href="/admin/big-call" className="rounded-[28px] border border-white/70 bg-white/80 p-6">
+          <h2 className="text-xl font-semibold text-ink-900">Big Call dashboard</h2>
+          <p className="mt-2 text-sm leading-7 text-ink-600">
+            Track notification opens and participation for every Big Call market, with aggregate stats.
+          </p>
+        </Link>
       </div>
     </div>
   );

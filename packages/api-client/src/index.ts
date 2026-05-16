@@ -3,6 +3,7 @@ import type {
   ApiBigCallResponse,
   ApiCategoryTopResponse,
   ApiCricketMatchDetail,
+  ApiCrowdVsExperts,
   ApiDailyQuests,
   ApiExpertLeaderboardEntry,
   ApiExpertOpinionTallies,
@@ -39,6 +40,7 @@ import type {
   ApiUserPortfolio,
   ApiUserProfile,
   ApiVote,
+  ProfileRecentCall,
   AppLeagueTier,
   AppMarketCategory,
   AppMarketStatus,
@@ -69,6 +71,8 @@ export type NewsQuery = {
   excludeCategory?: string;
   userId?: string;
   requireExpertOpinions?: boolean;
+  /** When true, authenticated users see stories boosted by followed-analyst signals. */
+  personalized?: boolean;
 };
 
 export type PublicMarketsQuery = {
@@ -76,6 +80,7 @@ export type PublicMarketsQuery = {
   category?: AppMarketCategory;
   q?: string;
   limit?: number;
+  cursor?: string | null;
   featured?: boolean;
   sort?: "rank" | "new" | "closing" | "close_at" | "featured" | "volume";
 };
@@ -163,7 +168,7 @@ export function createApiClient(options: ApiClientOptions) {
       return request<Record<string, unknown>>("/api/news/debug");
     },
     getPublicMarkets(query?: PublicMarketsQuery) {
-      return request<{ markets: ApiMarketSummary[] }>("/api/markets/public", query);
+      return request<{ markets: ApiMarketSummary[]; nextCursor?: string | null; hasMore?: boolean }>("/api/markets/public", query);
     },
     getPolls(query?: { status?: "open" | "closed" | "all"; category?: AppMarketCategory }) {
       return request<{ polls: ApiPollListItem[] }>("/api/polls", query, { auth: true });
@@ -175,7 +180,7 @@ export function createApiClient(options: ApiClientOptions) {
         userVote?: { side: string | null; numericValue: number | null } | null;
       }>(`/api/markets/${marketId}`, query, { auth: true });
     },
-    placePosition(marketId: string, body: { side?: string; numericValue?: number; amount: number }, query?: { userId?: string }) {
+    placePosition(marketId: string, body: { side?: string; numericValue?: number; amount: number; reasoning?: string }, query?: { userId?: string }) {
       return request<ApiPlacePositionResponse>(
         `/api/markets/${marketId}/positions`,
         query,
@@ -259,10 +264,10 @@ export function createApiClient(options: ApiClientOptions) {
       return request<ApiLeaderboardResponse>("/api/leaderboard", query, { auth: true });
     },
     getProfile(username: string) {
-      return request<{ user: ApiUserProfile }>(`/api/profile/${username}`, undefined, { auth: true });
+      return request<{ user: ApiUserProfile; recentCalls: ProfileRecentCall[] }>(`/api/profile/${username}`, undefined, { auth: true });
     },
     getUserProfile(username: string) {
-      return request<{ user: ApiUserProfile }>(`/api/profile/${username}`, undefined, { auth: true });
+      return request<{ user: ApiUserProfile; recentCalls: ProfileRecentCall[] }>(`/api/profile/${username}`, undefined, { auth: true });
     },
     getMyProfile(query?: { userId?: string }) {
       return request<ApiMyProfile>("/api/profile/me", query, { auth: true });
@@ -430,6 +435,19 @@ export function createApiClient(options: ApiClientOptions) {
       return request<ApiExpertLeaderboardEntry[]>(
         `/api/finance/experts/leaderboard`,
         params
+      );
+    },
+
+    searchExperts(q: string) {
+      return request<import("@predict-future/types").ApiExpertSearchResult[]>(
+        `/api/finance/experts/search`,
+        { q }
+      );
+    },
+
+    getVerifiedCalls() {
+      return request<import("@predict-future/types").ApiVerifiedCall[]>(
+        `/api/finance/verified-calls`
       );
     },
 
@@ -734,6 +752,100 @@ export function createApiClient(options: ApiClientOptions) {
     getProbabilityHistory(marketId: string) {
       return request<ApiProbabilityHistory>(
         `/api/markets/${marketId}/probability-history`
+      );
+    },
+
+    // ─── Expert Follow System (S28-T1) ────────────────────────────────────────
+
+    /**
+     * Follow a named expert analyst. Auth required.
+     * Idempotent — safe to call if already following.
+     * Returns { following: true }
+     */
+    followExpert(expertId: string) {
+      return request<{ following: boolean }>(
+        `/api/finance/experts/${expertId}/follow`,
+        undefined,
+        { method: "POST", auth: true }
+      );
+    },
+
+    /**
+     * Unfollow a named expert analyst. Auth required.
+     * Idempotent — safe to call even if not currently following.
+     * Returns { following: false }
+     */
+    unfollowExpert(expertId: string) {
+      return request<{ following: boolean }>(
+        `/api/finance/experts/${expertId}/follow`,
+        undefined,
+        { method: "DELETE", auth: true }
+      );
+    },
+
+    /**
+     * Fetch the list of expert IDs the current user follows.
+     * Returns an empty array when unauthenticated.
+     * Auth: optional (returns [] when unauthenticated).
+     */
+    getFollowedExperts() {
+      return request<{ expertIds: string[] }>(
+        "/api/finance/experts/followed",
+        undefined,
+        { auth: true }
+      ).then((res) => res.expertIds);
+    },
+
+    // ─── Crowd vs. Experts (S28-T4) ───────────────────────────────────────────
+
+    /**
+     * Fetch crowd vs. expert accuracy comparison data.
+     * Returns { resolvedCount: 0 } when no resolved opinions exist.
+     * Cached for 5 minutes server-side.
+     */
+    getCrowdVsExperts() {
+      return request<ApiCrowdVsExperts>("/api/finance/crowd-vs-experts");
+    },
+
+    // ─── Reasoning upvotes (S30-T1) ───────────────────────────────────────────
+
+    /**
+     * Toggle upvote on a position's reasoning. Auth required.
+     * Cannot upvote own positions (403).
+     * Returns { upvoted: boolean; count: number }.
+     */
+    upvotePositionReasoning(positionId: string) {
+      return request<{ upvoted: boolean; count: number }>(
+        `/api/positions/${positionId}/upvote-reasoning`,
+        undefined,
+        { method: "POST", auth: true }
+      );
+    },
+
+    // ─── Notifications: unread count + mark all read (S30-T4) ─────────────────
+
+    /**
+     * Fetch the current user's unread notification count.
+     * Auth: required. Cache-Control: no-store.
+     */
+    getNotificationsUnreadCount() {
+      return request<{ count: number }>(
+        "/api/notifications/unread-count",
+        undefined,
+        { auth: true }
+      );
+    },
+
+    /**
+     * Mark all unread notifications for the current user as read.
+     * Auth: required.
+     * Returns { updated: number }.
+     */
+    markAllNotificationsRead() {
+      return request<{ updated: number }>(
+        "/api/notifications/mark-all-read",
+        undefined,
+        { method: "POST", auth: true }
       );
     },
   };

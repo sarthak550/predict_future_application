@@ -16,6 +16,7 @@ export async function GET(
         },
         orderBy: { publishedAt: "desc" },
       },
+      _count: { select: { followers: true } },
     },
   });
 
@@ -51,6 +52,7 @@ export async function GET(
     provisional: credibility.provisional,
     totalOpinions: expert.opinions.length,
     resolvedCount: credibility.resolvedCount,
+    followerCount: expert._count.followers,
     hitCount: credibility.hitCount,
     missCount: credibility.missCount,
     recentCalls,

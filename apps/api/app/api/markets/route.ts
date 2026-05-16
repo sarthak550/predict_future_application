@@ -11,6 +11,8 @@ import { createMarketSchema } from "@/lib/validations/market";
 /** Statuses hidden from public market lists by default — unmoderated or removed. */
 const UNAPPROVED_STATUSES: MarketStatus[] = ["DRAFT", "PENDING_REVIEW", "REJECTED", "HOST_TIMEOUT"];
 
+const DEFAULT_PAGE_SIZE = 20;
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const status = searchParams.get("status");
@@ -20,7 +22,8 @@ export async function GET(request: Request) {
   const featured = searchParams.get("featured");
   const sort = searchParams.get("sort");
   const limitParam = searchParams.get("limit");
-  const limit = limitParam ? Math.max(1, Math.min(100, parseInt(limitParam, 10))) : undefined;
+  const cursorParam = searchParams.get("cursor");
+  const limit = limitParam ? Math.max(1, Math.min(100, parseInt(limitParam, 10))) : DEFAULT_PAGE_SIZE;
 
   // Resolve viewer role to decide whether to honor includeUnapproved=true (admin/mod only).
   let viewerIsModerator = false;
@@ -85,6 +88,10 @@ export async function GET(request: Request) {
           }
         : {})
     },
+    // Cursor pagination: when a cursor is provided, skip past it.
+    ...(cursorParam ? { cursor: { id: cursorParam }, skip: 1 } : {}),
+    // Always fetch one extra to determine hasMore.
+    take: limit + 1,
     include: {
       creator: {
         select: {
@@ -111,13 +118,17 @@ export async function GET(request: Request) {
     }
   });
 
+  // Detect if there is another page by checking if we got limit+1 results.
+  const hasMore = markets.length > limit;
+  const pageMarkets = hasMore ? markets.slice(0, limit) : markets;
+
   const sortedMarkets =
     sort === "new"
-      ? [...markets].sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
+      ? [...pageMarkets].sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
       : sort === "closing" || sort === "close_at"
-        ? [...markets].sort((left, right) => left.closeAt.getTime() - right.closeAt.getTime())
+        ? [...pageMarkets].sort((left, right) => left.closeAt.getTime() - right.closeAt.getTime())
         : sort === "featured"
-          ? [...markets].sort((left, right) => {
+          ? [...pageMarkets].sort((left, right) => {
               if (left.isFeatured !== right.isFeatured) {
                 return Number(right.isFeatured) - Number(left.isFeatured);
               }
@@ -125,19 +136,21 @@ export async function GET(request: Request) {
               return computeMarketRankScore(right) - computeMarketRankScore(left);
             })
           : sort === "volume"
-            ? [...markets].sort((left, right) => (right.totalVolume ?? 0) - (left.totalVolume ?? 0))
-            : rankMarkets(markets);
+            ? [...pageMarkets].sort((left, right) => (right.totalVolume ?? 0) - (left.totalVolume ?? 0))
+            : rankMarkets(pageMarkets);
 
-  const resultMarkets = limit ? sortedMarkets.slice(0, limit) : sortedMarkets;
+  const nextCursor = hasMore ? (sortedMarkets[sortedMarkets.length - 1]?.id ?? null) : null;
 
   return NextResponse.json({
-    markets: resultMarkets.map((market) => ({
+    markets: sortedMarkets.map((market) => ({
       ...market,
       creator: market.creator
         ? { ...market.creator, username: getDisplayName(market.creator) }
         : market.creator,
       marketRankScore: computeMarketRankScore(market)
-    }))
+    })),
+    nextCursor,
+    hasMore,
   });
 }
 

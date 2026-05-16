@@ -59,11 +59,11 @@ export default function TabsLayout() {
           }}
         />
         <Tabs.Screen
-          name="sports"
+          name="finance"
           options={{
-            title: "Sports",
+            title: "Finance",
             tabBarIcon: ({ color, size }) => (
-              <Ionicons name="football-outline" size={size} color={color} />
+              <Ionicons name="stats-chart-outline" size={size} color={color} />
             ),
           }}
         />
@@ -86,18 +86,6 @@ export default function TabsLayout() {
           }}
         />
         <Tabs.Screen
-          name="finance"
-          options={{
-            title: "Finance",
-            tabBarIcon: ({ color, size }) => (
-              <Ionicons name="stats-chart-outline" size={size} color={color} />
-            ),
-          }}
-        />
-        <Tabs.Screen name="leaderboard" options={{ href: null }} />
-        <Tabs.Screen name="notifications" options={{ href: null }} />
-        <Tabs.Screen name="groups" options={{ href: null }} />
-        <Tabs.Screen
           name="profile"
           options={{
             title: "Profile",
@@ -107,6 +95,10 @@ export default function TabsLayout() {
             tabBarBadge: profileBadge,
           }}
         />
+        <Tabs.Screen name="sports" options={{ href: null }} />
+        <Tabs.Screen name="leaderboard" options={{ href: null }} />
+        <Tabs.Screen name="notifications" options={{ href: null }} />
+        <Tabs.Screen name="groups" options={{ href: null }} />
       </Tabs>
     </>
   );

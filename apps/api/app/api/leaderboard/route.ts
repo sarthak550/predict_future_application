@@ -5,6 +5,40 @@ import { getUserIdFromRequest } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getDisplayName } from "@/lib/users/displayName";
 
+/**
+ * Look up the most recent LeaderboardSnapshot for each userId in the given
+ * timeWindow + category and return a map of userId → previousRank.
+ */
+async function getPreviousRankMap(
+  userIds: string[],
+  timeWindow: string,
+  category: string | null
+): Promise<Map<string, number>> {
+  if (userIds.length === 0) return new Map();
+
+  // For each user, get their most recent snapshot for this combination.
+  // We use a raw query for efficient "latest per group" retrieval.
+  const snapshots = await prisma.leaderboardSnapshot.findMany({
+    where: {
+      userId: { in: userIds },
+      timeWindow,
+      category: category ?? null,
+    },
+    orderBy: { snapshotAt: "desc" },
+    // Fetch up to 10 snapshots per user (we only need the latest but Prisma
+    // doesn't support DISTINCT ON; we'll deduplicate in JS).
+    take: userIds.length * 10,
+  });
+
+  const rankMap = new Map<string, number>();
+  for (const snap of snapshots) {
+    if (!rankMap.has(snap.userId)) {
+      rankMap.set(snap.userId, snap.rank);
+    }
+  }
+  return rankMap;
+}
+
 type TimeWindow = "week" | "month" | "all";
 
 function getCutoff(timeWindow: TimeWindow): Date | null {
@@ -114,15 +148,28 @@ export async function GET(request: Request) {
     // Flatten UserCategoryStat shape into ApiLeaderboardEntry shape (id, username,
     // reputationScore, accuracyScore at the top level — matches the All-tab shape
     // so the mobile renderer can use one row component).
-    const entries = rawCategoryEntries.map((row) => ({
-      id: row.userId,
-      username: getDisplayName(row.user),
-      reputationScore: row.user.reputationScore,
-      isVerifiedAnalyst: row.user.isVerifiedAnalyst,
-      accuracyScore: row.accuracyScore,
-      totalNetPoints: row.totalNetPoints,
-      followerCount: row.user._count.followers,
-    }));
+    const categoryUserIds = rawCategoryEntries.map((r) => r.userId);
+    const categoryPrevRanks = await getPreviousRankMap(
+      categoryUserIds,
+      timeWindow,
+      category
+    );
+
+    const entries = rawCategoryEntries.map((row, idx) => {
+      const currentRank = idx + 1;
+      const prevRank = categoryPrevRanks.get(row.userId);
+      const rankDelta = prevRank !== undefined ? prevRank - currentRank : null;
+      return {
+        id: row.userId,
+        username: getDisplayName(row.user),
+        reputationScore: row.user.reputationScore,
+        isVerifiedAnalyst: row.user.isVerifiedAnalyst,
+        accuracyScore: row.accuracyScore,
+        totalNetPoints: row.totalNetPoints,
+        followerCount: row.user._count.followers,
+        rankDelta,
+      };
+    });
 
     // Compute user's rank within this category if authenticated
     let userRank: number | null = null;
@@ -211,6 +258,7 @@ export async function GET(request: Request) {
       reputationScore: true,
       accuracyScore: true,
       isVerifiedAnalyst: true,
+      analystTier: true,
       stats: {
         select: {
           totalPredictions: true,
@@ -224,6 +272,10 @@ export async function GET(request: Request) {
   });
 
   // Flatten _count into followerCount; apply displayMode pseudonym; fall back to 0 on count error.
+  // Look up previous ranks for rank delta computation.
+  const allUserIds = rawEntries.map((u) => u.id);
+  const prevRankMap = await getPreviousRankMap(allUserIds, timeWindow, null);
+
   type LeaderboardEntry = {
     id: string;
     username: string;
@@ -231,30 +283,45 @@ export async function GET(request: Request) {
     accuracyScore: number;
     isVerifiedAnalyst: boolean;
     followerCount: number;
+    rankDelta: number | null;
     stats: { totalPredictions: number; totalNetPoints: number } | null;
   };
   let entries: LeaderboardEntry[];
   try {
-    entries = rawEntries.map((u) => ({
-      id: u.id,
-      username: getDisplayName(u),
-      reputationScore: u.reputationScore,
-      accuracyScore: u.accuracyScore,
-      isVerifiedAnalyst: u.isVerifiedAnalyst,
-      followerCount: u._count.followers,
-      stats: u.stats,
-    }));
+    entries = rawEntries.map((u, idx) => {
+      const currentRank = idx + 1;
+      const prevRank = prevRankMap.get(u.id);
+      const rankDelta = prevRank !== undefined ? prevRank - currentRank : null;
+      return {
+        id: u.id,
+        username: getDisplayName(u),
+        reputationScore: u.reputationScore,
+        accuracyScore: u.accuracyScore,
+        isVerifiedAnalyst: u.isVerifiedAnalyst,
+        analystTier: u.analystTier,
+        followerCount: u._count.followers,
+        stats: u.stats,
+        rankDelta,
+      };
+    });
   } catch (countErr) {
     console.error("[leaderboard] follower count mapping failed, falling back to 0", countErr);
-    entries = rawEntries.map((u) => ({
-      id: u.id,
-      username: getDisplayName(u),
-      reputationScore: u.reputationScore,
-      accuracyScore: u.accuracyScore,
-      isVerifiedAnalyst: u.isVerifiedAnalyst,
-      followerCount: 0,
-      stats: u.stats,
-    }));
+    entries = rawEntries.map((u, idx) => {
+      const currentRank = idx + 1;
+      const prevRank = prevRankMap.get(u.id);
+      const rankDelta = prevRank !== undefined ? prevRank - currentRank : null;
+      return {
+        id: u.id,
+        username: getDisplayName(u),
+        reputationScore: u.reputationScore,
+        accuracyScore: u.accuracyScore,
+        isVerifiedAnalyst: u.isVerifiedAnalyst,
+        analystTier: u.analystTier,
+        followerCount: 0,
+        stats: u.stats,
+        rankDelta,
+      };
+    });
   }
 
   // Compute user's overall rank if authenticated

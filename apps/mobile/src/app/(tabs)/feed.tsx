@@ -10,9 +10,11 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 
-import type { ApiBigCallMarket, ApiNewsFeedItem, AppMarketCategory } from "@predict-future/types";
+import type { ApiBigCallMarket, ApiNewsFeedItem, AppAnalystTier, AppMarketCategory } from "@predict-future/types";
 import { colors, radius, spacing } from "@predict-future/ui-tokens";
 
 import {
@@ -27,6 +29,8 @@ import { SkeletonFeedCard } from "@/components/skeleton-feed-card";
 import { StreakBadge } from "@/components/streak-reminder";
 import { mobileApi } from "@/lib/api";
 import { useSession } from "@/providers/session-provider";
+
+const FEED_PERSONALIZATION_KEY = "feed_personalization_mode";
 
 const PAGE_SIZE = 10;
 const TAB_BAR_HEIGHT = 72;
@@ -150,12 +154,14 @@ const bigCallStyles = StyleSheet.create({
   },
 });
 
-// Feed-specific category list: use the shared FILTER_BAR_CATEGORIES,
-// but SPORTS is omitted because sports stories are surfaced in the Sports tab.
-// (The API query already applies excludeCategory="SPORTS" when category=ALL.)
-const FEED_CATEGORIES = FILTER_BAR_CATEGORIES.filter(
-  (c) => c.key !== "SPORTS"
-);
+const FEED_CATEGORIES = FILTER_BAR_CATEGORIES;
+
+const ANALYST_TIER_LABELS: Record<AppAnalystTier, string> = {
+  ROOKIE: "Rookie",
+  ANALYST: "Analyst",
+  SENIOR_ANALYST: "Senior Analyst",
+  CHIEF_ANALYST: "Chief Analyst",
+};
 
 type NewsListItem =
   | { _type: "news"; _key: string; item: ApiNewsFeedItem }
@@ -185,6 +191,8 @@ function buildFeedItems(newsItems: ApiNewsFeedItem[]): NewsListItem[] {
   return result;
 }
 
+type PersonalizationMode = "for_you" | "all";
+
 export default function FeedScreen() {
   const { height } = useWindowDimensions();
   const navigation = useNavigation();
@@ -193,9 +201,18 @@ export default function FeedScreen() {
   const { session, status: authStatus } = useSession();
   const listRef = useRef<FlatList<NewsListItem>>(null);
   const [streakCount, setStreakCount] = useState(0);
+  const [followCount, setFollowCount] = useState<number | null>(null);
+
+  // Personalization mode — "for_you" or "all". Loaded from AsyncStorage on mount.
+  const [personalizationMode, setPersonalizationMode] = useState<PersonalizationMode>("all");
+  const personalizationModeRef = useRef<PersonalizationMode>("all");
 
   // Today's Big Call market — null while loading, undefined if no market set today
   const [bigCallMarket, setBigCallMarket] = useState<ApiBigCallMarket | null | undefined>(null);
+
+  // Tier upgrade nudge — shown when user is eligible for next tier
+  const [tierUpgradeNextTier, setTierUpgradeNextTier] = useState<AppAnalystTier | null>(null);
+  const [tierNudgeDismissed, setTierNudgeDismissed] = useState(true); // default hidden until loaded
 
   const [items, setItems] = useState<ApiNewsFeedItem[]>([]);
   const [hasMore, setHasMore] = useState(true);
@@ -228,11 +245,43 @@ export default function FeedScreen() {
   // from reappearing on pull-to-refresh or category switches once we've had data).
   const hasEverLoadedRef = useRef(false);
 
-  // Fetch streak count once when authenticated
+  // Load persisted personalization mode from AsyncStorage on mount
+  useEffect(() => {
+    void AsyncStorage.getItem(FEED_PERSONALIZATION_KEY).then((stored) => {
+      if (stored === "for_you" || stored === "all") {
+        personalizationModeRef.current = stored;
+        setPersonalizationMode(stored);
+      }
+    }).catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Fetch streak count + follow count + tier progress once when authenticated
   useEffect(() => {
     if (authStatus !== "authenticated" || !session) return;
-    void mobileApi.getMyProfile().then((p) => {
+    void mobileApi.getMyProfile().then(async (p) => {
       setStreakCount(p.user.streak ?? 0);
+      const following = (p.user as { followingCount?: number }).followingCount ?? 0;
+      setFollowCount(following);
+      // Default to "for_you" if user has follows and hasn't explicitly chosen a mode
+      void AsyncStorage.getItem(FEED_PERSONALIZATION_KEY).then((stored) => {
+        if (!stored && following > 0) {
+          personalizationModeRef.current = "for_you";
+          setPersonalizationMode("for_you");
+        }
+      }).catch(() => {});
+
+      // Check tier upgrade nudge
+      const tierProgress = (p.user as { tierProgress?: { isEligible?: boolean; nextTier?: AppAnalystTier | null } }).tierProgress;
+      if (tierProgress?.isEligible && tierProgress.nextTier) {
+        const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+        const dismissKey = `tier_upgrade_nudge_dismissed_${today}`;
+        const dismissed = await AsyncStorage.getItem(dismissKey).catch(() => "true");
+        if (dismissed !== "true") {
+          setTierUpgradeNextTier(tierProgress.nextTier);
+          setTierNudgeDismissed(false);
+        }
+      }
     }).catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authStatus]);
@@ -314,12 +363,10 @@ export default function FeedScreen() {
       const query: Parameters<typeof mobileApi.getNews>[0] = {
         limit: PAGE_SIZE,
         cursor: mode === "append" ? cursorRef.current : null,
+        personalized: personalizationModeRef.current === "for_you" ? true : undefined,
       };
 
-      if (cat === "ALL") {
-        // Sports has its own dedicated tab — exclude from the main feed
-        query.excludeCategory = "SPORTS";
-      } else {
+      if (cat !== "ALL") {
         query.category = cat as AppMarketCategory;
       }
 
@@ -417,6 +464,10 @@ export default function FeedScreen() {
   }, [loadPage]);
 
   function handleCategoryChange(cat: CategoryKey) {
+    if (cat === "SPORTS") {
+      router.push("/(tabs)/sports" as Parameters<typeof router.push>[0]);
+      return;
+    }
     if (cat === category) return;
     categoryRef.current = cat;
     setCategory(cat);
@@ -443,8 +494,63 @@ export default function FeedScreen() {
     [cardHeight]
   );
 
+  function handlePersonalizationToggle(mode: PersonalizationMode) {
+    if (mode === personalizationModeRef.current) return;
+    personalizationModeRef.current = mode;
+    setPersonalizationMode(mode);
+    void AsyncStorage.setItem(FEED_PERSONALIZATION_KEY, mode).catch(() => {});
+    // Reset paging and reload with the new mode
+    setItems([]);
+    cursorRef.current = null;
+    hasMoreRef.current = true;
+    inFlightRef.current = false;
+    void loadPage("replace");
+  }
+
   return (
     <View style={styles.screen}>
+      {/* For You / All toggle pills */}
+      {authStatus === "authenticated" && (
+        <View style={styles.personalizationRow}>
+          <Pressable
+            style={[
+              styles.personalizationPill,
+              personalizationMode === "for_you" && styles.personalizationPillActive,
+            ]}
+            onPress={() => handlePersonalizationToggle("for_you")}
+            accessibilityRole="button"
+            accessibilityLabel="For You feed"
+          >
+            <Text
+              style={[
+                styles.personalizationPillText,
+                personalizationMode === "for_you" && styles.personalizationPillTextActive,
+              ]}
+            >
+              For You
+            </Text>
+          </Pressable>
+          <Pressable
+            style={[
+              styles.personalizationPill,
+              personalizationMode === "all" && styles.personalizationPillActive,
+            ]}
+            onPress={() => handlePersonalizationToggle("all")}
+            accessibilityRole="button"
+            accessibilityLabel="All feed"
+          >
+            <Text
+              style={[
+                styles.personalizationPillText,
+                personalizationMode === "all" && styles.personalizationPillTextActive,
+              ]}
+            >
+              All
+            </Text>
+          </Pressable>
+        </View>
+      )}
+
       {/* Category filter bar — sticky above the feed cards.
           StreakBadge is appended at the trailing end of the same scroll row. */}
       <View style={[styles.categoryBar, { height: CATEGORY_BAR_HEIGHT }]}>
@@ -464,9 +570,45 @@ export default function FeedScreen() {
       {/* Platform trust banner — compact accuracy pill below the category bar */}
       <PlatformTrustBanner />
 
+      {/* Tier upgrade nudge — one-line dismissable banner for eligible users */}
+      {authStatus === "authenticated" && !tierNudgeDismissed && tierUpgradeNextTier !== null && (
+        <View style={styles.tierNudgeBanner}>
+          <Text style={styles.tierNudgeText} numberOfLines={1}>
+            {`You're one call away from ${ANALYST_TIER_LABELS[tierUpgradeNextTier]} tier — make it count.`}
+          </Text>
+          <Pressable
+            hitSlop={8}
+            onPress={async () => {
+              const today = new Date().toISOString().slice(0, 10);
+              const dismissKey = `tier_upgrade_nudge_dismissed_${today}`;
+              await AsyncStorage.setItem(dismissKey, "true").catch(() => {});
+              setTierNudgeDismissed(true);
+            }}
+            accessibilityLabel="Dismiss tier nudge"
+          >
+            <Ionicons name="close" size={14} color={colors.textMuted} />
+          </Pressable>
+        </View>
+      )}
+
       {/* Today's Big Call — shown only when a market is designated for today */}
       {bigCallMarket != null && (
         <BigCallCard market={bigCallMarket} />
+      )}
+
+      {/* Nudge row: shown in "For You" mode when user has 0 follows */}
+      {personalizationMode === "for_you" && followCount === 0 && (
+        <Pressable
+          style={styles.followNudgeRow}
+          onPress={() => router.push("/(tabs)/leaderboard")}
+          accessibilityRole="button"
+          accessibilityLabel="Browse Leaderboard to find analysts to follow"
+        >
+          <Text style={styles.followNudgeText}>
+            Follow analysts to personalize your feed
+          </Text>
+          <Text style={styles.followNudgeLink}>Browse Leaderboard</Text>
+        </Pressable>
       )}
 
       <FlatList
@@ -592,6 +734,85 @@ function mergeUniqueItems(current: ApiNewsFeedItem[], next: ApiNewsFeedItem[]) {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
+
+  // For You / All toggle
+  personalizationRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    backgroundColor: colors.surface,
+  },
+  personalizationPill: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.background,
+  },
+  personalizationPillActive: {
+    backgroundColor: colors.accent,
+    borderColor: colors.accent,
+  },
+  personalizationPillText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: colors.textMuted,
+  },
+  personalizationPillTextActive: {
+    color: "#fff",
+  },
+
+  // Follow nudge row
+  followNudgeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    backgroundColor: "#EFF6FF",
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
+  },
+  followNudgeText: {
+    flex: 1,
+    fontSize: 13,
+    color: "#1D4ED8",
+  },
+  followNudgeLink: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#1D4ED8",
+    marginLeft: spacing.sm,
+  },
+
+  // Tier upgrade nudge banner
+  tierNudgeBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    backgroundColor: "#F5F3FF",
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: "#DDD6FE",
+    gap: spacing.sm,
+  },
+  tierNudgeText: {
+    flex: 1,
+    fontSize: 12,
+    color: "#7C3AED",
+    fontWeight: "600",
+  },
 
   // Category bar — wraps the shared CategoryFilterBar
   categoryBar: {

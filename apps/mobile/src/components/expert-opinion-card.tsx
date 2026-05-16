@@ -16,6 +16,11 @@ type Props = {
   opinions: ApiExpertOpinionItem[];
   storyHeadline?: string;
   storyId?: string;
+  articlePublishedAt?: string;
+  /** Set of followed expert IDs — drives Follow/Following pill visibility */
+  followedExpertIds?: string[];
+  /** Called when the user taps Follow/Following */
+  onFollowToggle?: (expertId: string, currentlyFollowing: boolean) => void;
 };
 
 function getSourceDomain(url: string): string {
@@ -26,7 +31,7 @@ function getSourceDomain(url: string): string {
   }
 }
 
-export function ExpertOpinionCard({ opinions, storyHeadline, storyId }: Props) {
+export function ExpertOpinionCard({ opinions, storyHeadline, storyId, articlePublishedAt, followedExpertIds, onFollowToggle }: Props) {
   const router = useRouter();
 
   if (opinions.length === 0) return null;
@@ -38,7 +43,13 @@ export function ExpertOpinionCard({ opinions, storyHeadline, storyId }: Props) {
       {opinions.map((opinion, index) => (
         <View key={opinion.id}>
           {index > 0 && <View style={styles.takeDivider} />}
-          <ExpertOpinionRow opinion={opinion} hideByline={index > 0} />
+          <ExpertOpinionRow
+            opinion={opinion}
+            hideByline={index > 0}
+            isFollowed={followedExpertIds?.includes(opinion.expertId)}
+            onFollowToggle={onFollowToggle}
+            articlePublishedAt={articlePublishedAt}
+          />
         </View>
       ))}
 

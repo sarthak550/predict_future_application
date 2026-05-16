@@ -1,7 +1,10 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -11,15 +14,22 @@ import {
 } from "react-native";
 
 import type {
+  ApiCrowdVsExperts,
   ApiFinanceExpertSentiment,
   ApiFinanceMarketsResponse,
   ApiMarketSummary,
   ApiNewsFeedItem,
+  ApiVerifiedCall,
 } from "@predict-future/types";
 import { colors, radius, spacing } from "@predict-future/ui-tokens";
 
 import { ExpertOpinionCard } from "@/components/expert-opinion-card";
 import { mobileApi } from "@/lib/api";
+import { getExpertInitials, getExpertInitialsColor } from "@/utils/expertAvatar";
+
+const FOLLOWED_ANALYSTS_KEY = "finance:followedAnalysts";
+
+type DirectionFilter = "BULLISH" | "BEARISH" | "NEUTRAL" | "VERIFIED" | null;
 
 function formatDateRange(startsAt: string, endsAt: string): string {
   const fmt = (iso: string) =>
@@ -35,7 +45,13 @@ function formatSentimentDelta(current: number, previous: number | null): string 
   return `${sign} ${Math.abs(delta)}pts vs yesterday`;
 }
 
-function SentimentCard({ data }: { data: NonNullable<ApiFinanceMarketsResponse["sentimentToday"]> }) {
+function SentimentCard({
+  data,
+  onPress,
+}: {
+  data: NonNullable<ApiFinanceMarketsResponse["sentimentToday"]>;
+  onPress?: () => void;
+}) {
   const router = useRouter();
   const leanColor =
     data.leanLabel === "Bullish" ? "#16a34a" : data.leanLabel === "Bearish" ? "#dc2626" : "#6b7280";
@@ -45,11 +61,16 @@ function SentimentCard({ data }: { data: NonNullable<ApiFinanceMarketsResponse["
   const deltaPositive = deltaLabel?.startsWith("▲");
   const deltaColor = deltaPositive ? "#16a34a" : deltaLabel?.startsWith("▼") ? "#dc2626" : "#6b7280";
 
+  const handlePress = () => {
+    if (onPress) {
+      onPress();
+    } else {
+      router.push(`/market/${data.marketId}` as Parameters<typeof router.push>[0]);
+    }
+  };
+
   return (
-    <Pressable
-      style={financeStyles.sentimentCard}
-      onPress={() => router.push(`/market/${data.marketId}` as Parameters<typeof router.push>[0])}
-    >
+    <Pressable style={financeStyles.sentimentCard} onPress={handlePress}>
       <Text style={financeStyles.sentimentTitle}>Today&apos;s Sentiment</Text>
       <Text style={financeStyles.sentimentMarketTitle} numberOfLines={2}>
         {data.marketTitle}
@@ -81,11 +102,18 @@ function SentimentCard({ data }: { data: NonNullable<ApiFinanceMarketsResponse["
           <Text style={[financeStyles.deltaText, { color: deltaColor }]}>{deltaLabel}</Text>
         ) : null}
       </View>
+      <Text style={financeStyles.sentimentSeeOpinions}>See opinions →</Text>
     </Pressable>
   );
 }
 
-function AnalystSentimentCard({ sentiment }: { sentiment: ApiFinanceExpertSentiment }) {
+function AnalystSentimentCard({
+  sentiment,
+  onPress,
+}: {
+  sentiment: ApiFinanceExpertSentiment;
+  onPress?: () => void;
+}) {
   if (sentiment.totalCount === 0) {
     return (
       <View style={financeStyles.analystSentimentCard}>
@@ -105,7 +133,7 @@ function AnalystSentimentCard({ sentiment }: { sentiment: ApiFinanceExpertSentim
           : "#6B7280";
 
   return (
-    <View style={financeStyles.analystSentimentCard}>
+    <Pressable style={financeStyles.analystSentimentCard} onPress={onPress}>
       <Text style={financeStyles.analystSentimentTitle}>Today's Analyst Sentiment</Text>
 
       {/* Count chips row */}
@@ -170,7 +198,9 @@ function AnalystSentimentCard({ sentiment }: { sentiment: ApiFinanceExpertSentim
           Based on {sentiment.totalCount} expert {sentiment.totalCount === 1 ? "opinion" : "opinions"} in the last 7 days
         </Text>
       </View>
-    </View>
+
+      <Text style={financeStyles.analystSeeOpinions}>See opinions →</Text>
+    </Pressable>
   );
 }
 
@@ -205,9 +235,149 @@ function MarketChip({ market }: { market: ApiMarketSummary }) {
   );
 }
 
+/** My Analysts avatar-chip row — shown when user follows 1+ analysts */
+function MyAnalystsRow({
+  followedIds,
+  expertNames,
+  selectedAnalystFilter,
+  onSelectAnalyst,
+  onClearFilter,
+}: {
+  followedIds: string[];
+  expertNames: Record<string, { name: string; org: string }>;
+  selectedAnalystFilter: string | null;
+  onSelectAnalyst: (id: string) => void;
+  onClearFilter: () => void;
+}) {
+  if (followedIds.length === 0) return null;
+
+  return (
+    <View style={financeStyles.myAnalystsSection}>
+      <Text style={financeStyles.myAnalystsLabel}>My Analysts</Text>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={financeStyles.myAnalystsScroll}
+      >
+        {/* All chip */}
+        <Pressable
+          style={[
+            financeStyles.analystChip,
+            selectedAnalystFilter === null && financeStyles.analystChipActive,
+          ]}
+          onPress={onClearFilter}
+        >
+          <Text
+            style={[
+              financeStyles.analystChipText,
+              selectedAnalystFilter === null && financeStyles.analystChipTextActive,
+            ]}
+          >
+            All
+          </Text>
+        </Pressable>
+
+        {followedIds.map((id) => {
+          const info = expertNames[id];
+          const displayName = info
+            ? (info.name || info.org).slice(0, 8)
+            : id.slice(0, 8);
+          const initials = info
+            ? getExpertInitials(info.name, info.org)
+            : "?";
+          const initialsColor = info
+            ? getExpertInitialsColor(info.name || info.org)
+            : "#6b7280";
+          const isSelected = selectedAnalystFilter === id;
+
+          return (
+            <Pressable
+              key={id}
+              style={[financeStyles.analystChip, isSelected && financeStyles.analystChipActive]}
+              onPress={() => onSelectAnalyst(id)}
+            >
+              <View style={[financeStyles.analystChipAvatar, { backgroundColor: initialsColor }]}>
+                <Text style={financeStyles.analystChipAvatarText}>{initials}</Text>
+              </View>
+              <Text
+                style={[
+                  financeStyles.analystChipText,
+                  isSelected && financeStyles.analystChipTextActive,
+                ]}
+                numberOfLines={1}
+              >
+                {displayName}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+    </View>
+  );
+}
+
+/** Crowd vs. Experts comparison card */
+function CrowdVsExpertsCard({ data }: { data: ApiCrowdVsExperts }) {
+  if (data.resolvedCount < 10) return null;
+
+  const crowdWinRate = data.crowdWinRate ?? 0;
+  const expertWinRate = data.expertWinRate ?? 0;
+  const crowdWins = crowdWinRate >= expertWinRate;
+  const winnerText = crowdWins
+    ? "Crowd is beating analysts on Indian markets"
+    : "Analysts are leading the crowd this month";
+
+  const crowdFlex = Math.max(1, crowdWinRate);
+  const expertFlex = Math.max(1, expertWinRate);
+
+  return (
+    <View style={financeStyles.crowdVsExpertsCard}>
+      <Text style={financeStyles.crowdVsExpertsHeader}>CROWD VS. EXPERTS</Text>
+
+      <View style={financeStyles.crowdVsExpertsStatsRow}>
+        <View style={financeStyles.crowdVsExpertsStat}>
+          <Text style={[financeStyles.crowdVsExpertsWinRate, { color: "#4338CA" }]}>
+            {crowdWinRate}%
+          </Text>
+          <Text style={financeStyles.crowdVsExpertsStatLabel}>Crowd</Text>
+        </View>
+
+        <View style={financeStyles.crowdVsExpertsDivider} />
+
+        <View style={financeStyles.crowdVsExpertsStat}>
+          <Text style={[financeStyles.crowdVsExpertsWinRate, { color: "#0891b2" }]}>
+            {expertWinRate}%
+          </Text>
+          <Text style={financeStyles.crowdVsExpertsStatLabel}>Experts</Text>
+        </View>
+      </View>
+
+      {/* Segmented bar */}
+      <View style={financeStyles.crowdVsExpertsBarTrack}>
+        <View style={[financeStyles.crowdVsExpertsBarSegment, { flex: crowdFlex, backgroundColor: "#4338CA" }]} />
+        <View style={[financeStyles.crowdVsExpertsBarSegment, { flex: expertFlex, backgroundColor: "#0891b2" }]} />
+      </View>
+
+      <Text style={financeStyles.crowdVsExpertsWinner}>{winnerText}</Text>
+
+      <View style={financeStyles.crowdVsExpertsFooter}>
+        <Text style={financeStyles.crowdVsExpertsFooterText}>
+          Based on {data.resolvedCount} resolved calls
+        </Text>
+        {data.provisional && (
+          <View style={financeStyles.provisionalBadge}>
+            <Text style={financeStyles.provisionalBadgeText}>provisional</Text>
+          </View>
+        )}
+      </View>
+    </View>
+  );
+}
+
 export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => void }) {
   const [data, setData] = useState<ApiFinanceMarketsResponse | null>(null);
   const [analystSentiment, setAnalystSentiment] = useState<ApiFinanceExpertSentiment | null>(null);
+  const [crowdVsExperts, setCrowdVsExperts] = useState<ApiCrowdVsExperts | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -217,6 +387,11 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
 
   // Latest finance news with attached expert opinions and dual polls
   const [financeNews, setFinanceNews] = useState<ApiNewsFeedItem[]>([]);
+
+  // S28-T2: Pagination state
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   // ScrollView ref and expert section Y offset for scroll-to navigation (S18-T2 / T4)
   const scrollViewRef = useRef<ScrollView>(null);
@@ -228,20 +403,43 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
   // Toggle between named-analyst expert opinions and trusted-source market analysis
   const [opinionTab, setOpinionTab] = useState<"expert" | "analysis">("expert");
 
+  // S28-T3: Direction filter state
+  const [selectedDirectionFilter, setSelectedDirectionFilter] = useState<DirectionFilter>(null);
+
+  // S28-T1: Follow system state
+  const [followedExpertIds, setFollowedExpertIds] = useState<string[]>([]);
+  const [expertNamesMap, setExpertNamesMap] = useState<Record<string, { name: string; org: string }>>({});
+  const [selectedAnalystFilter, setSelectedAnalystFilter] = useState<string | null>(null);
+
+  // Verified calls — fetched independently so they're always visible
+  const [verifiedCalls, setVerifiedCalls] = useState<ApiVerifiedCall[]>([]);
+
   const router = useRouter();
 
   const load = async (isRefresh = false) => {
     if (!isRefresh) setLoading(true);
     setError(null);
     try {
-      const [marketsResult, newsResult, sentimentResult] = await Promise.all([
+      const [marketsResult, newsResult, sentimentResult, crowdResult, verifiedResult] = await Promise.all([
         mobileApi.getFinanceMarkets(),
-        mobileApi.getNews({ category: "FINANCE", limit: 30, requireExpertOpinions: true }),
+        mobileApi.getNews({ category: "FINANCE", limit: 10, requireExpertOpinions: true }),
         mobileApi.getFinanceExpertSentiment().catch(() => null),
+        mobileApi.getCrowdVsExperts().catch(() => null),
+        mobileApi.getVerifiedCalls().catch(() => []),
       ]);
       setData(marketsResult);
       setFinanceNews(newsResult.items ?? []);
+      setNextCursor(newsResult.nextCursor ?? null);
+      setHasMore(newsResult.hasMore ?? false);
       setAnalystSentiment(sentimentResult);
+      setCrowdVsExperts(crowdResult);
+      setVerifiedCalls(verifiedResult ?? []);
+
+      // Reset filters on refresh
+      if (isRefresh) {
+        setSelectedClusterFilter(null);
+        setSelectedDirectionFilter(null);
+      }
     } catch {
       setError("Couldn't load finance content. Check your connection and tap Retry.");
     } finally {
@@ -249,6 +447,39 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
       if (isRefresh) setRefreshing(false);
     }
   };
+
+  // S28-T2: Load more items (append to list)
+  const loadMore = useCallback(async () => {
+    if (!hasMore || loadingMore || nextCursor === null) return;
+    setLoadingMore(true);
+    try {
+      const result = await mobileApi.getNews({
+        category: "FINANCE",
+        limit: 10,
+        requireExpertOpinions: true,
+        cursor: nextCursor,
+      });
+      setFinanceNews((prev) => [...prev, ...(result.items ?? [])]);
+      setNextCursor(result.nextCursor ?? null);
+      setHasMore(result.hasMore ?? false);
+    } catch {
+      // Silently fail — user can scroll again to retry
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [hasMore, loadingMore, nextCursor]);
+
+  // S28-T2: Scroll handler — trigger loadMore when within 200px of bottom
+  const handleScroll = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+      const distanceFromBottom = contentSize.height - contentOffset.y - layoutMeasurement.height;
+      if (distanceFromBottom < 200) {
+        void loadMore();
+      }
+    },
+    [loadMore]
+  );
 
   // Check leaderboard for conditional link
   const checkLeaderboard = async () => {
@@ -260,10 +491,83 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
     }
   };
 
+  // S28-T1: Load followed expert IDs (from cache first, then API)
+  const loadFollowedExperts = useCallback(async () => {
+    // Instant render from AsyncStorage cache
+    try {
+      const cached = await AsyncStorage.getItem(FOLLOWED_ANALYSTS_KEY);
+      if (cached) {
+        const ids: string[] = JSON.parse(cached) as string[];
+        setFollowedExpertIds(ids);
+      }
+    } catch {
+      // ignore cache errors
+    }
+
+    // Then fetch from API
+    try {
+      const ids = await mobileApi.getFollowedExperts();
+      setFollowedExpertIds(ids);
+      await AsyncStorage.setItem(FOLLOWED_ANALYSTS_KEY, JSON.stringify(ids));
+    } catch {
+      // silently fail — cache is good enough
+    }
+  }, []);
+
   useEffect(() => {
     void load();
     void checkLeaderboard();
+    void loadFollowedExperts();
   }, []);
+
+  // S28-T1: Build expert name map from loaded financeNews
+  useEffect(() => {
+    const map: Record<string, { name: string; org: string }> = {};
+    for (const item of financeNews) {
+      for (const op of (item.expertOpinions ?? [])) {
+        if (!map[op.expertId]) {
+          map[op.expertId] = { name: op.expertName, org: op.expertOrganization };
+        }
+      }
+    }
+    setExpertNamesMap((prev) => ({ ...prev, ...map }));
+  }, [financeNews]);
+
+  // S28-T1: Handle follow/unfollow from ExpertOpinionRow — update local state + cache
+  const handleFollowToggle = useCallback(async (expertId: string, currentlyFollowing: boolean) => {
+    try {
+      if (currentlyFollowing) {
+        await mobileApi.unfollowExpert(expertId);
+        setFollowedExpertIds((prev) => {
+          const next = prev.filter((id) => id !== expertId);
+          void AsyncStorage.setItem(FOLLOWED_ANALYSTS_KEY, JSON.stringify(next));
+          return next;
+        });
+      } else {
+        await mobileApi.followExpert(expertId);
+        setFollowedExpertIds((prev) => {
+          const next = [...prev, expertId];
+          void AsyncStorage.setItem(FOLLOWED_ANALYSTS_KEY, JSON.stringify(next));
+          return next;
+        });
+      }
+    } catch {
+      // Optimistic update already happened in ExpertOpinionRow — re-sync on next load
+    }
+  }, []);
+
+  // S28-T3: Handler for sentiment card tap — pre-filter to dominant direction
+  const handleSentimentCardPress = useCallback(() => {
+    if (!analystSentiment || analystSentiment.totalCount === 0) return;
+
+    const dominant = analystSentiment.dominantLean;
+    if (dominant === "BULLISH" || dominant === "BEARISH" || dominant === "NEUTRAL") {
+      setSelectedDirectionFilter(dominant);
+    } else {
+      setSelectedDirectionFilter(null);
+    }
+    scrollViewRef.current?.scrollTo({ y: expertSectionY.current, animated: true });
+  }, [analystSentiment]);
 
   if (loading) {
     return (
@@ -292,12 +596,13 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
       ref={scrollViewRef}
       style={financeStyles.scroll}
       contentContainerStyle={financeStyles.scrollContent}
+      onScroll={handleScroll}
+      scrollEventThrottle={200}
       refreshControl={
         <RefreshControl
           refreshing={refreshing}
           onRefresh={() => {
             setRefreshing(true);
-            setSelectedClusterFilter(null);
             void load(true);
           }}
           tintColor={colors.accent}
@@ -314,11 +619,19 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
 
       {/* Section 1: Analyst Sentiment (opinion-sourced) */}
       {analystSentiment !== null ? (
-        <AnalystSentimentCard sentiment={analystSentiment} />
+        <AnalystSentimentCard
+          sentiment={analystSentiment}
+          onPress={handleSentimentCardPress}
+        />
       ) : (
         <View style={financeStyles.emptyState}>
           <Text style={financeStyles.emptyText}>Loading analyst sentiment...</Text>
         </View>
+      )}
+
+      {/* Section 1b: Crowd vs Experts card (only when >= 10 resolved calls) */}
+      {crowdVsExperts && crowdVsExperts.resolvedCount >= 10 && (
+        <CrowdVsExpertsCard data={crowdVsExperts} />
       )}
 
       {/* Section 2: Event Cluster data panels */}
@@ -406,6 +719,15 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
         style={financeStyles.unclusteredSection}
         onLayout={(e) => { expertSectionY.current = e.nativeEvent.layout.y; }}
       >
+        {/* S28-T1: My Analysts avatar-chip row */}
+        <MyAnalystsRow
+          followedIds={followedExpertIds}
+          expertNames={expertNamesMap}
+          selectedAnalystFilter={selectedAnalystFilter}
+          onSelectAnalyst={(id) => setSelectedAnalystFilter(id)}
+          onClearFilter={() => setSelectedAnalystFilter(null)}
+        />
+
         {/* Active cluster filter banner */}
         {selectedClusterFilter !== null ? (() => {
           const activeCluster = data?.eventClusters.find((c) => c.id === selectedClusterFilter);
@@ -427,6 +749,7 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
             key: string;
             storyId: string;
             storyHeadline: string;
+            articlePublishedAt: string;
             opinions: NonNullable<ApiNewsFeedItem["expertOpinions"]>;
           }
           const grouped: GroupedCard[] = [];
@@ -439,19 +762,41 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
                 grouped[idx].opinions.push(op);
               } else {
                 seen.set(key, grouped.length);
-                grouped.push({ key, storyId: item.id, storyHeadline: item.headline, opinions: [op] });
+                grouped.push({ key, storyId: item.id, storyHeadline: item.headline, articlePublishedAt: item.publishedAt, opinions: [op] });
               }
             }
           }
 
           // Apply cluster filter: show group if any opinion matches the selected cluster
-          const allGroups = selectedClusterFilter
+          let filteredGroups = selectedClusterFilter
             ? grouped.filter((g) => g.opinions.some((op) => op.eventClusterId === selectedClusterFilter))
             : grouped;
 
-          // Split into named-analyst opinions vs trusted-source market analysis
-          const expertGroups = allGroups.filter((g) => !g.opinions[0].isSourceAttribution);
-          const analysisGroups = allGroups.filter((g) => g.opinions[0].isSourceAttribution);
+          // S28-T1: Apply analyst filter
+          if (selectedAnalystFilter !== null) {
+            filteredGroups = filteredGroups.filter((g) =>
+              g.opinions.some((op) => op.expertId === selectedAnalystFilter)
+            );
+          }
+
+          // S28-T3: Apply direction/verified filter at the individual opinion level
+          // VERIFIED uses the dedicated verifiedCalls fetch — handled below at render time
+          if (selectedDirectionFilter !== null && selectedDirectionFilter !== "VERIFIED") {
+            filteredGroups = filteredGroups
+              .map((g) => ({
+                ...g,
+                opinions: g.opinions.filter((op) => op.direction === selectedDirectionFilter),
+              }))
+              .filter((g) => g.opinions.length > 0);
+          }
+
+          // Split into named-analyst opinions vs trusted-source market analysis.
+          // Route to Market Analysis if: isSourceAttribution=true OR no individual expertName
+          // (catches Goldman Sachs/JPMorgan institutional notes where AI omits a personal name).
+          const isAnalysis = (g: GroupedCard) =>
+            g.opinions[0].isSourceAttribution || !g.opinions[0].expertName?.trim();
+          const expertGroups = filteredGroups.filter((g) => !isAnalysis(g));
+          const analysisGroups = filteredGroups.filter((g) => isAnalysis(g));
 
           if (grouped.length === 0) {
             return (
@@ -471,6 +816,10 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
             );
           }
 
+          const allGroups = selectedClusterFilter
+            ? grouped.filter((g) => g.opinions.some((op) => op.eventClusterId === selectedClusterFilter))
+            : grouped;
+
           if (allGroups.length === 0 && selectedClusterFilter !== null) {
             return (
               <View style={financeStyles.expertEmptyCard}>
@@ -484,18 +833,81 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
 
           const activeGroups = opinionTab === "expert" ? expertGroups : analysisGroups;
 
+          // S28-T3: Count unfiltered groups for toggle badge
+          const allExpertGroups = (selectedClusterFilter
+            ? grouped.filter((g) => g.opinions.some((op) => op.eventClusterId === selectedClusterFilter))
+            : grouped
+          ).filter((g) => !isAnalysis(g));
+          const allAnalysisGroups = (selectedClusterFilter
+            ? grouped.filter((g) => g.opinions.some((op) => op.eventClusterId === selectedClusterFilter))
+            : grouped
+          ).filter((g) => isAnalysis(g));
+
           return (
             <>
-              {/* Toggle pill */}
+              {/* S28-T3: Direction filter chips */}
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={financeStyles.directionChipsScroll}
+              >
+                {(
+                  [
+                    { label: "All", value: null, activeColor: colors.accent },
+                    { label: "Bullish", value: "BULLISH", activeColor: "#16a34a" },
+                    { label: "Bearish", value: "BEARISH", activeColor: "#dc2626" },
+                    { label: "Neutral", value: "NEUTRAL", activeColor: "#6b7280" },
+                    { label: "Verified ✓", value: "VERIFIED", activeColor: "#2563eb" },
+                  ] as const
+                ).map(({ label, value, activeColor }) => {
+                  const isActive = selectedDirectionFilter === value;
+                  return (
+                    <Pressable
+                      key={label}
+                      style={[
+                        financeStyles.directionChip,
+                        isActive && { backgroundColor: activeColor, borderColor: activeColor },
+                      ]}
+                      onPress={() => setSelectedDirectionFilter(value)}
+                    >
+                      <Text
+                        style={[
+                          financeStyles.directionChipText,
+                          isActive && financeStyles.directionChipTextActive,
+                        ]}
+                      >
+                        {label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+
+              {/* S28-T3: Direction filter active banner */}
+              {selectedDirectionFilter !== null && (
+                <View style={financeStyles.filterBanner}>
+                  <Text style={financeStyles.filterBannerText} numberOfLines={1}>
+                    {selectedDirectionFilter === "VERIFIED"
+                      ? "Showing: Verified calls (resolved HIT or MISS)"
+                      : `Showing: ${selectedDirectionFilter!.charAt(0) + selectedDirectionFilter!.slice(1).toLowerCase()} opinions`}
+                  </Text>
+                  <Pressable
+                    onPress={() => setSelectedDirectionFilter(null)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Text style={financeStyles.filterClearBtn}>Clear filter ×</Text>
+                  </Pressable>
+                </View>
+              )}
+
+              {/* Toggle pill — always visible */}
               <View style={financeStyles.opinionToggle}>
                 <Pressable
                   style={[financeStyles.toggleBtn, opinionTab === "expert" && financeStyles.toggleBtnActive]}
                   onPress={() => setOpinionTab("expert")}
                 >
                   <Text style={[financeStyles.toggleBtnText, opinionTab === "expert" && financeStyles.toggleBtnTextActive]}>
-                    Expert Opinions
-                    {expertGroups.length > 0 ? ` (${expertGroups.length})` : ""}
-                  </Text>
+                    Expert Opinions</Text>
                 </Pressable>
                 <Pressable
                   style={[financeStyles.toggleBtn, opinionTab === "analysis" && financeStyles.toggleBtnActive]}
@@ -503,31 +915,104 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
                 >
                   <Text style={[financeStyles.toggleBtnText, opinionTab === "analysis" && financeStyles.toggleBtnTextActive]}>
                     Market Analysis
-                    {analysisGroups.length > 0 ? ` (${analysisGroups.length})` : ""}
                   </Text>
                 </Pressable>
               </View>
 
               {/* Subheader for analysis tab */}
-              {opinionTab === "analysis" && (
+              {opinionTab === "analysis" && selectedDirectionFilter !== "VERIFIED" && (
                 <Text style={financeStyles.sectionSubheader}>From trusted India-finance publications</Text>
               )}
 
-              {/* Cards for the active tab */}
-              {activeGroups.length === 0 ? (
-                <View style={financeStyles.expertEmptyCard}>
-                  <Text style={financeStyles.expertEmptyTitle}>
-                    {opinionTab === "expert" ? "No expert opinions yet" : "No market analysis yet"}
-                  </Text>
-                </View>
+              {/* Cards */}
+              {selectedDirectionFilter === "VERIFIED" && opinionTab === "expert" ? (
+                verifiedCalls.length === 0 ? (
+                  <View style={financeStyles.expertEmptyCard}>
+                    <Text style={financeStyles.expertEmptyTitle}>No verified calls yet</Text>
+                    <Text style={financeStyles.expertEmptySubtitle}>
+                      Calls are verified once their resolution window elapses. Check back soon.
+                    </Text>
+                  </View>
+                ) : (
+                  verifiedCalls.map((call) => {
+                    const isHit = call.resolutionStatus === "RESOLVED_HIT";
+                    const color = isHit ? "#16a34a" : "#dc2626";
+                    const dirLabel = call.direction === "BULLISH" ? "↑ Bullish" : call.direction === "BEARISH" ? "↓ Bearish" : "→ Neutral";
+                    const fmt = (iso: string | null) =>
+                      iso ? new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : null;
+                    const articleDate = fmt(call.publishedAt);
+                    const resolvedDate = fmt(call.resolvedAt);
+                    return (
+                      <Pressable
+                        key={call.id}
+                        style={financeStyles.verifiedCard}
+                        onPress={() => router.push(`/expert/${call.expertId}` as Parameters<typeof router.push>[0])}
+                      >
+                        <View style={[financeStyles.verifiedBadge, { backgroundColor: color }]}>
+                          <Text style={financeStyles.verifiedBadgeText}>{isHit ? "HIT ✓" : "MISS ✗"}</Text>
+                        </View>
+                        <View style={financeStyles.verifiedCardBody}>
+                          <Text style={financeStyles.verifiedExpert} numberOfLines={1}>
+                            {call.expertName} · {call.expertOrganization}
+                          </Text>
+                          {call.instrument ? (
+                            <Text style={[financeStyles.verifiedInstrument, { color }]}>{dirLabel} on {call.instrument}</Text>
+                          ) : null}
+                          <Text style={financeStyles.verifiedQuote} numberOfLines={2}>{call.quote}</Text>
+                          {call.resolutionNote ? (
+                            <Text style={[financeStyles.verifiedNote, { color }]} numberOfLines={1}>{call.resolutionNote}</Text>
+                          ) : null}
+                          <Text style={financeStyles.verifiedDates}>
+                            {articleDate ? `Called ${articleDate}` : ""}
+                            {articleDate && resolvedDate ? "  ·  " : ""}
+                            {resolvedDate ? `Resolved ${resolvedDate}` : ""}
+                          </Text>
+                          {call.storyHeadline ? (
+                            <Text style={financeStyles.verifiedStory} numberOfLines={1}>{call.storyHeadline}</Text>
+                          ) : null}
+                        </View>
+                      </Pressable>
+                    );
+                  })
+                )
               ) : (
-                activeGroups.map(({ key, storyId, storyHeadline, opinions }) => (
-                  <ExpertOpinionCard key={key} opinions={opinions} storyHeadline={storyHeadline} storyId={storyId} />
-                ))
+                activeGroups.length === 0 ? (
+                  <View style={financeStyles.expertEmptyCard}>
+                    <Text style={financeStyles.expertEmptyTitle}>
+                      {opinionTab === "expert" ? "No expert opinions yet" : "No market analysis yet"}
+                    </Text>
+                  </View>
+                ) : (
+                  activeGroups.map(({ key, storyId, storyHeadline, articlePublishedAt, opinions }) => (
+                    <ExpertOpinionCard
+                      key={key}
+                      opinions={opinions}
+                      storyHeadline={storyHeadline}
+                      storyId={storyId}
+                      articlePublishedAt={articlePublishedAt}
+                      followedExpertIds={followedExpertIds}
+                      onFollowToggle={handleFollowToggle}
+                    />
+                  ))
+                )
               )}
             </>
           );
         })()}
+
+        {/* S28-T2: Loading more footer */}
+        {loadingMore && (
+          <View style={financeStyles.loadMoreFooter}>
+            <ActivityIndicator size="small" color={colors.accent} />
+          </View>
+        )}
+
+        {/* S28-T2: End of list footer */}
+        {!hasMore && financeNews.length > 0 && !loadingMore && (
+          <View style={financeStyles.noMoreFooter}>
+            <Text style={financeStyles.noMoreText}>No more opinions</Text>
+          </View>
+        )}
       </View>
 
     </ScrollView>
@@ -547,6 +1032,40 @@ const financeStyles = StyleSheet.create({
     backgroundColor: colors.accent,
   },
   retryBtnText: { color: "#FFFFFF", fontWeight: "700", fontSize: 14 },
+  verifiedCard: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  verifiedBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 4,
+    alignSelf: "flex-start",
+    minWidth: 52,
+    alignItems: "center",
+  },
+  verifiedBadgeText: { fontSize: 10, fontWeight: "800", color: "#fff" },
+  verifiedCardBody: { flex: 1, gap: 2 },
+  verifiedExpert: { fontSize: 12, fontWeight: "700", color: colors.text },
+  verifiedInstrument: { fontSize: 11, fontWeight: "600" },
+  verifiedQuote: { fontSize: 12, color: colors.textMuted, lineHeight: 16 },
+  verifiedNote: { fontSize: 11, fontWeight: "600", fontStyle: "italic" as const },
+  verifiedDates: { fontSize: 10, color: colors.textMuted, marginTop: 3 },
+  verifiedStory: { fontSize: 11, color: colors.textMuted, marginTop: 2 },
+  expertLinksRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.sm,
+    paddingVertical: 6,
+  },
   crossTabLink: {
     marginHorizontal: spacing.lg,
     marginBottom: spacing.sm,
@@ -602,6 +1121,13 @@ const financeStyles = StyleSheet.create({
     gap: spacing.sm,
     flexWrap: "wrap",
   },
+  sentimentSeeOpinions: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#4338CA",
+    textAlign: "right",
+    marginTop: spacing.sm,
+  },
   leanChip: {
     alignSelf: "flex-start",
     paddingHorizontal: 10,
@@ -641,6 +1167,13 @@ const financeStyles = StyleSheet.create({
     fontSize: 13,
     color: "#6b7280",
     fontStyle: "italic",
+  },
+  analystSeeOpinions: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#166534",
+    textAlign: "right",
+    marginTop: spacing.sm,
   },
   analystCountRow: {
     flexDirection: "row",
@@ -700,6 +1233,181 @@ const financeStyles = StyleSheet.create({
     color: "#6b7280",
     flex: 1,
     flexWrap: "wrap",
+  },
+  // Crowd vs Experts card
+  crowdVsExpertsCard: {
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.lg,
+    padding: spacing.lg,
+    borderRadius: radius.md,
+    backgroundColor: "#F5F3FF",
+    borderWidth: 1,
+    borderColor: "#DDD6FE",
+  },
+  crowdVsExpertsHeader: {
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.8,
+    textTransform: "uppercase",
+    color: "#4338CA",
+    marginBottom: spacing.sm,
+  },
+  crowdVsExpertsStatsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: spacing.sm,
+  },
+  crowdVsExpertsStat: {
+    flex: 1,
+    alignItems: "center",
+  },
+  crowdVsExpertsWinRate: {
+    fontSize: 28,
+    fontWeight: "800",
+  },
+  crowdVsExpertsStatLabel: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#6b7280",
+    marginTop: 2,
+  },
+  crowdVsExpertsDivider: {
+    width: 1,
+    height: 40,
+    backgroundColor: "#DDD6FE",
+  },
+  crowdVsExpertsBarTrack: {
+    flexDirection: "row",
+    height: 8,
+    borderRadius: 4,
+    overflow: "hidden",
+    marginBottom: spacing.sm,
+    gap: 2,
+  },
+  crowdVsExpertsBarSegment: {
+    borderRadius: 4,
+  },
+  crowdVsExpertsWinner: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#374151",
+    marginBottom: spacing.xs ?? 4,
+  },
+  crowdVsExpertsFooter: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    flexWrap: "wrap",
+  },
+  crowdVsExpertsFooterText: {
+    fontSize: 11,
+    color: "#6b7280",
+  },
+  provisionalBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+    backgroundColor: "#FEF3C7",
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+  },
+  provisionalBadgeText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#92400E",
+  },
+  // My Analysts row
+  myAnalystsSection: {
+    marginBottom: spacing.md,
+  },
+  myAnalystsLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: colors.textMuted ?? "#6b7280",
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.xs ?? 4,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  myAnalystsScroll: {
+    paddingHorizontal: spacing.lg,
+    gap: spacing.sm,
+  },
+  analystChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    backgroundColor: "#F3F4F6",
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    gap: 6,
+  },
+  analystChipActive: {
+    backgroundColor: colors.accent,
+    borderColor: colors.accent,
+  },
+  analystChipAvatar: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  analystChipAvatarText: {
+    fontSize: 8,
+    fontWeight: "800",
+    color: "#fff",
+  },
+  analystChipText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#374151",
+  },
+  analystChipTextActive: {
+    color: "#fff",
+  },
+  // Direction filter chips
+  directionChipsScroll: {
+    paddingHorizontal: spacing.lg,
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  directionChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    backgroundColor: "#F3F4F6",
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+  },
+  directionChipActive: {
+    backgroundColor: colors.accent,
+    borderColor: colors.accent,
+  },
+  directionChipText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#6b7280",
+  },
+  directionChipTextActive: {
+    color: "#fff",
+    fontWeight: "700",
+  },
+  // Pagination footers
+  loadMoreFooter: {
+    paddingVertical: spacing.lg,
+    alignItems: "center",
+  },
+  noMoreFooter: {
+    paddingVertical: spacing.lg,
+    alignItems: "center",
+  },
+  noMoreText: {
+    fontSize: 12,
+    color: colors.textMuted ?? "#6b7280",
+    fontStyle: "italic",
   },
   emptyState: {
     marginHorizontal: spacing.lg,
@@ -768,7 +1476,7 @@ const financeStyles = StyleSheet.create({
   clusterScroll: { paddingLeft: spacing.lg },
   dataPanel: {
     paddingHorizontal: spacing.md,
-    paddingTop: spacing.xs,
+    paddingTop: spacing.xs ?? 4,
   },
   dataPanelRow: {
     flexDirection: "row",
@@ -812,7 +1520,7 @@ const financeStyles = StyleSheet.create({
     paddingVertical: spacing.sm,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: "#E5E7EB",
-    marginTop: spacing.xs,
+    marginTop: spacing.xs ?? 4,
   },
   expertTakesLink: {
     fontSize: 12,

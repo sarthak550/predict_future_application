@@ -346,7 +346,15 @@ export const updateMarketSchema = baseMarketSchema.partial();
 export const marketPositionSchema = z.object({
   side: z.nativeEnum(PositionSide).optional(),
   numericValue: z.coerce.number().min(0).optional(),
-  amount: z.coerce.number().int().min(50, "Minimum position size is 50 points.").max(100000)
+  amount: z.coerce.number().int().min(50, "Minimum position size is 50 points.").max(100000),
+  reasoning: z
+    .string()
+    .transform((v) => v.trim())
+    .refine((v) => v.length === 0 || v.length <= 500, {
+      message: "Reasoning must be at most 500 characters.",
+    })
+    .transform((v) => (v.length === 0 ? null : v))
+    .nullish()
 });
 
 export const marketCommentSchema = z.object({

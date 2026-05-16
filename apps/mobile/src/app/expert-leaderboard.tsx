@@ -90,6 +90,7 @@ function LeaderboardRow({ entry }: { entry: ApiExpertLeaderboardEntry }) {
 }
 
 export default function ExpertLeaderboardScreen() {
+  const router = useRouter();
   const [entries, setEntries] = useState<ApiExpertLeaderboardEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -112,7 +113,20 @@ export default function ExpertLeaderboardScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <Stack.Screen options={{ title: "Top Finance Experts" }} />
+      <Stack.Screen
+        options={{
+          title: "Top Finance Experts",
+          headerRight: () => (
+            <Pressable
+              onPress={() => router.push("/expert-search")}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              style={{ marginRight: 4 }}
+            >
+              <Text style={{ fontSize: 20 }}>🔍</Text>
+            </Pressable>
+          ),
+        }}
+      />
       {loading ? (
         <View style={lbStyles.center}>
           <ActivityIndicator size="large" color={colors.accent} />

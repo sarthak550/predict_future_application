@@ -191,6 +191,7 @@ export default function StoryScreen() {
                   opinions={opinions}
                   storyHeadline={story.headline}
                   storyId={story.id}
+                  articlePublishedAt={story.publishedAt}
                 />
               ));
             })()}

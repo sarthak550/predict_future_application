@@ -1,10 +1,11 @@
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
   Image,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -90,9 +91,18 @@ function CallRow({ call }: { call: ApiExpertCall }) {
           <Text style={expertProfileStyles.crowdNote}>Crowd: {hitPct}% HIT</Text>
         )}
       </View>
+      {call.resolutionNote && call.resolutionStatus !== "PENDING" && call.resolutionStatus !== "NOT_GRADED" ? (
+        <View style={[expertProfileStyles.resolutionNote, { borderLeftColor: resColor }]}>
+          <Text style={expertProfileStyles.resolutionNoteText}>{call.resolutionNote}</Text>
+        </View>
+      ) : null}
       <View style={expertProfileStyles.callFooter}>
         <Text style={expertProfileStyles.callDate}>
+          {"Called "}
           {new Date(call.publishedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+          {call.resolvedAt && (call.resolutionStatus === "RESOLVED_HIT" || call.resolutionStatus === "RESOLVED_MISS")
+            ? `  ·  Resolved ${new Date(call.resolvedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}`
+            : ""}
         </Text>
         {call.storyId ? (
           <Text style={expertProfileStyles.callReadMore}>Read article →</Text>
@@ -112,6 +122,7 @@ export default function ExpertProfileScreen() {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [callFilter, setCallFilter] = useState<"ALL" | "RESOLVED_HIT" | "RESOLVED_MISS" | "PENDING">("ALL");
 
   useEffect(() => {
     if (!id) return;
@@ -149,6 +160,12 @@ export default function ExpertProfileScreen() {
 
   const displayName = profile ? (profile.name || profile.organization) : "Expert";
 
+  const filteredCalls = useMemo(() => {
+    if (callFilter === "ALL") return calls;
+    if (callFilter === "PENDING") return calls.filter((c) => c.resolutionStatus === "PENDING" || c.resolutionStatus === "NOT_GRADED");
+    return calls.filter((c) => c.resolutionStatus === callFilter);
+  }, [calls, callFilter]);
+
   if (loading) {
     return (
       <View style={expertProfileStyles.center}>
@@ -174,7 +191,6 @@ export default function ExpertProfileScreen() {
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <Stack.Screen options={{ title: displayName, headerBackTitle: "Back" }} />
       <FlatList
-        data={calls}
         keyExtractor={(c) => c.id}
         ListHeaderComponent={
           <View style={expertProfileStyles.headerSection}>
@@ -224,7 +240,7 @@ export default function ExpertProfileScreen() {
                   ) : (
                     <View style={expertProfileStyles.provisionalBadge}>
                       <Text style={expertProfileStyles.provisionalText}>
-                        Provisional — fewer than 5 resolved calls
+                        Provisional — fewer than 3 resolved calls
                       </Text>
                     </View>
                   )}
@@ -250,14 +266,60 @@ export default function ExpertProfileScreen() {
                 </Text>
                 <Text style={expertProfileStyles.statLabel}>Hit Rate</Text>
               </View>
+              <View style={expertProfileStyles.statTile}>
+                <Text style={expertProfileStyles.statValue}>
+                  {profile.followerCount >= 1000
+                    ? `${(profile.followerCount / 1000).toFixed(1)}k`
+                    : profile.followerCount}
+                </Text>
+                <Text style={expertProfileStyles.statLabel}>Followers</Text>
+              </View>
             </View>
 
-            <Text style={expertProfileStyles.sectionTitle}>Recent Calls</Text>
+            <Text style={expertProfileStyles.sectionTitle}>Calls</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={expertProfileStyles.filterRow}
+              contentContainerStyle={{ gap: 8 }}
+            >
+              {(
+                [
+                  { key: "ALL", label: "All" },
+                  { key: "RESOLVED_HIT", label: "Hit ✓" },
+                  { key: "RESOLVED_MISS", label: "Miss ✗" },
+                  { key: "PENDING", label: "Pending" },
+                ] as const
+              ).map(({ key, label }) => {
+                const isActive = callFilter === key;
+                const chipColor =
+                  key === "RESOLVED_HIT" ? "#16a34a" :
+                  key === "RESOLVED_MISS" ? "#dc2626" :
+                  colors.accent;
+                return (
+                  <Pressable
+                    key={key}
+                    onPress={() => setCallFilter(key)}
+                    style={[
+                      expertProfileStyles.filterChip,
+                      isActive && { backgroundColor: chipColor, borderColor: chipColor },
+                    ]}
+                  >
+                    <Text style={[expertProfileStyles.filterChipText, isActive && { color: "#fff" }]}>
+                      {label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
           </View>
         }
         renderItem={({ item }) => <CallRow call={item} />}
+        data={filteredCalls}
         ListEmptyComponent={
-          <Text style={expertProfileStyles.emptyText}>No calls yet.</Text>
+          <Text style={expertProfileStyles.emptyText}>
+            {callFilter === "ALL" ? "No calls yet." : "No calls matching this filter."}
+          </Text>
         }
         ListFooterComponent={
           nextCursor ? (
@@ -362,6 +424,23 @@ const expertProfileStyles = StyleSheet.create({
   callDate: { fontSize: 10, color: colors.textMuted },
   callReadMore: { fontSize: 10, fontWeight: "700", color: colors.accent },
   emptyText: { textAlign: "center", color: colors.textMuted, padding: spacing.lg },
+  filterRow: { marginBottom: spacing.md },
+  filterChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  filterChipText: { fontSize: 12, fontWeight: "700", color: colors.textMuted },
+  resolutionNote: {
+    borderLeftWidth: 2,
+    paddingLeft: 8,
+    marginBottom: 6,
+    marginTop: 2,
+  },
+  resolutionNoteText: { fontSize: 11, color: colors.textMuted, fontStyle: "italic", lineHeight: 16 },
   loadMoreBtn: { margin: spacing.lg, alignItems: "center" },
   loadMoreText: { fontSize: 13, fontWeight: "700", color: colors.accent },
 });

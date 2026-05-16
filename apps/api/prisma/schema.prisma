@@ -35,6 +35,8 @@ model User {
   tipsReceivedTotal          Int                  @default(0)
   /// Controls whether the user appears under their real username or an anonymised pseudonym on public surfaces.
   displayMode                UserDisplayMode      @default(USERNAME)
+  /// Analyst tier earned through prediction accuracy and volume. Recomputed on market resolution and nightly cron.
+  analystTier                AnalystTier          @default(ROOKIE)
   accounts                   Account[]
   adminActions               AdminAction[]        @relation("AdminActor")
   targetAdminActions         AdminAction[]        @relation("AdminTargetUser")
@@ -67,6 +69,32 @@ model User {
   votes                      Vote[]
   wallet                     Wallet?
   multiChoicePositions       MultiChoicePosition[]
+  expertFollows              ExpertFollow[]
+  phoneVerificationOtp       PhoneVerificationOtp?
+  leaderboardSnapshots       LeaderboardSnapshot[]
+  reasoningUpvotes           ReasoningUpvote[]
+}
+
+model LeaderboardSnapshot {
+  id         String   @id @default(cuid())
+  userId     String
+  rank       Int
+  timeWindow String
+  category   String?
+  snapshotAt DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, timeWindow, category, snapshotAt])
+}
+
+model PhoneVerificationOtp {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  phone     String
+  otp       String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model Follow {
@@ -486,14 +514,33 @@ model MarketPosition {
   estimatedReturnAtEntry Float?
   payoutAmount           Int?
   settledAt              DateTime?
+  /// Optional free-text rationale attached by the user when placing the position (max 500 chars).
+  reasoning              String?
+  /// Running total of reasoning upvotes from other users (S30-T1).
+  reasoningUpvotes       Int                 @default(0)
   createdAt              DateTime            @default(now())
   market                 Market              @relation(fields: [marketId], references: [id], onDelete: Cascade)
   user                   User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   walletTransactions     WalletTransaction[]
+  reasoningUpvoteRecords ReasoningUpvote[]
 
   @@index([marketId, createdAt])
   @@index([userId, createdAt])
   @@index([marketId, numericValue])
+}
+
+/// Tracks which users have upvoted reasoning on a specific position (S30-T1).
+model ReasoningUpvote {
+  id         String         @id @default(cuid())
+  positionId String
+  userId     String
+  createdAt  DateTime       @default(now())
+  position   MarketPosition @relation(fields: [positionId], references: [id], onDelete: Cascade)
+  user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([positionId, userId])
+  @@index([positionId])
+  @@index([userId])
 }
 
 /// One selectable option in a MULTIPLE_CHOICE market.
@@ -690,8 +737,21 @@ model Expert {
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt
   opinions     ExpertOpinion[]
+  followers    ExpertFollow[]
 
   @@unique([name, organization])
+}
+
+model ExpertFollow {
+  id        String   @id @default(cuid())
+  userId    String
+  expertId  String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expert    Expert   @relation(fields: [expertId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, expertId])
+  @@index([userId, createdAt])
 }
 
 model ExpertOpinion {
@@ -710,9 +770,17 @@ model ExpertOpinion {
   resolvedAt       DateTime?
   resolutionNote   String?
   suppressedAt     DateTime?
+  /// Human-readable instrument name, e.g. "Nifty 50", "HDFC Bank", "Sensex"
+  instrument       String?
+  /// Yahoo Finance ticker symbol, e.g. "^NSEI", "HDFCBANK.NS", "^BSESN"
+  instrumentTicker String?
   /// When true, opinion is sourced from trusted publication (not attributed to named analyst).
   /// Display as "Market Analysis from [Source]" instead of "Expert: [Analyst Name]"
   isSourceAttribution Boolean               @default(false)
+  /// Days from publishedAt after which this call can be evaluated. Populated by AI during pre-processing.
+  resolutionWindowDays  Int?
+  /// publishedAt + resolutionWindowDays. Null until pre-processed. Index for daily cron query.
+  resolutionEligibleAt  DateTime?
   createdAt        DateTime                @default(now())
   updatedAt        DateTime                @updatedAt
   eventCluster     MarketEventCluster?     @relation(fields: [eventClusterId], references: [id])
@@ -723,6 +791,7 @@ model ExpertOpinion {
   @@index([expertId, publishedAt])
   @@index([isSourceAttribution])
   @@index([eventClusterId])
+  @@index([resolutionStatus, resolutionEligibleAt])
 }
 
 model ExpertOpinionVote {
@@ -775,6 +844,13 @@ model DailyQuest {
 
   @@unique([userId, date, questType])
   @@index([userId, date])
+}
+
+enum AnalystTier {
+  ROOKIE
+  ANALYST
+  SENIOR_ANALYST
+  CHIEF_ANALYST
 }
 
 enum Role {
