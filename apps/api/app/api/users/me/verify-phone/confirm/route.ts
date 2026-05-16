@@ -64,8 +64,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true, phoneVerified: true, bonusCredited: 100, alreadyVerified: true });
     }
 
-    // Validate OTP against the in-memory store.
-    const { valid, phone } = verifyOtp(userId, submittedOtp);
+    // Validate OTP against the DB-backed store.
+    const { valid, phone } = await verifyOtp(userId, submittedOtp);
 
     if (!valid || !phone) {
       return NextResponse.json(
@@ -128,7 +128,7 @@ export async function POST(request: Request) {
     }
 
     // Clear OTP only after successful commit.
-    clearOtp(userId);
+    await clearOtp(userId);
 
     return NextResponse.json({ ok: true, phoneVerified: true, bonusCredited: 100 });
   } catch (error) {

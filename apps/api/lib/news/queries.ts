@@ -30,10 +30,15 @@ export type NewsFeedExpertOpinion = {
   sourceUrl: string;
   resolutionStatus: string;
   resolvedAt: Date | null;
+  resolutionNote: string | null;
   /** Nullable FK to event cluster for filter UX (S18-T4) */
   eventClusterId: string | null;
   /** True when sourced from trusted publication (no named analyst) — display as "Market Analysis from [Source]" */
   isSourceAttribution: boolean;
+  /** Human-readable instrument name, e.g. "Nifty 50" — null until identified by auto-resolution */
+  instrument: string | null;
+  /** Yahoo Finance ticker symbol for the primary instrument, e.g. "^NSEI" */
+  instrumentTicker: string | null;
 };
 
 export type NewsFeedItem = {
@@ -193,12 +198,170 @@ export async function getPublishedNewsPage(input?: {
         sourceUrl: opinion.sourceUrl,
         resolutionStatus: opinion.resolutionStatus,
         resolvedAt: opinion.resolvedAt ?? null,
+        resolutionNote: opinion.resolutionNote ?? null,
         eventClusterId: opinion.eventClusterId ?? null,
         isSourceAttribution: opinion.isSourceAttribution,
+        instrument: opinion.instrument ?? null,
+        instrumentTicker: opinion.instrumentTicker ?? null,
       })),
     })),
     nextCursor: hasMore && lastItem ? encodeNewsCursor(lastItem) : null,
     hasMore
+  } satisfies NewsCursorPage;
+}
+
+/**
+ * Personalized news feed.
+ *
+ * Stories linked to markets where followed analysts placed positions in the
+ * last 14 days are surfaced first. Non-boosted stories fill the tail in
+ * standard reverse-chronological order.
+ *
+ * Falls back to standard chronological feed when:
+ * - userId is missing
+ * - The user follows nobody
+ * - No relevant market positions found
+ */
+export async function getPersonalizedNewsPage(input: {
+  limit?: number;
+  category?: MarketCategory;
+  excludeCategory?: MarketCategory;
+  cursor?: string | null;
+  userId: string;
+  requireExpertOpinions?: boolean;
+}): Promise<NewsCursorPage> {
+  const limit = Math.max(1, Math.min(50, input.limit ?? 10));
+  const decodedCursor = decodeNewsCursor(input.cursor);
+
+  // 1. Fetch the set of userIds the current user follows.
+  const followRows = await prisma.follow.findMany({
+    where: { followerId: input.userId },
+    select: { followeeId: true },
+  });
+
+  if (followRows.length === 0) {
+    // No follows → standard feed
+    return getPublishedNewsPage(input);
+  }
+
+  const followeeIds = followRows.map((r) => r.followeeId);
+  const since14Days = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+
+  // 2. Collect marketIds from those users' recent positions.
+  const recentPositions = await prisma.marketPosition.findMany({
+    where: {
+      userId: { in: followeeIds },
+      createdAt: { gte: since14Days },
+    },
+    select: { marketId: true },
+  });
+
+  const boostedMarketIds = [...new Set(recentPositions.map((p) => p.marketId))];
+
+  if (boostedMarketIds.length === 0) {
+    // Followed analysts have no recent positions → standard feed
+    return getPublishedNewsPage(input);
+  }
+
+  // 3. Fetch two batches in one query: boosted stories first, then the rest.
+  // We over-fetch slightly (2× limit) then page correctly.
+  const baseWhere: Prisma.StoryWhereInput = {
+    status: { in: visibleNewsStatuses },
+    ...(input.category ? { category: input.category } : {}),
+    ...(input.excludeCategory ? { category: { not: input.excludeCategory } } : {}),
+    ...(input.requireExpertOpinions ? { expertOpinions: { some: { suppressedAt: null } } } : {}),
+    ...(buildCursorWhere(decodedCursor) ?? {}),
+  };
+
+  const [boostedItems, regularItems] = await Promise.all([
+    prisma.story.findMany({
+      where: { ...baseWhere, market: { id: { in: boostedMarketIds } } },
+      orderBy: [{ publishedAt: "desc" }, { id: "desc" }],
+      include: newsFeedInclude(),
+      take: limit + 1,
+    }),
+    prisma.story.findMany({
+      where: {
+        ...baseWhere,
+        // Exclude stories already in the boosted batch so no duplicates.
+        NOT: { market: { id: { in: boostedMarketIds } } },
+      },
+      orderBy: [{ publishedAt: "desc" }, { id: "desc" }],
+      include: newsFeedInclude(),
+      take: limit + 1,
+    }),
+  ]);
+
+  // Merge: boosted first, then regular, deduplicate by id.
+  const seenIds = new Set<string>();
+  const merged: typeof boostedItems = [];
+  for (const item of [...boostedItems, ...regularItems]) {
+    if (!seenIds.has(item.id)) {
+      seenIds.add(item.id);
+      merged.push(item);
+    }
+  }
+
+  const hasMore = merged.length > limit;
+  const slice = merged.slice(0, limit);
+  const lastItem = slice.at(-1);
+
+  return {
+    items: slice.map<NewsFeedItem>((item) => ({
+      id: item.id,
+      slug: item.slug,
+      headline: item.headline,
+      summary: item.summary,
+      category: item.category,
+      sourceName: item.sourceName,
+      sourceUrl: item.sourceUrl,
+      imageUrl: item.imageUrl,
+      publishedAt: item.publishedAt.toISOString(),
+      ingestedAt: item.ingestedAt.toISOString(),
+      isFeatured: item.isFeatured,
+      isTrending: item.isTrending,
+      market: item.market && !UNAPPROVED_MARKET_STATUSES.includes(item.market.status)
+        ? {
+            id: item.market.id,
+            slug: item.market.slug,
+            title: item.market.title,
+            status: item.market.status,
+            marketType: item.market.marketType,
+            yesPool: item.market.yesPool,
+            noPool: item.market.noPool,
+            totalVolume: item.market.totalVolume,
+            totalParticipants: item.market.totalParticipants,
+            yesCount: item.market.yesCount,
+            noCount: item.market.noCount,
+            totalVotes: item.market.totalVotes,
+            unit: item.market.unit,
+            minValue: item.market.minValue,
+            maxValue: item.market.maxValue,
+            averageNumericValue: item.market.averageNumericValue,
+            closeAt: item.market.closeAt,
+          }
+        : null,
+      expertOpinions: (item.expertOpinions ?? []).map((opinion) => ({
+        id: opinion.id,
+        expertId: opinion.expertId,
+        expertName: opinion.expert.name,
+        expertOrganization: opinion.expert.organization,
+        avatarUrl: opinion.expert.avatarUrl ?? null,
+        verified: opinion.expert.verified,
+        quote: opinion.quote,
+        direction: opinion.direction,
+        sourceUrl: opinion.sourceUrl,
+        resolutionStatus: opinion.resolutionStatus,
+        resolvedAt: opinion.resolvedAt ?? null,
+        resolutionNote: opinion.resolutionNote ?? null,
+        eventClusterId: opinion.eventClusterId ?? null,
+        isSourceAttribution: opinion.isSourceAttribution,
+        instrument: opinion.instrument ?? null,
+        instrumentTicker: opinion.instrumentTicker ?? null,
+      })),
+    })),
+    nextCursor: hasMore && lastItem ? encodeNewsCursor(lastItem) : null,
+    hasMore,
   } satisfies NewsCursorPage;
 }
 

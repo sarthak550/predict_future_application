@@ -51,6 +51,7 @@ export async function GET(
           displayMode: true,
           reputationScore: true,
           isVerifiedAnalyst: true,
+          analystTier: true,
         }
       },
       comments: {
@@ -121,11 +122,69 @@ export async function GET(
           numericValue: true,
           probabilityAtEntry: true,
           estimatedReturnAtEntry: true,
+          reasoning: true,
+          reasoningUpvotes: true,
           createdAt: true,
         },
         orderBy: { createdAt: "desc" },
       })
     : [];
+
+  // Fetch top-5 analyst positions with reasoning from OTHER users (S30-T1 upvote display).
+  const analystPositionsRaw = await prisma.marketPosition.findMany({
+    where: {
+      marketId: market.id,
+      reasoning: { not: null },
+      ...(viewerId ? { userId: { not: viewerId } } : {}),
+    },
+    select: {
+      id: true,
+      userId: true,
+      side: true,
+      reasoning: true,
+      reasoningUpvotes: true,
+      createdAt: true,
+      user: {
+        select: {
+          id: true,
+          username: true,
+          displayMode: true,
+          isVerifiedAnalyst: true,
+          analystTier: true,
+        },
+      },
+    },
+    orderBy: { reasoningUpvotes: "desc" },
+    take: 5,
+  });
+
+  // If authenticated, check which analyst positions the viewer has upvoted.
+  const upvotedPositionIds = new Set<string>();
+  if (viewerId && analystPositionsRaw.length > 0) {
+    const myUpvotes = await prisma.reasoningUpvote.findMany({
+      where: {
+        userId: viewerId,
+        positionId: { in: analystPositionsRaw.map((p) => p.id) },
+      },
+      select: { positionId: true },
+    });
+    myUpvotes.forEach((u) => upvotedPositionIds.add(u.positionId));
+  }
+
+  const analystPositions = analystPositionsRaw.map((p) => ({
+    id: p.id,
+    userId: p.userId,
+    side: p.side,
+    reasoning: p.reasoning,
+    reasoningUpvotes: p.reasoningUpvotes,
+    iUpvotedReasoning: upvotedPositionIds.has(p.id),
+    createdAt: p.createdAt.toISOString(),
+    user: {
+      username: getDisplayName(p.user),
+      isVerifiedAnalyst: p.user.isVerifiedAnalyst,
+      analystTier: p.user.analystTier,
+    },
+  }));
 
   // Retrieve userPercentileRank from the user's MARKET_WIN wallet transaction, if any.
   let userPercentileRank: number | null = null;
@@ -204,7 +263,7 @@ export async function GET(
     resolution: shapedResolution,
   };
 
-  return NextResponse.json({ market: responseMarket, userPositions, userMultiChoicePositions, userVote, userPercentileRank });
+  return NextResponse.json({ market: responseMarket, userPositions, analystPositions, userMultiChoicePositions, userVote, userPercentileRank });
 }
 
 export async function PATCH(

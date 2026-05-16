@@ -13,12 +13,15 @@ interface ProfilePageProps {
   params: { username: string };
 }
 
-interface ResolvedMarket {
-  id: string;
-  title: string;
-  outcome: string;
-  resolveAt: Date;
-  userSide: string | null;
+interface RecentCall {
+  marketId: string;
+  marketTitle: string;
+  side: string;
+  reasoning: string | null;
+  reasoningUpvotes: number;
+  createdAt: Date;
+  marketStatus: string;
+  outcome: string | null;
 }
 
 interface CategoryStat {
@@ -44,6 +47,7 @@ export async function generateMetadata(
       displayMode: true,
       isVerifiedAnalyst: true,
       accuracyScore: true,
+      analystTier: true,
       stats: {
         select: {
           totalPredictions: true,
@@ -60,12 +64,39 @@ export async function generateMetadata(
   const displayName = getDisplayName(user);
   const accuracy = user.stats?.accuracyScore ?? user.accuracyScore;
   const totalPredictions = user.stats?.totalPredictions ?? 0;
+  // Fetch first recent call's reasoning for og:description override
+  const firstReasoningPosition = await prisma.marketPosition.findFirst({
+    where: {
+      userId: user.id,
+      reasoning: { not: null },
+      market: {
+        visibility: "PUBLIC",
+        status: { notIn: ["DRAFT", "PENDING_REVIEW", "REJECTED"] },
+      },
+    },
+    orderBy: { createdAt: "desc" },
+    select: { reasoning: true },
+  });
+  const firstReasoning = firstReasoningPosition?.reasoning ?? null;
+
   const accuracyPct = accuracy.toFixed(1);
+
+  const tierLabel: Record<string, string> = {
+    ANALYST: "Analyst",
+    SENIOR_ANALYST: "Senior Analyst",
+    CHIEF_ANALYST: "Chief Analyst",
+  };
+  const tierDesc = user.analystTier && user.analystTier !== "ROOKIE"
+    ? `${tierLabel[user.analystTier] ?? user.analystTier} — `
+    : "";
 
   // Use the real username in the URL (anonymity affects display, not discoverability).
   // Use the display name in the title/description so anonymous users are not exposed.
   const title = `${displayName}'s Analyst Profile — Predict Future`;
-  const description = `${displayName} has made ${totalPredictions} predictions with ${accuracyPct}% accuracy on Predict Future — India's Analyst Scorecard.`;
+  const defaultDescription = `${displayName} — ${tierDesc}${totalPredictions} predictions, ${accuracyPct}% accuracy on Predict Future — India's Analyst Scorecard.`;
+  const description = firstReasoning
+    ? firstReasoning.slice(0, 155)
+    : defaultDescription;
   const url = `https://predictfuture.app/profile/${user.username}`;
 
   return {
@@ -133,34 +164,79 @@ async function fetchProfileData(username: string) {
 
   if (!user) return null;
 
-  // Fetch last 5 finalized markets created by this user, with the user's
-  // position on each market for the "your call" column.
-  const recentMarkets = await prisma.market.findMany({
+  // Fetch recent calls: positions on public markets, preferring those with reasoning.
+  const recentPositionsWithReasoning = await prisma.marketPosition.findMany({
     where: {
-      creatorId: user.id,
-      resolutionStatus: "FINALIZED",
+      userId: user.id,
+      reasoning: { not: null },
+      market: {
+        visibility: "PUBLIC",
+        status: { notIn: ["DRAFT", "PENDING_REVIEW", "REJECTED"] },
+      },
     },
-    orderBy: { resolveAt: "desc" },
+    orderBy: { createdAt: "desc" },
     take: 5,
     select: {
       id: true,
-      title: true,
-      outcome: true,
-      resolveAt: true,
-      positions: {
-        where: { userId: user.id },
-        select: { side: true },
-        take: 1,
+      side: true,
+      reasoning: true,
+      reasoningUpvotes: true,
+      createdAt: true,
+      market: {
+        select: {
+          id: true,
+          title: true,
+          status: true,
+          outcome: true,
+        },
       },
     },
   });
 
-  const resolvedMarkets: ResolvedMarket[] = recentMarkets.map((m) => ({
-    id: m.id,
-    title: m.title,
-    outcome: m.outcome,
-    resolveAt: m.resolveAt,
-    userSide: m.positions[0]?.side ?? null,
+  let recentCallsRaw = recentPositionsWithReasoning;
+  if (recentCallsRaw.length < 5) {
+    const existingIds = new Set(recentCallsRaw.map((p) => p.id));
+    const fallback = await prisma.marketPosition.findMany({
+      where: {
+        userId: user.id,
+        id: { notIn: Array.from(existingIds) },
+        market: {
+          visibility: "PUBLIC",
+          status: { notIn: ["DRAFT", "PENDING_REVIEW", "REJECTED"] },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 5 - recentCallsRaw.length,
+      select: {
+        id: true,
+        side: true,
+        reasoning: true,
+        reasoningUpvotes: true,
+        createdAt: true,
+        market: {
+          select: {
+            id: true,
+            title: true,
+            status: true,
+            outcome: true,
+          },
+        },
+      },
+    });
+    recentCallsRaw = [...recentCallsRaw, ...fallback]
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .slice(0, 5);
+  }
+
+  const recentCalls: RecentCall[] = recentCallsRaw.map((p) => ({
+    marketId: p.market.id,
+    marketTitle: p.market.title,
+    side: p.side ?? "UNKNOWN",
+    reasoning: p.reasoning,
+    reasoningUpvotes: p.reasoningUpvotes,
+    createdAt: p.createdAt,
+    marketStatus: p.market.status,
+    outcome: p.market.outcome === "UNRESOLVED" ? null : p.market.outcome,
   }));
 
   const categoryStats: CategoryStat[] = user.categoryStats.map((cs) => ({
@@ -180,7 +256,7 @@ async function fetchProfileData(username: string) {
     bestStreak: user.stats?.bestStreak ?? 0,
     followerCount: user._count.followers,
     createdAt: user.createdAt,
-    resolvedMarkets,
+    recentCalls,
     categoryStats,
   };
 }
@@ -215,10 +291,12 @@ function outcomeColorClass(outcome: string): string {
   }
 }
 
-function callColorClass(side: string | null, outcome: string): string {
-  if (!side) return "";
-  const correct = side === outcome;
-  return correct ? styles.callCorrect : styles.callWrong;
+function sideColorClass(side: string): string {
+  switch (side) {
+    case "YES": return styles.chipYes;
+    case "NO": return styles.chipNo;
+    default: return styles.chipDefault;
+  }
 }
 
 function formatCategory(category: string): string {
@@ -285,33 +363,45 @@ export default async function PublicProfilePage({ params }: ProfilePageProps) {
       </section>
 
       {/* ------------------------------------------------------------------ */}
-      {/* Recent resolved markets */}
+      {/* Recent Calls (S30-T3) — positions with optional reasoning */}
       {/* ------------------------------------------------------------------ */}
-      {profile.resolvedMarkets.length > 0 && (
-        <section className={styles.section}>
-          <h2 className={styles.sectionTitle}>Recent Calls</h2>
+      <section className={styles.section}>
+        <h2 className={styles.sectionTitle}>Recent Calls</h2>
+        {profile.recentCalls.length === 0 ? (
+          <p className={styles.emptyState}>No public calls yet.</p>
+        ) : (
           <ul className={styles.marketList}>
-            {profile.resolvedMarkets.map((market) => (
-              <li key={market.id} className={styles.marketRow}>
+            {profile.recentCalls.map((call) => (
+              <li key={`${call.marketId}-${call.createdAt.toISOString()}`} className={styles.marketRow}>
                 <div className={styles.marketInfo}>
-                  <p className={styles.marketTitle}>{market.title}</p>
-                  <p className={styles.marketDate}>{formatDate(market.resolveAt)}</p>
+                  <p className={styles.marketTitle}>{call.marketTitle}</p>
+                  {call.reasoning && (
+                    <p className={styles.marketReasoning}>
+                      &ldquo;{call.reasoning.length > 200 ? `${call.reasoning.slice(0, 200)}...` : call.reasoning}&rdquo;
+                    </p>
+                  )}
+                  <p className={styles.marketDate}>{formatDate(call.createdAt)}</p>
                 </div>
                 <div className={styles.marketMeta}>
-                  <span className={`${styles.chip} ${outcomeColorClass(market.outcome)}`}>
-                    {outcomeLabel(market.outcome)}
+                  <span className={`${styles.chip} ${sideColorClass(call.side)}`}>
+                    {call.side}
                   </span>
-                  {market.userSide && (
-                    <span className={`${styles.callChip} ${callColorClass(market.userSide, market.outcome)}`}>
-                      Called {market.userSide}
+                  {call.outcome && (
+                    <span className={`${styles.callChip} ${outcomeColorClass(call.outcome)}`}>
+                      {outcomeLabel(call.outcome)}
+                    </span>
+                  )}
+                  {call.reasoningUpvotes > 0 && (
+                    <span className={styles.upvoteChip}>
+                      {`👍 ${call.reasoningUpvotes}`}
                     </span>
                   )}
                 </div>
               </li>
             ))}
           </ul>
-        </section>
-      )}
+        )}
+      </section>
 
       {/* ------------------------------------------------------------------ */}
       {/* Top categories */}

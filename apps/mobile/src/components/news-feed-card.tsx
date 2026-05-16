@@ -461,12 +461,65 @@ function PollB({
 }
 
 /** Single expert opinion row — renders avatar, name, quote, direction badge, footer, and polls. */
-export function ExpertOpinionRow({ opinion, hideByline }: { opinion: ApiExpertOpinionItem; hideByline?: boolean }) {
+function ResolutionStrip({ opinion, articlePublishedAt }: { opinion: ApiExpertOpinionItem; articlePublishedAt?: string }) {
+  const status = opinion?.resolutionStatus;
+  if (status !== "RESOLVED_HIT" && status !== "RESOLVED_MISS") return null;
+
+  const isHit = status === "RESOLVED_HIT";
+  const color = isHit ? "#16a34a" : "#dc2626";
+  const label = isHit ? "HIT ✓" : "MISS ✗";
+  const note = opinion.resolutionNote ?? null;
+
+  const fmt = (iso: string | null | undefined) =>
+    iso ? new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : null;
+  const calledDate = fmt(articlePublishedAt);
+  const resolvedDate = fmt(opinion.resolvedAt);
+
+  return (
+    <View
+      style={[
+        expertStyles.resolutionStrip,
+        { backgroundColor: isHit ? "#f0fdf4" : "#fef2f2", borderColor: color + "40" },
+      ]}
+    >
+      <View style={[expertStyles.resolutionBadge, { backgroundColor: color }]}>
+        <Text style={expertStyles.resolutionBadgeText}>{label}</Text>
+      </View>
+      <View style={{ flex: 1 }}>
+        {note ? (
+          <Text style={[expertStyles.resolutionNoteText, { color }]}>
+            {note}
+          </Text>
+        ) : null}
+        {(calledDate || resolvedDate) ? (
+          <Text style={expertStyles.resolutionDates}>
+            {calledDate ? `Called ${calledDate}` : ""}
+            {calledDate && resolvedDate ? "  ·  " : ""}
+            {resolvedDate ? `Resolved ${resolvedDate}` : ""}
+          </Text>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+export function ExpertOpinionRow({
+  opinion,
+  hideByline,
+  isFollowed,
+  onFollowToggle,
+  articlePublishedAt,
+}: {
+  opinion: ApiExpertOpinionItem;
+  hideByline?: boolean;
+  /** Whether the current user follows this expert. Undefined = unauthenticated / not loaded */
+  isFollowed?: boolean;
+  /** Called when user taps Follow/Following. Parent handles optimistic state. */
+  onFollowToggle?: (expertId: string, currentlyFollowing: boolean) => void;
+  articlePublishedAt?: string;
+}) {
   const router = useRouter();
   const dirConfig = DIRECTION_CONFIG[opinion.direction] ?? DIRECTION_CONFIG.NEUTRAL;
-  const displayName = opinion.expertName
-    ? `${opinion.expertName} · ${opinion.expertOrganization}`
-    : opinion.expertOrganization;
   const initials = getExpertInitials(opinion.expertName, opinion.expertOrganization);
   const initialsColor = getExpertInitialsColor(opinion.expertName || opinion.expertOrganization);
   const sourceDomain = getSourceDomain(opinion.sourceUrl);
@@ -475,6 +528,9 @@ export function ExpertOpinionRow({ opinion, hideByline }: { opinion: ApiExpertOp
   const [tallies, setTallies] = useState<ApiExpertOpinionTallies | null>(null);
   const [loadingTallies, setLoadingTallies] = useState(false);
   const [showSkeleton, setShowSkeleton] = useState(false);
+
+  // Optimistic follow state — syncs with parent via isFollowed prop
+  const [followPending, setFollowPending] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -508,7 +564,16 @@ export function ExpertOpinionRow({ opinion, hideByline }: { opinion: ApiExpertOp
     setTallies(updated);
   }, []);
 
+  const handleFollowPress = useCallback(() => {
+    if (!onFollowToggle || followPending) return;
+    setFollowPending(true);
+    onFollowToggle(opinion.expertId, isFollowed ?? false);
+    // Clear pending after brief delay — parent updates isFollowed
+    setTimeout(() => setFollowPending(false), 600);
+  }, [onFollowToggle, followPending, opinion.expertId, isFollowed]);
+
   const isSourceAttribution = opinion.isSourceAttribution === true;
+  const showFollowBtn = !isSourceAttribution && !hideByline && onFollowToggle !== undefined;
 
   return (
     <View>
@@ -559,15 +624,41 @@ export function ExpertOpinionRow({ opinion, hideByline }: { opinion: ApiExpertOp
                   </Text>
                 </View>
 
-                <View
-                  style={[
-                    expertStyles.directionBadge,
-                    { backgroundColor: dirConfig.color, borderColor: dirConfig.color },
-                  ]}
-                >
-                  <Text style={expertStyles.directionLabel}>
-                    {dirConfig.prefix} {dirConfig.label}
-                  </Text>
+                <View style={expertStyles.bylineRight}>
+                  {showFollowBtn && (
+                    <Pressable
+                      style={[
+                        expertStyles.followPill,
+                        isFollowed && expertStyles.followPillActive,
+                      ]}
+                      onPress={handleFollowPress}
+                      disabled={followPending}
+                    >
+                      {followPending ? (
+                        <ActivityIndicator size={10} color={isFollowed ? "#fff" : colors.accent} />
+                      ) : (
+                        <Text
+                          style={[
+                            expertStyles.followPillText,
+                            isFollowed && expertStyles.followPillTextActive,
+                          ]}
+                        >
+                          {isFollowed ? "Following" : "Follow"}
+                        </Text>
+                      )}
+                    </Pressable>
+                  )}
+
+                  <View
+                    style={[
+                      expertStyles.directionBadge,
+                      { backgroundColor: dirConfig.color, borderColor: dirConfig.color },
+                    ]}
+                  >
+                    <Text style={expertStyles.directionLabel}>
+                      {dirConfig.prefix} {dirConfig.label}
+                    </Text>
+                  </View>
                 </View>
               </View>
 
@@ -579,6 +670,8 @@ export function ExpertOpinionRow({ opinion, hideByline }: { opinion: ApiExpertOp
               >
                 <Text style={expertStyles.quoteText}>{opinion.quote}</Text>
               </View>
+
+              <ResolutionStrip opinion={opinion} articlePublishedAt={articlePublishedAt} />
 
               <Pressable onPress={() => void Linking.openURL(opinion.sourceUrl)}>
                 <Text style={expertStyles.footer}>
@@ -611,6 +704,9 @@ export function ExpertOpinionRow({ opinion, hideByline }: { opinion: ApiExpertOp
           >
             <Text style={expertStyles.quoteText}>{opinion.quote}</Text>
           </View>
+
+          <ResolutionStrip opinion={opinion} />
+
           <Pressable onPress={() => void Linking.openURL(opinion.sourceUrl)}>
             <Text style={expertStyles.footer}>
               AI-summarized from {sourceDomain}. For educational discussion only. Not investment advice.
@@ -1407,6 +1503,34 @@ const expertStyles = StyleSheet.create({
     flex: 1,
     gap: 2,
   },
+  bylineRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    flexShrink: 0,
+  },
+  followPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    minWidth: 66,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  followPillActive: {
+    backgroundColor: colors.accent,
+    borderColor: colors.accent,
+  },
+  followPillText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: colors.accent,
+  },
+  followPillTextActive: {
+    color: "#fff",
+  },
   sourceAttributionBadge: {
     alignSelf: "flex-start",
     backgroundColor: "#F0F9FF",
@@ -1483,6 +1607,37 @@ const expertStyles = StyleSheet.create({
     lineHeight: 14,
     color: "#6B7280",
     textDecorationLine: "underline",
+  },
+  resolutionStrip: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    borderRadius: 6,
+    borderWidth: 1,
+    padding: 8,
+    marginTop: 6,
+    marginBottom: 2,
+  },
+  resolutionBadge: {
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    flexShrink: 0,
+  },
+  resolutionBadgeText: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: "#fff",
+  },
+  resolutionNoteText: {
+    fontSize: 11,
+    lineHeight: 15,
+    fontStyle: "italic" as const,
+  },
+  resolutionDates: {
+    fontSize: 10,
+    color: "#6b7280",
+    marginTop: 3,
   },
   expandBtn: {
     marginTop: spacing.xs,

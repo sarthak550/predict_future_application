@@ -51,8 +51,13 @@ export async function GET(
         quote: opinion.quote,
         direction: opinion.direction,
         sourceUrl: opinion.sourceUrl,
+        publishedAt: opinion.publishedAt.toISOString(),
         resolutionStatus: opinion.resolutionStatus,
         resolvedAt: opinion.resolvedAt?.toISOString() ?? null,
+        resolutionNote: opinion.resolutionNote ?? null,
+        isSourceAttribution: opinion.isSourceAttribution,
+        instrument: opinion.instrument ?? null,
+        instrumentTicker: opinion.instrumentTicker ?? null,
       })),
     },
   });

@@ -64,10 +64,30 @@ function getPredictionCount(entry: ApiLeaderboardEntry): number | undefined {
   return entry.totalPredictions ?? entry.stats?.totalPredictions;
 }
 
-function getSubtitle(category: AppMarketCategory | undefined): string {
-  if (category == null) return "Ranked by reputation";
-  const label = category.charAt(0) + category.slice(1).toLowerCase();
-  return `Ranked by accuracy in ${label}`;
+// S12-T1: time-window-aware subtitle
+function getSubtitle(
+  category: AppMarketCategory | undefined,
+  timeWindow: ApiLeaderboardTimeWindow
+): string {
+  const windowSuffix =
+    timeWindow === "week"
+      ? "this week"
+      : timeWindow === "month"
+      ? "this month"
+      : null; // "all" has its own phrasing
+
+  if (category != null) {
+    const label = category.charAt(0) + category.slice(1).toLowerCase();
+    if (windowSuffix != null) {
+      return `Top ${label} predictors ${windowSuffix}`;
+    }
+    return `Top ${label} predictors all time`;
+  }
+
+  // No category selected (All tab)
+  if (timeWindow === "week") return "Top predictors this week";
+  if (timeWindow === "month") return "Top predictors this month";
+  return "All-time rankings";
 }
 
 export default function LeaderboardScreen() {
@@ -96,14 +116,13 @@ export default function LeaderboardScreen() {
   const userRank = data?.userRank ?? null;
   const userContext = data?.userContext ?? null;
   const currentUsername = session?.username;
-  const isCurrentUserRanked =
-    currentUsername != null && entries.some((e) => e.username === currentUsername);
 
-  const subtitle = getSubtitle(category);
+  // S12-T1: pass timeWindow to getSubtitle
+  const subtitle = getSubtitle(category, timeWindow);
   const countLabel =
     entries.length > 0 ? `Showing ${entries.length} top predictors` : null;
 
-  // Sticky "Your Rank" card — pinned above the scrollable list (S12-T3)
+  // S12-T3: sticky card — rendered outside FlatList
   const yourRankCard =
     currentUsername != null ? (
       <YourRankCard
@@ -114,14 +133,15 @@ export default function LeaderboardScreen() {
       />
     ) : null;
 
-  const header = (
+  // S12-T3: fixed controls above FlatList (time-window pills + category chips + Your Rank card)
+  const fixedControls = (
     <>
       <View style={styles.header}>
         <Text style={styles.title}>Leaderboard</Text>
         <Text style={styles.subtitle}>{subtitle}</Text>
       </View>
 
-      {/* Time-window selector (S12-T2) */}
+      {/* Time-window selector */}
       <View style={styles.timeWindowRow}>
         {TIME_WINDOWS.map((item) => (
           <Pressable
@@ -160,7 +180,7 @@ export default function LeaderboardScreen() {
         ))}
       </ScrollView>
 
-      {/* Sticky rank card (S12-T3) */}
+      {/* Sticky "Your Rank" card pinned above the list */}
       {yourRankCard}
 
       {countLabel != null && (
@@ -171,8 +191,8 @@ export default function LeaderboardScreen() {
 
   if (loading && entries.length === 0) {
     return (
-      <View style={[styles.screen, { paddingHorizontal: spacing.xl }]}>
-        {header}
+      <View style={styles.screen}>
+        <View style={styles.fixedHeader}>{fixedControls}</View>
         <View style={styles.center}>
           <ActivityIndicator size="large" color={colors.accent} />
         </View>
@@ -182,8 +202,8 @@ export default function LeaderboardScreen() {
 
   if (error) {
     return (
-      <View style={[styles.screen, { paddingHorizontal: spacing.xl }]}>
-        {header}
+      <View style={styles.screen}>
+        <View style={styles.fixedHeader}>{fixedControls}</View>
         <View style={styles.center}>
           <Text style={styles.errorText}>{error}</Text>
           <Pressable onPress={refetch} style={styles.retry}>
@@ -194,46 +214,47 @@ export default function LeaderboardScreen() {
     );
   }
 
-  // The old footer rank banner is replaced by the sticky YourRankCard above.
-  // We keep a minimal footer spacer only.
-  const listFooter = <View style={{ height: spacing.xl }} />;
-
   return (
-    <FlatList
-      style={styles.screen}
-      data={entries}
-      keyExtractor={(item) => item.id}
-      contentContainerStyle={styles.list}
-      refreshControl={
-        <RefreshControl
-          refreshing={loading}
-          onRefresh={refetch}
-          tintColor={colors.accent}
-        />
-      }
-      ListHeaderComponent={header}
-      ListFooterComponent={listFooter}
-      renderItem={({ item, index }) => {
-        const rank = index + 1;
-        const isMe = currentUsername != null && item.username === currentUsername;
-        const rankStyle = getRankStyle(rank);
-        const predictions = getPredictionCount(item);
+    // S12-T3: outer View wraps everything so fixedControls stay sticky
+    <View style={styles.screen}>
+      <View style={styles.fixedHeader}>{fixedControls}</View>
 
-        return (
-          <LeaderboardRow
-            item={item}
-            rank={rank}
-            isMe={isMe}
-            rankStyle={rankStyle}
-            predictions={predictions}
-            onPress={() => router.push(`/user/${item.username}`)}
+      {/* S12-T3: FlatList takes flex: 1, scrolls only the leaderboard rows */}
+      <FlatList
+        style={styles.list}
+        data={entries}
+        keyExtractor={(item) => item.id}
+        contentContainerStyle={styles.listContent}
+        refreshControl={
+          <RefreshControl
+            refreshing={loading}
+            onRefresh={refetch}
+            tintColor={colors.accent}
           />
-        );
-      }}
-      ListEmptyComponent={
-        <EmptyState category={category} onMakePrediction={() => router.push("/(tabs)/feed")} />
-      }
-    />
+        }
+        ListFooterComponent={<View style={{ height: spacing.xl }} />}
+        renderItem={({ item, index }) => {
+          const rank = index + 1;
+          const isMe = currentUsername != null && item.username === currentUsername;
+          const rankStyle = getRankStyle(rank);
+          const predictions = getPredictionCount(item);
+
+          return (
+            <LeaderboardRow
+              item={item}
+              rank={rank}
+              isMe={isMe}
+              rankStyle={rankStyle}
+              predictions={predictions}
+              onPress={() => router.push(`/user/${item.username}`)}
+            />
+          );
+        }}
+        ListEmptyComponent={
+          <EmptyState category={category} onMakePrediction={() => router.push("/(tabs)/feed")} />
+        }
+      />
+    </View>
   );
 }
 
@@ -251,6 +272,10 @@ type LeaderboardRowProps = {
 };
 
 function LeaderboardRow({ item, rank, isMe, rankStyle, predictions, onPress }: LeaderboardRowProps) {
+  // S12-T4: determine delta badge to render
+  const delta = item.rankDelta ?? null;
+  const showDelta = delta != null && delta !== 0;
+
   return (
     <Pressable
       style={({ pressed }) => [
@@ -264,6 +289,25 @@ function LeaderboardRow({ item, rank, isMe, rankStyle, predictions, onPress }: L
       <View style={[styles.rankPill, { backgroundColor: rankStyle.bg }]}>
         <Text style={[styles.rankText, { color: rankStyle.text }]}>#{rank}</Text>
       </View>
+
+      {/* S12-T4: delta badge — only when non-null and non-zero */}
+      {showDelta && (
+        <View
+          style={[
+            styles.deltaBadge,
+            delta > 0 ? styles.deltaBadgeUp : styles.deltaBadgeDown,
+          ]}
+        >
+          <Text
+            style={[
+              styles.deltaBadgeText,
+              delta > 0 ? styles.deltaBadgeTextUp : styles.deltaBadgeTextDown,
+            ]}
+          >
+            {delta > 0 ? `+${delta} ▲` : `${Math.abs(delta)} ▼`}
+          </Text>
+        </View>
+      )}
 
       {/* User info */}
       <View style={styles.userInfo}>
@@ -288,7 +332,7 @@ function LeaderboardRow({ item, rank, isMe, rankStyle, predictions, onPress }: L
         </View>
       </View>
 
-      {/* Chevron affordance (S12-T4) */}
+      {/* Chevron affordance */}
       <Text style={styles.chevron}>›</Text>
     </Pressable>
   );
@@ -374,7 +418,13 @@ function EmptyState({ category, onMakePrediction }: EmptyStateProps) {
 // ---------------------------------------------------------------------------
 
 const styles = StyleSheet.create({
+  // S12-T3: outer container — flex: 1 so fixedHeader + FlatList fill the screen
   screen: { flex: 1, backgroundColor: colors.background },
+  // S12-T3: fixed controls section (not inside FlatList)
+  fixedHeader: {
+    paddingHorizontal: spacing.xl,
+    backgroundColor: colors.background,
+  },
   header: { paddingTop: spacing.xl },
   title: { fontSize: 28, fontWeight: "700", color: colors.text },
   subtitle: { marginTop: spacing.xs, fontSize: 14, color: colors.textMuted },
@@ -424,7 +474,9 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
   },
 
-  list: {
+  // S12-T3: FlatList takes remaining space
+  list: { flex: 1 },
+  listContent: {
     paddingHorizontal: spacing.xl,
     paddingBottom: spacing["2xl"],
     gap: spacing.sm,
@@ -454,6 +506,19 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   rankText: { fontSize: 13, fontWeight: "700" },
+
+  // S12-T4: delta badge
+  deltaBadge: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+  },
+  deltaBadgeUp: { backgroundColor: "#D1FAE5" },
+  deltaBadgeDown: { backgroundColor: "#FEE2E2" },
+  deltaBadgeText: { fontSize: 11, fontWeight: "700" },
+  deltaBadgeTextUp: { color: "#065F46" },
+  deltaBadgeTextDown: { color: "#991B1B" },
+
   userInfo: { flex: 1 },
   usernameRow: { flexDirection: "row", alignItems: "center" },
   username: { fontSize: 15, fontWeight: "600", color: colors.text },

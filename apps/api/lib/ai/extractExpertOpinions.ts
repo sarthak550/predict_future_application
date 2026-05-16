@@ -90,11 +90,13 @@ Set "isSourceAttribution": false.
 If the article names the expert but does NOT mention their firm, use "Independent" as expertOrganization.
 Examples: "Ridham Desai of Morgan Stanley" → org = "Morgan Stanley". "Sudip Bandyopadhyay, market expert" → org = "Independent".
 
-MODE 2: SOURCE-ATTRIBUTED (only when NO individual's name appears anywhere in the article)
-Market analysis/calls attributed to the publication as a whole (e.g., ETMarkets editorial, Mint Explainer).
-Use publication name for expertOrganization, leave expertName blank.
+MODE 2: SOURCE-ATTRIBUTED (institutional research notes OR publication-level analysis)
+Use this when:
+  a) NO individual analyst name appears — article is from the publication's editorial desk (e.g., ETMarkets editorial, Mint Explainer), OR
+  b) The call is from a research institution/brokerage house without a named analyst (e.g., "Goldman Sachs says…", "JP Morgan note…", "JM Financial report…", "Nuvama Institutional Equities…", "Motilal Oswal report…")
+Use publication/institution name for expertOrganization, leave expertName blank.
 Set "isSourceAttribution": true.
-Do NOT use Mode 2 if any individual analyst name is present — use Mode 1 instead.
+Do NOT use Mode 2 if a specific individual's name (first + last name) is explicitly mentioned — use Mode 1 instead.
 
 REJECTION CRITERIA (applies to both modes):
 - CEO/CFO talking about own company strategy
@@ -273,7 +275,7 @@ async function callGeminiForExtraction(
         ],
         generationConfig: {
           temperature: 0.2, // Low temperature for extraction — accuracy over creativity
-          maxOutputTokens: 2048,
+          maxOutputTokens: 4096,
           responseMimeType: "application/json",
         },
       }),

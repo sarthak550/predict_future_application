@@ -2,7 +2,7 @@ import { MarketCategory } from "@prisma/client";
 import { NextResponse } from "next/server";
 
 import { getUserIdFromRequest } from "@/lib/auth";
-import { getPublishedNewsPage } from "@/lib/news/queries";
+import { getPublishedNewsPage, getPersonalizedNewsPage } from "@/lib/news/queries";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -11,7 +11,7 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const userId = (await getUserIdFromRequest(request)) ?? undefined;
   const rawLimit = Number(searchParams.get("limit") ?? 10);
-  const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(20, Math.floor(rawLimit))) : 10;
+  const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(30, Math.floor(rawLimit))) : 10;
   const rawCategory = searchParams.get("category");
   const cursor = searchParams.get("cursor");
   const category =
@@ -26,15 +26,30 @@ export async function GET(request: Request) {
       : undefined;
 
   const requireExpertOpinions = searchParams.get("requireExpertOpinions") === "true";
+  const personalized = searchParams.get("personalized") === "true";
 
-  const page = await getPublishedNewsPage({
-    limit,
-    category,
-    excludeCategory,
-    cursor,
-    userId,
-    requireExpertOpinions
-  });
+  // Personalized mode: boost stories linked to markets where followed analysts
+  // have placed positions in the last 14 days.
+  let page;
+  if (personalized && userId) {
+    page = await getPersonalizedNewsPage({
+      limit,
+      category,
+      excludeCategory,
+      cursor,
+      userId,
+      requireExpertOpinions,
+    });
+  } else {
+    page = await getPublishedNewsPage({
+      limit,
+      category,
+      excludeCategory,
+      cursor,
+      userId,
+      requireExpertOpinions,
+    });
+  }
 
   // Batch-fetch user votes for all markets in this page
   const marketIds = page.items

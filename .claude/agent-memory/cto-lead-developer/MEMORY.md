@@ -20,3 +20,8 @@
 - [project_sprint26_t5.md](project_sprint26_t5.md) — S26-T5: UserDisplayMode enum, getDisplayName() in lib/users/displayName.ts, applied to all public surfaces, own-view exception on /me
 - [project_sprint27_t1.md](project_sprint27_t1.md) — S27-T1: Big Call daily market — schema fields, admin route, cron push (CRON_SECRET bearer), GET today-big-call, mobile BigCallCard, types, api-client (COMPLETE)
 - [project_sprint27_t2.md](project_sprint27_t2.md) — S27-T2: Probability chart — MarketProbabilitySnapshot, hourly cron, fire-and-forget on positions, history API, pure View chart on market detail (COMPLETE)
+- [project_s28_finance_features.md](project_s28_finance_features.md) — S28: ExpertFollow schema+API, infinite scroll pagination, direction filters, crowd-vs-experts card + seed fixtures
+- [project_auto_resolution.md](project_auto_resolution.md) — Auto-resolution system: priceHistory.ts, extractInstrument.ts, script + cron route; first run: 9 HIT, 3 MISS, 10 NOT_GRADED from 22 eligible opinions
+- [project_per_call_resolution_windows.md](project_per_call_resolution_windows.md) — Per-call windows: resolutionWindowDays+resolutionEligibleAt fields, parseOpinionTimeframe() export, preprocess script, two-phase cron route
+- [project_phone_otp_db.md](project_phone_otp_db.md) — DB-backed PhoneVerificationOtp model + MSG91 SMS; all phone-verification.ts fns now async; env vars: MSG91_AUTH_KEY, MSG91_TEMPLATE_ID, PHONE_VERIFY_MODE
+- [project_admin_event_clusters.md](project_admin_event_clusters.md) — Admin CRUD for MarketEventCluster: GET/POST collection + PATCH/DELETE resource; replaces manual seed.ts management

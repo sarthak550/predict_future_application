@@ -15,6 +15,7 @@ import type {
   ApiCategoryStat,
   ApiUserProfile,
   AppMarketStatus,
+  ProfileRecentCall,
 } from "@predict-future/types";
 import { colors, radius, spacing } from "@predict-future/ui-tokens";
 
@@ -194,6 +195,94 @@ function CreatedMarketsSection({
   );
 }
 
+// ── Recent Calls (S30-T3) ─────────────────────────────────────────────────────
+
+const OUTCOME_META: Record<string, { label: string; color: string; bg: string }> = {
+  YES: { label: "YES", color: "#15803D", bg: "#DCFCE7" },
+  NO: { label: "NO", color: "#B91C1C", bg: "#FEE2E2" },
+  CANCELLED: { label: "Cancelled", color: "#6B7280", bg: "#F3F4F6" },
+};
+
+const SIDE_META: Record<string, { label: string; color: string; bg: string }> = {
+  YES: { label: "YES", color: "#15803D", bg: "#DCFCE7" },
+  NO: { label: "NO", color: "#B91C1C", bg: "#FEE2E2" },
+  UNKNOWN: { label: "?", color: "#6B7280", bg: "#F3F4F6" },
+};
+
+function RecentCallsSection({
+  recentCalls,
+}: {
+  recentCalls: ProfileRecentCall[];
+}) {
+  const router = useRouter();
+
+  return (
+    <View style={styles.card}>
+      <Text style={[styles.sectionTitle, { marginBottom: spacing.md }]}>
+        Recent Calls
+      </Text>
+      {recentCalls.length === 0 ? (
+        <Text style={styles.emptyText}>No public calls yet.</Text>
+      ) : (
+        recentCalls.map((call) => {
+          const sideMeta = SIDE_META[call.side] ?? SIDE_META.UNKNOWN;
+          const outcomeMeta = call.outcome ? (OUTCOME_META[call.outcome] ?? null) : null;
+          const truncated =
+            call.reasoning && call.reasoning.length > 120
+              ? call.reasoning.slice(0, 120) + "…"
+              : call.reasoning;
+
+          return (
+            <Pressable
+              key={`${call.marketId}-${call.createdAt}`}
+              style={({ pressed }) => [
+                styles.recentCallRow,
+                pressed && styles.marketRowPressed,
+              ]}
+              onPress={() =>
+                router.push(`/market/${call.marketId}` as Parameters<typeof router.push>[0])
+              }
+            >
+              {/* Market title */}
+              <Text style={styles.recentCallTitle} numberOfLines={2}>
+                {call.marketTitle}
+              </Text>
+
+              {/* Side + outcome chips row */}
+              <View style={styles.recentCallChips}>
+                <View style={[styles.chip, { backgroundColor: sideMeta.bg }]}>
+                  <Text style={[styles.chipText, { color: sideMeta.color }]}>
+                    {sideMeta.label}
+                  </Text>
+                </View>
+                {outcomeMeta != null && (
+                  <View style={[styles.chip, { backgroundColor: outcomeMeta.bg }]}>
+                    <Text style={[styles.chipText, { color: outcomeMeta.color }]}>
+                      {outcomeMeta.label}
+                    </Text>
+                  </View>
+                )}
+                {call.reasoningUpvotes > 0 && (
+                  <View style={styles.upvoteChip}>
+                    <Text style={styles.upvoteChipText}>
+                      👍 {call.reasoningUpvotes}
+                    </Text>
+                  </View>
+                )}
+              </View>
+
+              {/* Reasoning snippet */}
+              {truncated != null && truncated.length > 0 && (
+                <Text style={styles.recentCallReasoning}>{truncated}</Text>
+              )}
+            </Pressable>
+          );
+        })
+      )}
+    </View>
+  );
+}
+
 // ── Follow button ─────────────────────────────────────────────────────────────
 
 function FollowButton({
@@ -274,10 +363,10 @@ export default function UserProfileScreen() {
     () => mobileApi.getUserProfile(username),
     [username]
   );
-  const { data, loading, error, refetch } = useApiQuery<{ user: ApiUserProfile }>(
-    fetcher,
-    [username]
-  );
+  const { data, loading, error, refetch } = useApiQuery<{
+    user: ApiUserProfile;
+    recentCalls: ProfileRecentCall[];
+  }>(fetcher, [username]);
 
   const headerTitle = username ? `@${username}` : "Profile";
 
@@ -341,7 +430,9 @@ export default function UserProfileScreen() {
   const badges = user.badges ?? [];
   const categoryStats = user.categoryStats ?? [];
   const createdMarkets = user.createdMarkets ?? [];
+  const recentCalls = data.recentCalls ?? [];
   const totalPredictions = user.stats?.totalPredictions ?? 0;
+  const totalReasoningUpvotes = user.totalReasoningUpvotes ?? 0;
 
   // Determine whether to show the follow button: only for other users when authenticated.
   const isOwnProfile = session?.userId === user.id;
@@ -432,6 +523,15 @@ export default function UserProfileScreen() {
             label="Reputation"
             value={user.reputationScore.toLocaleString()}
           />
+          {totalReasoningUpvotes > 0 && (
+            <>
+              <View style={styles.statDivider} />
+              <StatBox
+                label="Call Upvotes"
+                value={totalReasoningUpvotes.toLocaleString()}
+              />
+            </>
+          )}
         </View>
 
         {/* ── Tips received (S26-T2) ── shown when user has received at least one tip */}
@@ -493,8 +593,11 @@ export default function UserProfileScreen() {
           <CreatedMarketsSection markets={createdMarkets} />
         )}
 
+        {/* ── Recent Calls (S30-T3) ── */}
+        <RecentCallsSection recentCalls={recentCalls} />
+
         {/* Empty state when nothing to show */}
-        {badges.length === 0 && categoryStats.length === 0 && createdMarkets.length === 0 && (
+        {badges.length === 0 && categoryStats.length === 0 && createdMarkets.length === 0 && recentCalls.length === 0 && (
           <View style={styles.emptyCard}>
             <Text style={styles.emptyCardText}>
               This user hasn't made any public predictions yet.
@@ -774,6 +877,51 @@ const styles = StyleSheet.create({
     color: colors.textMuted as string,
     textAlign: "center",
     lineHeight: 20,
+  },
+
+  // Recent Calls (S30-T3)
+  recentCallRow: {
+    paddingVertical: spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border as string,
+  },
+  recentCallTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: colors.text as string,
+    lineHeight: 20,
+    marginBottom: spacing.xs,
+  },
+  recentCallChips: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.xs,
+    marginBottom: spacing.xs,
+  },
+  chip: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+  },
+  chipText: {
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  upvoteChip: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+    backgroundColor: "#EFF6FF",
+  },
+  upvoteChipText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#1D4ED8",
+  },
+  recentCallReasoning: {
+    fontSize: 13,
+    color: colors.textMuted as string,
+    lineHeight: 18,
   },
 
   // Follow button

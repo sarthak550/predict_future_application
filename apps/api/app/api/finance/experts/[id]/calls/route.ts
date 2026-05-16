@@ -71,6 +71,8 @@ export async function GET(
         resolutionNote: o.resolutionNote,
         storyId: o.story?.id ?? null,
         storyHeadline: o.story?.headline ?? null,
+        instrument: o.instrument ?? null,
+        instrumentTicker: o.instrumentTicker ?? null,
         retrospectiveTallies: {
           hit: hitCount,
           miss: missCount,

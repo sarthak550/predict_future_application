@@ -134,7 +134,7 @@ async function fetchLeagueScores(leagueConfig: typeof ESPN_LEAGUES[number]): Pro
         homeTeam: {
           name: home?.team?.displayName ?? home?.team?.name ?? "Home",
           abbreviation: home?.team?.abbreviation ?? "",
-          logo: home?.team?.logo ?? "",
+          logo: home?.team?.logo ?? home?.team?.logos?.[0]?.href ?? "",
           score: homeScore,
           record: extractRecord(home),
           linescores: extractLinescores(home),
@@ -142,7 +142,7 @@ async function fetchLeagueScores(leagueConfig: typeof ESPN_LEAGUES[number]): Pro
         awayTeam: {
           name: away?.team?.displayName ?? away?.team?.name ?? "Away",
           abbreviation: away?.team?.abbreviation ?? "",
-          logo: away?.team?.logo ?? "",
+          logo: away?.team?.logo ?? away?.team?.logos?.[0]?.href ?? "",
           score: awayScore,
           record: extractRecord(away),
           linescores: extractLinescores(away),
@@ -300,19 +300,17 @@ export async function getLiveScores(): Promise<LiveScore[]> {
   }
 
   const now = Date.now();
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
-  const todayStartMs = todayStart.getTime();
 
   const filtered = allScores.filter((score) => {
     if (score.status === "in") return true;
+    const isCricket = score.sport === "Cricket";
+    const gameTime = new Date(score.startTime).getTime();
     if (score.status === "post") {
-      const gameTime = new Date(score.startTime).getTime();
-      return gameTime >= todayStartMs;
+      return now - gameTime < 48 * 60 * 60 * 1000;
     }
     if (score.status === "pre") {
-      const gameTime = new Date(score.startTime).getTime();
-      return gameTime - now < 6 * 60 * 60 * 1000;
+      const window = isCricket ? 48 * 60 * 60 * 1000 : 36 * 60 * 60 * 1000;
+      return gameTime - now < window;
     }
     return false;
   });

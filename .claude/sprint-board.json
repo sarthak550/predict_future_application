@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "currentSprint": 25,
+  "currentSprint": 30,
   "tickets": [
     {
       "id": "S7-T1",
@@ -305,9 +305,12 @@
       "title": "Leaderboard: dynamic subtitle + sort-order consistency fix",
       "description": "The leaderboard subtitle reads 'Top predictors by reputation' on every tab regardless of the active category filter. Category tabs sort by accuracy, but the subtitle never updates to reflect this.",
       "priority": "critical",
-      "status": "qa-review",
+      "status": "failed",
       "qaVerdict": "fail",
-      "failureNotes": null,
+      "failureNotes": [
+        "apps/mobile/src/app/(tabs)/leaderboard.tsx line 67-71: getSubtitle() takes only `category` as its argument and completely ignores `timeWindow`. When the user selects 'This Week', the subtitle still shows 'Ranked by reputation' \u2014 it never changes to e.g. 'Top predictors this week'. Fix: pass `timeWindow` into getSubtitle() and return strings like 'Top predictors this week', 'Top predictors this month', 'All-time rankings'.",
+        "apps/mobile/src/app/(tabs)/leaderboard.tsx line 76-77: `timeWindow` state defaults to 'week' but `category` defaults to undefined. Both are held in local component state. The leaderboard tab has `href: null` in the tab layout (line 89 of _layout.tsx), meaning it is not in the navigation tab bar \u2014 it can only be navigated to programmatically. Component state should survive navigation within the session. However the subtitle fix is still required \u2014 sort-order consistency is structurally sound, but the subtitle inconsistency means S12-T1 remains FAIL."
+      ],
       "createdAt": "2026-05-02"
     },
     {
@@ -316,8 +319,8 @@
       "title": "Leaderboard: time-window selector (This Week / This Month / All Time)",
       "description": "The leaderboard is a flat all-time ranking. Weekly leaderboards create a fresh competitive context every 7 days and dramatically improve 7-day retention.",
       "priority": "high",
-      "status": "qa-review",
-      "qaVerdict": "fail",
+      "status": "done",
+      "qaVerdict": "pass",
       "failureNotes": null,
       "createdAt": "2026-05-02"
     },
@@ -327,9 +330,11 @@
       "title": "Leaderboard: sticky 'Your Rank' card pinned below selectors",
       "description": "The user's own rank is currently shown as a small banner buried at the bottom of the scrollable list. Show users exactly where they stand immediately and without scrolling.",
       "priority": "high",
-      "status": "qa-review",
+      "status": "failed",
       "qaVerdict": "fail",
-      "failureNotes": null,
+      "failureNotes": [
+        "apps/mobile/src/app/(tabs)/leaderboard.tsx lines 107-164: YourRankCard is rendered inside the `header` constant (line 164), which is then passed as `ListHeaderComponent` to FlatList (line 214). In React Native, ListHeaderComponent scrolls WITH the list content \u2014 it is NOT pinned/sticky. There is no `stickyHeaderIndices` prop on the FlatList and the card is not rendered outside the FlatList in a wrapping View. The ticket requirement is that the card be 'sticky (pinned) and not scroll away with the list'. Fix: render the card OUTSIDE and ABOVE the FlatList in a containing View, or use a wrapping View with the FlatList inside so the card remains above the scroll area."
+      ],
       "createdAt": "2026-05-02"
     },
     {
@@ -338,9 +343,14 @@
       "title": "Leaderboard: row chevron, delta badge, and category-aware empty state",
       "description": "Three small polish gaps: no tappable affordance on leaderboard rows, no rank movement indicator, generic empty state copy.",
       "priority": "medium",
-      "status": "qa-review",
+      "status": "failed",
       "qaVerdict": "fail",
-      "failureNotes": null,
+      "failureNotes": [
+        "Delta badge (rank change indicator) is not implemented anywhere in the stack. packages/types/src/index.ts ApiLeaderboardEntry (lines 472-486) has no `rankDelta` or `previousRank` field. apps/api/app/api/leaderboard/route.ts does not compute or return any rank-change data. apps/mobile/src/app/(tabs)/leaderboard.tsx LeaderboardRow component (lines 253-295) has no delta badge rendering. Only the chevron (line 292) has been implemented. Fix: add `rankDelta?: number | null` to ApiLeaderboardEntry type, compute it in the API route by comparing current rank against a stored previous rank (or skip storage and return null for now), and render a '+N'/'-N' badge in LeaderboardRow.",
+        "Chevron is present (line 292) \u2014 this part of S12-T4 passes.",
+        "Category-aware empty state IS implemented (lines 356-369): EmptyState shows 'No predictions in [Category] yet \u2014 be the first!' when a category is selected. This part of S12-T4 passes.",
+        "Net verdict for S12-T4 is FAIL because the delta badge \u2014 an explicit named requirement in the ticket \u2014 is entirely absent."
+      ],
       "createdAt": "2026-05-02"
     },
     {
@@ -947,6 +957,184 @@
       "qaVerdict": "pass",
       "failureNotes": null,
       "createdAt": "2026-05-09"
+    },
+    {
+      "id": "S28-T1",
+      "sprint": 28,
+      "title": "Finance: Analyst Follow System + My Analysts filter",
+      "description": "Add analyst follow capability to the Finance tab expert opinion feed.\n\n**Schema changes (Prisma):**\n1. Add model ExpertFollow { id String @id @default(cuid()); userId String; expertId String; createdAt DateTime @default(now()); user User @relation(fields: [userId], references: [id], onDelete: Cascade); expert Expert @relation(fields: [expertId], references: [id], onDelete: Cascade); @@unique([userId, expertId]); @@index([userId, createdAt]); } to schema.prisma.\n2. Add expertFollows ExpertFollow[] back-relation on both User and Expert models.\n3. Run prisma migrate dev --name expert_follow.\n\n**API endpoints (apps/api):**\n4. POST /api/finance/experts/[id]/follow -- authenticated, upsert ExpertFollow row, return { following: true }.\n5. DELETE /api/finance/experts/[id]/follow -- authenticated, delete ExpertFollow row, return { following: false }.\n6. GET /api/finance/expert-opinions?followedOnly=true -- when followedOnly=true and user is authenticated, filter expertId IN (SELECT expertId FROM ExpertFollow WHERE userId = ?). Reuse existing route or add a new route.\n\n**Mobile UI (apps/mobile):**\n7. In ExpertOpinionRow (inside news-feed-card.tsx), add a Follow / Following pill button next to the analyst name. Tap calls the follow/unfollow API with optimistic state update. Show loading spinner during API call. Grey out if not authenticated.\n8. In finance-mode.tsx, load followedAnalystIds: string[] from GET /api/finance/experts?followed=true on mount. Store in state.\n9. Add a horizontal My Analysts avatar-chip row above the Expert Opinions / Market Analysis toggle -- shown only when followedAnalystIds.length > 0. Each chip shows analyst initials circle + name truncated to 8 chars. Tapping a chip sets selectedAnalystFilter state. An All chip clears the filter. Apply the filter in the grouped-opinions derivation.\n10. Persist followedAnalystIds in AsyncStorage key finance:followedAnalysts so the row renders instantly on next open before the API call resolves.\n\n**Acceptance criteria:**\n- Follow button visible on every named-analyst opinion card (not on isSourceAttribution cards).\n- Tapping Follow persists to DB and updates button state within 500ms.\n- My Analysts chip row appears as soon as user follows 1+ analyst, disappears when all unfollowed.\n- Selecting an analyst chip correctly filters the expert opinions list.\n- All chip restores unfiltered view.\n- Works when logged out: Follow button is hidden (or shows auth prompt on tap).",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-13"
+    },
+    {
+      "id": "S28-T2",
+      "sprint": 28,
+      "title": "Finance: Infinite scroll pagination on expert opinions feed",
+      "description": "Wire up cursor-based pagination on the Finance tab expert feed. The API already supports pagination via nextCursor / hasMore -- the mobile client loads 30 items once and ignores these fields.\n\n**Changes in finance-mode.tsx:**\n1. Change mobileApi.getNews({ category: FINANCE, limit: 30, requireExpertOpinions: true }) to limit: 10.\n2. Add state: nextCursor: string | null = null, hasMore: boolean = true, loadingMore: boolean = false.\n3. Refactor load(isRefresh) to reset cursor and replace financeNews array on refresh.\n4. Add loadMore() function: if (!hasMore || loadingMore) return early. Set loadingMore = true. Call mobileApi.getNews({ category: FINANCE, limit: 10, requireExpertOpinions: true, cursor: nextCursor }). Append to financeNews array. Update nextCursor and hasMore from response.\n5. Attach an onScroll handler to the existing ScrollView that triggers loadMore() when contentOffset.y + layoutHeight >= contentSize.height - 200 (within 200px of bottom).\n6. Show a loading spinner (ActivityIndicator) as a footer when loadingMore === true.\n7. Show No more opinions text footer when hasMore === false and list is non-empty.\n\n**API changes (apps/api/app/api/news/route.ts):**\n8. The existing limit cap is Math.min(20, ...) -- raise the max to 30 but default to 10 for Finance tab use.\n\n**Acceptance criteria:**\n- Initial load fetches only 10 stories (faster initial paint).\n- Scrolling to the bottom triggers loadMore automatically.\n- New items append below existing ones without replacing them.\n- Pull-to-refresh resets cursor and reloads from page 1.\n- No duplicate cards appear across pages.\n- Footer spinner visible during load, No more text when exhausted.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-13"
+    },
+    {
+      "id": "S28-T3",
+      "sprint": 28,
+      "title": "Finance: Direction filter chips + tappable Sentiment Card",
+      "description": "Two UI improvements that close interaction dead-ends on the Finance tab.\n\n**Part A -- Direction filter chips:**\n1. In finance-mode.tsx, add selectedDirectionFilter: BULLISH | BEARISH | NEUTRAL | null state, defaulting to null.\n2. Render a horizontally-scrollable ScrollView (horizontal, showsHorizontalScrollIndicator={false}) of pill chips immediately above the Expert Opinions / Market Analysis toggle. Chips: All | Bullish | Bearish | Neutral.\n3. Active chip: accent background + white text. Inactive: gray background + muted text.\n4. Apply the filter in the grouped-opinions derivation IIFE: when selectedDirectionFilter is set, filter grouped array to groups where opinions[0].direction === selectedDirectionFilter. Pure client-side -- no API change needed.\n5. Direction chips reset to All on pull-to-refresh.\n\n**Part B -- Tappable Analyst Sentiment Card:**\n6. Change AnalystSentimentCard from a View to a Pressable.\n7. On press, set selectedDirectionFilter to the dominant lean direction (map sentiment.dominantLean to BULLISH | BEARISH | NEUTRAL) AND scroll to expertSectionY.current using existing scrollViewRef.\n8. Add a subtle See opinions chevron or text at the bottom right of the sentiment card so users understand it is tappable.\n9. When direction filter activates via sentiment card tap, show the existing filterBanner above opinion cards: Showing: Bullish opinions x Clear.\n\n**Part C -- Poll A aggregate count (include if time allows):**\n10. In ExpertOpinionRow (news-feed-card.tsx), below the agree/disagree slider, add a small bar showing vote distribution: X agree in green, Y disagree in red. Only shown after user has voted OR if opinion has >= 5 votes. Requires adding agreeCount / disagreeCount to ApiExpertOpinionItem type and returning from expert-opinions API.\n\n**Acceptance criteria:**\n- Direction chips filter client-side with no additional API call.\n- All chip restores unfiltered list.\n- Sentiment card tap scrolls to expert section and pre-filters to dominant direction.\n- Filter banner appears and Clear removes the direction filter.\n- Chips and cluster filter can be combined (both active simultaneously).",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-13"
+    },
+    {
+      "id": "S28-T4",
+      "sprint": 28,
+      "title": "Finance: Crowd-vs-Expert comparison card scaffolding",
+      "description": "Build the Crowd vs. Experts accuracy comparison surface. Show empirically whether the crowd or named analysts have been more accurate on resolved Indian market calls. Hidden behind a minimum-threshold gate (< 10 resolved opinions = hide entirely).\n\n**API endpoint (apps/api):**\n1. Create GET /api/finance/crowd-vs-experts returning:\n{ resolvedCount: 12, crowdCorrect: 8, expertCorrect: 5, crowdWinRate: 67, expertWinRate: 42, sampleSize: 12, provisional: true, lastUpdated: ISO string }\n- Expert correct = resolutionStatus = HIT count.\n- Crowd correct = on resolved ExpertOpinion-linked markets, majority crowd vote matched the resolution.\n- provisional: true when resolvedCount < 20.\n2. Add GET /api/finance/crowd-vs-experts to mobileApi client in packages/api-client/src/index.ts.\n\n**Mobile UI (finance-mode.tsx):**\n3. Add CrowdVsExpertsCard component. Only render if resolvedCount >= 10.\n4. Card layout:\n   - Header: CROWD VS. EXPERTS (uppercase label)\n   - Two-column stat row: LEFT = Crowd win-rate % bold large, RIGHT = Experts win-rate % bold large.\n   - Segmented bar showing relative performance (same style as analyst gauge bar).\n   - Footer: Based on {resolvedCount} resolved calls + provisional label if applicable.\n   - Winner label: Crowd is beating analysts on Indian markets this month. OR Analysts are leading the crowd this month.\n5. Load crowdVsExperts data in the existing Promise.all in load(). Use .catch(() => null) so failure does not break the tab.\n\n**Seed fixture for QA:**\n6. Add 10+ resolved ExpertOpinion records (5 HIT, 5 MISS) to prisma/seed.ts for the Finance category so QA can verify the card renders.\n\n**Acceptance criteria:**\n- Card hidden when resolvedCount < 10.\n- Card renders correctly with seed data.\n- Provisional label shown when resolvedCount < 20.\n- No crash when API returns null (graceful hide).\n- Win-rate percentages are integers.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-13"
+    },
+    {
+      "id": "S29-T1",
+      "sprint": 29,
+      "title": "Leaderboard tab restored to the main nav bar",
+      "description": "The Leaderboard screen is fully built but hidden from the tab bar via `options={{ href: null }}` in `apps/mobile/src/app/(tabs)/_layout.tsx`. The Leaderboard is the product's primary identity surface \u2014 'India's Analyst Scorecard' \u2014 and must be discoverable within 5 seconds of opening the app.\n\n**Acceptance criteria:**\n1. In `apps/mobile/src/app/(tabs)/_layout.tsx`, remove `options={{ href: null }}` from the `<Tabs.Screen name=\"leaderboard\" />` entry.\n2. Add a `tabBarIcon` using `Ionicons name=\"trophy-outline\"` (same size/color pattern as other tab icons).\n3. Restructure the tab order to: Feed / Finance / Leaderboard / Create / Profile. Remove Markets from the tab bar (it remains accessible via Feed category chips, Finance tab's Markets link, and deep links).\n4. Verify the leaderboard tab routes correctly from all other tabs.\n5. Verify the back-navigation from Leaderboard to other screens is unaffected.\n6. The `<Tabs.Screen name=\"sports\" />`, `<Tabs.Screen name=\"notifications\" />`, `<Tabs.Screen name=\"groups\" />`, and `<Tabs.Screen name=\"markets\" />` tabs should all remain hidden (`href: null`) \u2014 only leaderboard is being restored.\n7. Smoke test: tap Leaderboard tab cold (no prior navigation) \u2014 the full leaderboard with time-window selector and Your Rank card loads without errors.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-16"
+    },
+    {
+      "id": "S29-T2",
+      "sprint": 29,
+      "title": "Leaderboard rank delta \u2014 compute and persist weekly rank movement",
+      "description": "The `rankDelta` field on `ApiLeaderboardEntry` is hardcoded to `null` in `apps/api/app/api/leaderboard/route.ts` (lines 125, 247, 259). The mobile UI already renders up/down delta badges when `rankDelta` is non-null \u2014 the frontend is complete. The backend computation and persistence layer is missing.\n\n**Schema (apps/api/prisma/schema.prisma):**\n1. Add a new model:\n```\nmodel LeaderboardSnapshot {\n  id         String    @id @default(cuid())\n  userId     String\n  rank       Int\n  timeWindow String    // 'week' | 'month' | 'all'\n  category   String?   // null = All\n  snapshotAt DateTime  @default(now())\n  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)\n  @@index([userId, timeWindow, category, snapshotAt])\n}\n```\n2. Run `prisma migrate dev --name add_leaderboard_snapshot`.\n3. Add `leaderboardSnapshots LeaderboardSnapshot[]` to the User model.\n\n**Cron route (apps/api/app/api/cron/leaderboard-snapshot/route.ts):**\n4. POST handler, CRON_SECRET guarded (same pattern as existing cron routes).\n5. For each combination of timeWindow ('week','month','all') x category (null, 'SPORTS', 'BUSINESS', 'TECH', 'GENERAL'): run the existing leaderboard ranking query, then upsert one LeaderboardSnapshot row per user for that combination.\n6. Add to `vercel.json` crons: `{ \"path\": \"/api/cron/leaderboard-snapshot\", \"schedule\": \"59 18 * * 0\" }` (Sunday 23:59 IST = 18:59 UTC).\n\n**Leaderboard query update (apps/api/app/api/leaderboard/route.ts):**\n7. After computing the ranked list, for each user look up their most recent LeaderboardSnapshot for the same timeWindow+category.\n8. Compute `rankDelta = previousSnapshot.rank - currentRank` (positive = moved up in rank number terms; in the UI +8 means climbed 8 spots).\n9. If no prior snapshot exists, `rankDelta = null`.\n10. Replace all hardcoded `rankDelta: null` with the computed value.\n\n**Seed fixture for QA:**\n11. In `prisma/seed.ts`, insert a set of LeaderboardSnapshot rows dated 8 days ago (before the 'week' window) for the top 10 seeded users so QA can verify delta badges render without waiting a week.\n\n**Acceptance criteria:**\n- Delta badges render in QA with seed data (up arrows for users who climbed, down arrows for users who dropped).\n- First-run with no prior snapshots: all deltas are null, no badges rendered \u2014 correct behavior.\n- Cron route returns 200 with a count of snapshots written.\n- rankDelta is an integer (no floats).",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-16"
+    },
+    {
+      "id": "S29-T3",
+      "sprint": 29,
+      "title": "Call Reasoning field \u2014 optional free-text rationale on market positions",
+      "description": "When a user places a prediction, there is no way to attach reasoning. The entire competitive edge of the 'Analyst Scorecard' positioning over X polls and StockTwits is that calls here carry accountability and context. This ticket adds an optional reasoning field to market positions.\n\n**Schema:**\n1. Add `reasoning String?` to the `MarketPosition` model in `apps/api/prisma/schema.prisma`.\n2. Run `prisma migrate dev --name add_position_reasoning`.\n\n**API:**\n3. In `POST /api/markets/[marketId]/positions` (and multi-choice equivalent), accept an optional `reasoning` string in the request body. Validate: if present, must be 1\u2013500 characters (trim whitespace, reject if only whitespace). Store on the created MarketPosition.\n4. Add `reasoning?: string` to the `ApiMarketPosition` type in `packages/types/src/index.ts`.\n5. Include `reasoning` in the position SELECT in the market detail API (`GET /api/markets/[marketId]`) and in the user profile positions query.\n\n**Mobile UI \u2014 bet panel (apps/mobile/src/app/market/[id].tsx):**\n6. In the betting bottom sheet, below the amount presets and above the Place Bet button, add a collapsed 'Add your reasoning (optional)' row with a pencil icon. Tapping it expands a `TextInput` (multiline, maxLength=500) with a character counter (`{chars}/500`).\n7. The expanded state is sticky within the session \u2014 once opened it stays open until the sheet closes.\n8. Include `reasoning` in the position creation API call payload when the field has content.\n\n**Display:**\n9. In the market detail screen's 'Positions' / 'Comments' section, where user positions are rendered, show `reasoning` as an italic light-grey line below the position badge if non-null.\n10. On the mobile user profile Activity tab, show `reasoning` on recent call rows where present.\n11. On the web public profile page (`apps/api/app/profile/[username]/page.tsx`), show reasoning on recent markets where present.\n\n**Acceptance criteria:**\n- Reasoning field is optional: existing stake flow works with zero changes if user skips it.\n- Max 500 chars enforced at API level (400 error if exceeded).\n- Reasoning renders on market detail positions list.\n- Reasoning renders on public profile recent calls.\n- Empty string treated as null (not stored as empty string).",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-16"
+    },
+    {
+      "id": "S29-T4",
+      "sprint": 29,
+      "title": "For You feed \u2014 personalized news feed weighted by analyst follows",
+      "description": "The Feed tab serves all news in reverse-chronological order regardless of whether the user follows analysts. Users who follow 10 analysts see the same feed as users who follow nobody. This ticket adds a lightweight personalization layer using the existing Follow social graph.\n\n**API (apps/api/app/api/news/route.ts):**\n1. Accept a new optional query parameter `personalized=true`.\n2. When `personalized=true` AND the request is authenticated: fetch the set of userIds the current user follows (via Follow.followeeId WHERE followerId = currentUser). Find all MarketPosition.marketId values for those followed users in the last 14 days. Find all NewsMarket links (or equivalent join table) connecting news stories to those marketIds. Give those stories a sort boost so they appear before same-timestamp stories with no followed-analyst signal. Implementation: use a SQL CASE expression or Prisma `orderBy` with a computed field \u2014 a story with a followed-analyst call gets `boosted=true` and the sort is `ORDER BY boosted DESC, publishedAt DESC`. Do not exclude non-boosted stories \u2014 they fill the tail.\n3. If `personalized=true` but the user follows nobody OR is unauthenticated: return the standard chronological feed (same as `personalized=false`).\n4. Add `personalized?: boolean` parameter to the `getNews` method in `packages/api-client/src/index.ts`.\n\n**Mobile UI (apps/mobile/src/app/(tabs)/feed.tsx):**\n5. Add a two-pill toggle at the top of the Feed tab: 'For You' and 'All'. Style matches the time-window pills on the Leaderboard screen.\n6. 'For You' passes `personalized: true` to the API call. 'All' uses the existing chronological call.\n7. Default: if the user has 1+ follows, default to 'For You'. If 0 follows, default to 'All' and show a subtle nudge row: 'Follow analysts to personalize your feed' with a 'Browse Leaderboard' button routing to the Leaderboard tab.\n8. Persist the user's last-chosen tab in AsyncStorage under key `feed_personalization_mode`.\n9. Pull-to-refresh resets the feed with the current mode (not the other mode).\n\n**Acceptance criteria:**\n- 'For You' tab shows followed-analyst stories first, then chronological tail.\n- 'All' tab is identical to current behavior.\n- Users with 0 follows see the nudge row.\n- Mode persists across app restarts.\n- No crash when followed analyst has no recent market calls (graceful fallback to chronological).",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-16"
+    },
+    {
+      "id": "S29-T5",
+      "sprint": 29,
+      "title": "Analyst Tier system \u2014 Rookie / Analyst / Senior Analyst / Chief Analyst",
+      "description": "No persistent analyst identity progression exists in the product. Users have league tiers (Bronze/Gold) based on monthly points, but nothing tied to accuracy + call volume that appears everywhere the user's name appears. This ticket introduces the Analyst Tier \u2014 a permanent credential that distinguishes serious analysts from casual participants.\n\n**Schema (apps/api/prisma/schema.prisma):**\n1. Add enum: `enum AnalystTier { ROOKIE ANALYST SENIOR_ANALYST CHIEF_ANALYST }`\n2. Add field to User: `analystTier AnalystTier @default(ROOKIE)`\n3. Run `prisma migrate dev --name add_analyst_tier`.\n\n**Tier thresholds (apps/api/lib/analysts.ts \u2014 new file):**\n```\nROOKIE: default (everyone starts here)\nANALYST: totalPredictions >= 10 AND avgAccuracyScore >= 0.55\nSENIOR_ANALYST: totalPredictions >= 50 AND avgAccuracyScore >= 0.60\nCHIEF_ANALYST: totalPredictions >= 200 AND avgAccuracyScore >= 0.65 AND isVerifiedAnalyst = true\n```\nExport a `computeAnalystTier(userId: string): Promise<AnalystTier>` helper that reads from `UserStat` and returns the appropriate tier.\n\n**Wiring:**\n4. Call `computeAnalystTier` and update `user.analystTier` at: (a) market resolution path \u2014 after settling positions for all users, recompute tier for affected users; (b) new cron `POST /api/cron/recalculate-analyst-tiers` (CRON_SECRET guarded, runs nightly) that recomputes for all users with predictions resolved in the last 24h. Add to `vercel.json`: `{ \"path\": \"/api/cron/recalculate-analyst-tiers\", \"schedule\": \"0 2 * * *\" }` (02:00 UTC = 07:30 IST).\n5. Include `analystTier` in all user profile API responses (`GET /api/profile/me`, `GET /api/users/[username]`, leaderboard entries, market detail creator field).\n\n**Shared component (apps/mobile/src/components/analyst-tier-badge.tsx):**\n6. Create `AnalystTierBadge` component. Props: `tier: AnalystTier`. Renders a compact colored text chip:\n   - ROOKIE: grey background, 'Rookie' label (omit entirely on public surfaces \u2014 too noisy)\n   - ANALYST: blue (#3B82F6), 'Analyst'\n   - SENIOR_ANALYST: amber (#F59E0B), 'Sr. Analyst'\n   - CHIEF_ANALYST: purple (#7C3AED) with a star prefix, 'Chief Analyst'\n7. Add `AnalystTierBadge` adjacent to `VerifiedBadge` on: user profile header, leaderboard rows (only ANALYST and above \u2014 suppress ROOKIE), market detail creator line, comment rows (only SENIOR_ANALYST and above \u2014 suppress lower tiers to reduce noise).\n\n**Web:**\n8. Include `analystTier` in the og:description of `apps/api/app/profile/[username]/page.tsx` (e.g. 'Senior Analyst \u2014 73 predictions, 64% accuracy').\n\n**Acceptance criteria:**\n- ROOKIE users see no badge on public surfaces.\n- ANALYST badge appears on leaderboard for qualifying users.\n- CHIEF_ANALYST requires isVerifiedAnalyst=true \u2014 a non-verified user with 300 predictions stays at SENIOR_ANALYST.\n- Tier updates after market resolution without a full app restart.\n- Nightly cron runs without error and updates tiers correctly.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-16"
+    },
+    {
+      "id": "S29-T6",
+      "sprint": 29,
+      "title": "Phone verification live SMS via MSG91 \u2014 wire PHONE_VERIFY_MODE=prod",
+      "description": "Phone verification is fully built (routes, OTP store, +100 point bonus, mobile prompt card) but only operates in dev mode (logs OTP to console). The MSG91 integration code path exists but has never been QA'd against the live MSG91 API v5 endpoint. This ticket closes the last 5%.\n\n**API audit (apps/api/app/api/users/me/verify-phone/route.ts):**\n1. Audit the MSG91 HTTP call. The correct MSG91 OTP API v5 endpoint is: `POST https://control.msg91.com/api/v5/otp` with headers `{ authkey: MSG91_AUTH_KEY, 'Content-Type': 'application/json' }` and body `{ template_id: MSG91_TEMPLATE_ID, mobile: '91' + phoneNumber, otp: generatedOTP }`. Verify the current implementation matches this shape exactly.\n2. If the current implementation uses an older MSG91 endpoint format, update it to v5.\n3. Wrap the MSG91 fetch in a try/catch. On any MSG91 error (network failure, non-200 response): log `{ error: msg91Response.status, body: msg91ResponseText }` to the server console and continue \u2014 do NOT return an error to the client. The OTP should still be stored in the DB and the user should still receive a 200 (the OTP will be logged to console as fallback). Never let SMS provider failure block the verification UX.\n4. Add a comment block at the top of the route file documenting all required env vars:\n```\n// Required env vars:\n// MSG91_AUTH_KEY \u2014 from MSG91 dashboard > API Key\n// MSG91_SENDER_ID \u2014 6-char sender ID approved by MSG91 (e.g. PRDCFT)\n// MSG91_TEMPLATE_ID \u2014 DLT-registered template ID from MSG91 dashboard\n// PHONE_VERIFY_MODE \u2014 'dev' (logs OTP) or 'prod' (sends SMS)\n```\n5. Add the same env var list to a new section in `apps/api/README.md` or `DEPLOYMENT.md` (create if missing) under 'Phone Verification Setup'.\n\n**QA verification steps:**\n6. Set `PHONE_VERIFY_MODE=dev` in `.env.local`. Enter a phone number in the Profile tab phone verification prompt. Verify OTP logs to server console. Enter the OTP in the confirm screen. Verify +100 points credited and `phoneVerified=true` returned.\n7. Verify the prompt card dismisses after successful verification and does not re-appear.\n8. Verify entering wrong OTP returns a clear 400 error message on screen.\n\n**Acceptance criteria:**\n- `PHONE_VERIFY_MODE=dev` flow passes end-to-end QA (OTP in console, +100 bonus, card dismisses).\n- MSG91 error does not crash or error the endpoint \u2014 graceful fallback confirmed.\n- Env var documentation is present in the route file and in deployment docs.\n- Entering wrong OTP shows user-facing error, does not crash.",
+      "priority": "medium",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-16"
+    },
+    {
+      "id": "S30-T2",
+      "sprint": 30,
+      "title": "Tier Progress Bar on Profile + Feed nudge",
+      "description": "Extend /api/profile/me with tierProgress object. Add progress bars to mobile Profile tab. Feed dismissable nudge when isEligible.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-16"
+    },
+    {
+      "id": "S30-T3",
+      "sprint": 30,
+      "title": "Call Reasoning on public profile + SEO pages",
+      "description": "Add recentCalls array to /api/profile/[username]. Show on web SEO page and mobile public profile.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-16"
+    },
+    {
+      "id": "S30-T1",
+      "sprint": 30,
+      "title": "Reasoning upvotes + Best Reasoner badge",
+      "description": "Add ReasoningUpvote model, upvote endpoint, thumbs-up UI, badge cron.",
+      "priority": "high",
+      "status": "failed",
+      "qaVerdict": "fail",
+      "failureNotes": [
+        "apps/api/prisma/schema.prisma has reasoningUpvotes field on MarketPosition and ReasoningUpvote model, but `npx prisma generate` has NOT been run \u2014 the generated Prisma client (node_modules/@prisma/client/index.d.ts) contains 0 references to these new fields. The route apps/api/app/api/profile/me/route.ts calls prisma.marketPosition.aggregate({ _sum: { reasoningUpvotes: true } }) but the runtime client does not recognise this field \u2014 confirmed by HTTP 500 on GET /api/profile/me with a valid Bearer token. CTO must run `cd apps/api && npx prisma generate` (and restart the dev server) before this ticket can pass QA."
+      ],
+      "createdAt": "2026-05-16"
+    },
+    {
+      "id": "S30-T4",
+      "sprint": 30,
+      "title": "Notification unread badge + mark-all-read",
+      "description": "GET /api/notifications/unread-count, POST /api/notifications/mark-all-read, red pill badge on Profile tab, mark-all button on notifications screen.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-16"
+    },
+    {
+      "id": "S30-T5",
+      "sprint": 30,
+      "title": "Markets tab infinite scroll",
+      "description": "Add cursor pagination to /api/markets route. FlatList onEndReached in mobile Markets tab.",
+      "priority": "medium",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-16"
+    },
+    {
+      "id": "S30-T6",
+      "sprint": 30,
+      "title": "Admin Big Call performance dashboard",
+      "description": "Web admin page showing Big Call markets with opens/participants/outcome table and top-line stats.",
+      "priority": "medium",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-16"
     }
   ]
 }

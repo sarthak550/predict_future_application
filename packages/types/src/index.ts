@@ -113,10 +113,15 @@ export type ApiExpertOpinionItem = {
   sourceUrl: string;
   resolutionStatus: "PENDING" | "RESOLVED_HIT" | "RESOLVED_MISS" | "NOT_GRADED";
   resolvedAt?: string | null;
+  resolutionNote?: string | null;
   /** Nullable FK to a MarketEventCluster (S18-T4) */
   eventClusterId?: string | null;
   /** True when sourced from a trusted publication (no named analyst) — display as "Market Analysis" instead of "Expert Opinion" */
   isSourceAttribution?: boolean;
+  /** Human-readable instrument name, e.g. "Nifty 50", "HDFC Bank" — null until auto-resolution identifies it */
+  instrument?: string | null;
+  /** Yahoo Finance ticker symbol for the primary instrument, e.g. "^NSEI", "HDFCBANK.NS" */
+  instrumentTicker?: string | null;
 };
 
 export type ApiNewsFeedItem = {
@@ -247,10 +252,29 @@ export type ApiMarketDetailMarket = ApiMarketSummary & {
   } | null;
 };
 
+/** An analyst's position on a market, shown on the market detail screen for reasoning upvote UI (S30-T1). */
+export type ApiAnalystPosition = {
+  id: string;
+  userId: string;
+  side: AppPositionSide | null;
+  reasoning: string | null;
+  reasoningUpvotes: number;
+  /** True when the current authenticated viewer has upvoted this reasoning. */
+  iUpvotedReasoning: boolean;
+  createdAt: string;
+  user: {
+    username: string;
+    isVerifiedAnalyst: boolean;
+    analystTier?: AppAnalystTier;
+  };
+};
+
 export type ApiMarketDetail = {
   market: ApiMarketDetailMarket;
   /** Percentile rank for the authenticated user on this market (only set when market is RESOLVED and user won). */
   userPercentileRank?: number | null;
+  /** Top-5 positions with reasoning from other analysts, sorted by upvotes desc (S30-T1). */
+  analystPositions?: ApiAnalystPosition[];
 };
 
 export type ApiHostEligibility = {
@@ -464,6 +488,9 @@ export type ApiVote = {
 
 export type ApiLeaderboardTimeWindow = "week" | "month" | "all";
 
+/** Analyst tier earned through prediction accuracy and volume. */
+export type AppAnalystTier = "ROOKIE" | "ANALYST" | "SENIOR_ANALYST" | "CHIEF_ANALYST";
+
 export type ApiLeaderboardEntry = {
   id: string;
   /** Display name — pseudonym when displayMode=ANONYMOUS, real username otherwise. */
@@ -478,6 +505,13 @@ export type ApiLeaderboardEntry = {
     totalPredictions?: number;
     totalNetPoints?: number;
   } | null;
+  /**
+   * Change in rank position since the previous snapshot.
+   * Positive = rank improved (moved up the board), negative = dropped.
+   * Null when historical snapshot data is unavailable.
+   */
+  rankDelta?: number | null;
+  analystTier?: AppAnalystTier;
 };
 
 export type ApiLeaderboardUserContext = {
@@ -510,10 +544,32 @@ export type ApiCategoryStat = {
   totalNetPoints?: number;
 };
 
+export type ApiMarketPosition = {
+  id: string;
+  side: AppPositionSide | null;
+  numericValue?: number | null;
+  amount: number;
+  probabilityAtEntry?: number | null;
+  estimatedReturnAtEntry?: number | null;
+  /** Optional analyst rationale attached at position creation (max 500 chars). */
+  reasoning?: string | null;
+  /** Running total of upvotes received on the reasoning (S30-T1). */
+  reasoningUpvotes?: number;
+  /** True when the current authenticated user has upvoted this reasoning (S30-T1). */
+  iUpvotedReasoning?: boolean;
+  createdAt: string;
+};
+
 export type ApiPositionSummary = {
   id: string;
   side: AppPositionSide;
   amount: number;
+  /** Optional analyst rationale (max 500 chars). */
+  reasoning?: string | null;
+  /** Running total of upvotes received on the reasoning (S30-T1). */
+  reasoningUpvotes?: number;
+  /** True when the current authenticated user has upvoted this reasoning (S30-T1). */
+  iUpvotedReasoning?: boolean;
   createdAt: string;
   market: {
     id: string;
@@ -537,6 +593,33 @@ export type ApiPnlSummary = {
   lastUpdatedAt: string;
 };
 
+/** One entry in the "Recent Calls" section on public profiles (S30-T3). */
+export type ProfileRecentCall = {
+  marketId: string;
+  marketTitle: string;
+  side: string;
+  reasoning: string | null;
+  reasoningUpvotes: number;
+  createdAt: string;
+  marketStatus: string;
+  outcome: string | null;
+};
+
+export type ApiTierProgress = {
+  currentTier: AppAnalystTier;
+  nextTier: AppAnalystTier | null;
+  /** Predictions required to unlock the next tier. */
+  predictionsNeeded: number;
+  /** Predictions still needed to reach the threshold (0 when met). */
+  predictionsToGo: number;
+  /** Accuracy fraction required for the next tier (e.g. 0.55 = 55%). */
+  accuracyNeeded: number;
+  /** User's current accuracy fraction. */
+  currentAccuracy: number;
+  /** True when both predictions and accuracy thresholds are met. */
+  isEligible: boolean;
+};
+
 export type ApiUserProfile = {
   id: string;
   /** Display name — pseudonym when displayMode=ANONYMOUS, real username otherwise. */
@@ -555,6 +638,8 @@ export type ApiUserProfile = {
   isVerifiedAnalyst?: boolean;
   /** Whether the user has completed phone verification (S25-T6). */
   phoneVerified?: boolean;
+  /** Analyst tier — ROOKIE / ANALYST / SENIOR_ANALYST / CHIEF_ANALYST. */
+  analystTier?: AppAnalystTier;
   stats?: {
     totalPredictions?: number;
     totalNetPoints?: number;
@@ -579,6 +664,12 @@ export type ApiUserProfile = {
   isFollowedByMe?: boolean;
   /** Lifetime tip points received across all comments (S26-T2). */
   tipsReceivedTotal?: number;
+  /** Analyst tier progression data — only present on /api/profile/me. */
+  tierProgress?: ApiTierProgress;
+  /** Sum of reasoningUpvotes across all positions (S30-T1). */
+  totalReasoningUpvotes?: number;
+  /** Recent calls on public markets — present on /api/profile/[username] (S30-T3). */
+  recentCalls?: ProfileRecentCall[];
 };
 
 // ── Phone verification (S25-T6) ───────────────────────────────────────────────
@@ -751,6 +842,10 @@ export interface ApiExpertCall {
   resolutionNote?: string | null;
   storyId?: string | null;
   storyHeadline?: string | null;
+  /** Human-readable instrument name, e.g. "Nifty 50" — null until auto-resolution identifies it */
+  instrument?: string | null;
+  /** Yahoo Finance ticker symbol, e.g. "^NSEI" */
+  instrumentTicker?: string | null;
   retrospectiveTallies?: { hit: number; miss: number; total: number };
 }
 
@@ -765,12 +860,44 @@ export interface ApiExpertProfile {
   provisional: boolean;
   totalOpinions: number;
   resolvedCount: number;
+  followerCount: number;
   recentCalls: ApiExpertCall[];
 }
 
 export interface ApiExpertLeaderboardEntry {
   rank: number;
   expert: ApiExpertProfile & { hitCount: number; missCount: number };
+}
+
+export interface ApiVerifiedCall {
+  id: string;
+  expertId: string;
+  expertName: string;
+  expertOrganization: string;
+  expertVerified: boolean;
+  expertAvatarUrl: string | null;
+  direction: "BULLISH" | "BEARISH" | "NEUTRAL";
+  quote: string;
+  resolutionStatus: "RESOLVED_HIT" | "RESOLVED_MISS";
+  resolutionNote: string | null;
+  resolvedAt: string | null;
+  publishedAt: string;
+  storyId: string | null;
+  storyHeadline: string | null;
+  instrument: string | null;
+}
+
+export interface ApiExpertSearchResult {
+  id: string;
+  name: string;
+  organization: string;
+  verified: boolean;
+  avatarUrl: string | null;
+  totalOpinions: number;
+  credibilityScore: number | null;
+  provisional: boolean;
+  resolvedCount: number;
+  followerCount: number;
 }
 
 // ─── Finance: Expert Sentiment Aggregate ──────────────────────────────────────
@@ -815,6 +942,22 @@ export interface ApiFinanceMarketsResponse {
     nextCursor: string | null;
     total: number;
   };
+}
+
+/**
+ * Crowd vs. Expert accuracy comparison card data.
+ * When resolvedCount === 0 the API returns { resolvedCount: 0 } and all other
+ * fields are absent — callers should check resolvedCount >= 10 before rendering.
+ */
+export interface ApiCrowdVsExperts {
+  resolvedCount: number;
+  crowdCorrect?: number;
+  expertCorrect?: number;
+  crowdWinRate?: number;
+  expertWinRate?: number;
+  sampleSize?: number;
+  provisional?: boolean;
+  lastUpdated?: string;
 }
 
 // ─── Calibration scorecard ─────────────────────────────────────────────────────

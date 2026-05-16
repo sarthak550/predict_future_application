@@ -12,6 +12,7 @@
 - [Finance Section S13–16 Initiative](project_finance_section.md) — FULLY DELIVERED 2026-05-02. Expert opinions, dual polls, event clusters, credibility scoring, leaderboard. Next: admin UI, expert verification flow.
 - [Go-to-Market Strategy](project_gtm_strategy.md) — Product thesis, target user, differentiation vs competitors, GTM wedge, and legal flag. Repositioned to "India's Analyst Scorecard" 2026-05-06.
 - [Repositioning Copy & Landing Page](project_repositioning_copy.md) — Finalized tagline, elevator pitch, App Store copy, onboarding screens, Twitter bio, WhatsApp share line, press pitch, and landing page wireframe. Locked 2026-05-06.
+- [Sprint 29 Plan — Make the Scoreboard Real](sprint29_plan.md) — 6 tickets: Leaderboard nav restored, rank delta, call reasoning, For You feed, Analyst Tiers, MSG91 SMS. Written 2026-05-16.
 - [Manifold Gap Analysis — Post Sprint 24](manifold_gap_analysis_sprint24.md) — Feature-level gap list vs Manifold after S24 shipped; used to sequence Sprint 25 (2026-05-07).
 - [Competitive Intelligence — Sprint 25 Planning](competitive_intel_sprint25.md) — Manifold verdict table + Metaculus/Kalshi/Polymarket/GJOpen/Probo/MPL Opinio findings; Probo shutdown = acquisition window (2026-05-08).
 - [Sprint 25-26-27 Roadmap](sprints_25_26_27_roadmap.md) — 14 formal tickets across Credibility (S25), Social Layer (S26), Engagement (S27); key design decisions locked (2026-05-09).

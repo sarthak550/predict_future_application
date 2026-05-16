@@ -170,7 +170,8 @@ export async function POST(
           numericValue,
           amount: payload.amount,
           probabilityAtEntry,
-          estimatedReturnAtEntry: estimatedReturn
+          estimatedReturnAtEntry: estimatedReturn,
+          reasoning: payload.reasoning ?? null,
         }
       });
 

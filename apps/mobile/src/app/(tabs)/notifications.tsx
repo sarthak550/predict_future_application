@@ -45,16 +45,23 @@ export default function NotificationsTabScreen() {
 
   // Local optimistic read state: track which IDs have been marked read this session.
   const [locallyRead, setLocallyRead] = useState<Set<string>>(new Set());
+  // Track when the user tapped "Mark all as read" — optimistically clears all badges.
+  const [allMarkedRead, setAllMarkedRead] = useState(false);
 
   useInterval(refetch, 60_000, authStatus === "authenticated");
 
   const notifications = data?.notifications ?? [];
 
   async function markAllRead() {
+    // Optimistic: immediately hide all badges.
+    setAllMarkedRead(true);
     try {
-      await mobileApi.markNotificationsRead();
+      await mobileApi.markAllNotificationsRead();
       refetch();
-    } catch { /* ignore */ }
+    } catch {
+      // Revert on error
+      setAllMarkedRead(false);
+    }
   }
 
   function handlePress(item: ApiNotification) {
@@ -71,7 +78,7 @@ export default function NotificationsTabScreen() {
     }
   }
 
-  const hasUnread = notifications.some((n) => !n.isRead && !locallyRead.has(n.id));
+  const hasUnread = !allMarkedRead && notifications.some((n) => !n.isRead && !locallyRead.has(n.id));
 
   return (
     <View style={styles.screen}>
@@ -98,7 +105,7 @@ export default function NotificationsTabScreen() {
             refreshControl={<RefreshControl refreshing={loading} onRefresh={refetch} tintColor={colors.accent} />}
             renderItem={({ item }) => {
               const route = resolveHref(item.href);
-              const isRead = item.isRead || locallyRead.has(item.id);
+              const isRead = item.isRead || locallyRead.has(item.id) || allMarkedRead;
               const isTappable = route !== null;
 
               return (
