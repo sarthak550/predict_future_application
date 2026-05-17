@@ -1,5 +1,10 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  eslint: {
+    // Skip Next's ESLint pass during prod builds — TypeScript ESLint plugin
+    // resolution conflicts with monorepo workspace setup on Vercel.
+    ignoreDuringBuilds: true,
+  },
   transpilePackages: [
     "@predict-future/api-client",
     "@predict-future/auth-shared",
