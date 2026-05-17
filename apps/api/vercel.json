@@ -3,15 +3,15 @@
   "crons": [
     {
       "path": "/api/cron/news-ingestion",
-      "schedule": "*/30 * * * *"
+      "schedule": "0 8 * * *"
     },
     {
       "path": "/api/cron/probability-snapshot",
-      "schedule": "0 * * * *"
+      "schedule": "0 12 * * *"
     },
     {
       "path": "/api/cron/market-lifecycle",
-      "schedule": "0 */2 * * *"
+      "schedule": "0 6 * * *"
     },
     {
       "path": "/api/cron/auto-resolve-opinions",
