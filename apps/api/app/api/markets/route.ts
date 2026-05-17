@@ -25,17 +25,17 @@ export async function GET(request: Request) {
   const cursorParam = searchParams.get("cursor");
   const limit = limitParam ? Math.max(1, Math.min(100, parseInt(limitParam, 10))) : DEFAULT_PAGE_SIZE;
 
+  // Resolve viewer for both admin check and iSaved population.
+  const viewerId = await getUserIdFromRequest(request).catch(() => null);
+
   // Resolve viewer role to decide whether to honor includeUnapproved=true (admin/mod only).
   let viewerIsModerator = false;
-  if (includeUnapproved) {
-    const viewerId = await getUserIdFromRequest(request).catch(() => null);
-    if (viewerId) {
-      const viewer = await prisma.user.findUnique({
-        where: { id: viewerId },
-        select: { role: true },
-      });
-      viewerIsModerator = viewer?.role === "ADMIN" || viewer?.role === "MODERATOR";
-    }
+  if (includeUnapproved && viewerId) {
+    const viewer = await prisma.user.findUnique({
+      where: { id: viewerId },
+      select: { role: true },
+    });
+    viewerIsModerator = viewer?.role === "ADMIN" || viewer?.role === "MODERATOR";
   }
 
   // Status filter logic:
@@ -141,13 +141,25 @@ export async function GET(request: Request) {
 
   const nextCursor = hasMore ? (sortedMarkets[sortedMarkets.length - 1]?.id ?? null) : null;
 
+  // Populate iSaved for authenticated viewers — batch-fetch their saved market ids.
+  let savedSet = new Set<string>();
+  if (viewerId && sortedMarkets.length > 0) {
+    const marketIds = sortedMarkets.map((m) => m.id);
+    const saved = await prisma.savedMarket.findMany({
+      where: { userId: viewerId, marketId: { in: marketIds } },
+      select: { marketId: true },
+    });
+    savedSet = new Set(saved.map((s) => s.marketId));
+  }
+
   return NextResponse.json({
     markets: sortedMarkets.map((market) => ({
       ...market,
       creator: market.creator
         ? { ...market.creator, username: getDisplayName(market.creator) }
         : market.creator,
-      marketRankScore: computeMarketRankScore(market)
+      marketRankScore: computeMarketRankScore(market),
+      ...(viewerId ? { iSaved: savedSet.has(market.id) } : {}),
     })),
     nextCursor,
     hasMore,

@@ -195,10 +195,20 @@ export type ApiMarketSummary = {
   winningOptionId?: string | null;
   /** Populated on market detail responses for authenticated users of MULTIPLE_CHOICE markets */
   userMultiChoicePositions?: Array<{ optionId: string; amount: number }>;
+  /** Raw outcome of the market (mirror of DB field): 'YES' / 'NO' / 'UNRESOLVED' (null on unresolved markets). */
+  outcome?: "YES" | "NO" | "UNRESOLVED" | null;
   /** Non-null for markets imported from external platforms (e.g. 'manifold'). */
   originPlatform?: string | null;
   /** Canonical source URL — set on imported markets; used for attribution badge link. */
   resolutionSourceUrl?: string | null;
+  /** Crowd consensus probability (0..1) from origin platform — null for native markets. */
+  externalProbability?: number | null;
+  /** Total trading volume on origin platform (USD) — null for native markets. */
+  externalVolume?: number | null;
+  /** Unique trader count on origin platform — null for native markets. */
+  externalTraderCount?: number | null;
+  /** Whether the authenticated viewer has bookmarked this market. Undefined when not authenticated. */
+  iSaved?: boolean;
 };
 
 /**

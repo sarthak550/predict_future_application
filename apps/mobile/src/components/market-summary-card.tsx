@@ -1,12 +1,18 @@
+import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
+import { useState } from "react";
 import { Linking, Pressable, Share, StyleSheet, Text, View } from "react-native";
 
 import type { ApiMarketSummary } from "@predict-future/types";
 import { formatPercent, formatPoints, formatRelativeTime } from "@predict-future/utils";
 import { colors, radius, shadows, spacing } from "@predict-future/ui-tokens";
 
+import { mobileApi } from "@/lib/api";
+
 type Props = {
   item: ApiMarketSummary;
+  /** Called after a successful save toggle so parent can sync state. */
+  onSaveToggled?: (marketId: string, saved: boolean) => void;
 };
 
 async function shareMarket(item: ApiMarketSummary) {
@@ -15,14 +21,33 @@ async function shareMarket(item: ApiMarketSummary) {
   await Share.share({ message, url });
 }
 
-export function MarketSummaryCard({ item }: Props) {
+export function MarketSummaryCard({ item, onSaveToggled }: Props) {
   const router = useRouter();
+  const [isSaved, setIsSaved] = useState(item.iSaved ?? false);
+  const [savingInFlight, setSavingInFlight] = useState(false);
   const trust = item.creator?.stats?.hostTrustScore;
   const yesPool = item.yesPool ?? 0;
   const noPool = item.noPool ?? 0;
   const totalPool = yesPool + noPool;
   const yesProbability = totalPool > 0 ? yesPool / totalPool : 0.5;
   const isOpen = item.status === "OPEN";
+
+  const handleToggleSave = async () => {
+    if (savingInFlight) return;
+    setSavingInFlight(true);
+    const optimisticSaved = !isSaved;
+    setIsSaved(optimisticSaved);
+    try {
+      const res = await mobileApi.toggleSaveMarket(item.id);
+      setIsSaved(res.saved);
+      onSaveToggled?.(item.id, res.saved);
+    } catch {
+      // Revert optimistic update on failure
+      setIsSaved(!optimisticSaved);
+    } finally {
+      setSavingInFlight(false);
+    }
+  };
 
   return (
     <Pressable
@@ -38,31 +63,31 @@ export function MarketSummaryCard({ item }: Props) {
         {item.category ? (
           <Text style={styles.category}>{item.category}</Text>
         ) : null}
-        <Pressable
-          style={styles.shareBtn}
-          onPress={(e) => { e.stopPropagation?.(); void shareMarket(item); }}
-          hitSlop={8}
-        >
-          <Text style={styles.shareBtnText}>Share</Text>
-        </Pressable>
+        <View style={styles.topRowActions}>
+          <Pressable
+            style={styles.bookmarkBtn}
+            onPress={(e) => { e.stopPropagation?.(); void handleToggleSave(); }}
+            hitSlop={8}
+            accessibilityLabel={isSaved ? "Remove bookmark" : "Bookmark market"}
+          >
+            <Feather
+              name={isSaved ? "bookmark" : "bookmark"}
+              size={16}
+              color={isSaved ? colors.accent : colors.textMuted}
+            />
+          </Pressable>
+          <Pressable
+            style={styles.shareBtn}
+            onPress={(e) => { e.stopPropagation?.(); void shareMarket(item); }}
+            hitSlop={8}
+          >
+            <Text style={styles.shareBtnText}>Share</Text>
+          </Pressable>
+        </View>
       </View>
 
       <Text style={styles.title} numberOfLines={2}>{item.title}</Text>
 
-      {item.originPlatform === "manifold" ? (
-        <Pressable
-          style={styles.manifoldBadge}
-          onPress={(e) => {
-            e.stopPropagation?.();
-            if (item.resolutionSourceUrl) {
-              void Linking.openURL(item.resolutionSourceUrl);
-            }
-          }}
-          hitSlop={4}
-        >
-          <Text style={styles.manifoldBadgeText}>Archived · Manifold</Text>
-        </Pressable>
-      ) : null}
 
       {item.description ? (
         <Text style={styles.description} numberOfLines={2}>{item.description}</Text>
@@ -102,6 +127,26 @@ export function MarketSummaryCard({ item }: Props) {
             </View>
           ) : null}
         </View>
+      ) : item.status === "RESOLVED" ? (
+        // Resolved binary markets: show the final outcome chip instead of a probability bar.
+        (() => {
+          const resolvedSide = item.outcome ?? null;
+          if (resolvedSide === "YES" || resolvedSide === "NO") {
+            return (
+              <View style={styles.outcomeRow}>
+                <View
+                  style={[
+                    styles.outcomeChip,
+                    resolvedSide === "YES" ? styles.outcomeChipYes : styles.outcomeChipNo,
+                  ]}
+                >
+                  <Text style={[styles.outcomeChipText, { color: resolvedSide === "YES" ? "#16A34A" : "#DC2626" }]}>{`✓ Resolved ${resolvedSide}`}</Text>
+                </View>
+              </View>
+            );
+          }
+          return null;
+        })()
       ) : (
         <View style={styles.probabilitySection}>
           <View style={styles.progressTrack}>
@@ -137,8 +182,24 @@ export function MarketSummaryCard({ item }: Props) {
         ) : null}
       </View>
 
-      {item.creator?.username ? (
+      {/* Host line — only for native markets (no originPlatform) */}
+      {!item.originPlatform && item.creator?.username ? (
         <Text style={styles.host}>@{item.creator.username}</Text>
+      ) : null}
+
+      {/* Source attribution for imported markets */}
+      {item.originPlatform != null && item.resolutionSourceUrl ? (
+        <Pressable
+          onPress={(e) => {
+            e.stopPropagation?.();
+            void Linking.openURL(item.resolutionSourceUrl as string);
+          }}
+          hitSlop={8}
+        >
+          <Text style={styles.sourceAttribution}>
+            Source: {item.originPlatform.charAt(0).toUpperCase() + item.originPlatform.slice(1)} →
+          </Text>
+        </Pressable>
       ) : null}
     </Pressable>
   );
@@ -161,8 +222,16 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     flex: 1,
   },
-  shareBtn: {
+  topRowActions: {
     marginLeft: "auto",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  bookmarkBtn: {
+    padding: 4,
+  },
+  shareBtn: {
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: radius.sm,
@@ -216,9 +285,12 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     color: colors.textMuted,
   },
+  manifoldBlock: {
+    marginTop: spacing.xs,
+    gap: 4,
+  },
   manifoldBadge: {
     alignSelf: "flex-start",
-    marginTop: spacing.xs,
     paddingHorizontal: 7,
     paddingVertical: 2,
     borderRadius: 10,
@@ -231,6 +303,11 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#6B7280",
     letterSpacing: 0.3,
+  },
+  crowdLine: {
+    fontSize: 11,
+    fontWeight: "500",
+    color: "#6B7280",
   },
   numericSection: {
     marginTop: spacing.lg,
@@ -312,6 +389,28 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#DC2626",
   },
+  outcomeRow: {
+    marginTop: spacing.lg,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  outcomeChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+  },
+  outcomeChipYes: {
+    backgroundColor: "rgba(22,163,74,0.12)",
+  },
+  outcomeChipNo: {
+    backgroundColor: "rgba(220,38,38,0.12)",
+  },
+  outcomeChipText: {
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 0.3,
+    color: "#16A34A",
+  },
   metricsRow: {
     marginTop: spacing.lg,
     flexDirection: "row",
@@ -335,5 +434,11 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "600",
     color: colors.accent,
+  },
+  sourceAttribution: {
+    marginTop: spacing.sm,
+    fontSize: 11,
+    fontWeight: "500",
+    color: colors.textMuted,
   },
 });

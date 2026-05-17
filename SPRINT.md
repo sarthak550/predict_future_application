@@ -2,8 +2,8 @@
 
 > Human-readable view of `.claude/sprint-board.json`. Auto-maintained by the CEO/CTO/QA agents — do not edit by hand.
 
-**Current sprint:** 30
-**Status:** Sprint 30 COMPLETE — All 6 tickets passed QA (2026-05-17). Sprints 12, 25–30 COMPLETE.
+**Current sprint:** 31
+**Status:** Sprint 31 IN PROGRESS Sprints 12, 25–30 COMPLETE.
 
 ---
 
@@ -349,3 +349,19 @@
 | S30-T4 | HIGH | ✅ done | Notification unread badge + mark-all-read |
 | S30-T5 | MED | ✅ done | Markets tab infinite scroll |
 | S30-T6 | MED | ✅ done | Admin Big Call performance dashboard |
+
+---
+
+## Sprint 31
+
+**Theme:** Manifold integration quality + Markets discoverability + Saved markets
+**Status:** COMPLETE — All 6 tickets passed QA (2026-05-17). T1 variant typo + T5 stale Prisma client both fixed and runtime-verified.
+
+| ID | Pri | Status | Title |
+|---|---|---|---|
+| S31-T1 | CRIT | ✅ done | Admin bulk-approve Manifold PENDING_REVIEW markets |
+| S31-T2 | HIGH | ✅ done | Global Markets search + Related Markets rail on detail |
+| S31-T3 | HIGH | ✅ done | Featured/Trending carousel at top of Markets tab |
+| S31-T4 | HIGH | ✅ done | Polish Manifold archive cards |
+| S31-T5 | MED | ✅ done | Saved/Bookmarked markets |
+| S31-T6 | MED | ✅ done | Import Manifold NUMERIC markets |

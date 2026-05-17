@@ -7,7 +7,9 @@ import {
   Animated,
   AppState,
   type AppStateStatus,
+  Linking,
   Modal,
+  PanResponder,
   Pressable,
   ScrollView,
   Share,
@@ -20,7 +22,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import type { Session } from "@/providers/session-provider";
 
-import type { ApiAnalystPosition, ApiMarketDetail, ApiProbabilityHistory } from "@predict-future/types";
+import type { ApiAnalystPosition, ApiMarketDetail, ApiMarketSummary, ApiProbabilityHistory } from "@predict-future/types";
 import { formatPercent, formatPoints, formatRelativeTime } from "@predict-future/utils";
 import { colors, radius, shadows, spacing } from "@predict-future/ui-tokens";
 
@@ -308,7 +310,12 @@ function StickyBettingBar({
   const yesPool = market.yesPool ?? 0;
   const noPool = market.noPool ?? 0;
   const totalPool = yesPool + noPool;
-  const yesProbability = totalPool > 0 ? yesPool / totalPool : 0.5;
+  const resolvedSide = market.winningSide ?? market.outcome ?? null;
+  const yesProbability =
+    market.status === "RESOLVED" && resolvedSide === "YES" ? 1.0 :
+    market.status === "RESOLVED" && resolvedSide === "NO" ? 0.0 :
+    totalPool > 0 ? yesPool / totalPool :
+    market.externalProbability ?? 0.5;
 
   const isOpen = market.status === "OPEN";
   const isNumeric = market.marketType === "NUMERIC";
@@ -1428,7 +1435,12 @@ function MarketBody({
   const yesPool = market.yesPool ?? 0;
   const noPool = market.noPool ?? 0;
   const totalPool = yesPool + noPool;
-  const yesProbability = totalPool > 0 ? yesPool / totalPool : 0.5;
+  const resolvedSide = market.winningSide ?? market.outcome ?? null;
+  const yesProbability =
+    market.status === "RESOLVED" && resolvedSide === "YES" ? 1.0 :
+    market.status === "RESOLVED" && resolvedSide === "NO" ? 0.0 :
+    totalPool > 0 ? yesPool / totalPool :
+    market.externalProbability ?? 0.5;
 
   const isOpen = market.status === "OPEN";
   const isClosed = !isOpen;
@@ -1457,9 +1469,12 @@ function MarketBody({
     }).start();
   }, [yesProbability]);
 
-  // Probability history chart state (S27-T2)
+  // Probability history chart state (S27-T2). Re-fetches on bet placement so the
+  // chart reflects the consensus shift live — keyed on positions length + total volume
+  // so any change after a bet triggers a refresh.
   const [probHistory, setProbHistory] = useState<ApiProbabilityHistory | null>(null);
   const [probHistoryLoading, setProbHistoryLoading] = useState(false);
+  const probHistoryFingerprint = `${data?.userPositions?.length ?? 0}-${market.totalVolume ?? 0}-${market.totalParticipants ?? 0}`;
 
   useEffect(() => {
     if (!marketId || market.marketType !== "BINARY") return;
@@ -1471,7 +1486,7 @@ function MarketBody({
         setProbHistory(null);
       })
       .finally(() => setProbHistoryLoading(false));
-  }, [marketId, market.marketType]);
+  }, [marketId, market.marketType, probHistoryFingerprint]);
 
   // Numeric poll vote state (for numeric polls that remain in scroll body)
   const existingVote = data.userVote ?? null;
@@ -1655,11 +1670,24 @@ function MarketBody({
           {market.resolveAt ? <InfoItem label="Resolves" value={formatRelativeTime(market.resolveAt)} /> : null}
         </View>
 
-        {market.creator?.username ? (
+        {/* Host line — only for native (non-imported) markets */}
+        {market.originPlatform == null && market.creator?.username ? (
           <View style={styles.hostRow}>
             <Text style={styles.hostLabel}>Hosted by @{market.creator.username}</Text>
             {market.creator.isVerifiedAnalyst === true && <VerifiedBadge compact />}
           </View>
+        ) : null}
+
+        {/* Source attribution for imported markets */}
+        {market.originPlatform != null && market.resolutionSourceUrl ? (
+          <Pressable
+            style={styles.hostRow}
+            onPress={() => void Linking.openURL(market.resolutionSourceUrl as string)}
+          >
+            <Text style={styles.sourceAttributionDetail}>
+              Source: {market.originPlatform.charAt(0).toUpperCase() + market.originPlatform.slice(1)} — tap to view original
+            </Text>
+          </Pressable>
         ) : null}
 
         {isOpen ? (
@@ -1804,6 +1832,8 @@ function MarketBody({
         <ResolutionSection
           resolution={market.resolution}
           winningSide={market.winningSide ?? null}
+          originPlatform={market.originPlatform ?? null}
+          resolutionSourceUrl={market.resolutionSourceUrl ?? null}
         />
       ) : null}
 
@@ -1815,6 +1845,9 @@ function MarketBody({
           outcome={market.winningSide ?? null}
         />
       ) : null}
+
+      {/* Related Markets rail (S31-T2) */}
+      <RelatedMarketsRail currentMarketId={marketId} title={market.title} />
 
       {/* Analyst Reasoning section — top-5 other analysts' positions with reasoning (S30-T1) */}
       {(data.analystPositions ?? []).length > 0 ? (
@@ -1956,9 +1989,13 @@ type ResolutionData = {
 function ResolutionSection({
   resolution,
   winningSide,
+  originPlatform,
+  resolutionSourceUrl,
 }: {
   resolution: ResolutionData;
   winningSide: string | null;
+  originPlatform?: string | null;
+  resolutionSourceUrl?: string | null;
 }) {
   const outcomeLabel = winningSide ? `Resolved ${winningSide}` : "Resolved";
   const isYes = winningSide === "YES";
@@ -2021,6 +2058,17 @@ function ResolutionSection({
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Resolution Rationale</Text>
           <Text style={styles.subtitle}>{resolution.rationale}</Text>
+          {/* View on origin platform (S31-T4) */}
+          {originPlatform != null && resolutionSourceUrl ? (
+            <Pressable
+              style={styles.manifoldLink}
+              onPress={() => void Linking.openURL(resolutionSourceUrl)}
+            >
+              <Text style={styles.manifoldLinkText}>
+                View on {originPlatform.charAt(0).toUpperCase() + originPlatform.slice(1)} →
+              </Text>
+            </Pressable>
+          ) : null}
         </View>
       ) : null}
     </>
@@ -2038,14 +2086,130 @@ function InfoItem({ label, value }: { label: string; value: string }) {
   );
 }
 
-// ─── ProbabilityChart (S27-T2) ────────────────────────────────────────────────
-// Pure View-based consensus-line chart. No external charting library.
-// Renders a segmented polyline using absolutely positioned Views in a fixed 120px container.
+// ─── RelatedMarketsRail (S31-T2) ─────────────────────────────────────────────
+
+function RelatedMarketsRail({ currentMarketId, title }: { currentMarketId: string; title: string }) {
+  const router = useRouter();
+  const [markets, setMarkets] = useState<ApiMarketSummary[]>([]);
+
+  useEffect(() => {
+    if (!title) return;
+    const queryWords = title.split(/\s+/).slice(0, 3).join(" ");
+    if (!queryWords) return;
+    mobileApi.getPublicMarkets({ q: queryWords, limit: 6 })
+      .then((res) => {
+        // Exclude the current market from results
+        const filtered = (res.markets ?? []).filter((m) => m.id !== currentMarketId);
+        setMarkets(filtered);
+      })
+      .catch(() => setMarkets([]));
+  }, [currentMarketId, title]);
+
+  if (markets.length === 0) return null;
+
+  return (
+    <View style={styles.card}>
+      <Text style={styles.sectionTitle}>Related Markets</Text>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={relatedStyles.scrollContent}
+      >
+        {markets.map((m) => {
+          const yesP = (m.yesPool ?? 0) + (m.noPool ?? 0) > 0
+            ? (m.yesPool ?? 0) / ((m.yesPool ?? 0) + (m.noPool ?? 0))
+            : m.externalProbability ?? 0.5;
+          return (
+            <Pressable
+              key={m.id}
+              style={({ pressed }) => [relatedStyles.card, pressed && { opacity: 0.8 }]}
+              onPress={() => router.push(`/market/${m.id}`)}
+            >
+              {m.category ? (
+                <View style={relatedStyles.catBadge}>
+                  <Text style={relatedStyles.catText}>{m.category}</Text>
+                </View>
+              ) : null}
+              <Text style={relatedStyles.title} numberOfLines={2}>{m.title}</Text>
+              <View style={relatedStyles.probRow}>
+                <View style={relatedStyles.probTrack}>
+                  <View style={[relatedStyles.probFill, { width: `${Math.max(6, yesP * 100)}%` }]} />
+                </View>
+                <Text style={relatedStyles.probLabel}>YES {Math.round(yesP * 100)}%</Text>
+              </View>
+              <Text style={relatedStyles.players}>{m.totalParticipants ?? 0} players</Text>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+    </View>
+  );
+}
+
+const relatedStyles = StyleSheet.create({
+  scrollContent: { gap: 10, paddingVertical: 4 },
+  card: {
+    width: 160,
+    backgroundColor: colors.background,
+    borderRadius: radius.md,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+    gap: 6,
+  },
+  catBadge: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+    backgroundColor: "#EEF2FF",
+  },
+  catText: {
+    fontSize: 9,
+    fontWeight: "800",
+    letterSpacing: 0.4,
+    color: "#4F46E5",
+    textTransform: "uppercase",
+  },
+  title: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: colors.text,
+    lineHeight: 17,
+  },
+  probRow: { gap: 4 },
+  probTrack: {
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: "#FEE2E2",
+    overflow: "hidden",
+  },
+  probFill: {
+    height: "100%",
+    borderRadius: 3,
+    backgroundColor: "#16A34A",
+  },
+  probLabel: { fontSize: 10, fontWeight: "700", color: "#16A34A" },
+  players: { fontSize: 10, color: colors.textMuted },
+});
+
+// ─── ProbabilityChart (S27-T2 + interactive drag inspector) ──────────────────
+// View-based consensus-line chart with Manifold/Robinhood-style interactive
+// pan-to-inspect: drag finger across the chart to see probability + date at
+// that point. Includes time-range filter pills (1D / 7D / 1M / All).
 // Only shown for BINARY markets with >= 2 snapshots.
 
-const CHART_HEIGHT = 120;
-const CHART_LABEL_WIDTH = 30; // px reserved for Y-axis labels
-const CHART_PADDING_V = 12; // vertical breathing room
+const CHART_HEIGHT = 140;
+const CHART_LABEL_WIDTH = 32;
+const CHART_PADDING_V = 14;
+
+type RangeKey = "1D" | "7D" | "1M" | "ALL";
+const RANGE_OPTIONS: { key: RangeKey; label: string; ms: number | null }[] = [
+  { key: "1D", label: "1D", ms: 24 * 60 * 60 * 1000 },
+  { key: "7D", label: "7D", ms: 7 * 24 * 60 * 60 * 1000 },
+  { key: "1M", label: "1M", ms: 30 * 24 * 60 * 60 * 1000 },
+  { key: "ALL", label: "All", ms: null },
+];
 
 function ProbabilityChart({
   history,
@@ -2057,6 +2221,8 @@ function ProbabilityChart({
   outcome: string | null;
 }) {
   const [chartWidth, setChartWidth] = useState(0);
+  const [touchX, setTouchX] = useState<number | null>(null);
+  const [range, setRange] = useState<RangeKey>("ALL");
 
   if (!history || history.snapshots.length < 2) {
     return (
@@ -2067,11 +2233,18 @@ function ProbabilityChart({
     );
   }
 
-  // Build display snapshots — if resolved, append the final outcome point
-  const displayPoints = [...history.snapshots];
+  // Filter by selected range relative to the latest snapshot
+  const allSnaps = history.snapshots;
+  const latestAt = new Date(allSnaps[allSnaps.length - 1]!.at).getTime();
+  const rangeMs = RANGE_OPTIONS.find((r) => r.key === range)?.ms ?? null;
+  const filtered = rangeMs != null
+    ? allSnaps.filter((s) => latestAt - new Date(s.at).getTime() <= rangeMs)
+    : allSnaps;
+  // Ensure at least 2 points; fall back to ALL if filter too tight
+  const displayBase = filtered.length >= 2 ? filtered : allSnaps;
+
+  const displayPoints = [...displayBase];
   if (isResolved && history.resolvedProbability !== null) {
-    // Append final outcome point with the same timestamp as the last snapshot
-    // (it will be rendered as a special marker at the right edge)
     displayPoints.push({
       at: displayPoints[displayPoints.length - 1]?.at ?? new Date().toISOString(),
       probability: history.resolvedProbability,
@@ -2086,21 +2259,18 @@ function ProbabilityChart({
   const innerH = CHART_HEIGHT - CHART_PADDING_V * 2;
   const innerW = chartWidth - CHART_LABEL_WIDTH;
 
-  // Convert snapshots to X/Y in chart coordinate space
   function toXY(snap: { at: string; probability: number }, index: number) {
     const t = new Date(snap.at).getTime();
     const x =
       n <= 1
         ? (index === 0 ? 0 : innerW)
         : ((t - firstAt) / totalDuration) * innerW;
-    // Y: probability 1.0 = top of chart (y=0 in absolute), 0.0 = bottom
     const y = CHART_PADDING_V + (1 - snap.probability) * innerH;
     return { x, y };
   }
 
-  const points = displayPoints.map((s, i) => ({ ...toXY(s, i), prob: s.probability }));
+  const points = displayPoints.map((s, i) => ({ ...toXY(s, i), prob: s.probability, at: s.at }));
 
-  // Build line segments
   const segments: Array<{ x1: number; y1: number; x2: number; y2: number }> = [];
   for (let i = 0; i < points.length - 1; i++) {
     segments.push({
@@ -2111,59 +2281,95 @@ function ProbabilityChart({
     });
   }
 
-  // 50% threshold line Y position
   const thresholdY = CHART_PADDING_V + (1 - 0.5) * innerH;
 
-  const firstDate = new Date(displayPoints[0]!.at).toLocaleDateString("en-IN", {
-    month: "short",
-    day: "numeric",
-  });
-  const lastDate = new Date(displayPoints[n - 1]!.at).toLocaleDateString("en-IN", {
-    month: "short",
-    day: "numeric",
-  });
+  // ── Interactive: find nearest point to touchX ──
+  const inspected = touchX != null
+    ? points.reduce((best, p) => (Math.abs(p.x - touchX) < Math.abs(best.x - touchX) ? p : best), points[0]!)
+    : null;
+
+  // PanResponder reads innerW via ref so it isn't captured stale when chartWidth was 0.
+  const innerWRef = useRef(innerW);
+  innerWRef.current = innerW;
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onStartShouldSetPanResponderCapture: () => true,
+      onMoveShouldSetPanResponder: (_, gs) => Math.abs(gs.dx) > 4,
+      onMoveShouldSetPanResponderCapture: (_, gs) => Math.abs(gs.dx) > Math.abs(gs.dy),
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderGrant: (e) => {
+        const x = e.nativeEvent.locationX;
+        const w = innerWRef.current;
+        if (typeof x === "number" && w > 0) setTouchX(Math.max(0, Math.min(w, x)));
+      },
+      onPanResponderMove: (e) => {
+        const x = e.nativeEvent.locationX;
+        const w = innerWRef.current;
+        if (typeof x === "number" && w > 0) setTouchX(Math.max(0, Math.min(w, x)));
+      },
+      onPanResponderRelease: () => setTouchX(null),
+      onPanResponderTerminate: () => setTouchX(null),
+    })
+  ).current;
+
+  const firstDate = new Date(displayPoints[0]!.at).toLocaleDateString("en-IN", { month: "short", day: "numeric" });
+  const lastDate = new Date(displayPoints[n - 1]!.at).toLocaleDateString("en-IN", { month: "short", day: "numeric" });
 
   const lastPoint = points[n - 1]!;
+  const currentPct = Math.round((inspected?.prob ?? lastPoint.prob) * 100);
+  const headlineDate = inspected
+    ? new Date(inspected.at).toLocaleString("en-IN", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
+    : isResolved
+      ? "Final"
+      : "Latest";
 
   return (
     <View style={styles.probChartCard}>
-      <Text style={styles.probChartTitle}>Consensus shift</Text>
+      <View style={styles.probChartHeader}>
+        <Text style={styles.probChartTitle}>Consensus shift</Text>
+        <View style={styles.probChartHeadlineRow}>
+          <Text style={styles.probChartHeadlinePct}>{currentPct}% YES</Text>
+          <Text style={styles.probChartHeadlineDate}>{headlineDate}</Text>
+        </View>
+        {isResolved && outcome && !inspected ? (
+          <View
+            style={[
+              styles.probChartFinalBadge,
+              { backgroundColor: outcome === "YES" ? "rgba(22,163,74,0.12)" : "rgba(220,38,38,0.12)" },
+            ]}
+          >
+            <Text
+              style={[
+                styles.probChartFinalBadgeText,
+                { color: outcome === "YES" ? "#16a34a" : "#dc2626" },
+              ]}
+            >
+              ✓ Resolved {outcome}
+            </Text>
+          </View>
+        ) : null}
+      </View>
 
       <View
         style={[styles.probChartArea, { height: CHART_HEIGHT + 24 }]}
         onLayout={(e) => setChartWidth(e.nativeEvent.layout.width)}
       >
-        {/* Y-axis labels */}
-        <View
-          style={[
-            styles.probChartYLabels,
-            { width: CHART_LABEL_WIDTH, height: CHART_HEIGHT },
-          ]}
-        >
+        <View style={[styles.probChartYLabels, { width: CHART_LABEL_WIDTH, height: CHART_HEIGHT }]}>
           <Text style={styles.probChartYLabel}>100%</Text>
           <Text style={[styles.probChartYLabel, { marginTop: "auto" }]}>0%</Text>
         </View>
 
-        {/* Chart canvas */}
         {chartWidth > 0 ? (
           <View
-            style={[
-              styles.probChartCanvas,
-              { width: innerW, height: CHART_HEIGHT },
-            ]}
+            style={[styles.probChartCanvas, { width: innerW, height: CHART_HEIGHT }]}
+            {...panResponder.panHandlers}
           >
-            {/* 50% dashed threshold line */}
             {Array.from({ length: Math.floor(innerW / 10) }).map((_, i) => (
-              <View
-                key={`dash-${i}`}
-                style={[
-                  styles.probChartDash,
-                  { left: i * 10, top: thresholdY - 0.5 },
-                ]}
-              />
+              <View key={`dash-${i}`} style={[styles.probChartDash, { left: i * 10, top: thresholdY - 0.5 }]} />
             ))}
 
-            {/* Line segments */}
             {segments.map((seg, i) => {
               const dx = seg.x2 - seg.x1;
               const dy = seg.y2 - seg.y1;
@@ -2174,32 +2380,28 @@ function ProbabilityChart({
                   key={`seg-${i}`}
                   style={[
                     styles.probChartSegment,
-                    {
-                      left: seg.x1,
-                      top: seg.y1,
-                      width: length,
-                      transform: [{ rotate: `${angle}deg` }],
-                    },
+                    { left: seg.x1, top: seg.y1, width: length, transform: [{ rotate: `${angle}deg` }] },
                   ]}
                 />
               );
             })}
 
-            {/* Data dots — only first and last */}
-            <View
-              style={[
-                styles.probChartDot,
-                { left: (points[0]?.x ?? 0) - 3, top: (points[0]?.y ?? 0) - 3 },
-              ]}
-            />
-            <View
-              style={[
-                styles.probChartDot,
-                { left: lastPoint.x - 3, top: lastPoint.y - 3 },
-              ]}
-            />
+            <View style={[styles.probChartDot, { left: (points[0]?.x ?? 0) - 3, top: (points[0]?.y ?? 0) - 3 }]} />
+            <View style={[styles.probChartDot, { left: lastPoint.x - 3, top: lastPoint.y - 3 }]} />
 
-            {/* Resolved outcome marker */}
+            {/* Inspector hairline + dot when touched */}
+            {inspected ? (
+              <>
+                <View style={[styles.probChartHairline, { left: inspected.x, height: CHART_HEIGHT }]} />
+                <View
+                  style={[
+                    styles.probChartInspectDot,
+                    { left: inspected.x - 5, top: inspected.y - 5 },
+                  ]}
+                />
+              </>
+            ) : null}
+
             {isResolved && outcome ? (
               <View
                 style={[
@@ -2218,10 +2420,27 @@ function ProbabilityChart({
         ) : null}
       </View>
 
-      {/* X-axis labels */}
       <View style={[styles.probChartXLabels, { paddingLeft: CHART_LABEL_WIDTH }]}>
         <Text style={styles.probChartXLabel}>{firstDate}</Text>
         <Text style={styles.probChartXLabel}>{lastDate}</Text>
+      </View>
+
+      {/* Time range pills */}
+      <View style={styles.probChartRangeRow}>
+        {RANGE_OPTIONS.map((opt) => {
+          const active = range === opt.key;
+          return (
+            <Pressable
+              key={opt.key}
+              onPress={() => setRange(opt.key)}
+              style={[styles.probChartRangePill, active && styles.probChartRangePillActive]}
+            >
+              <Text style={[styles.probChartRangeText, active && styles.probChartRangeTextActive]}>
+                {opt.label}
+              </Text>
+            </Pressable>
+          );
+        })}
       </View>
     </View>
   );
@@ -2696,6 +2915,20 @@ const styles = StyleSheet.create({
   },
   hostLabel: {
     fontSize: 14,
+    fontWeight: "600",
+    color: colors.accent,
+  },
+  sourceAttributionDetail: {
+    fontSize: 12,
+    fontWeight: "500",
+    color: colors.textMuted,
+  },
+  manifoldLink: {
+    marginTop: spacing.sm,
+    alignSelf: "flex-start",
+  },
+  manifoldLinkText: {
+    fontSize: 13,
     fontWeight: "600",
     color: colors.accent,
   },
@@ -3789,5 +4022,82 @@ const styles = StyleSheet.create({
   probChartXLabel: {
     fontSize: 10,
     color: colors.textMuted,
+  },
+  probChartHeader: {
+    marginBottom: spacing.sm,
+  },
+  probChartHeadlineRow: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    justifyContent: "space-between",
+    marginTop: 2,
+  },
+  probChartHeadlinePct: {
+    fontSize: 22,
+    fontWeight: "800",
+    color: colors.text,
+    letterSpacing: -0.3,
+  },
+  probChartHeadlineDate: {
+    fontSize: 11,
+    color: colors.textMuted,
+    fontWeight: "500",
+  },
+  probChartHairline: {
+    position: "absolute",
+    top: 0,
+    width: 1,
+    backgroundColor: colors.text,
+    opacity: 0.35,
+  },
+  probChartInspectDot: {
+    position: "absolute",
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: "#ffffff",
+    borderWidth: 2,
+    borderColor: colors.accent,
+  },
+  probChartRangeRow: {
+    flexDirection: "row",
+    gap: 6,
+    marginTop: spacing.sm,
+    paddingLeft: 32,
+  },
+  probChartRangePill: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    backgroundColor: "transparent",
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  probChartRangePillActive: {
+    backgroundColor: colors.text,
+    borderColor: colors.text,
+  },
+  probChartRangeText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: colors.textMuted,
+  },
+  probChartRangeTextActive: {
+    color: colors.surface,
+  },
+  probChartFinalBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: spacing.xs,
+    alignSelf: "flex-start",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+  },
+  probChartFinalBadgeText: {
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.3,
   },
 });

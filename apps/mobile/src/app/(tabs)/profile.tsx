@@ -2508,6 +2508,7 @@ function PhoneVerifyModal({
   const [step, setStep] = useState<VerifyStep>("phone");
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState("");
+  const [devOtp, setDevOtp] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -2530,7 +2531,8 @@ function PhoneVerifyModal({
     setLoading(true);
     setErrorMsg(null);
     try {
-      await mobileApi.requestPhoneVerification(phone.trim());
+      const res = await mobileApi.requestPhoneVerification(phone.trim());
+      setDevOtp(res.otp ?? null);
       setStep("otp");
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to send OTP. Please try again.";
@@ -2622,6 +2624,19 @@ function PhoneVerifyModal({
               <Text style={pvModalStyles.subheading}>
                 A 6-digit code was sent to {phone}. Enter it below.
               </Text>
+              {devOtp ? (
+                <Pressable
+                  onPress={() => setOtp(devOtp)}
+                  style={{ backgroundColor: "rgba(245, 158, 11, 0.12)", borderRadius: 8, padding: 10, marginBottom: 10 }}
+                >
+                  <Text style={{ fontSize: 12, color: "#92400e", fontWeight: "700" }}>
+                    DEV MODE — OTP: {devOtp}
+                  </Text>
+                  <Text style={{ fontSize: 11, color: "#92400e", marginTop: 2 }}>
+                    Tap to autofill. Real SMS will be sent once DLT is approved.
+                  </Text>
+                </Pressable>
+              ) : null}
               <TextInput
                 style={pvModalStyles.input}
                 placeholder="6-digit code"

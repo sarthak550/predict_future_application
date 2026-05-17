@@ -256,6 +256,7 @@ export async function finalizeMarketResolution(input: {
     const market = await tx.market.findUnique({
       where: { id: input.marketId },
       include: {
+
         positions: {
           select: {
             userId: true
@@ -402,7 +403,7 @@ export async function finalizeMarketResolution(input: {
     }
 
     return market;
-  });
+  }, { maxWait: 30000, timeout: 30000 });
 
   // Fire push notifications after the transaction commits — best-effort, non-blocking.
   // Uses prisma directly (not tx) so it never holds the transaction open.
@@ -663,7 +664,7 @@ export async function submitHostMarketResolution(input: {
     }
 
     return market;
-  });
+  }, { maxWait: 30000, timeout: 30000 });
 }
 
 export async function submitMarketChallenge(input: {
@@ -767,7 +768,7 @@ export async function submitMarketChallenge(input: {
     await refreshUserStats(tx, input.challengerUserId);
 
     return challenge;
-  });
+  }, { maxWait: 30000, timeout: 30000 });
 }
 
 export async function upholdTrustedHostResolution(input: {

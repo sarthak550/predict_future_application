@@ -848,6 +848,37 @@ export function createApiClient(options: ApiClientOptions) {
         { method: "POST", auth: true }
       );
     },
+
+    // ─── Saved/Bookmarked Markets (S31-T5) ────────────────────────────────────
+
+    /**
+     * Toggle bookmark on a market. Auth required.
+     * Idempotent: calling again unsaves.
+     * Returns { saved: boolean }.
+     */
+    toggleSaveMarket(marketId: string) {
+      return request<{ saved: boolean }>(
+        `/api/markets/${marketId}/save`,
+        undefined,
+        { method: "POST", auth: true }
+      );
+    },
+
+    /**
+     * Fetch the authenticated user's bookmarked markets, cursor-paginated.
+     * Auth: required.
+     */
+    getSavedMarkets(query?: { limit?: number; cursor?: string }) {
+      return request<{
+        markets: ApiMarketSummary[];
+        nextCursor: string | null;
+        hasMore: boolean;
+      }>(
+        "/api/users/me/saved-markets",
+        query,
+        { auth: true }
+      );
+    },
   };
 }
 

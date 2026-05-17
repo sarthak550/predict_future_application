@@ -32,6 +32,10 @@
     {
       "path": "/api/cron/award-reasoning-badges",
       "schedule": "30 3 * * *"
+    },
+    {
+      "path": "/api/cron/sync-manifold-resolutions",
+      "schedule": "0 4 * * *"
     }
   ]
 }

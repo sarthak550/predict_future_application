@@ -73,6 +73,7 @@ model User {
   phoneVerificationOtp       PhoneVerificationOtp?
   leaderboardSnapshots       LeaderboardSnapshot[]
   reasoningUpvotes           ReasoningUpvote[]
+  savedMarkets               SavedMarket[]
 }
 
 model LeaderboardSnapshot {
@@ -420,6 +421,12 @@ model Market {
   originPlatform             String?
   /// Composite idempotency key in the form '<platform>:<remoteId>'. Unique so re-running import scripts is safe.
   externalId                 String?                @unique
+  /// Crowd consensus from origin platform (0..1 implied YES probability at resolution / latest snapshot). Null for native markets.
+  externalProbability        Float?
+  /// Total trading volume on the origin platform (USD equivalent). Null for native markets.
+  externalVolume             Float?
+  /// Unique trader count on the origin platform. Null for native markets.
+  externalTraderCount        Int?
   /// Date this market was marked as 'Today's Big Call' (stored as IST midnight UTC). Null = not designated.
   isBigCallDate              DateTime?
   /// Timestamp when the Big Call push notification was sent — used as idempotency guard to prevent double-sends.
@@ -444,6 +451,7 @@ model Market {
   notifications              Notification[]
   votes                      Vote[]
   walletTransactions         WalletTransaction[]
+  savedByUsers               SavedMarket[]
 
   @@index([status, closeAt])
   @@index([status, resolveAt])
@@ -1077,6 +1085,19 @@ enum ReportStatus {
   REVIEWING
   RESOLVED
   DISMISSED
+}
+
+/// A market bookmarked by a user for later reference.
+model SavedMarket {
+  id        String   @id @default(cuid())
+  userId    String
+  marketId  String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  market    Market   @relation(fields: [marketId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, marketId])
+  @@index([userId, createdAt])
 }
 
 enum AdminActionType {

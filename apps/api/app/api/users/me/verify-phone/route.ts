@@ -152,7 +152,7 @@ export async function POST(request: Request) {
 
     if (isDevMode) {
       console.log(`[phone-verification] OTP for ${phone}: ${otp}`);
-      return NextResponse.json({ ok: true, devOtp: otp });
+      return NextResponse.json({ ok: true, otp });
     }
 
     // Production: dispatch SMS via MSG91. On failure, log and continue — the

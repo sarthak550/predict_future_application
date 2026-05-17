@@ -33,6 +33,8 @@ export async function GET(
         status: true,
         outcome: true,
         createdAt: true,
+        closeAt: true,
+        finalizationAt: true,
         marketType: true,
       },
     });
@@ -73,6 +75,32 @@ export async function GET(
         });
       }
       displaySnapshots = [...dayMap.values()];
+    }
+
+    // Always guarantee the chart can render (>=2 points) by synthesizing a 50%
+    // baseline at market creation and, if there's still only 1 point, an endpoint
+    // at the market's natural end time. This means:
+    //  - 0 real snapshots (never bet) → baseline at createdAt + endpoint at close/finalize → flat 50% line
+    //  - 1 real snapshot              → baseline at createdAt + the snapshot
+    //  - 2+ real snapshots            → just the snapshots
+    {
+      const firstSnap = displaySnapshots[0];
+      const baseline = { at: market.createdAt.toISOString(), probability: 0.5 };
+      if (!firstSnap || new Date(firstSnap.at).getTime() > market.createdAt.getTime()) {
+        displaySnapshots = [baseline, ...displaySnapshots];
+      }
+      // If only the baseline exists, anchor a second point at the market's end
+      // (finalizationAt for resolved, closeAt otherwise, falling back to now).
+      // Ensure the endpoint is meaningfully after the baseline so the chart
+      // doesn't collapse to a single point — minimum 1 hour separation.
+      if (displaySnapshots.length < 2) {
+        const baselineTs = market.createdAt.getTime();
+        const minSeparationMs = 60 * 60 * 1000;
+        const endCandidate = market.finalizationAt ?? market.closeAt ?? new Date();
+        const endTs = (endCandidate instanceof Date ? endCandidate : new Date(endCandidate)).getTime();
+        const anchorTs = Math.max(endTs, baselineTs + minSeparationMs, Date.now());
+        displaySnapshots = [...displaySnapshots, { at: new Date(anchorTs).toISOString(), probability: 0.5 }];
+      }
     }
 
     // For resolved markets, append the final outcome as a definitive endpoint on the chart

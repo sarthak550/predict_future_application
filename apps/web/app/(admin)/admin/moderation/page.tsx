@@ -1,5 +1,6 @@
 import { ApproveStoryForm } from "@/components/admin/approve-story-form";
 import { ApproveMarketForm } from "@/components/admin/approve-market-form";
+import { BulkApproveManifoldForm } from "@/components/admin/bulk-approve-manifold-form";
 import { BulkApproveStoriesForm } from "@/components/admin/bulk-approve-stories-form";
 import { FeatureMarketForm } from "@/components/admin/feature-market-form";
 import { RejectMarketForm } from "@/components/admin/reject-market-form";
@@ -202,9 +203,12 @@ export default async function ModerationPage() {
         </CardContent>
       </Card>
 
-      <div>
-        <h2 className="text-2xl font-semibold text-ink-900">Market and trust moderation</h2>
-        <p className="mt-2 text-sm text-ink-500">Approve clean markets, feature strong questions, and deal with abuse reports quickly.</p>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-semibold text-ink-900">Market and trust moderation</h2>
+          <p className="mt-2 text-sm text-ink-500">Approve clean markets, feature strong questions, and deal with abuse reports quickly.</p>
+        </div>
+        <BulkApproveManifoldForm />
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[1fr_1fr]">

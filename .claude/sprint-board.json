@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "currentSprint": 30,
+  "currentSprint": 31,
   "tickets": [
     {
       "id": "S7-T1",
@@ -1135,6 +1135,77 @@
       "qaVerdict": "pass",
       "failureNotes": null,
       "createdAt": "2026-05-16"
+    },
+    {
+      "id": "S31-T1",
+      "sprint": 31,
+      "title": "Admin bulk-approve Manifold PENDING_REVIEW markets",
+      "description": "New POST /api/admin/markets/bulk-approve route. Idempotent bulk approval with transaction + AdminAction rows. Skip follower notifications for imported markets. Admin UI button on web markets page.",
+      "priority": "critical",
+      "status": "failed",
+      "qaVerdict": "fail",
+      "failureNotes": [
+        "apps/web/components/admin/bulk-approve-manifold-form.tsx line 38: uses variant=\"default\" on the Button component but the Button only accepts variant=\"primary\" | \"secondary\" | \"ghost\" | \"danger\". TypeScript error: TS2322. CTO must change variant=\"default\" to variant=\"primary\"."
+      ],
+      "createdAt": "2026-05-17"
+    },
+    {
+      "id": "S31-T2",
+      "sprint": 31,
+      "title": "Global Markets search + Related Markets rail on detail",
+      "description": "Remove mode guard on search bar. Related Markets horizontal FlatList on market detail page.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-17"
+    },
+    {
+      "id": "S31-T3",
+      "sprint": 31,
+      "title": "Featured/Trending carousel at top of Markets tab",
+      "description": "Horizontal scroll of 5 hero cards at top of public Markets tab. Trending-up icon header.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-17"
+    },
+    {
+      "id": "S31-T4",
+      "sprint": 31,
+      "title": "Polish Manifold archive cards",
+      "description": "Hide bot host line for imported markets. Add subtle Source: Manifold attribution link. Same on detail page.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-17"
+    },
+    {
+      "id": "S31-T5",
+      "sprint": 31,
+      "title": "Saved/Bookmarked markets",
+      "description": "SavedMarket schema. POST toggle save, GET saved-markets paginated. Bookmark icon on cards. Saved status tab.",
+      "priority": "medium",
+      "status": "failed",
+      "qaVerdict": "fail",
+      "failureNotes": [
+        "No Prisma migration file exists for the SavedMarket model. The CTO appears to have used 'prisma db push' or 'prisma db execute' to create the table directly, bypassing the migrations system. This means: (1) the dev server started BEFORE prisma generate ran and is using a stale Prisma client without the SavedMarket model, causing all SavedMarket-related endpoints (POST /api/markets/[marketId]/save, GET /api/users/me/saved-markets, and authenticated GET /api/markets) to return HTTP 500. CTO must: (a) create a proper migration via 'npx prisma migrate dev --name add_saved_market', (b) restart the dev server so it picks up the regenerated Prisma client.",
+        "Runtime verified: POST /api/markets/[marketId]/save returns HTTP 500 with valid Bearer token. GET /api/users/me/saved-markets returns HTTP 500. GET /api/markets returns HTTP 500 with Bearer auth (iSaved batch query crashes on stale Prisma client). All work without auth (no savedMarket query path)."
+      ],
+      "createdAt": "2026-05-17"
+    },
+    {
+      "id": "S31-T6",
+      "sprint": 31,
+      "title": "Import Manifold NUMERIC markets",
+      "description": "Run import script with --open-only --limit=50, then backfill probability history. Verify NUMERIC markets imported.",
+      "priority": "medium",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-17"
     }
   ]
 }

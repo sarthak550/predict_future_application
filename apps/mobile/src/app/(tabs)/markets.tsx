@@ -29,13 +29,14 @@ import { mobileApi } from "@/lib/api";
 // ── constants ───────────────────────────────────────────────────────
 
 type MarketMode = "public" | "private" | "polls";
-type StatusTab = "live" | "ended" | "settled";
+type StatusTab = "live" | "ended" | "settled" | "saved";
 type MarketSort = "new" | "rank" | "close_at" | "volume";
 
 const STATUS_TABS: { key: StatusTab; label: string }[] = [
   { key: "live", label: "Live" },
   { key: "ended", label: "Cancelled" },
   { key: "settled", label: "Settled" },
+  { key: "saved", label: "Saved" },
 ];
 
 const SORT_OPTIONS: { key: MarketSort; label: string }[] = [
@@ -122,7 +123,7 @@ export default function MarketsScreen() {
   const [publicStatus, setPublicStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const publicInFlight = useRef(false);
 
-  const loadPublicMarkets = useCallback(async (mode_: "replace" | "append", cursorVal: string | null, sortVal: MarketSort) => {
+  const loadPublicMarkets = useCallback(async (mode_: "replace" | "append", cursorVal: string | null, sortVal: MarketSort, tab: StatusTab) => {
     if (publicInFlight.current) return;
     publicInFlight.current = true;
     if (mode_ === "replace") {
@@ -131,12 +132,26 @@ export default function MarketsScreen() {
       setPublicStatus("loading");
     }
     try {
+      // Server-side status filter: live → OPEN, settled → RESOLVED. ended tab covers 3 statuses so we leave it unfiltered.
+      const serverStatus = tab === "live" ? "OPEN" : tab === "settled" ? "RESOLVED" : undefined;
       const res = await mobileApi.getPublicMarkets({
         sort: sortVal,
         cursor: cursorVal ?? undefined,
+        status: serverStatus,
       });
       const newMarkets = res.markets ?? [];
-      setPublicMarkets((prev) => mode_ === "replace" ? newMarkets : [...prev, ...newMarkets]);
+      setPublicMarkets((prev) => {
+        const base = mode_ === "replace" ? [] : prev;
+        const seen = new Set(base.map((m) => m.id));
+        const merged = [...base];
+        for (const m of newMarkets) {
+          if (!seen.has(m.id)) {
+            seen.add(m.id);
+            merged.push(m);
+          }
+        }
+        return merged;
+      });
       setPublicCursor(res.nextCursor ?? null);
       setPublicHasMore(res.hasMore ?? false);
       setPublicError(null);
@@ -150,31 +165,25 @@ export default function MarketsScreen() {
     }
   }, []);
 
-  // Initial fetch and re-fetch when sort changes.
-  const prevSort = useRef(sort);
+  // Initial fetch and re-fetch when sort OR status tab changes.
   useEffect(() => {
     if (mode !== "public") return;
-    if (prevSort.current !== sort) {
-      prevSort.current = sort;
-      setPublicCursor(null);
-      setPublicHasMore(true);
-      void loadPublicMarkets("replace", null, sort);
-    } else {
-      void loadPublicMarkets("replace", null, sort);
-    }
+    setPublicCursor(null);
+    setPublicHasMore(true);
+    void loadPublicMarkets("replace", null, sort, statusTab);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, sort]);
+  }, [mode, sort, statusTab]);
 
   function handlePublicEndReached() {
     if (publicHasMore && !publicInFlight.current && mode === "public") {
-      void loadPublicMarkets("append", publicCursor, sort);
+      void loadPublicMarkets("append", publicCursor, sort, statusTab);
     }
   }
 
   function handlePublicRefresh() {
     setPublicCursor(null);
     setPublicHasMore(true);
-    void loadPublicMarkets("replace", null, sort);
+    void loadPublicMarkets("replace", null, sort, statusTab);
   }
 
   // Wrap in a publicQuery-compatible shape for the rest of the render logic.
@@ -186,17 +195,43 @@ export default function MarketsScreen() {
     refetch: handlePublicRefresh,
   };
 
-  // ── trending shelf (top 3 by rank, parallel fetch) ────────────────
+  // ── trending carousel (top 5 by rank, parallel fetch) ────────────────
 
   useEffect(() => {
     if (mode !== "public") return;
     setLoadingTrending(true);
     mobileApi
-      .getPublicMarkets({ sort: "rank", limit: 3 })
-      .then((res) => setTrendingMarkets(res.markets.slice(0, 3)))
+      .getPublicMarkets({ sort: "rank", limit: 5, status: "OPEN" })
+      .then((res) => setTrendingMarkets(res.markets.slice(0, 5)))
       .catch(() => setTrendingMarkets([]))
       .finally(() => setLoadingTrending(false));
   }, [mode]);
+
+  // ── saved markets ─────────────────────────────────────────────────
+
+  const [savedMarkets, setSavedMarkets] = useState<ApiMarketSummary[]>([]);
+  const [savedLoading, setSavedLoading] = useState(false);
+  const [savedError, setSavedError] = useState<string | null>(null);
+
+  const loadSavedMarkets = useCallback(async () => {
+    setSavedLoading(true);
+    setSavedError(null);
+    try {
+      const res = await mobileApi.getSavedMarkets({ limit: 50 });
+      setSavedMarkets(res.markets);
+    } catch {
+      setSavedError("Unable to load saved markets.");
+    } finally {
+      setSavedLoading(false);
+    }
+  }, []);
+
+  // Fetch saved markets when the "saved" tab becomes active
+  useEffect(() => {
+    if (mode === "public" && statusTab === "saved") {
+      void loadSavedMarkets();
+    }
+  }, [mode, statusTab, loadSavedMarkets]);
 
   // ── search ────────────────────────────────────────────────────────
 
@@ -284,11 +319,15 @@ export default function MarketsScreen() {
   const allMarkets = mode === "public" ? publicQuery.data?.markets ?? [] : groupMarkets;
   const loading =
     mode === "public"
-      ? publicQuery.loading
+      ? statusTab === "saved"
+        ? savedLoading
+        : publicQuery.loading
       : groupMarketsLoading || groupsQuery.loading;
   const error =
     mode === "public"
-      ? publicQuery.error
+      ? statusTab === "saved"
+        ? savedError
+        : publicQuery.error
       : groupsQuery.error;
   const queryStatus = mode === "public" ? publicQuery.status : groupsQuery.status;
 
@@ -297,28 +336,48 @@ export default function MarketsScreen() {
     const live = allMarkets.filter((m) => matchesStatusTab(m.status, "live")).length;
     const ended = allMarkets.filter((m) => matchesStatusTab(m.status, "ended")).length;
     const settled = allMarkets.filter((m) => matchesStatusTab(m.status, "settled")).length;
-    return { live, ended, settled };
-  }, [allMarkets]);
+    const saved = savedMarkets.length;
+    return { live, ended, settled, saved };
+  }, [allMarkets, savedMarkets]);
 
   // Filter: status → category (client-side; no re-fetch on category change)
   const filteredMarkets = useMemo(() => {
+    if (statusTab === "saved") {
+      // Saved tab: use savedMarkets directly (already fetched from dedicated endpoint)
+      const seen = new Set<string>();
+      return savedMarkets.filter((m) => {
+        if (seen.has(m.id)) return false;
+        seen.add(m.id);
+        return true;
+      });
+    }
     let result = allMarkets.filter((m) => matchesStatusTab(m.status, statusTab));
     if (mode === "public" && statusTab === "live" && category !== "ALL") {
       result = result.filter((m) => (m.category as string) === category);
     }
-    return result;
-  }, [allMarkets, statusTab, category]);
+    // Defensive dedupe: even if upstream returns duplicates, FlatList must see unique keys.
+    const seen = new Set<string>();
+    return result.filter((m) => {
+      if (seen.has(m.id)) return false;
+      seen.add(m.id);
+      return true;
+    });
+  }, [allMarkets, savedMarkets, statusTab, category, mode]);
 
   const handleRefresh = useCallback(() => {
     if (mode === "public") {
-      publicQuery.refetch();
+      if (statusTab === "saved") {
+        void loadSavedMarkets();
+      } else {
+        publicQuery.refetch();
+      }
     } else if (mode === "polls") {
       pollsQuery.refetch();
     } else {
       groupsQuery.refetch();
       fetchAllGroupMarkets();
     }
-  }, [mode, publicQuery, pollsQuery, groupsQuery, fetchAllGroupMarkets]);
+  }, [mode, statusTab, publicQuery, pollsQuery, groupsQuery, fetchAllGroupMarkets, loadSavedMarkets]);
 
   // ── render ────────────────────────────────────────────────────────
 
@@ -380,26 +439,24 @@ export default function MarketsScreen() {
         </Pressable>
       </View>
 
-      {/* ── Search bar (public mode only) ── */}
-      {mode === "public" ? (
-        <View style={styles.searchRow}>
-          <Feather name="search" size={16} color={colors.textMuted} />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search markets..."
-            placeholderTextColor={colors.textMuted}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-          />
-          {searchLoading ? (
-            <ActivityIndicator size="small" color={colors.textMuted} />
-          ) : searchQuery.length > 0 ? (
-            <Pressable onPress={() => setSearchQuery("")} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <Feather name="x" size={16} color={colors.textMuted} />
-            </Pressable>
-          ) : null}
-        </View>
-      ) : null}
+      {/* ── Search bar (all modes) ── */}
+      <View style={styles.searchRow}>
+        <Feather name="search" size={16} color={colors.textMuted} />
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search markets..."
+          placeholderTextColor={colors.textMuted}
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+        />
+        {searchLoading && mode === "public" ? (
+          <ActivityIndicator size="small" color={colors.textMuted} />
+        ) : searchQuery.length > 0 ? (
+          <Pressable onPress={() => setSearchQuery("")} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Feather name="x" size={16} color={colors.textMuted} />
+          </Pressable>
+        ) : null}
+      </View>
 
       {/* ── Sort control row (public/Explore mode, hidden in search mode) ── */}
       {mode === "public" && !isSearchMode ? (
@@ -540,10 +597,13 @@ export default function MarketsScreen() {
         ListHeaderComponent={
           !isSearchMode && mode === "public" && statusTab === "live" ? (
             <>
-              {/* Trending shelf — only shown in default/New sort */}
-              {sort === "new" && (trendingMarkets.length > 0 || loadingTrending) ? (
+              {/* Trending carousel — hero cards (S31-T3) */}
+              {(trendingMarkets.length > 0 || loadingTrending) ? (
                 <View style={styles.trendingShelf}>
-                  <Text style={styles.trendingTitle}>Trending</Text>
+                  <View style={styles.trendingHeader}>
+                    <Feather name="trending-up" size={15} color={colors.accent} />
+                    <Text style={styles.trendingTitle}>Trending Markets</Text>
+                  </View>
                   {loadingTrending ? (
                     <ActivityIndicator color={colors.accent} style={{ marginVertical: 8 }} />
                   ) : (
@@ -552,40 +612,49 @@ export default function MarketsScreen() {
                       showsHorizontalScrollIndicator={false}
                       contentContainerStyle={styles.trendingScroll}
                     >
-                      {trendingMarkets.map((m) => (
-                        <Pressable
-                          key={m.id}
-                          style={({ pressed }) => [styles.trendingCard, pressed && { opacity: 0.8 }]}
-                          onPress={() => router.push(`/market/${m.id}`)}
-                        >
-                          <View style={styles.trendingCardHeader}>
-                            {m.category ? (
-                              <View style={styles.trendingCatBadge}>
-                                <Text style={styles.trendingCatText}>{m.category}</Text>
-                              </View>
-                            ) : null}
-                          </View>
-                          <Text style={styles.trendingCardTitle} numberOfLines={2}>{m.title}</Text>
-                          <View style={styles.trendingCardMeta}>
+                      {trendingMarkets.map((m) => {
+                        const yesPool = m.yesPool ?? 0;
+                        const noPool = m.noPool ?? 0;
+                        const total = yesPool + noPool;
+                        const yesPct = total > 0 ? yesPool / total : (m.externalProbability ?? 0.5);
+                        return (
+                          <Pressable
+                            key={m.id}
+                            style={({ pressed }) => [styles.heroCard, pressed && { opacity: 0.85 }]}
+                            onPress={() => router.push(`/market/${m.id}`)}
+                          >
+                            <View style={styles.heroCardHeader}>
+                              {m.category ? (
+                                <View style={styles.trendingCatBadge}>
+                                  <Text style={styles.trendingCatText}>{m.category}</Text>
+                                </View>
+                              ) : null}
+                              <Text style={styles.heroCardPlayers}>
+                                {m.totalParticipants ?? 0} players
+                              </Text>
+                            </View>
+                            <Text style={styles.heroCardTitle} numberOfLines={2}>{m.title}</Text>
                             {m.marketType === "NUMERIC" ? (
-                              <Text style={styles.trendingCardProb}>
+                              <Text style={styles.heroCardProb}>
                                 {m.averageNumericValue != null
                                   ? `~${Number(m.averageNumericValue).toFixed(1)}${m.unit ? ` ${m.unit}` : ""}`
-                                  : "No guesses"}
+                                  : "—"}
                               </Text>
                             ) : (
-                              <Text style={styles.trendingCardProb}>
-                                {m.yesPool != null && m.noPool != null && (m.yesPool + m.noPool) > 0
-                                  ? `${Math.round((m.yesPool / (m.yesPool + m.noPool)) * 100)}% YES`
-                                  : "50% YES"}
-                              </Text>
+                              <View style={styles.heroCardProbSection}>
+                                <View style={styles.heroCardBar}>
+                                  <View style={[styles.heroCardBarYes, { flex: Math.max(0.04, yesPct) }]} />
+                                  <View style={[styles.heroCardBarNo, { flex: Math.max(0.04, 1 - yesPct) }]} />
+                                </View>
+                                <View style={styles.heroCardProbRow}>
+                                  <Text style={styles.heroCardYesLabel}>YES {Math.round(yesPct * 100)}%</Text>
+                                  <Text style={styles.heroCardNoLabel}>NO {Math.round((1 - yesPct) * 100)}%</Text>
+                                </View>
+                              </View>
                             )}
-                            <Text style={styles.trendingCardPlayers}>
-                              {m.totalParticipants ?? 0} players
-                            </Text>
-                          </View>
-                        </Pressable>
-                      ))}
+                          </Pressable>
+                        );
+                      })}
                     </ScrollView>
                   )}
                 </View>
@@ -644,6 +713,13 @@ export default function MarketsScreen() {
               >
                 <Text style={styles.retryLabel}>Show All</Text>
               </Pressable>
+            </View>
+          ) : statusTab === "saved" ? (
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyTitle}>No saved markets</Text>
+              <Text style={styles.emptyText}>
+                Tap the bookmark icon on any market to save it for later.
+              </Text>
             </View>
           ) : (
             <View style={styles.emptyCard}>
@@ -1349,32 +1425,39 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
 
-  // ── Trending shelf ─────────────────────────────────────────────────
+  // ── Trending carousel (S31-T3) ────────────────────────────────────
 
   trendingShelf: {
     marginBottom: spacing.md,
+  },
+  trendingHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    marginBottom: spacing.sm,
   },
   trendingTitle: {
     fontSize: 15,
     fontWeight: "800",
     color: colors.text,
-    marginBottom: spacing.sm,
   },
   trendingScroll: {
     gap: spacing.sm,
     paddingBottom: spacing.xs,
   },
-  trendingCard: {
-    width: 180,
+  heroCard: {
+    width: 220,
     backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    padding: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.border,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    borderWidth: 1.5,
+    borderColor: colors.accent + "33",
+    gap: spacing.sm,
   },
-  trendingCardHeader: {
+  heroCardHeader: {
     flexDirection: "row",
-    marginBottom: spacing.xs,
+    alignItems: "center",
+    justifyContent: "space-between",
   },
   trendingCatBadge: {
     paddingHorizontal: 6,
@@ -1389,27 +1472,53 @@ const styles = StyleSheet.create({
     color: "#4F46E5",
     textTransform: "uppercase",
   },
-  trendingCardTitle: {
-    fontSize: 13,
+  heroCardPlayers: {
+    fontSize: 10,
+    color: colors.textMuted,
+    fontWeight: "600",
+  },
+  heroCardTitle: {
+    fontSize: 15,
     fontWeight: "700",
     color: colors.text,
-    lineHeight: 18,
-    marginBottom: spacing.sm,
+    lineHeight: 21,
   },
-  trendingCardMeta: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginTop: "auto" as unknown as number,
-  },
-  trendingCardProb: {
-    fontSize: 12,
+  heroCardProb: {
+    fontSize: 14,
     fontWeight: "700",
     color: colors.accent,
   },
-  trendingCardPlayers: {
-    fontSize: 10,
-    color: colors.textMuted,
+  heroCardProbSection: {
+    gap: 4,
+  },
+  heroCardBar: {
+    flexDirection: "row",
+    height: 7,
+    borderRadius: 4,
+    overflow: "hidden",
+    gap: 1,
+  },
+  heroCardBarYes: {
+    backgroundColor: "#16A34A",
+    borderRadius: 4,
+  },
+  heroCardBarNo: {
+    backgroundColor: "#DC2626",
+    borderRadius: 4,
+  },
+  heroCardProbRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  heroCardYesLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#16A34A",
+  },
+  heroCardNoLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#DC2626",
   },
 
   // ── Level 2: status tabs ──────────────────────────────────────────

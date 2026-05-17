@@ -39,9 +39,11 @@ import {
 // CLI argument parsing
 // ---------------------------------------------------------------------------
 
-function parseArgs(): { dryRun: boolean; limit: number; minTraders: number } {
+function parseArgs(): { dryRun: boolean; limit: number; minTraders: number; includeOpen: boolean; openOnly: boolean } {
   const args = process.argv.slice(2);
   const dryRun = args.includes("--dry-run");
+  const includeOpen = args.includes("--include-open") || args.includes("--open-only");
+  const openOnly = args.includes("--open-only");
 
   const limitArg = args.find((a) => a.startsWith("--limit="));
   const rawLimit = limitArg ? parseInt(limitArg.split("=")[1], 10) : 500;
@@ -50,10 +52,10 @@ function parseArgs(): { dryRun: boolean; limit: number; minTraders: number } {
   const minTradersArg = args.find((a) => a.startsWith("--min-traders="));
   const rawMinTraders = minTradersArg
     ? parseInt(minTradersArg.split("=")[1], 10)
-    : 30;
-  const minTraders = Math.max(0, isNaN(rawMinTraders) ? 30 : rawMinTraders);
+    : 10;
+  const minTraders = Math.max(0, isNaN(rawMinTraders) ? 10 : rawMinTraders);
 
-  return { dryRun, limit, minTraders };
+  return { dryRun, limit, minTraders, includeOpen, openOnly };
 }
 
 // ---------------------------------------------------------------------------
@@ -74,6 +76,14 @@ interface ManifoldMarket {
   outcomeType?: string;
   uniqueBettorCount?: number;
   groupSlugs?: string[];
+  probability?: number;
+  volume?: number;
+  resolutionProbability?: number;
+  // Numeric / pseudo-numeric markets
+  min?: number;
+  max?: number;
+  isLogScale?: boolean;
+  resolutionValue?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -152,8 +162,8 @@ function mapCategory(market: ManifoldMarket): MarketCategory | null {
     return MarketCategory.ENTERTAINMENT;
   }
 
-  // No matching category — skip
-  return null;
+  // No matching category — fall back to GENERAL so we don't drop the market.
+  return MarketCategory.GENERAL;
 }
 
 // ---------------------------------------------------------------------------
@@ -219,12 +229,13 @@ async function ensureBotUser(): Promise<string> {
 // ---------------------------------------------------------------------------
 
 async function main() {
-  const { dryRun, limit, minTraders } = parseArgs();
+  const { dryRun, limit, minTraders, includeOpen, openOnly } = parseArgs();
 
   console.log("=== Manifold Markets Import ===");
   console.log(`  mode:        ${dryRun ? "DRY RUN (no writes)" : "LIVE"}`);
   console.log(`  limit:       ${limit}`);
   console.log(`  min-traders: ${minTraders}`);
+  console.log(`  include-open: ${includeOpen ? (openOnly ? "OPEN-ONLY" : "yes") : "no"}`);
   console.log("");
 
   const botUserId = dryRun ? "<dry-run>" : await ensureBotUser();
@@ -256,17 +267,50 @@ async function main() {
         break;
       }
 
-      // Filter: isResolved
-      if (!m.isResolved) continue;
+      // Filter: resolved-only vs open-only vs both
+      if (openOnly && m.isResolved) continue;
+      if (!includeOpen && !m.isResolved) continue;
 
-      // Filter: resolution must be YES or NO
-      if (m.resolution !== "YES" && m.resolution !== "NO") {
+      // Filter: outcomeType must be BINARY, PSEUDO_NUMERIC, or NUMERIC
+      const isBinary = m.outcomeType === "BINARY";
+      const isNumeric = m.outcomeType === "PSEUDO_NUMERIC" || m.outcomeType === "NUMERIC";
+      if (!isBinary && !isNumeric) {
+        skippedResolution++;
+        continue;
+      }
+      // Mechanism must be a known type.
+      // BINARY markets use "cpmm-1"; PSEUDO_NUMERIC markets use "pseudonumeric";
+      // multi-answer markets use "cpmm-multi-1".
+      const allowedMechanism = isBinary
+        ? m.mechanism === "cpmm-1"
+        : isNumeric
+          ? m.mechanism === "cpmm-1" || m.mechanism === "pseudonumeric"
+          : m.mechanism === "cpmm-multi-1";
+      if (!allowedMechanism) {
         skippedResolution++;
         continue;
       }
 
-      // Filter: mechanism and outcomeType
-      if (m.mechanism !== "cpmm-1" || m.outcomeType !== "BINARY") {
+      // Resolved-state checks per market type
+      if (m.isResolved) {
+        if (isBinary && m.resolution !== "YES" && m.resolution !== "NO") {
+          skippedResolution++;
+          continue;
+        }
+        if (isNumeric && (m.resolutionValue == null || !isFinite(m.resolutionValue))) {
+          skippedResolution++;
+          continue;
+        }
+      }
+      // For OPEN markets, require a closeTime in the future (else stale)
+      if (!m.isResolved) {
+        if (!m.closeTime || m.closeTime < Date.now()) {
+          skippedResolution++;
+          continue;
+        }
+      }
+      // Numeric markets need min/max for a valid range
+      if (isNumeric && (m.min == null || m.max == null || m.min >= m.max)) {
         skippedResolution++;
         continue;
       }
@@ -302,7 +346,7 @@ async function main() {
           title: m.question,
           category,
           traders: m.uniqueBettorCount ?? 0,
-          resolution: m.resolution,
+          resolution: m.resolution ?? "OPEN",
         });
         continue;
       }
@@ -316,10 +360,18 @@ async function main() {
 
       const closeAt = m.closeTime ? new Date(m.closeTime) : new Date();
       const resolvedAt = m.resolutionTime ? new Date(m.resolutionTime) : closeAt;
-      const outcome = m.resolution === "YES" ? MarketOutcome.YES : MarketOutcome.NO;
       const description = (m.textDescription?.trim() || m.question).slice(0, 2000);
+      const isOpenImport = !m.isResolved;
+      const marketType = isNumeric ? MarketType.NUMERIC : MarketType.BINARY;
+      // For numeric markets we don't have YES/NO outcome — only actualValue
+      const outcome: MarketOutcome | undefined = isOpenImport
+        ? undefined
+        : isBinary
+          ? (m.resolution === "YES" ? MarketOutcome.YES : MarketOutcome.NO)
+          : undefined;
+      const actualValue = !isOpenImport && isNumeric ? m.resolutionValue ?? null : null;
 
-      // Upsert market
+      // Upsert market — RESOLVED for resolved imports, PENDING_REVIEW for open imports (admin approves)
       const market = await prisma.market.upsert({
         where: { externalId },
         create: {
@@ -328,43 +380,66 @@ async function main() {
           description,
           category,
           template: MarketTemplate.CUSTOM,
-          marketType: MarketType.BINARY,
+          marketType,
+          minValue: isNumeric ? m.min ?? null : null,
+          maxValue: isNumeric ? m.max ?? null : null,
+          actualValue,
           creatorId: botUserId,
-          status: MarketStatus.RESOLVED,
-          resolutionStatus: ResolutionStatus.FINALIZED,
+          status: isOpenImport ? MarketStatus.PENDING_REVIEW : MarketStatus.RESOLVED,
+          resolutionStatus: isOpenImport ? ResolutionStatus.OPEN : ResolutionStatus.FINALIZED,
           resolutionMode: ResolutionMode.SOURCE_BASED,
           resolutionSourceType: ResolutionSourceType.PRESS_RELEASE,
           resolutionSourceName: "Manifold Markets",
           resolutionSourceUrl: sourceUrl,
-          resolutionRuleText: "Resolved by Manifold Markets on original platform.",
+          resolutionRuleText: isOpenImport
+            ? "Will sync with Manifold Markets on resolution."
+            : "Resolved by Manifold Markets on original platform.",
           visibility: MarketVisibility.PUBLIC,
           poolRewardMode: PoolRewardMode.COMMISSION_BASED,
           outcome,
           closeAt,
           resolveAt: closeAt,
-          approvedAt: new Date(),
-          approvedById: botUserId,
-          finalizationAt: resolvedAt,
+          approvedAt: isOpenImport ? null : new Date(),
+          approvedById: isOpenImport ? null : botUserId,
+          finalizationAt: isOpenImport ? null : resolvedAt,
           originPlatform: "manifold",
           externalId,
+          externalProbability: m.resolutionProbability ?? m.probability ?? null,
+          externalVolume: m.volume ?? null,
+          externalTraderCount: m.uniqueBettorCount ?? null,
+          // Mirror crowd data into native counters so card UI renders uniformly ($1 = 10 pts)
+          totalVolume: m.volume != null ? Math.round(m.volume * 10) : 0,
+          totalParticipants: m.uniqueBettorCount ?? 0,
         },
-        update: {},
+        update: {
+          externalProbability: m.resolutionProbability ?? m.probability ?? null,
+          externalVolume: m.volume ?? null,
+          externalTraderCount: m.uniqueBettorCount ?? null,
+          totalVolume: m.volume != null ? Math.round(m.volume * 10) : 0,
+          totalParticipants: m.uniqueBettorCount ?? 0,
+        },
         select: { id: true },
       });
 
-      // Create MarketResolution row
-      await prisma.marketResolution.upsert({
-        where: { marketId: market.id },
-        create: {
-          marketId: market.id,
-          outcome,
-          sourceName: "Manifold Markets",
-          sourceUrl,
-          explanation: `Imported from Manifold. Original resolution: ${m.resolution}`,
-          resolvedAt,
-        },
-        update: {},
-      });
+      // Create MarketResolution row for resolved imports (binary uses outcome, numeric uses actualValue text)
+      if (!isOpenImport) {
+        const explanation = isNumeric
+          ? `Imported from Manifold. Resolved value: ${m.resolutionValue}`
+          : `Imported from Manifold. Original resolution: ${m.resolution}`;
+        await prisma.marketResolution.upsert({
+          where: { marketId: market.id },
+          create: {
+            marketId: market.id,
+            outcome: outcome ?? MarketOutcome.UNRESOLVED,
+            actualValue,
+            sourceName: "Manifold Markets",
+            sourceUrl,
+            explanation,
+            resolvedAt,
+          },
+          update: {},
+        });
+      }
 
       imported++;
 
