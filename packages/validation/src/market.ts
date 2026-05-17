@@ -346,7 +346,8 @@ export const updateMarketSchema = baseMarketSchema.partial();
 export const marketPositionSchema = z.object({
   side: z.nativeEnum(PositionSide).optional(),
   numericValue: z.coerce.number().min(0).optional(),
-  amount: z.coerce.number().int().min(50, "Minimum position size is 50 points.").max(100000),
+  // amount=0 is allowed for flagship-poll votes (validated server-side that market.flagshipEventAt is set).
+  amount: z.coerce.number().int().min(0, "Amount cannot be negative.").max(100000),
   reasoning: z
     .string()
     .transform((v) => v.trim())
@@ -402,7 +403,15 @@ export const adminOverturnResolutionSchema = z.object({
 
 export const multiChoicePositionSchema = z.object({
   optionId: z.string().cuid(),
-  amount: z.coerce.number().int().min(10, "Minimum stake is 10 points.").max(100000)
+  // amount=0 allowed for flagship polls (validated server-side that market is flagship).
+  amount: z.coerce.number().int().min(0, "Amount cannot be negative.").max(100000),
+  reasoning: z
+    .string()
+    .transform((v) => v.trim())
+    .pipe(z.string().max(500, "Reasoning must be 500 characters or less."))
+    .transform((v) => (v.length === 0 ? null : v))
+    .nullable()
+    .optional()
 });
 
 export const resolveMultiChoiceSchema = z.object({

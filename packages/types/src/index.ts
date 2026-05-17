@@ -209,6 +209,28 @@ export type ApiMarketSummary = {
   externalTraderCount?: number | null;
   /** Whether the authenticated viewer has bookmarked this market. Undefined when not authenticated. */
   iSaved?: boolean;
+  /** When set, this market is a Finance flagship event tied to a specific upcoming real-world date. */
+  flagshipEventAt?: string | null;
+  /** One of: 'RBI' | 'BUDGET' | 'GST' | 'GLOBAL' | 'FED' | 'OTHER'. */
+  flagshipEventType?: string | null;
+};
+
+/**
+ * Probability map for binary markets: { YES: 0.6, NO: 0.4 }
+ * For MULTIPLE_CHOICE: { optionId1: 0.5, optionId2: 0.3, ... }
+ */
+export type ApiFlagshipProbabilityMap = Record<string, number>;
+
+/** A flagship event returned by GET /api/finance/flagship-events */
+export type ApiFlagshipEvent = ApiMarketSummary & {
+  flagshipEventAt: string;
+  flagshipEventType: string;
+  /** Crowd (all participants) probability map. Null if no positions yet. */
+  crowdProbability: ApiFlagshipProbabilityMap | null;
+  /** Expert-only probability map. Null if fewer than 3 expert participants. */
+  expertProbability: ApiFlagshipProbabilityMap | null;
+  /** Count of expert participants used for the expert probability computation. */
+  expertCount?: number;
 };
 
 /**

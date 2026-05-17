@@ -46,7 +46,8 @@ export async function POST(
         title: true,
         status: true,
         marketType: true,
-        closeAt: true
+        closeAt: true,
+        flagshipEventAt: true
       }
     });
 
@@ -78,8 +79,36 @@ export async function POST(
       return NextResponse.json({ error: "Option not found in this market." }, { status: 404 });
     }
 
+    // Flagship polls allow amount=0 (free vote). Reject 0 elsewhere; enforce 10 min for stakes.
+    const isFlagshipPoll = market.flagshipEventAt !== null;
+    if (payload.amount === 0 && !isFlagshipPoll) {
+      return NextResponse.json({ error: "Minimum stake is 10 points." }, { status: 400 });
+    }
+    if (payload.amount > 0 && payload.amount < 10) {
+      return NextResponse.json({ error: "Minimum stake is 10 points." }, { status: 400 });
+    }
+
     if (user.wallet.balance < payload.amount) {
       return NextResponse.json({ error: "Insufficient wallet balance." }, { status: 400 });
+    }
+
+    // For flagship polls, only ONE option per user (it's a poll, not a stake spread).
+    // If user already voted on a different option, reject.
+    if (isFlagshipPoll) {
+      const existingDifferent = await prisma.multiChoicePosition.findFirst({
+        where: {
+          userId: user.id,
+          marketId: market.id,
+          optionId: { not: payload.optionId }
+        },
+        select: { id: true }
+      });
+      if (existingDifferent) {
+        return NextResponse.json(
+          { error: "You already voted on a different option. Edit your reasoning instead." },
+          { status: 409 }
+        );
+      }
     }
 
     let questRewards: CompletedQuestReward[] = [];
@@ -99,7 +128,11 @@ export async function POST(
       if (existingPosition) {
         await tx.multiChoicePosition.update({
           where: { id: existingPosition.id },
-          data: { amount: { increment: payload.amount } }
+          data: {
+            amount: { increment: payload.amount },
+            // For flagship polls, allow the user to refresh their reasoning when they re-submit.
+            ...(isFlagshipPoll && payload.reasoning !== undefined ? { reasoning: payload.reasoning } : {}),
+          }
         });
       } else {
         await tx.multiChoicePosition.create({
@@ -107,7 +140,8 @@ export async function POST(
             userId: user.id,
             marketId: market.id,
             optionId: payload.optionId,
-            amount: payload.amount
+            amount: payload.amount,
+            reasoning: payload.reasoning ?? null,
           }
         });
 
@@ -123,34 +157,33 @@ export async function POST(
         }
       }
 
-      // Deduct from wallet.
-      await tx.wallet.update({
-        where: { id: user.wallet!.id },
-        data: { balance: { decrement: payload.amount } }
-      });
+      // Skip wallet update for flagship-poll votes (amount=0). They're free votes, not stakes.
+      if (payload.amount > 0) {
+        await tx.wallet.update({
+          where: { id: user.wallet!.id },
+          data: { balance: { decrement: payload.amount } }
+        });
 
-      // Record wallet transaction.
-      await tx.walletTransaction.create({
-        data: {
-          walletId: user.wallet!.id,
-          type: "POSITION_COMMITMENT",
-          amount: -payload.amount,
-          description: `Multi-choice stake on market option`,
-          marketId: market.id
-        }
-      });
+        await tx.walletTransaction.create({
+          data: {
+            walletId: user.wallet!.id,
+            type: "POSITION_COMMITMENT",
+            amount: -payload.amount,
+            description: `Multi-choice stake on market option`,
+            marketId: market.id
+          }
+        });
 
-      // Increment option pool.
-      await tx.marketOption.update({
-        where: { id: payload.optionId },
-        data: { totalStaked: { increment: payload.amount } }
-      });
+        await tx.marketOption.update({
+          where: { id: payload.optionId },
+          data: { totalStaked: { increment: payload.amount } }
+        });
 
-      // Increment market total volume.
-      await tx.market.update({
-        where: { id: market.id },
-        data: { totalVolume: { increment: payload.amount } }
-      });
+        await tx.market.update({
+          where: { id: market.id },
+          data: { totalVolume: { increment: payload.amount } }
+        });
+      }
 
       // Quest engine — non-fatal.
       try {

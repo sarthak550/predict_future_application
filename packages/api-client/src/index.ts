@@ -8,6 +8,7 @@ import type {
   ApiExpertLeaderboardEntry,
   ApiExpertOpinionTallies,
   ApiExpertProfile,
+  ApiFlagshipEvent,
   ApiFinanceExpertSentiment,
   ApiFinanceMarketsResponse,
   ApiFollowerEntry,
@@ -191,7 +192,7 @@ export function createApiClient(options: ApiClientOptions) {
         }
       );
     },
-    placeMultiChoicePosition(marketId: string, body: { optionId: string; amount: number }) {
+    placeMultiChoicePosition(marketId: string, body: { optionId: string; amount: number; reasoning?: string | null }) {
       return request<{ ok: boolean; questRewards: Array<{ questId: string; reward: number }> }>(
         `/api/markets/${marketId}/positions/multi-choice`,
         undefined,
@@ -822,6 +823,18 @@ export function createApiClient(options: ApiClientOptions) {
       );
     },
 
+    /**
+     * Update the reasoning text on an existing position (used for flagship polls
+     * where the side is locked but the reasoning can be refined).
+     */
+    updatePositionReasoning(positionId: string, reasoning: string | null) {
+      return request<{ ok: true; reasoning: string | null }>(
+        `/api/positions/${positionId}/reasoning`,
+        undefined,
+        { method: "PATCH", body: JSON.stringify({ reasoning }), auth: true }
+      );
+    },
+
     // ─── Notifications: unread count + mark all read (S30-T4) ─────────────────
 
     /**
@@ -877,6 +890,43 @@ export function createApiClient(options: ApiClientOptions) {
         "/api/users/me/saved-markets",
         query,
         { auth: true }
+      );
+    },
+
+    // ─── Flagship Events (S32-T1) ─────────────────────────────────────────────
+
+    /**
+     * Fetch the upcoming flagship finance events carousel.
+     * Returns OPEN markets with flagshipEventAt in the future, sorted ASC.
+     * Public endpoint — no auth required.
+     */
+    getFlagshipEvents() {
+      return request<{ events: ApiFlagshipEvent[] }>(
+        "/api/finance/flagship-events"
+      );
+    },
+
+    /**
+     * Set or clear the flagship event designation on a market.
+     * Pass null for both fields to clear the designation.
+     * Auth: required (admin/moderator).
+     */
+    markMarketAsFlagship(
+      marketId: string,
+      data: { flagshipEventAt: string | null; flagshipEventType: string | null }
+    ) {
+      return request<{
+        market: {
+          id: string;
+          title: string;
+          status: string;
+          flagshipEventAt: string | null;
+          flagshipEventType: string | null;
+        };
+      }>(
+        `/api/admin/markets/${marketId}/mark-flagship`,
+        undefined,
+        { method: "POST", body: JSON.stringify(data), auth: true }
       );
     },
   };

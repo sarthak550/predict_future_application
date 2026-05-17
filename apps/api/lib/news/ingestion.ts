@@ -218,5 +218,5 @@ export async function ingestStories(items: StoryInput[], actorId: string) {
     }
 
     return results;
-  });
+  }, { maxWait: 30000, timeout: 30000 });
 }

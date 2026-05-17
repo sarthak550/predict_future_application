@@ -1206,6 +1206,76 @@
       "qaVerdict": "pass",
       "failureNotes": null,
       "createdAt": "2026-05-17"
+    },
+    {
+      "id": "S32-T1",
+      "sprint": 32,
+      "title": "Schema + API for flagship events",
+      "description": "Add flagshipEventAt/flagshipEventType to Market schema. New GET /api/finance/flagship-events public route. New POST /api/admin/markets/[marketId]/mark-flagship admin route. Add ApiFlagshipEvent type + api-client methods.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-18"
+    },
+    {
+      "id": "S32-T2",
+      "sprint": 32,
+      "title": "Finance tab Upcoming Events carousel",
+      "description": "New FlagshipEventsCarousel component at top of Finance tab. Hero cards with countdown, probability bar, expert consensus line, Predict button.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-18"
+    },
+    {
+      "id": "S32-T3",
+      "sprint": 32,
+      "title": "User-create flagship poll flow",
+      "description": "Flagship event toggle in Create wizard (Finance only). Date picker + event type dropdown. POST /api/markets accepts flagshipEventAt + flagshipEventType.",
+      "priority": "high",
+      "status": "failed",
+      "qaVerdict": "fail",
+      "failureNotes": [
+        "apps/mobile/src/app/(tabs)/create.tsx line 33: FINANCE is missing from the CATEGORIES constant. The FlagshipEventSection only renders when category === 'FINANCE' (line 785), but users can never select FINANCE from the category picker (line 1235) because the array at line 33-40 omits it. The entire flagship create flow is unreachable. Fix: add { label: 'Finance', value: 'FINANCE' } to the CATEGORIES array."
+      ],
+      "createdAt": "2026-05-18"
+    },
+    {
+      "id": "S32-T4",
+      "sprint": 32,
+      "title": "Expert consensus split on flagship cards",
+      "description": "Expert probability already computed in flagship-events route. Update mobile card to render expert split line.",
+      "priority": "high",
+      "status": "failed",
+      "qaVerdict": "fail",
+      "failureNotes": [
+        "apps/api/app/api/finance/flagship-events/route.ts lines 70-109: The results.map() block returns expertProbability but never computes or returns expertCount. The ApiFlagshipEvent type marks expertCount as optional (packages/types/src/index.ts line 233), but ExpertConsensusLine in finance-mode.tsx (line 138) renders 'Experts (${count}):' using expertCount ?? 0. When experts do exist and expertProbability is non-null, the component will always display 'Experts (0):' instead of the actual expert count. Fix: compute expertCount from the filtered expert positions inside computeExpertProbability (or return it alongside), then include it in the results.map() return object."
+      ],
+      "createdAt": "2026-05-18"
+    },
+    {
+      "id": "S32-T5",
+      "sprint": 32,
+      "title": "Push notifications for flagship events",
+      "description": "Fire push to all users on admin approve of flagship market. Daily cron flagship-reminder at 9:15am UTC for markets closing tomorrow.",
+      "priority": "medium",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-18"
+    },
+    {
+      "id": "S32-T6",
+      "sprint": 32,
+      "title": "Admin surface for flagship events",
+      "description": "Flagship badge + sort in moderation page. New /admin/flagship-events page with full list, inline edit form, link from admin home.",
+      "priority": "medium",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-18"
     }
   ]
 }

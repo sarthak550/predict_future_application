@@ -55,6 +55,9 @@ export async function GET(request: Request) {
     where: {
       visibility: "PUBLIC",
       storyId: null,
+      // Flagship Finance polls live exclusively in the Finance tab carousel,
+      // not in the general Markets list.
+      flagshipEventAt: null,
       ...(explicitStatusFilter ?? {}),
       ...(defaultUnapprovedFilter ?? {}),
       ...(category && Object.values(MarketCategory).includes(category as MarketCategory)
@@ -182,13 +185,45 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Account is not allowed to create markets." }, { status: 403 });
     }
 
-    const payload = createMarketSchema.parse(await request.json());
+    const rawBody = await request.json() as Record<string, unknown>;
+    const payload = createMarketSchema.parse(rawBody);
+
+    // S32-T3: Extract optional flagship event fields outside the core schema.
+    // Both must be provided together; date must be in the future.
+    let flagshipEventAt: Date | null = null;
+    let flagshipEventType: string | null = null;
+
+    if (rawBody.flagshipEventAt != null || rawBody.flagshipEventType != null) {
+      const fatRaw = rawBody.flagshipEventAt;
+      const fetRaw = rawBody.flagshipEventType;
+
+      if (!fatRaw || !fetRaw || typeof fatRaw !== "string" || typeof fetRaw !== "string") {
+        return NextResponse.json(
+          { error: "flagshipEventAt and flagshipEventType must both be provided together." },
+          { status: 400 }
+        );
+      }
+
+      const parsed = new Date(fatRaw);
+      if (isNaN(parsed.getTime()) || parsed <= new Date()) {
+        return NextResponse.json(
+          { error: "flagshipEventAt must be a valid future ISO date." },
+          { status: 400 }
+        );
+      }
+
+      flagshipEventAt = parsed;
+      flagshipEventType = fetRaw.trim();
+    }
+
     const market = await createPredictionMarket({
       actorId: actor.id,
       actorRole: actor.role,
       actorUsername: actor.username,
       actorReputationScore: actor.reputationScore,
-      payload
+      payload,
+      flagshipEventAt,
+      flagshipEventType,
     });
 
     return NextResponse.json({ market: { id: market.id, status: market.status } }, { status: 201 });

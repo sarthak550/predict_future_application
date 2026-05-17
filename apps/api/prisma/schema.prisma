@@ -433,6 +433,13 @@ model Market {
   bigCallNotificationSentAt  DateTime?
   /// Engagement analytics: total opens of this market from Big Call notifications/card.
   bigCallNotificationOpenedCount Int               @default(0)
+  /// When set, this market is a Finance "flagship event" tied to a specific upcoming
+  /// real-world date (RBI MPC, Budget, etc.). Used by the Finance tab Policy & Big Events
+  /// carousel. Null for normal markets.
+  flagshipEventAt            DateTime?
+  /// One of: 'RBI' | 'BUDGET' | 'GST' | 'GLOBAL' | 'FED' | 'OTHER'.
+  /// Plain string so we can add types without migrations.
+  flagshipEventType          String?
   adminActions               AdminAction[]
   challenges                 Challenge[]
   approvedBy                 User?                  @relation("ApprovedMarkets", fields: [approvedById], references: [id])
@@ -464,6 +471,7 @@ model Market {
   @@index([eventClusterId, status])
   @@index([originPlatform, externalId])
   @@index([isBigCallDate])
+  @@index([flagshipEventAt])
 }
 
 /// Hourly snapshot of binary/multi-choice market probability for the consensus-line chart.
@@ -574,6 +582,9 @@ model MultiChoicePosition {
   marketId    String
   optionId    String
   amount      Int
+  /// Optional free-text reasoning attached to this pick. Used for flagship polls
+  /// where users explain why they chose this option.
+  reasoning   String?
   payoutAmount Int?        @default(0)
   settledAt   DateTime?
   createdAt   DateTime     @default(now())

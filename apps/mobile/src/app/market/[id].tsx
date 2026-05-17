@@ -38,6 +38,7 @@ type UserPosition = {
   amount: number;
   numericValue: number | null;
   createdAt: string;
+  reasoning?: string | null;
 };
 
 type UserVote = {
@@ -45,7 +46,18 @@ type UserVote = {
   numericValue: number | null;
 };
 
-type MarketResponse = ApiMarketDetail & { userPositions?: UserPosition[]; userVote?: UserVote | null };
+type UserMultiChoicePosition = {
+  id?: string;
+  optionId: string;
+  amount: number;
+  reasoning?: string | null;
+};
+
+type MarketResponse = Omit<ApiMarketDetail, "userMultiChoicePositions"> & {
+  userPositions?: UserPosition[];
+  userVote?: UserVote | null;
+  userMultiChoicePositions?: UserMultiChoicePosition[];
+};
 
 function normalizeParam(value: string | string[] | undefined): string | null {
   if (Array.isArray(value)) return value[0] ?? null;
@@ -306,6 +318,13 @@ function StickyBettingBar({
   const positions = data.userPositions ?? [];
   const hasPosition = positions.length > 0;
   const totalCommitted = positions.reduce((sum, p) => sum + p.amount, 0);
+  const isFlagshipPoll = market.flagshipEventAt != null;
+  const ctaLabel = isFlagshipPoll
+    ? (hasPosition ? "Edit reasoning" : "Vote")
+    : (hasPosition ? "Add More" : "Predict");
+  const ctaLabelMC = isFlagshipPoll
+    ? (hasPosition ? "Edit reasoning" : "Vote")
+    : (hasPosition ? "Stake More" : "Predict");
 
   const yesPool = market.yesPool ?? 0;
   const noPool = market.noPool ?? 0;
@@ -462,13 +481,20 @@ function StickyBettingBar({
         <View style={barStyle}>
           <View style={styles.stickyBarInner}>
             <View style={styles.stickyBarLeft}>
-              <Text style={styles.stickyProbLabel}>Total staked</Text>
-              <Text style={styles.stickyProbValue}>{formatPoints(totalStaked)} pts</Text>
+              {isFlagshipPoll ? (
+                <>
+                  <Text style={styles.stickyProbLabel}>Votes</Text>
+                  <Text style={styles.stickyProbValue}>{market.totalParticipants ?? 0}</Text>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.stickyProbLabel}>Total staked</Text>
+                  <Text style={styles.stickyProbValue}>{formatPoints(totalStaked)} pts</Text>
+                </>
+              )}
             </View>
             <Pressable style={styles.predictBtn} onPress={onOpenBetSheet}>
-              <Text style={styles.predictBtnText}>
-                {hasPosition ? "Stake More" : "Predict"}
-              </Text>
+              <Text style={styles.predictBtnText}>{ctaLabelMC}</Text>
             </Pressable>
           </View>
         </View>
@@ -522,16 +548,18 @@ function StickyBettingBar({
                     {positions[0]?.side ?? `${positions[0]?.numericValue}`}
                   </Text>
                 </View>
-                <Text style={styles.stickyPositionAmount}>
-                  {formatPoints(totalCommitted)} pts
-                </Text>
+                {!isFlagshipPoll ? (
+                  <Text style={styles.stickyPositionAmount}>
+                    {formatPoints(totalCommitted)} pts
+                  </Text>
+                ) : (
+                  <Text style={styles.stickyPositionAmount}>Voted</Text>
+                )}
               </View>
             ) : null}
           </View>
           <Pressable style={styles.predictBtn} onPress={onOpenBetSheet}>
-            <Text style={styles.predictBtnText}>
-              {hasPosition ? "Add More" : "Predict"}
-            </Text>
+            <Text style={styles.predictBtnText}>{ctaLabel}</Text>
           </Pressable>
         </View>
       </View>
@@ -586,11 +614,17 @@ function BettingSheet({
   const [placing, setPlacing] = useState(false);
   const [betError, setBetError] = useState<string | null>(null);
   const [betSuccess, setBetSuccess] = useState(false);
-  // Reasoning field — sticky within session once expanded
-  const [reasoningExpanded, setReasoningExpanded] = useState(false);
+  // Reasoning field — sticky within session once expanded. Always expanded for flagship polls.
+  const [reasoningExpanded, setReasoningExpanded] = useState(market.flagshipEventAt != null);
   const [reasoning, setReasoning] = useState("");
 
-  // Reset form when sheet opens
+  // Flagship polls = free vote, no points wagered, prominent reasoning.
+  const isFlagshipPoll = market.flagshipEventAt != null;
+  // For flagship polls with an existing vote: side is locked, only reasoning can be updated.
+  const flagshipExistingPosition = isFlagshipPoll && hasPosition ? positions[0] : null;
+  const isFlagshipReasoningEdit = Boolean(flagshipExistingPosition);
+
+  // Reset form when sheet opens. For flagship reasoning-edit mode, prefill from existing.
   useEffect(() => {
     if (visible) {
       setSelectedSide(null);
@@ -599,18 +633,43 @@ function BettingSheet({
       setCustomAmount("");
       setBetError(null);
       setBetSuccess(false);
-      setReasoningExpanded(false);
-      setReasoning("");
+      setReasoningExpanded(isFlagshipPoll);
+      setReasoning(flagshipExistingPosition?.reasoning ?? "");
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
-  const betAmount = customAmount ? parseInt(customAmount, 10) : parseInt(amount, 10);
+  const betAmount = isFlagshipPoll
+    ? 0
+    : (customAmount ? parseInt(customAmount, 10) : parseInt(amount, 10));
 
   const yesProbability = (yesPool + noPool) > 0 ? yesPool / (yesPool + noPool) : 0.5;
 
   async function handlePlaceBet() {
     if (placing) return;
-    if (!betAmount || betAmount < 50) {
+
+    // Flagship + already voted: just PATCH the reasoning, don't create a new position.
+    if (isFlagshipReasoningEdit && flagshipExistingPosition) {
+      setPlacing(true);
+      setBetError(null);
+      try {
+        const trimmed = reasoning.trim();
+        await mobileApi.updatePositionReasoning(
+          flagshipExistingPosition.id,
+          trimmed.length > 0 ? trimmed : null
+        );
+        setBetSuccess(true);
+        onRefresh();
+        setTimeout(() => onBetSuccess(), 900);
+      } catch (err: unknown) {
+        setBetError(err instanceof Error ? err.message : "Failed to update reasoning.");
+      } finally {
+        setPlacing(false);
+      }
+      return;
+    }
+
+    if (!isFlagshipPoll && (!betAmount || betAmount < 50)) {
       setBetError("Minimum bet is 50 points.");
       return;
     }
@@ -678,7 +737,9 @@ function BettingSheet({
         {/* Header */}
         <View style={styles.sheetHeader}>
           <Text style={styles.sheetTitle}>
-            {hasPosition ? "Increase Your Bet" : "Place Your Bet"}
+            {isFlagshipPoll
+              ? (hasPosition ? "Update Your Reasoning" : "Cast Your Vote")
+              : (hasPosition ? "Increase Your Bet" : "Place Your Bet")}
           </Text>
           <Pressable onPress={onClose} style={styles.sheetCloseBtn} hitSlop={12}>
             <Text style={styles.sheetCloseBtnText}>Done</Text>
@@ -688,9 +749,17 @@ function BettingSheet({
         {betSuccess ? (
           // ── Success state ──
           <View style={styles.sheetSuccessSection}>
-            <Text style={styles.sheetSuccessTitle}>Bet placed!</Text>
+            <Text style={styles.sheetSuccessTitle}>
+              {isFlagshipReasoningEdit
+                ? "Reasoning updated"
+                : (isFlagshipPoll ? "Vote recorded!" : "Bet placed!")}
+            </Text>
             <Text style={styles.sheetSuccessText}>
-              Your position has been recorded. You can increase your bet but cannot change your side.
+              {isFlagshipReasoningEdit
+                ? "Your refined take is now visible to the community."
+                : (isFlagshipPoll
+                  ? "Thanks for sharing your call. Your reasoning is now visible to the community."
+                  : "Your position has been recorded. You can increase your bet but cannot change your side.")}
             </Text>
           </View>
         ) : (
@@ -740,7 +809,9 @@ function BettingSheet({
             {/* Existing side reminder */}
             {!isNumeric && hasPosition ? (
               <View style={styles.lockedSideRow}>
-                <Text style={styles.lockedLabel}>Your side:</Text>
+                <Text style={styles.lockedLabel}>
+                  {isFlagshipPoll ? "Your vote:" : "Your side:"}
+                </Text>
                 <View
                   style={[
                     styles.sidePill,
@@ -780,94 +851,128 @@ function BettingSheet({
               </View>
             ) : null}
 
-            {/* Amount selection */}
-            <Text style={[styles.inputLabel, { marginTop: spacing.lg }]}>Amount</Text>
-            <View style={styles.presetRow}>
-              {BET_PRESETS.map((preset) => (
-                <Pressable
-                  key={preset}
-                  style={[
-                    styles.presetPill,
-                    amount === String(preset) && !customAmount && styles.presetPillActive,
-                  ]}
-                  onPress={() => {
-                    setAmount(String(preset));
-                    setCustomAmount("");
-                  }}
-                >
-                  <Text
-                    style={[
-                      styles.presetText,
-                      amount === String(preset) && !customAmount && styles.presetTextActive,
-                    ]}
-                  >
-                    {preset}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
+            {/* Amount selection — hidden for flagship polls (free vote, no stake) */}
+            {!isFlagshipPoll ? (
+              <>
+                <Text style={[styles.inputLabel, { marginTop: spacing.lg }]}>Amount</Text>
+                <View style={styles.presetRow}>
+                  {BET_PRESETS.map((preset) => (
+                    <Pressable
+                      key={preset}
+                      style={[
+                        styles.presetPill,
+                        amount === String(preset) && !customAmount && styles.presetPillActive,
+                      ]}
+                      onPress={() => {
+                        setAmount(String(preset));
+                        setCustomAmount("");
+                      }}
+                    >
+                      <Text
+                        style={[
+                          styles.presetText,
+                          amount === String(preset) && !customAmount && styles.presetTextActive,
+                        ]}
+                      >
+                        {preset}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
 
-            <TextInput
-              style={styles.textInput}
-              placeholder="Custom amount (min 50)"
-              placeholderTextColor={colors.textMuted}
-              keyboardType="numeric"
-              value={customAmount}
-              onChangeText={(text) => {
-                setCustomAmount(text);
-                if (text) setAmount("");
-              }}
-            />
-
-            {!isNumeric && selectedSide && betAmount >= 50 ? (
-              <View style={styles.estimatedReturnRow}>
-                <Text style={styles.estimatedReturnLabel}>Estimated return</Text>
-                <Text style={styles.estimatedReturnValue}>
-                  {formatPoints(calcEstimatedReturn(selectedSide, betAmount, yesPool, noPool))} pts
-                </Text>
-              </View>
-            ) : null}
-
-            {/* Reasoning field */}
-            <Pressable
-              style={styles.reasoningToggleRow}
-              onPress={() => setReasoningExpanded((prev) => !prev)}
-              accessibilityRole="button"
-              accessibilityLabel="Add reasoning"
-            >
-              <Ionicons
-                name="pencil-outline"
-                size={15}
-                color={colors.textMuted}
-                style={{ marginRight: spacing.xs }}
-              />
-              <Text style={styles.reasoningToggleLabel}>
-                Add your reasoning (optional)
-              </Text>
-              <Ionicons
-                name={reasoningExpanded ? "chevron-up" : "chevron-down"}
-                size={14}
-                color={colors.textMuted}
-              />
-            </Pressable>
-
-            {reasoningExpanded ? (
-              <View style={styles.reasoningInputWrapper}>
                 <TextInput
-                  style={styles.reasoningInput}
-                  placeholder="Why are you making this call?"
+                  style={styles.textInput}
+                  placeholder="Custom amount (min 50)"
                   placeholderTextColor={colors.textMuted}
-                  multiline
-                  maxLength={500}
-                  value={reasoning}
-                  onChangeText={setReasoning}
-                  textAlignVertical="top"
+                  keyboardType="numeric"
+                  value={customAmount}
+                  onChangeText={(text) => {
+                    setCustomAmount(text);
+                    if (text) setAmount("");
+                  }}
                 />
-                <Text style={styles.reasoningCounter}>
-                  {reasoning.length}/500
-                </Text>
-              </View>
+
+                {!isNumeric && selectedSide && betAmount >= 50 ? (
+                  <View style={styles.estimatedReturnRow}>
+                    <Text style={styles.estimatedReturnLabel}>Estimated return</Text>
+                    <Text style={styles.estimatedReturnValue}>
+                      {formatPoints(calcEstimatedReturn(selectedSide, betAmount, yesPool, noPool))} pts
+                    </Text>
+                  </View>
+                ) : null}
+              </>
             ) : null}
+
+            {/* Reasoning field — always visible & prominently labeled for flagship polls */}
+            {isFlagshipPoll ? (
+              <View style={{ marginTop: spacing.lg }}>
+                <Text style={[styles.inputLabel, { fontSize: 14 }]}>
+                  {isFlagshipReasoningEdit ? "Refine your reasoning" : "Why? Share your take with the community"}
+                </Text>
+                <Text style={{ fontSize: 12, color: colors.textMuted, marginTop: 2, marginBottom: 8 }}>
+                  {isFlagshipReasoningEdit
+                    ? "Your vote is locked, but you can update your reasoning as new info comes out."
+                    : "Strong reasoning earns upvotes from other analysts."}
+                </Text>
+                <View style={styles.reasoningInputWrapper}>
+                  <TextInput
+                    style={styles.reasoningInput}
+                    placeholder="What's driving your prediction? News, data, gut feel?"
+                    placeholderTextColor={colors.textMuted}
+                    multiline
+                    maxLength={500}
+                    value={reasoning}
+                    onChangeText={setReasoning}
+                    textAlignVertical="top"
+                  />
+                  <Text style={styles.reasoningCounter}>
+                    {reasoning.length}/500
+                  </Text>
+                </View>
+              </View>
+            ) : (
+              <>
+                <Pressable
+                  style={styles.reasoningToggleRow}
+                  onPress={() => setReasoningExpanded((prev) => !prev)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Add reasoning"
+                >
+                  <Ionicons
+                    name="pencil-outline"
+                    size={15}
+                    color={colors.textMuted}
+                    style={{ marginRight: spacing.xs }}
+                  />
+                  <Text style={styles.reasoningToggleLabel}>
+                    Add your reasoning (optional)
+                  </Text>
+                  <Ionicons
+                    name={reasoningExpanded ? "chevron-up" : "chevron-down"}
+                    size={14}
+                    color={colors.textMuted}
+                  />
+                </Pressable>
+
+                {reasoningExpanded ? (
+                  <View style={styles.reasoningInputWrapper}>
+                    <TextInput
+                      style={styles.reasoningInput}
+                      placeholder="Why are you making this call?"
+                      placeholderTextColor={colors.textMuted}
+                      multiline
+                      maxLength={500}
+                      value={reasoning}
+                      onChangeText={setReasoning}
+                      textAlignVertical="top"
+                    />
+                    <Text style={styles.reasoningCounter}>
+                      {reasoning.length}/500
+                    </Text>
+                  </View>
+                ) : null}
+              </>
+            )}
 
             {betError ? <Text style={styles.betError}>{betError}</Text> : null}
 
@@ -880,8 +985,9 @@ function BettingSheet({
                 <ActivityIndicator color="#fff" />
               ) : (
                 <Text style={styles.placeBetText}>
-                  {hasPosition ? "Increase Bet" : "Place Bet"}{" "}
-                  {betAmount >= 50 ? `— ${betAmount} pts` : ""}
+                  {isFlagshipPoll
+                    ? (hasPosition ? "Update reasoning" : "Submit your vote")
+                    : `${hasPosition ? "Increase Bet" : "Place Bet"} ${betAmount >= 50 ? `— ${betAmount} pts` : ""}`}
                 </Text>
               )}
             </Pressable>
@@ -917,32 +1023,64 @@ function MultiChoiceBettingSheet({
   const options = market.options ?? [];
   const totalStaked = options.reduce((sum, o) => sum + o.totalStaked, 0);
 
+  // Flagship multi-choice polls: side locked once voted, only reasoning editable.
+  const isFlagshipPoll = market.flagshipEventAt != null;
+  const userMCPositions = data.userMultiChoicePositions ?? [];
+  const existingMCPos = userMCPositions[0] ?? null;
+  const isFlagshipReasoningEdit = isFlagshipPoll && existingMCPos != null;
+
   const [selectedOptionId, setSelectedOptionId] = useState<string | null>(null);
   const [amount, setAmount] = useState("");
   const [customAmount, setCustomAmount] = useState("");
   const [placing, setPlacing] = useState(false);
   const [betError, setBetError] = useState<string | null>(null);
   const [betSuccess, setBetSuccess] = useState(false);
+  const [reasoning, setReasoning] = useState("");
 
   useEffect(() => {
     if (visible) {
-      setSelectedOptionId(null);
+      // Pre-select locked option in flagship-edit mode
+      setSelectedOptionId(existingMCPos?.optionId ?? null);
       setAmount("");
       setCustomAmount("");
       setBetError(null);
       setBetSuccess(false);
+      setReasoning((existingMCPos as { reasoning?: string | null } | null)?.reasoning ?? "");
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
-  const betAmount = customAmount ? parseInt(customAmount, 10) : parseInt(amount, 10);
+  const betAmount = isFlagshipPoll ? 0 : (customAmount ? parseInt(customAmount, 10) : parseInt(amount, 10));
 
   async function handlePlaceBet() {
     if (placing) return;
+
+    // Flagship + already voted: PATCH reasoning, don't create new position
+    if (isFlagshipReasoningEdit && existingMCPos) {
+      setPlacing(true);
+      setBetError(null);
+      try {
+        const trimmed = reasoning.trim();
+        // Treat MultiChoicePosition.id same as MarketPosition.id (endpoint tries both tables).
+        const posId = (existingMCPos as { id?: string }).id;
+        if (!posId) throw new Error("Position id missing.");
+        await mobileApi.updatePositionReasoning(posId, trimmed.length > 0 ? trimmed : null);
+        setBetSuccess(true);
+        onRefresh();
+        setTimeout(() => onBetSuccess(), 900);
+      } catch (err: unknown) {
+        setBetError(err instanceof Error ? err.message : "Failed to update reasoning.");
+      } finally {
+        setPlacing(false);
+      }
+      return;
+    }
+
     if (!selectedOptionId) {
       setBetError("Select an option.");
       return;
     }
-    if (!betAmount || betAmount < 10) {
+    if (!isFlagshipPoll && (!betAmount || betAmount < 10)) {
       setBetError("Minimum stake is 10 points.");
       return;
     }
@@ -950,9 +1088,11 @@ function MultiChoiceBettingSheet({
     setPlacing(true);
     setBetError(null);
     try {
+      const trimmed = reasoning.trim();
       const result = await mobileApi.placeMultiChoicePosition(marketId, {
         optionId: selectedOptionId,
-        amount: betAmount
+        amount: betAmount,
+        reasoning: isFlagshipPoll && trimmed.length > 0 ? trimmed : undefined,
       });
       setBetSuccess(true);
       onRefresh();
@@ -989,7 +1129,11 @@ function MultiChoiceBettingSheet({
         <View style={styles.sheetHandle} />
 
         <View style={styles.sheetHeader}>
-          <Text style={styles.sheetTitle}>Choose an Option</Text>
+          <Text style={styles.sheetTitle}>
+            {isFlagshipReasoningEdit
+              ? "Update Your Reasoning"
+              : (isFlagshipPoll ? "Cast Your Vote" : "Choose an Option")}
+          </Text>
           <Pressable onPress={onClose} style={styles.sheetCloseBtn} hitSlop={12}>
             <Text style={styles.sheetCloseBtnText}>Done</Text>
           </Pressable>
@@ -997,16 +1141,26 @@ function MultiChoiceBettingSheet({
 
         {betSuccess ? (
           <View style={styles.sheetSuccessSection}>
-            <Text style={styles.sheetSuccessTitle}>Stake placed!</Text>
+            <Text style={styles.sheetSuccessTitle}>
+              {isFlagshipReasoningEdit
+                ? "Reasoning updated"
+                : (isFlagshipPoll ? "Vote recorded!" : "Stake placed!")}
+            </Text>
             <Text style={styles.sheetSuccessText}>
-              Your prediction has been recorded.
+              {isFlagshipReasoningEdit
+                ? "Your refined take is now visible to the community."
+                : (isFlagshipPoll
+                  ? "Thanks for sharing your call. Your reasoning is now visible to the community."
+                  : "Your prediction has been recorded.")}
             </Text>
           </View>
         ) : (
           <>
-            {/* Options list */}
+            {/* Options list — locked to a single option in flagship-edit mode */}
             <ScrollView style={{ maxHeight: 220 }} showsVerticalScrollIndicator={false}>
-              {options.map((option) => {
+              {options
+                .filter((opt) => !isFlagshipReasoningEdit || opt.id === existingMCPos?.optionId)
+                .map((option) => {
                 const pct = totalStaked > 0 ? option.totalStaked / totalStaked : 0;
                 const isSelected = selectedOptionId === option.id;
                 return (
@@ -1016,7 +1170,10 @@ function MultiChoiceBettingSheet({
                       styles.multiChoiceOption,
                       isSelected && styles.multiChoiceOptionSelected
                     ]}
-                    onPress={() => setSelectedOptionId(option.id)}
+                    onPress={() => {
+                      if (isFlagshipReasoningEdit) return;
+                      setSelectedOptionId(option.id);
+                    }}
                   >
                     <View style={styles.multiChoiceOptionRow}>
                       <Text
@@ -1026,7 +1183,7 @@ function MultiChoiceBettingSheet({
                         ]}
                         numberOfLines={2}
                       >
-                        {option.label}
+                        {option.label}{isFlagshipReasoningEdit ? "  (your vote)" : ""}
                       </Text>
                       <Text style={styles.multiChoiceOptionPct}>
                         {Math.round(pct * 100)}%
@@ -1046,44 +1203,75 @@ function MultiChoiceBettingSheet({
               })}
             </ScrollView>
 
-            {/* Amount selection */}
-            <Text style={[styles.inputLabel, { marginTop: spacing.md }]}>Amount</Text>
-            <View style={styles.presetRow}>
-              {[50, 100, 250, 500, 1000].map((preset) => (
-                <Pressable
-                  key={preset}
-                  style={[
-                    styles.presetPill,
-                    amount === String(preset) && !customAmount && styles.presetPillActive,
-                  ]}
-                  onPress={() => {
-                    setAmount(String(preset));
-                    setCustomAmount("");
-                  }}
-                >
-                  <Text
-                    style={[
-                      styles.presetText,
-                      amount === String(preset) && !customAmount && styles.presetTextActive,
-                    ]}
-                  >
-                    {preset}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
+            {/* Amount selection — hidden for flagship polls */}
+            {!isFlagshipPoll ? (
+              <>
+                <Text style={[styles.inputLabel, { marginTop: spacing.md }]}>Amount</Text>
+                <View style={styles.presetRow}>
+                  {[50, 100, 250, 500, 1000].map((preset) => (
+                    <Pressable
+                      key={preset}
+                      style={[
+                        styles.presetPill,
+                        amount === String(preset) && !customAmount && styles.presetPillActive,
+                      ]}
+                      onPress={() => {
+                        setAmount(String(preset));
+                        setCustomAmount("");
+                      }}
+                    >
+                      <Text
+                        style={[
+                          styles.presetText,
+                          amount === String(preset) && !customAmount && styles.presetTextActive,
+                        ]}
+                      >
+                        {preset}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
 
-            <TextInput
-              style={styles.textInput}
-              placeholder="Custom amount (min 10)"
-              placeholderTextColor={colors.textMuted}
-              keyboardType="numeric"
-              value={customAmount}
-              onChangeText={(text) => {
-                setCustomAmount(text);
-                if (text) setAmount("");
-              }}
-            />
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="Custom amount (min 10)"
+                  placeholderTextColor={colors.textMuted}
+                  keyboardType="numeric"
+                  value={customAmount}
+                  onChangeText={(text) => {
+                    setCustomAmount(text);
+                    if (text) setAmount("");
+                  }}
+                />
+              </>
+            ) : null}
+
+            {/* Reasoning textarea — always visible & prominent for flagship polls */}
+            {isFlagshipPoll ? (
+              <View style={{ marginTop: spacing.md }}>
+                <Text style={[styles.inputLabel, { fontSize: 14 }]}>
+                  {isFlagshipReasoningEdit ? "Refine your reasoning" : "Why? Share your take with the community"}
+                </Text>
+                <Text style={{ fontSize: 12, color: colors.textMuted, marginTop: 2, marginBottom: 8 }}>
+                  {isFlagshipReasoningEdit
+                    ? "Your vote is locked, but you can update your reasoning as new info comes out."
+                    : "Strong reasoning earns upvotes from other analysts."}
+                </Text>
+                <TextInput
+                  style={[styles.textInput, { minHeight: 80, paddingTop: 10 }]}
+                  placeholder="What's driving your prediction? News, data, gut feel?"
+                  placeholderTextColor={colors.textMuted}
+                  multiline
+                  maxLength={500}
+                  value={reasoning}
+                  onChangeText={setReasoning}
+                  textAlignVertical="top"
+                />
+                <Text style={{ fontSize: 11, color: colors.textMuted, alignSelf: "flex-end", marginTop: 2 }}>
+                  {reasoning.length}/500
+                </Text>
+              </View>
+            ) : null}
 
             {betError ? <Text style={styles.betError}>{betError}</Text> : null}
 
@@ -1096,7 +1284,11 @@ function MultiChoiceBettingSheet({
                 <ActivityIndicator color="#fff" />
               ) : (
                 <Text style={styles.placeBetText}>
-                  Stake{betAmount >= 10 ? ` — ${betAmount} pts` : ""}
+                  {isFlagshipReasoningEdit
+                    ? "Update reasoning"
+                    : (isFlagshipPoll
+                      ? "Submit your vote"
+                      : `Stake${betAmount >= 10 ? ` — ${betAmount} pts` : ""}`)}
                 </Text>
               )}
             </Pressable>
@@ -1446,6 +1638,7 @@ function MarketBody({
   const isClosed = !isOpen;
   const isNumeric = market.marketType === "NUMERIC";
   const isPoll = Boolean(market.storyId);
+  const isFlagshipPoll = market.flagshipEventAt != null;
 
   const isPendingReview = market.status === "DRAFT" || market.status === "PENDING_REVIEW";
   const isCreatorViewing =
@@ -1700,10 +1893,12 @@ function MarketBody({
         ) : null}
       </View>
 
-      {/* Existing positions */}
+      {/* Existing positions / vote */}
       {hasPosition ? (
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Your Position</Text>
+          <Text style={styles.sectionTitle}>
+            {isFlagshipPoll ? "Your Vote" : "Your Position"}
+          </Text>
           {positions.map((pos) => (
             <View key={pos.id} style={styles.positionRow}>
               {pos.side ? (
@@ -1715,17 +1910,34 @@ function MarketBody({
                   <Text style={styles.sidePillText}>Guess: {pos.numericValue}</Text>
                 </View>
               ) : null}
-              <Text style={styles.positionAmount}>{formatPoints(pos.amount)} pts</Text>
+              {!isFlagshipPoll ? (
+                <Text style={styles.positionAmount}>{formatPoints(pos.amount)} pts</Text>
+              ) : null}
               <Text style={styles.positionDate}>{formatRelativeTime(pos.createdAt)}</Text>
             </View>
           ))}
-          <View style={styles.totalRow}>
-            <Text style={styles.totalLabel}>Total committed</Text>
-            <Text style={styles.totalValue}>{formatPoints(totalCommitted)} pts</Text>
-          </View>
+          {!isFlagshipPoll ? (
+            <View style={styles.totalRow}>
+              <Text style={styles.totalLabel}>Total committed</Text>
+              <Text style={styles.totalValue}>{formatPoints(totalCommitted)} pts</Text>
+            </View>
+          ) : null}
+          {/* Show user's reasoning prominently on flagship polls */}
+          {isFlagshipPoll && positions[0]?.reasoning ? (
+            <View style={{ marginTop: spacing.sm, padding: spacing.sm, borderRadius: 8, backgroundColor: "rgba(245,158,11,0.08)" }}>
+              <Text style={{ fontSize: 11, fontWeight: "700", color: "#92400e", marginBottom: 4, letterSpacing: 0.3 }}>
+                YOUR REASONING
+              </Text>
+              <Text style={{ fontSize: 13, color: colors.text, fontStyle: "italic", lineHeight: 18 }}>
+                "{positions[0]?.reasoning}"
+              </Text>
+            </View>
+          ) : null}
           {isOpen ? (
             <Pressable style={styles.addMoreBtn} onPress={onOpenBetSheet}>
-              <Text style={styles.addMoreBtnText}>Add More</Text>
+              <Text style={styles.addMoreBtnText}>
+                {isFlagshipPoll ? "Edit reasoning" : "Add More"}
+              </Text>
             </Pressable>
           ) : null}
         </View>

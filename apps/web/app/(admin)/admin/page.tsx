@@ -78,6 +78,12 @@ export default async function AdminDashboardPage() {
             Track notification opens and participation for every Big Call market, with aggregate stats.
           </p>
         </Link>
+        <Link href="/admin/flagship-events" className="rounded-[28px] border border-amber-200 bg-amber-50 p-6">
+          <h2 className="text-xl font-semibold text-ink-900">🔥 Flagship Events</h2>
+          <p className="mt-2 text-sm leading-7 text-ink-600">
+            Manage Policy &amp; Big Events carousel — tag markets with RBI / Budget / GST / Fed dates, edit or clear designations.
+          </p>
+        </Link>
       </div>
     </div>
   );

@@ -213,11 +213,12 @@ export async function GET(
   }
 
   // For MULTIPLE_CHOICE markets, also return the viewer's per-option stakes.
+  // Include id + reasoning so the flagship-poll UI can lock-and-edit reasoning.
   const userMultiChoicePositions =
     viewerId && market.marketType === "MULTIPLE_CHOICE"
       ? await prisma.multiChoicePosition.findMany({
           where: { marketId: market.id, userId: viewerId },
-          select: { optionId: true, amount: true },
+          select: { id: true, optionId: true, amount: true, reasoning: true },
         })
       : [];
 

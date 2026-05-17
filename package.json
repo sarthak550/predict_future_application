@@ -22,7 +22,9 @@
     "prisma:push": "npm run prisma:push --workspace @predict-future/api",
     "prisma:migrate": "npm run prisma:migrate --workspace @predict-future/api",
     "prisma:seed": "npm run prisma:seed --workspace @predict-future/api",
-    "ingest:news": "npm run ingest:news --workspace @predict-future/api"
+    "ingest:news": "npm run ingest:news --workspace @predict-future/api",
+    "use:local": "cp apps/mobile/.env.local apps/mobile/.env && echo '✓ mobile -> LOCAL (http://192.168.1.2:3001)'",
+    "use:prod": "cp apps/mobile/.env.prod apps/mobile/.env && echo '✓ mobile -> PROD (Vercel)'"
   },
   "devDependencies": {
     "turbo": "^2.0.12",

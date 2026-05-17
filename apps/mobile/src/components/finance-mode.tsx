@@ -15,6 +15,7 @@ import {
 
 import type {
   ApiCrowdVsExperts,
+  ApiFlagshipEvent,
   ApiFinanceExpertSentiment,
   ApiFinanceMarketsResponse,
   ApiMarketSummary,
@@ -30,6 +31,219 @@ import { getExpertInitials, getExpertInitialsColor } from "@/utils/expertAvatar"
 const FOLLOWED_ANALYSTS_KEY = "finance:followedAnalysts";
 
 type DirectionFilter = "BULLISH" | "BEARISH" | "NEUTRAL" | "VERIFIED" | null;
+
+// ─── Flagship Events Carousel (S32-T2) ────────────────────────────────────────
+
+const EVENT_TYPE_COLORS: Record<string, string> = {
+  RBI: "#DC2626",
+  BUDGET: "#D97706",
+  GST: "#7C3AED",
+  GLOBAL: "#0284C7",
+  FED: "#065F46",
+  OTHER: "#4B5563",
+};
+
+function getCountdownLabel(flagshipEventAt: string): string {
+  const now = Date.now();
+  const target = new Date(flagshipEventAt).getTime();
+  const diffMs = target - now;
+  if (diffMs <= 0) return "Today";
+  const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+  if (diffDays === 1) return "Tomorrow";
+  if (diffDays <= 7) return `in ${diffDays} days`;
+  const diffWeeks = Math.round(diffDays / 7);
+  return `in ${diffWeeks}w`;
+}
+
+function FlagshipProbabilityBar({
+  market,
+  crowdProbability,
+}: {
+  market: ApiFlagshipEvent;
+  crowdProbability: Record<string, number> | null;
+}) {
+  if (!crowdProbability) {
+    return (
+      <Text style={flagshipStyles.noDataText}>No predictions yet</Text>
+    );
+  }
+
+  if (market.marketType === "BINARY") {
+    const yesP = crowdProbability["YES"] ?? 0;
+    const noP = crowdProbability["NO"] ?? 0;
+    return (
+      <View>
+        <View style={flagshipStyles.barTrack}>
+          <View style={[flagshipStyles.barSegment, { flex: yesP, backgroundColor: "#16a34a" }]} />
+          <View style={[flagshipStyles.barSegment, { flex: noP, backgroundColor: "#dc2626" }]} />
+        </View>
+        <View style={flagshipStyles.barLabels}>
+          <Text style={[flagshipStyles.barLabel, { color: "#16a34a" }]}>YES {Math.round(yesP * 100)}%</Text>
+          <Text style={[flagshipStyles.barLabel, { color: "#dc2626" }]}>NO {Math.round(noP * 100)}%</Text>
+        </View>
+      </View>
+    );
+  }
+
+  // MULTIPLE_CHOICE — show top 3-4 segments with option labels
+  if (market.marketType === "MULTIPLE_CHOICE" && market.options?.length) {
+    const sorted = market.options
+      .filter((o) => crowdProbability[o.id] !== undefined)
+      .map((o) => ({ label: o.label, pct: crowdProbability[o.id] ?? 0 }))
+      .sort((a, b) => b.pct - a.pct)
+      .slice(0, 4);
+    const segColors = ["#0284C7", "#7C3AED", "#D97706", "#64748B"];
+    return (
+      <View>
+        <View style={flagshipStyles.barTrack}>
+          {sorted.map((seg, i) => (
+            <View
+              key={i}
+              style={[flagshipStyles.barSegment, { flex: seg.pct, backgroundColor: segColors[i % segColors.length] }]}
+            />
+          ))}
+        </View>
+        <View style={flagshipStyles.barLabelsWrap}>
+          {sorted.map((seg, i) => (
+            <Text key={i} style={[flagshipStyles.barLabelSmall, { color: segColors[i % segColors.length] }]}>
+              {seg.label.length > 10 ? seg.label.slice(0, 9) + "…" : seg.label} {Math.round(seg.pct * 100)}%
+            </Text>
+          ))}
+        </View>
+      </View>
+    );
+  }
+
+  return null;
+}
+
+function ExpertConsensusLine({
+  expertProbability,
+  expertCount,
+  market,
+}: {
+  expertProbability: Record<string, number> | null;
+  expertCount?: number;
+  market: ApiFlagshipEvent;
+}) {
+  if (expertProbability === null) {
+    return (
+      <Text style={flagshipStyles.expertLineNull}>Experts: not enough data yet</Text>
+    );
+  }
+
+  const count = expertCount ?? 0;
+
+  if (market.marketType === "BINARY") {
+    const yesP = expertProbability["YES"] ?? 0;
+    const noP = expertProbability["NO"] ?? 0;
+    return (
+      <Text style={flagshipStyles.expertLine}>
+        {`Experts (${count}): ${Math.round(yesP * 100)}% YES · ${Math.round(noP * 100)}% NO`}
+      </Text>
+    );
+  }
+
+  if (market.marketType === "MULTIPLE_CHOICE" && market.options?.length) {
+    const parts = market.options
+      .filter((o) => expertProbability[o.id] !== undefined)
+      .sort((a, b) => (expertProbability[b.id] ?? 0) - (expertProbability[a.id] ?? 0))
+      .slice(0, 3)
+      .map((o) => `${Math.round((expertProbability[o.id] ?? 0) * 100)}% ${o.label.split(" ")[0]}`);
+    return (
+      <Text style={flagshipStyles.expertLine}>
+        {`Experts (${count}): ${parts.join(" · ")}`}
+      </Text>
+    );
+  }
+
+  return null;
+}
+
+function FlagshipHeroCard({ event }: { event: ApiFlagshipEvent }) {
+  const router = useRouter();
+  const accentColor = EVENT_TYPE_COLORS[event.flagshipEventType] ?? EVENT_TYPE_COLORS["OTHER"];
+  const countdown = getCountdownLabel(event.flagshipEventAt);
+
+  return (
+    <Pressable
+      style={[flagshipStyles.card, { borderLeftColor: accentColor }]}
+      onPress={() => router.push(`/market/${event.id}` as Parameters<typeof router.push>[0])}
+    >
+      {/* Top row: type chip + countdown */}
+      <View style={flagshipStyles.cardTopRow}>
+        <View style={[flagshipStyles.typeChip, { backgroundColor: accentColor + "20", borderColor: accentColor + "60" }]}>
+          <Text style={[flagshipStyles.typeChipText, { color: accentColor }]}>{event.flagshipEventType}</Text>
+        </View>
+        <View style={flagshipStyles.countdownBadge}>
+          <Text style={flagshipStyles.countdownText}>{countdown}</Text>
+        </View>
+      </View>
+
+      {/* Market title */}
+      <Text style={flagshipStyles.cardTitle} numberOfLines={2}>{event.title}</Text>
+
+      {/* Probability bar */}
+      <View style={flagshipStyles.probSection}>
+        <Text style={flagshipStyles.crowdLabel}>Crowd</Text>
+        <FlagshipProbabilityBar market={event} crowdProbability={event.crowdProbability} />
+      </View>
+
+      {/* Expert consensus */}
+      <ExpertConsensusLine
+        expertProbability={event.expertProbability}
+        expertCount={event.expertCount}
+        market={event}
+      />
+
+      {/* CTA */}
+      <View style={flagshipStyles.cardFooter}>
+        <Text style={[flagshipStyles.predictBtn, { color: accentColor }]}>Predict</Text>
+      </View>
+    </Pressable>
+  );
+}
+
+function FlagshipEventsCarousel({ events }: { events: ApiFlagshipEvent[] }) {
+  const router = useRouter();
+
+  const goCreate = () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (router.push as (href: any) => void)({
+      pathname: "/(tabs)/create",
+      params: { preselectCategory: "FINANCE", flagshipOn: "1" },
+    });
+  };
+
+  return (
+    <View style={flagshipStyles.section}>
+      <View style={flagshipStyles.headerRow}>
+        <Text style={flagshipStyles.sectionHeader}>{"🔥 Policy & Big Events"}</Text>
+        <Pressable onPress={goCreate} style={flagshipStyles.createBtn} hitSlop={8}>
+          <Text style={flagshipStyles.createBtnText}>+ Create poll</Text>
+        </Pressable>
+      </View>
+      {events.length === 0 ? (
+        <Pressable onPress={goCreate} style={flagshipStyles.emptyCard}>
+          <Text style={flagshipStyles.emptyTitle}>No live event polls yet</Text>
+          <Text style={flagshipStyles.emptyHint}>
+            Start the first poll on an upcoming RBI meeting, Budget, or global event.
+          </Text>
+        </Pressable>
+      ) : (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={flagshipStyles.scroll}
+        >
+          {events.map((event) => (
+            <FlagshipHeroCard key={event.id} event={event} />
+          ))}
+        </ScrollView>
+      )}
+    </View>
+  );
+}
 
 function formatDateRange(startsAt: string, endsAt: string): string {
   const fmt = (iso: string) =>
@@ -378,6 +592,7 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
   const [data, setData] = useState<ApiFinanceMarketsResponse | null>(null);
   const [analystSentiment, setAnalystSentiment] = useState<ApiFinanceExpertSentiment | null>(null);
   const [crowdVsExperts, setCrowdVsExperts] = useState<ApiCrowdVsExperts | null>(null);
+  const [flagshipEvents, setFlagshipEvents] = useState<ApiFlagshipEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -420,12 +635,13 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
     if (!isRefresh) setLoading(true);
     setError(null);
     try {
-      const [marketsResult, newsResult, sentimentResult, crowdResult, verifiedResult] = await Promise.all([
+      const [marketsResult, newsResult, sentimentResult, crowdResult, verifiedResult, flagshipResult] = await Promise.all([
         mobileApi.getFinanceMarkets(),
         mobileApi.getNews({ category: "FINANCE", limit: 10, requireExpertOpinions: true }),
         mobileApi.getFinanceExpertSentiment().catch(() => null),
         mobileApi.getCrowdVsExperts().catch(() => null),
         mobileApi.getVerifiedCalls().catch(() => []),
+        mobileApi.getFlagshipEvents().catch(() => ({ events: [] })),
       ]);
       setData(marketsResult);
       setFinanceNews(newsResult.items ?? []);
@@ -434,6 +650,7 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
       setAnalystSentiment(sentimentResult);
       setCrowdVsExperts(crowdResult);
       setVerifiedCalls(verifiedResult ?? []);
+      setFlagshipEvents((flagshipResult?.events ?? []) as ApiFlagshipEvent[]);
 
       // Reset filters on refresh
       if (isRefresh) {
@@ -616,6 +833,9 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
       >
         <Text style={financeStyles.crossTabLinkText}>Read Finance News →</Text>
       </Pressable>
+
+      {/* Section 0: Flagship Events carousel — hidden when empty */}
+      <FlagshipEventsCarousel events={flagshipEvents} />
 
       {/* Section 1: Analyst Sentiment (opinion-sourced) */}
       {analystSentiment !== null ? (
@@ -1622,5 +1842,179 @@ const financeStyles = StyleSheet.create({
     fontWeight: "700",
     color: "#4338CA",
     marginLeft: spacing.sm,
+  },
+});
+
+// ─── Flagship carousel styles ─────────────────────────────────────────────────
+const flagshipStyles = StyleSheet.create({
+  section: {
+    marginBottom: spacing.lg,
+  },
+  sectionHeader: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#111827",
+  },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: spacing.lg,
+    marginBottom: spacing.sm,
+  },
+  createBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    backgroundColor: "rgba(245, 158, 11, 0.12)",
+    borderWidth: 1,
+    borderColor: "#fbbf24",
+  },
+  createBtnText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#92400e",
+  },
+  emptyCard: {
+    marginHorizontal: spacing.lg,
+    padding: spacing.lg,
+    borderRadius: 12,
+    backgroundColor: "rgba(245, 158, 11, 0.06)",
+    borderWidth: 1,
+    borderColor: "#fde68a",
+    borderStyle: "dashed",
+  },
+  emptyTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#92400e",
+    marginBottom: 4,
+  },
+  emptyHint: {
+    fontSize: 12,
+    color: "#92400e",
+    opacity: 0.85,
+    lineHeight: 17,
+  },
+  scroll: {
+    paddingHorizontal: spacing.lg,
+    gap: spacing.md,
+    paddingRight: spacing.lg * 2,
+  },
+  card: {
+    width: 280,
+    backgroundColor: "#fff",
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    borderLeftWidth: 4,
+    padding: spacing.md,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.07,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  cardTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  typeChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+  },
+  typeChipText: {
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+  },
+  countdownBadge: {
+    backgroundColor: "#FEF3C7",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+  },
+  countdownText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#92400E",
+  },
+  cardTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#111827",
+    lineHeight: 20,
+    marginBottom: spacing.sm,
+  },
+  probSection: {
+    marginBottom: spacing.xs ?? 4,
+  },
+  crowdLabel: {
+    fontSize: 9,
+    fontWeight: "700",
+    color: "#6B7280",
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
+    marginBottom: 4,
+  },
+  barTrack: {
+    flexDirection: "row",
+    height: 8,
+    borderRadius: 4,
+    overflow: "hidden",
+    gap: 2,
+    marginBottom: 4,
+  },
+  barSegment: {
+    borderRadius: 4,
+  },
+  barLabels: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  barLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  barLabelsWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 4,
+  },
+  barLabelSmall: {
+    fontSize: 10,
+    fontWeight: "600",
+  },
+  noDataText: {
+    fontSize: 11,
+    color: "#9CA3AF",
+    fontStyle: "italic",
+    marginBottom: 4,
+  },
+  expertLine: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#4338CA",
+    marginTop: spacing.xs ?? 4,
+  },
+  expertLineNull: {
+    fontSize: 11,
+    color: "#9CA3AF",
+    fontStyle: "italic",
+    marginTop: spacing.xs ?? 4,
+  },
+  cardFooter: {
+    marginTop: spacing.sm,
+    alignItems: "flex-end",
+  },
+  predictBtn: {
+    fontSize: 13,
+    fontWeight: "800",
   },
 });

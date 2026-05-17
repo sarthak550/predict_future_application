@@ -67,6 +67,10 @@ export async function createPredictionMarket(input: {
   actorUsername: string;
   actorReputationScore: number;
   payload: CreateMarketInput;
+  /** S32-T3: Optional flagship event timestamp. When set, market appears in Policy & Big Events carousel. */
+  flagshipEventAt?: Date | null;
+  /** S32-T3: Optional flagship event type tag (e.g. 'RBI', 'BUDGET'). Must be set with flagshipEventAt. */
+  flagshipEventType?: string | null;
 }) {
   const actor = await prisma.user.findUnique({
     where: { id: input.actorId },
@@ -243,7 +247,14 @@ export async function createPredictionMarket(input: {
         challengeWindowHours,
         gracePeriodHours,
         approvedAt: autoApproved ? new Date() : null,
-        approvedById: autoApproved ? actor.id : null
+        approvedById: autoApproved ? actor.id : null,
+        // S32-T3: flagship event fields (optional)
+        ...(input.flagshipEventAt
+          ? {
+              flagshipEventAt: input.flagshipEventAt,
+              flagshipEventType: input.flagshipEventType ?? null,
+            }
+          : {}),
       }
     });
 

@@ -14,7 +14,11 @@
     "prisma:push": "prisma db push --schema prisma/schema.prisma && prisma generate --schema prisma/schema.prisma",
     "prisma:migrate": "prisma migrate dev --schema prisma/schema.prisma && prisma generate --schema prisma/schema.prisma",
     "prisma:seed": "tsx prisma/seed.ts",
-    "ingest:news": "tsx scripts/ingest-news.ts"
+    "ingest:news": "tsx scripts/ingest-news.ts",
+    "prisma:push:prod": "bash -c 'set -a; source .env.prod; set +a; prisma db push --schema prisma/schema.prisma && prisma generate --schema prisma/schema.prisma'",
+    "prisma:seed:prod": "tsx --env-file=.env --env-file=.env.prod prisma/seed.ts",
+    "ingest:news:prod": "tsx --env-file=.env --env-file=.env.prod scripts/ingest-news.ts",
+    "manifold:import:prod": "tsx --env-file=.env --env-file=.env.prod scripts/import-manifold-markets.ts"
   },
   "dependencies": {
     "@mozilla/readability": "^0.6.0",

@@ -2,8 +2,8 @@
 
 > Human-readable view of `.claude/sprint-board.json`. Auto-maintained by the CEO/CTO/QA agents — do not edit by hand.
 
-**Current sprint:** 31
-**Status:** Sprint 31 IN PROGRESS Sprints 12, 25–30 COMPLETE.
+**Current sprint:** 32
+**Status:** Sprint 32 IN PROGRESS. Sprints 12, 25–31 COMPLETE.
 
 ---
 
@@ -365,3 +365,19 @@
 | S31-T4 | HIGH | ✅ done | Polish Manifold archive cards |
 | S31-T5 | MED | ✅ done | Saved/Bookmarked markets |
 | S31-T6 | MED | ✅ done | Import Manifold NUMERIC markets |
+
+---
+
+## Sprint 32
+
+**Theme:** Flagship Event Polls — high-impact upcoming finance/policy events with admin-moderated polls
+**Status:** COMPLETE — All 6 tickets passed QA (2026-05-18). T3 (Finance missing from category picker) and T4 (expertCount dropped from response) both fixed inline.
+
+| ID | Pri | Status | Title |
+|---|---|---|---|
+| S32-T1 | CRIT | ✅ done | Schema + API for flagship events |
+| S32-T2 | CRIT | ✅ done | Finance tab Upcoming Events carousel |
+| S32-T3 | HIGH | ✅ done | User-create flagship poll flow |
+| S32-T4 | HIGH | ✅ done | Expert consensus split on flagship cards |
+| S32-T5 | MED | ✅ done | Push notifications for flagship events |
+| S32-T6 | MED | ✅ done | Admin surface for flagship events |

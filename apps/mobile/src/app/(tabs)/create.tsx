@@ -32,6 +32,7 @@ const DRAFT_KEY = "draft_market_form";
 
 const CATEGORIES: Array<{ label: string; value: AppMarketCategory }> = [
   { label: "General", value: "GENERAL" },
+  { label: "Finance", value: "FINANCE" },
   { label: "Sports", value: "SPORTS" },
   { label: "Business", value: "BUSINESS" },
   { label: "Tech", value: "TECH" },
@@ -102,16 +103,21 @@ export default function CreateScreen() {
   const { session, status: sessionStatus } = useSession();
   const userId = session?.userId;
 
-  // Prefill params passed from Sports tab (or other deep links)
+  // Prefill params passed from Sports tab, Finance flagship CTA, or other deep links
   const params = useLocalSearchParams<{
     initialTitle?: string;
     initialCategory?: string;
+    preselectCategory?: string;
+    flagshipOn?: string;
   }>();
   const initialTitle = typeof params.initialTitle === "string" ? params.initialTitle : undefined;
   const initialCategory =
     typeof params.initialCategory === "string"
       ? (params.initialCategory as AppMarketCategory)
-      : undefined;
+      : typeof params.preselectCategory === "string"
+        ? (params.preselectCategory as AppMarketCategory)
+        : undefined;
+  const startWithFlagshipOn = params.flagshipOn === "1";
 
   const eligibilityFetcher = useCallback(
     () => mobileApi.getHostEligibility(),
@@ -147,6 +153,7 @@ export default function CreateScreen() {
         userId={userId}
         initialTitle={initialTitle}
         initialCategory={initialCategory}
+        startWithFlagshipOn={startWithFlagshipOn}
       />
     </View>
   );
@@ -306,10 +313,12 @@ function CreateWizard({
   userId,
   initialTitle,
   initialCategory,
+  startWithFlagshipOn,
 }: {
   userId: string;
   initialTitle?: string;
   initialCategory?: AppMarketCategory;
+  startWithFlagshipOn?: boolean;
 }) {
   const router = useRouter();
   const [stepIdx, setStepIdx] = useState(0);
@@ -350,6 +359,13 @@ function CreateWizard({
   const [commissionBps, setCommissionBps] = useState(200);
   const [challengeWindowHours, setChallengeWindowHours] = useState(12);
   const [gracePeriodHours, setGracePeriodHours] = useState(48);
+
+  // Flagship event (S32-T3) — FINANCE category only
+  const [isFlagshipEvent, setIsFlagshipEvent] = useState<boolean>(Boolean(startWithFlagshipOn));
+  const [flagshipEventAt, setFlagshipEventAt] = useState<Date | null>(
+    startWithFlagshipOn ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) : null
+  );
+  const [flagshipEventType, setFlagshipEventType] = useState<string>("RBI");
 
   // Draft banner state
   const [draftBanner, setDraftBanner] = useState<"hidden" | "visible">("hidden");
@@ -516,6 +532,12 @@ function CreateWizard({
         ...(visibility === "PRIVATE" && groupId
           ? { groupId, structuredData: { groupId } }
           : {}),
+        ...(isFlagshipEvent && flagshipEventAt
+          ? {
+              flagshipEventAt: flagshipEventAt.toISOString(),
+              flagshipEventType: flagshipEventType,
+            }
+          : {}),
         ...(marketType === "NUMERIC"
           ? {
               unit: unit || "units",
@@ -580,6 +602,9 @@ function CreateWizard({
     setCloseAt(new Date(Date.now() + 24 * 3600000));
     setResolveAt(new Date(Date.now() + 48 * 3600000));
     setMcOptions(["", ""]);
+    setIsFlagshipEvent(false);
+    setFlagshipEventAt(null);
+    setFlagshipEventType("RBI");
   }
 
   // ── Success screen ─────────────────────────────────────────────────────────
@@ -767,6 +792,33 @@ function CreateWizard({
               isHostResolved={resolutionMode === "HOST"}
               gracePeriodHours={gracePeriodHours}
             />
+            {/* S32-T3: Flagship event toggle — visible only for FINANCE category */}
+            {category === "FINANCE" && (
+              <FlagshipEventSection
+                isFlagshipEvent={isFlagshipEvent}
+                setIsFlagshipEvent={(val) => {
+                  setIsFlagshipEvent(val);
+                  // When toggling on, pre-set flagshipEventAt to 7 days from now if unset
+                  if (val && !flagshipEventAt) {
+                    const defaultDate = new Date(Date.now() + 7 * 24 * 3600000);
+                    setFlagshipEventAt(defaultDate);
+                    setCloseAt(defaultDate);
+                  }
+                  // When toggling off, restore closeAt to 24h default
+                  if (!val) {
+                    setCloseAt(new Date(Date.now() + 24 * 3600000));
+                  }
+                }}
+                flagshipEventAt={flagshipEventAt}
+                setFlagshipEventAt={(date) => {
+                  setFlagshipEventAt(date);
+                  // Keep closeAt in sync
+                  if (date) setCloseAt(date);
+                }}
+                flagshipEventType={flagshipEventType}
+                setFlagshipEventType={setFlagshipEventType}
+              />
+            )}
             {/* Advanced settings disclosure — only shown on timing step */}
             <Pressable
               style={({ pressed }) => [styles.advancedToggleRow, pressed && { opacity: 0.7 }]}
@@ -1910,6 +1962,112 @@ function TimelineRow({ emoji, label, date, sub }: { emoji?: string; label: strin
 }
 
 // ---------------------------------------------------------------------------
+// Flagship Event Section — S32-T3
+// ---------------------------------------------------------------------------
+
+const FLAGSHIP_EVENT_TYPES = [
+  { label: "RBI MPC Decision", value: "RBI" },
+  { label: "Union Budget", value: "BUDGET" },
+  { label: "GST Council Meeting", value: "GST" },
+  { label: "Global Market Event", value: "GLOBAL" },
+  { label: "US Federal Reserve", value: "FED" },
+  { label: "Other Policy Event", value: "OTHER" },
+];
+
+function FlagshipEventSection({
+  isFlagshipEvent,
+  setIsFlagshipEvent,
+  flagshipEventAt,
+  setFlagshipEventAt,
+  flagshipEventType,
+  setFlagshipEventType,
+}: {
+  isFlagshipEvent: boolean;
+  setIsFlagshipEvent: (val: boolean) => void;
+  flagshipEventAt: Date | null;
+  setFlagshipEventAt: (date: Date | null) => void;
+  flagshipEventType: string;
+  setFlagshipEventType: (type: string) => void;
+}) {
+  const minDate = new Date(Date.now() + 2 * 24 * 3600000); // > today + 1 day
+  const maxDate = new Date(Date.now() + 90 * 24 * 3600000); // <= today + 90 days
+
+  function handleEventAtChange(dateStr: string) {
+    const parsed = new Date(dateStr);
+    if (!isNaN(parsed.getTime())) {
+      const clamped = parsed < minDate ? minDate : parsed > maxDate ? maxDate : parsed;
+      setFlagshipEventAt(clamped);
+    }
+  }
+
+  return (
+    <View style={styles.flagshipSection}>
+      <View style={styles.flagshipToggleRow}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.flagshipToggleLabel}>Flagship event poll</Text>
+          <Text style={styles.flagshipToggleSub}>
+            Tie this market to a high-impact upcoming event. It will appear in the Policy &amp; Big Events carousel on the Finance tab.
+          </Text>
+        </View>
+        <Pressable
+          style={[styles.toggleSwitch, isFlagshipEvent && styles.toggleSwitchOn]}
+          onPress={() => setIsFlagshipEvent(!isFlagshipEvent)}
+        >
+          <View style={[styles.toggleKnob, isFlagshipEvent && styles.toggleKnobOn]} />
+        </Pressable>
+      </View>
+
+      {isFlagshipEvent && (
+        <View style={styles.flagshipFields}>
+          <Text style={styles.label}>Event date</Text>
+          <Text style={styles.hint}>
+            When the event happens (must be 2+ days from now, up to 90 days). Voting closes at this time.
+          </Text>
+          <TextInput
+            style={styles.input}
+            value={flagshipEventAt
+              ? flagshipEventAt.toISOString().slice(0, 16).replace("T", " ")
+              : ""}
+            onChangeText={handleEventAtChange}
+            placeholder="YYYY-MM-DD HH:MM"
+            placeholderTextColor="#9CA3AF"
+          />
+
+          <Text style={[styles.label, { marginTop: 12 }]}>Event type</Text>
+          <View style={styles.pillRow}>
+            {FLAGSHIP_EVENT_TYPES.map((et) => (
+              <Pressable
+                key={et.value}
+                style={[styles.pill, flagshipEventType === et.value && styles.pillActive]}
+                onPress={() => setFlagshipEventType(et.value)}
+              >
+                <Text style={[styles.pillText, flagshipEventType === et.value && styles.pillTextActive]}>
+                  {et.label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+
+          {flagshipEventAt && (
+            <View style={styles.selectedDateCard}>
+              <Text style={styles.selectedDateLabel}>Event date</Text>
+              <Text style={styles.selectedDateValue}>
+                {flagshipEventAt.toLocaleDateString([], {
+                  weekday: "short",
+                  month: "short",
+                  day: "numeric",
+                  year: "numeric",
+                })}
+              </Text>
+            </View>
+          )}
+        </View>
+      )}
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Step — Review
 // ---------------------------------------------------------------------------
 
@@ -2637,5 +2795,63 @@ const styles = StyleSheet.create({
     color: colors.accent,
     fontWeight: "600",
     fontSize: 14,
+  },
+  // Flagship event section styles (S32-T3)
+  flagshipSection: {
+    marginTop: spacing.lg,
+    marginBottom: spacing.sm,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+    backgroundColor: "#FFFBEB",
+    overflow: "hidden",
+  },
+  flagshipToggleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    padding: spacing.md,
+  },
+  flagshipToggleLabel: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#92400E",
+    marginBottom: 3,
+  },
+  flagshipToggleSub: {
+    fontSize: 11,
+    color: "#78350F",
+    lineHeight: 15,
+  },
+  flagshipFields: {
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: "#FDE68A",
+  },
+  toggleSwitch: {
+    width: 42,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: "#D1D5DB",
+    padding: 2,
+    justifyContent: "center",
+  },
+  toggleSwitchOn: {
+    backgroundColor: "#D97706",
+  },
+  toggleKnob: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: "#fff",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.15,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  toggleKnobOn: {
+    alignSelf: "flex-end",
   },
 });

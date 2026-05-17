@@ -26,3 +26,4 @@
 - [project_phone_otp_db.md](project_phone_otp_db.md) — DB-backed PhoneVerificationOtp model + MSG91 SMS; all phone-verification.ts fns now async; env vars: MSG91_AUTH_KEY, MSG91_TEMPLATE_ID, PHONE_VERIFY_MODE
 - [project_admin_event_clusters.md](project_admin_event_clusters.md) — Admin CRUD for MarketEventCluster: GET/POST collection + PATCH/DELETE resource; replaces manual seed.ts management
 - [project_sprint31.md](project_sprint31.md) — S31 T1-T6: bulk-approve (already done), search/related (already done), trending carousel (already done), Manifold polish (already done), SavedMarket schema+API+mobile, Manifold NUMERIC import (all BINARY in practice)
+- [project_sprint32.md](project_sprint32.md) — S32 T1-T6: flagship events carousel, Create wizard toggle, expert consensus, push notifications, admin surface — all qa-review

@@ -86,6 +86,14 @@ export async function POST(
       if (market.creatorId === user.id && !canCreatorParticipateInMarket(market.resolutionMode)) {
         throw new Error("Hosts cannot take positions in their own host-resolved markets.");
       }
+      // Flagship polls allow amount=0 (free vote, no wallet deduction). Reject 0 for everything else.
+      const isFlagshipPoll = market.flagshipEventAt !== null;
+      if (payload.amount === 0 && !isFlagshipPoll) {
+        throw new Error("Minimum bet is 50 points.");
+      }
+      if (payload.amount > 0 && payload.amount < 50) {
+        throw new Error("Minimum bet is 50 points.");
+      }
       if (wallet.balance < payload.amount) {
         throw new Error("Insufficient virtual points.");
       }
@@ -175,27 +183,30 @@ export async function POST(
         }
       });
 
-      await tx.wallet.update({
-        where: {
-          id: wallet.id
-        },
-        data: {
-          balance: {
-            decrement: payload.amount
+      // Skip wallet update for flagship-poll votes (amount=0). They're free votes, not stakes.
+      if (payload.amount > 0) {
+        await tx.wallet.update({
+          where: {
+            id: wallet.id
+          },
+          data: {
+            balance: {
+              decrement: payload.amount
+            }
           }
-        }
-      });
+        });
 
-      await tx.walletTransaction.create({
-        data: {
-          walletId: wallet.id,
-          type: "POSITION_COMMITMENT",
-          amount: -payload.amount,
-          description: `Position on "${market.title}"`,
-          marketId: market.id,
-          positionId: position.id
-        }
-      });
+        await tx.walletTransaction.create({
+          data: {
+            walletId: wallet.id,
+            type: "POSITION_COMMITMENT",
+            amount: -payload.amount,
+            description: `Position on "${market.title}"`,
+            marketId: market.id,
+            positionId: position.id
+          }
+        });
+      }
 
       const updatedBondMetrics = calculateBondMetrics({
         poolRewardMode: market.poolRewardMode,

@@ -61,7 +61,8 @@ export default async function ModerationPage() {
       include: {
         creator: true
       },
-      orderBy: { createdAt: "asc" }
+      // S32-T6: Sort flagship-pending markets to top, then by createdAt asc
+      orderBy: [{ flagshipEventAt: "asc" }, { createdAt: "asc" }]
     }),
     prisma.marketReport.findMany({
       where: {
@@ -219,12 +220,20 @@ export default async function ModerationPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             {draftMarkets.map((market) => (
-              <div key={market.id} className="rounded-[24px] border border-ink-100 p-4">
+              <div
+                key={market.id}
+                className={`rounded-[24px] border p-4 ${market.flagshipEventAt ? "border-amber-300 bg-amber-50" : "border-ink-100"}`}
+              >
                 <div className="grid gap-4 lg:grid-cols-[1fr_0.8fr]">
                   <div className="space-y-3">
                     <p className="font-medium text-ink-900">{market.title}</p>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <Badge variant="warning">{market.status.toLowerCase().replaceAll("_", " ")}</Badge>
+                      {market.flagshipEventAt && (
+                        <Badge variant="accent">
+                          {"🔥 Flagship"} · {market.flagshipEventType ?? ""} · {new Date(market.flagshipEventAt).toLocaleDateString()}
+                        </Badge>
+                      )}
                     </div>
                     <p className="mt-1 text-sm text-ink-500">by @{market.creator.username}</p>
                     <p className="mt-3 text-sm leading-7 text-ink-600">{market.resolutionRuleText}</p>
