@@ -27,6 +27,7 @@ export async function GET(request: Request) {
 
   const requireExpertOpinions = searchParams.get("requireExpertOpinions") === "true";
   const personalized = searchParams.get("personalized") === "true";
+  const expertOpinionClusterId = searchParams.get("expertOpinionClusterId") || undefined;
 
   // Personalized mode: boost stories linked to markets where followed analysts
   // have placed positions in the last 14 days.
@@ -39,6 +40,7 @@ export async function GET(request: Request) {
       cursor,
       userId,
       requireExpertOpinions,
+      expertOpinionClusterId,
     });
   } else {
     page = await getPublishedNewsPage({
@@ -48,6 +50,7 @@ export async function GET(request: Request) {
       cursor,
       userId,
       requireExpertOpinions,
+      expertOpinionClusterId,
     });
   }
 

@@ -3,7 +3,6 @@ import type {
   ApiBigCallResponse,
   ApiCategoryTopResponse,
   ApiCricketMatchDetail,
-  ApiCrowdVsExperts,
   ApiDailyQuests,
   ApiExpertLeaderboardEntry,
   ApiExpertOpinionTallies,
@@ -74,6 +73,8 @@ export type NewsQuery = {
   requireExpertOpinions?: boolean;
   /** When true, authenticated users see stories boosted by followed-analyst signals. */
   personalized?: boolean;
+  /** When set, restrict feed to stories that have at least one expert opinion tagged to this MarketEventCluster. */
+  expertOpinionClusterId?: string;
 };
 
 export type PublicMarketsQuery = {
@@ -795,17 +796,6 @@ export function createApiClient(options: ApiClientOptions) {
         undefined,
         { auth: true }
       ).then((res) => res.expertIds);
-    },
-
-    // ─── Crowd vs. Experts (S28-T4) ───────────────────────────────────────────
-
-    /**
-     * Fetch crowd vs. expert accuracy comparison data.
-     * Returns { resolvedCount: 0 } when no resolved opinions exist.
-     * Cached for 5 minutes server-side.
-     */
-    getCrowdVsExperts() {
-      return request<ApiCrowdVsExperts>("/api/finance/crowd-vs-experts");
     },
 
     // ─── Reasoning upvotes (S30-T1) ───────────────────────────────────────────

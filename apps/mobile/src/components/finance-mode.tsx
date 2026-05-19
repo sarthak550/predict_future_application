@@ -3,6 +3,7 @@ import { useRouter } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Modal,
   NativeScrollEvent,
   NativeSyntheticEvent,
   Pressable,
@@ -14,7 +15,6 @@ import {
 } from "react-native";
 
 import type {
-  ApiCrowdVsExperts,
   ApiFlagshipEvent,
   ApiFinanceExpertSentiment,
   ApiFinanceMarketsResponse,
@@ -168,7 +168,7 @@ function FlagshipHeroCard({ event }: { event: ApiFlagshipEvent }) {
   return (
     <Pressable
       style={[flagshipStyles.card, { borderLeftColor: accentColor }]}
-      onPress={() => router.push(`/market/${event.id}` as Parameters<typeof router.push>[0])}
+      onPress={() => router.push(`/finance/poll/${event.id}` as Parameters<typeof router.push>[0])}
     >
       {/* Top row: type chip + countdown */}
       <View style={flagshipStyles.cardTopRow}>
@@ -530,72 +530,190 @@ function MyAnalystsRow({
   );
 }
 
-/** Crowd vs. Experts comparison card */
-function CrowdVsExpertsCard({ data }: { data: ApiCrowdVsExperts }) {
-  if (data.resolvedCount < 10) return null;
 
-  const crowdWinRate = data.crowdWinRate ?? 0;
-  const expertWinRate = data.expertWinRate ?? 0;
-  const crowdWins = crowdWinRate >= expertWinRate;
-  const winnerText = crowdWins
-    ? "Crowd is beating analysts on Indian markets"
-    : "Analysts are leading the crowd this month";
+type PulseKind = "events" | "sentiment" | "calendar";
 
-  const crowdFlex = Math.max(1, crowdWinRate);
-  const expertFlex = Math.max(1, expertWinRate);
+type PulsePill = {
+  kind: PulseKind;
+  icon: string;
+  label: string;
+  value: string;
+  enabled: boolean;
+};
+
+function PulseRibbon({
+  flagshipEvents,
+  analystSentiment,
+  clustersCount,
+  onPress,
+}: {
+  flagshipEvents: ApiFlagshipEvent[];
+  analystSentiment: ApiFinanceExpertSentiment | null;
+  clustersCount: number;
+  onPress: (kind: PulseKind) => void;
+}) {
+  // Compose pulse pills based on what data is available.
+  const nextEvent = flagshipEvents[0];
+  const cdLabel = nextEvent
+    ? (() => {
+        const ms = new Date(nextEvent.flagshipEventAt ?? Date.now()).getTime() - Date.now();
+        const days = Math.floor(ms / (24 * 60 * 60 * 1000));
+        if (days >= 2) return `in ${days}d`;
+        if (days === 1) return "tomorrow";
+        return "today";
+      })()
+    : "";
+
+  const sentimentLean = analystSentiment
+    ? analystSentiment.bullishPercent >= analystSentiment.bearishPercent &&
+      analystSentiment.bullishPercent >= analystSentiment.neutralPercent
+      ? `${Math.round(analystSentiment.bullishPercent)}% Bullish`
+      : analystSentiment.bearishPercent >= analystSentiment.neutralPercent
+        ? `${Math.round(analystSentiment.bearishPercent)}% Bearish`
+        : `${Math.round(analystSentiment.neutralPercent)}% Neutral`
+    : "";
+
+  const pills: PulsePill[] = [
+    {
+      kind: "events",
+      icon: "🔥",
+      label: nextEvent ? "Next event" : "Big events",
+      value: nextEvent
+        ? `${nextEvent.flagshipEventType ?? "Event"} ${cdLabel}`
+        : flagshipEvents.length > 0
+          ? `${flagshipEvents.length} upcoming`
+          : "Create one",
+      enabled: true,
+    },
+    {
+      kind: "sentiment",
+      icon: "📊",
+      label: "Today's sentiment",
+      value: sentimentLean || "Loading…",
+      enabled: analystSentiment !== null,
+    },
+    {
+      kind: "calendar",
+      icon: "💼",
+      label: "Policy calendar",
+      value: clustersCount > 0 ? `${clustersCount} this week` : "Quiet week",
+      enabled: clustersCount > 0,
+    },
+  ];
+
+  // Show only pills that have meaningful data — hide entire ribbon if all empty.
+  const visiblePills = pills.filter((p) => p.value.length > 0);
+  if (visiblePills.length === 0) return null;
 
   return (
-    <View style={financeStyles.crowdVsExpertsCard}>
-      <Text style={financeStyles.crowdVsExpertsHeader}>CROWD VS. EXPERTS</Text>
-
-      <View style={financeStyles.crowdVsExpertsStatsRow}>
-        <View style={financeStyles.crowdVsExpertsStat}>
-          <Text style={[financeStyles.crowdVsExpertsWinRate, { color: "#4338CA" }]}>
-            {crowdWinRate}%
-          </Text>
-          <Text style={financeStyles.crowdVsExpertsStatLabel}>Crowd</Text>
-        </View>
-
-        <View style={financeStyles.crowdVsExpertsDivider} />
-
-        <View style={financeStyles.crowdVsExpertsStat}>
-          <Text style={[financeStyles.crowdVsExpertsWinRate, { color: "#0891b2" }]}>
-            {expertWinRate}%
-          </Text>
-          <Text style={financeStyles.crowdVsExpertsStatLabel}>Experts</Text>
-        </View>
-      </View>
-
-      {/* Segmented bar */}
-      <View style={financeStyles.crowdVsExpertsBarTrack}>
-        <View style={[financeStyles.crowdVsExpertsBarSegment, { flex: crowdFlex, backgroundColor: "#4338CA" }]} />
-        <View style={[financeStyles.crowdVsExpertsBarSegment, { flex: expertFlex, backgroundColor: "#0891b2" }]} />
-      </View>
-
-      <Text style={financeStyles.crowdVsExpertsWinner}>{winnerText}</Text>
-
-      <View style={financeStyles.crowdVsExpertsFooter}>
-        <Text style={financeStyles.crowdVsExpertsFooterText}>
-          Based on {data.resolvedCount} resolved calls
-        </Text>
-        {data.provisional && (
-          <View style={financeStyles.provisionalBadge}>
-            <Text style={financeStyles.provisionalBadgeText}>provisional</Text>
-          </View>
-        )}
-      </View>
+    <View style={pulseStyles.wrapper}>
+      <Text style={pulseStyles.heading}>TODAY&apos;S PULSE</Text>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={pulseStyles.scroll}
+      >
+        {visiblePills.map((p) => (
+          <Pressable
+            key={p.kind}
+            onPress={() => onPress(p.kind)}
+            style={({ pressed }) => [
+              pulseStyles.pill,
+              !p.enabled && pulseStyles.pillMuted,
+              pressed && { transform: [{ scale: 0.97 }], opacity: 0.85 },
+            ]}
+          >
+            <View style={pulseStyles.pillTop}>
+              <Text style={pulseStyles.pillIcon}>{p.icon}</Text>
+              <Text style={pulseStyles.pillLabel}>{p.label}</Text>
+            </View>
+            <Text style={pulseStyles.pillValue} numberOfLines={1}>{p.value}</Text>
+          </Pressable>
+        ))}
+      </ScrollView>
     </View>
   );
 }
 
+function PulseSheet({
+  visible,
+  onClose,
+  title,
+  children,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={pulseStyles.sheetBackdrop} onPress={onClose} />
+      <View style={pulseStyles.sheetContainer}>
+        <View style={pulseStyles.sheetHandle} />
+        <View style={pulseStyles.sheetHeader}>
+          <Text style={pulseStyles.sheetTitle}>{title}</Text>
+          <Pressable onPress={onClose} hitSlop={12}>
+            <Text style={pulseStyles.sheetClose}>Done</Text>
+          </Pressable>
+        </View>
+        <ScrollView style={{ maxHeight: "90%" }} contentContainerStyle={{ paddingBottom: 40 }}>
+          {children}
+        </ScrollView>
+      </View>
+    </Modal>
+  );
+}
+
+const pulseStyles = StyleSheet.create({
+  wrapper: { marginBottom: spacing.md },
+  heading: {
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1,
+    color: "#9ca3af",
+    paddingHorizontal: spacing.lg,
+    marginBottom: 8,
+  },
+  scroll: { paddingHorizontal: spacing.lg, gap: 10 },
+  pill: {
+    width: 140,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 14,
+    backgroundColor: "#0f172a",
+    borderWidth: 1,
+    borderColor: "#1f2937",
+  },
+  pillMuted: { backgroundColor: "#111827", borderColor: "#1f2937" },
+  pillTop: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 8 },
+  pillIcon: { fontSize: 16 },
+  pillLabel: { fontSize: 10, fontWeight: "700", color: "#94a3b8", letterSpacing: 0.3, textTransform: "uppercase" },
+  pillValue: { fontSize: 14, fontWeight: "800", color: "#f9fafb" },
+
+  sheetBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)" },
+  sheetContainer: {
+    position: "absolute", left: 0, right: 0, bottom: 0,
+    backgroundColor: "#fff",
+    borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    paddingHorizontal: spacing.md, paddingTop: spacing.md, paddingBottom: spacing.lg,
+    maxHeight: "85%",
+  },
+  sheetHandle: { width: 40, height: 4, borderRadius: 2, backgroundColor: "#d1d5db", alignSelf: "center", marginBottom: spacing.md },
+  sheetHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.md, paddingHorizontal: 4 },
+  sheetTitle: { fontSize: 17, fontWeight: "800", color: "#111827" },
+  sheetClose: { fontSize: 14, fontWeight: "700", color: colors.accent },
+});
+
 export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => void }) {
   const [data, setData] = useState<ApiFinanceMarketsResponse | null>(null);
   const [analystSentiment, setAnalystSentiment] = useState<ApiFinanceExpertSentiment | null>(null);
-  const [crowdVsExperts, setCrowdVsExperts] = useState<ApiCrowdVsExperts | null>(null);
   const [flagshipEvents, setFlagshipEvents] = useState<ApiFlagshipEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Which pulse sheet is open. null = none.
+  const [pulseOpen, setPulseOpen] = useState<PulseKind | null>(null);
 
   // Expert leaderboard count for conditional "Top Experts" link
   const [leaderboardCount, setLeaderboardCount] = useState(0);
@@ -635,11 +753,15 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
     if (!isRefresh) setLoading(true);
     setError(null);
     try {
-      const [marketsResult, newsResult, sentimentResult, crowdResult, verifiedResult, flagshipResult] = await Promise.all([
+      const [marketsResult, newsResult, sentimentResult, verifiedResult, flagshipResult] = await Promise.all([
         mobileApi.getFinanceMarkets(),
-        mobileApi.getNews({ category: "FINANCE", limit: 10, requireExpertOpinions: true }),
+        mobileApi.getNews({
+          category: "FINANCE",
+          limit: 10,
+          requireExpertOpinions: true,
+          expertOpinionClusterId: selectedClusterFilter ?? undefined,
+        }),
         mobileApi.getFinanceExpertSentiment().catch(() => null),
-        mobileApi.getCrowdVsExperts().catch(() => null),
         mobileApi.getVerifiedCalls().catch(() => []),
         mobileApi.getFlagshipEvents().catch(() => ({ events: [] })),
       ]);
@@ -648,7 +770,6 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
       setNextCursor(newsResult.nextCursor ?? null);
       setHasMore(newsResult.hasMore ?? false);
       setAnalystSentiment(sentimentResult);
-      setCrowdVsExperts(crowdResult);
       setVerifiedCalls(verifiedResult ?? []);
       setFlagshipEvents((flagshipResult?.events ?? []) as ApiFlagshipEvent[]);
 
@@ -675,6 +796,7 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
         limit: 10,
         requireExpertOpinions: true,
         cursor: nextCursor,
+        expertOpinionClusterId: selectedClusterFilter ?? undefined,
       });
       setFinanceNews((prev) => [...prev, ...(result.items ?? [])]);
       setNextCursor(result.nextCursor ?? null);
@@ -684,7 +806,7 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
     } finally {
       setLoadingMore(false);
     }
-  }, [hasMore, loadingMore, nextCursor]);
+  }, [hasMore, loadingMore, nextCursor, selectedClusterFilter]);
 
   // S28-T2: Scroll handler — trigger loadMore when within 200px of bottom
   const handleScroll = useCallback(
@@ -736,6 +858,36 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
     void checkLeaderboard();
     void loadFollowedExperts();
   }, []);
+
+  // Refetch news when cluster filter changes so server-side filtering
+  // surfaces all matching stories, not just those in the first page.
+  const isInitialMount = useRef(true);
+  useEffect(() => {
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const result = await mobileApi.getNews({
+          category: "FINANCE",
+          limit: 10,
+          requireExpertOpinions: true,
+          expertOpinionClusterId: selectedClusterFilter ?? undefined,
+        });
+        if (cancelled) return;
+        setFinanceNews(result.items ?? []);
+        setNextCursor(result.nextCursor ?? null);
+        setHasMore(result.hasMore ?? false);
+      } catch {
+        // silently fail — keep current items
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedClusterFilter]);
 
   // S28-T1: Build expert name map from loaded financeNews
   useEffect(() => {
@@ -809,6 +961,7 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
   }
 
   return (
+    <>
     <ScrollView
       ref={scrollViewRef}
       style={financeStyles.scroll}
@@ -826,115 +979,26 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
         />
       }
     >
-      {/* Read Finance News link */}
-      <Pressable
-        style={financeStyles.crossTabLink}
-        onPress={onNavigateToFeed}
-      >
-        <Text style={financeStyles.crossTabLinkText}>Read Finance News →</Text>
-      </Pressable>
+      {/* Pulse ribbon — compact glanceable strip at the top */}
+      <PulseRibbon
+        flagshipEvents={flagshipEvents}
+        analystSentiment={analystSentiment}
+        clustersCount={data?.eventClusters.length ?? 0}
+        onPress={(kind) => setPulseOpen(kind)}
+      />
 
-      {/* Section 0: Flagship Events carousel — hidden when empty */}
-      <FlagshipEventsCarousel events={flagshipEvents} />
-
-      {/* Section 1: Analyst Sentiment (opinion-sourced) */}
-      {analystSentiment !== null ? (
-        <AnalystSentimentCard
-          sentiment={analystSentiment}
-          onPress={handleSentimentCardPress}
-        />
-      ) : (
-        <View style={financeStyles.emptyState}>
-          <Text style={financeStyles.emptyText}>Loading analyst sentiment...</Text>
-        </View>
-      )}
-
-      {/* Section 1b: Crowd vs Experts card (only when >= 10 resolved calls) */}
-      {crowdVsExperts && crowdVsExperts.resolvedCount >= 10 && (
-        <CrowdVsExpertsCard data={crowdVsExperts} />
-      )}
-
-      {/* Section 2: Event Cluster data panels */}
-      {data && data.eventClusters.length > 0 ? (
-        data.eventClusters.map((cluster) => (
-          <View key={cluster.id} style={financeStyles.clusterSection}>
-            {/* Cluster header */}
-            <View style={financeStyles.clusterHeader}>
-              {cluster.bannerEmoji ? (
-                <Text style={financeStyles.clusterEmoji}>{cluster.bannerEmoji}</Text>
-              ) : null}
-              <View style={financeStyles.clusterHeaderText}>
-                <Text style={financeStyles.clusterName}>{cluster.name}</Text>
-                <Text style={financeStyles.clusterDateRange}>
-                  {formatDateRange(cluster.startsAt, cluster.endsAt)}
-                </Text>
-              </View>
-            </View>
-
-            {/* Data panel rows */}
-            {cluster.dataPoints && cluster.dataPoints.length > 0 ? (
-              <View style={financeStyles.dataPanel}>
-                {cluster.dataPoints.map((dp, i) => (
-                  <View
-                    key={i}
-                    style={[
-                      financeStyles.dataPanelRow,
-                      i < cluster.dataPoints.length - 1 && financeStyles.dataPanelRowBorder,
-                    ]}
-                  >
-                    <Text style={financeStyles.dataPanelLabel}>{dp.label}</Text>
-                    <View style={financeStyles.dataPanelValueCol}>
-                      <Text style={financeStyles.dataPanelValue}>{dp.value}</Text>
-                      {dp.date ? (
-                        <Text style={financeStyles.dataPanelDate}>{dp.date}</Text>
-                      ) : null}
-                      {dp.subtext ? (
-                        <Text style={financeStyles.dataPanelSubtext}>{dp.subtext}</Text>
-                      ) : null}
-                    </View>
-                  </View>
-                ))}
-              </View>
-            ) : null}
-
-            {/* Expert takes footer link */}
-            <View style={financeStyles.clusterFooter}>
-              {cluster.expertTakeCount > 0 ? (
-                <Pressable
-                  onPress={() => {
-                    setSelectedClusterFilter(cluster.id);
-                    scrollViewRef.current?.scrollTo({ y: expertSectionY.current, animated: true });
-                  }}
-                >
-                  <Text style={financeStyles.expertTakesLink}>
-                    {`→ ${cluster.expertTakeCount} expert ${cluster.expertTakeCount === 1 ? "take" : "takes"} on this event`}
-                  </Text>
-                </Pressable>
-              ) : (
-                <Text style={financeStyles.expertTakesMuted}>0 expert takes yet</Text>
-              )}
-            </View>
-          </View>
-        ))
-      ) : (
-        <View style={financeStyles.emptyState}>
-          <Text style={financeStyles.emptyText}>
-            No events this week. Markets will appear here when events are scheduled.
-          </Text>
-        </View>
-      )}
-
-      {/* Top Experts link — only shown when 3+ experts have resolved calls */}
-      {leaderboardCount >= 3 && (
-        <Pressable
-          style={financeStyles.crossTabLink}
-          onPress={() => router.push("/expert-leaderboard" as Parameters<typeof router.push>[0])}
-        >
-          <Text style={financeStyles.crossTabLinkText}>Top Experts →</Text>
+      {/* HERO HEADER — Expert Opinions is the main feature */}
+      <View style={financeStyles.heroHeader}>
+        <Text style={financeStyles.heroTitle}>Expert Opinions</Text>
+        <Text style={financeStyles.heroSubtitle}>
+          What India&apos;s top analysts are saying right now
+        </Text>
+        <Pressable onPress={onNavigateToFeed} style={financeStyles.heroNewsLink}>
+          <Text style={financeStyles.heroNewsLinkText}>Read Finance News →</Text>
         </Pressable>
-      )}
+      </View>
 
-      {/* Section 3: Expert Opinions + Market Analysis */}
+      {/* Section 3: Expert Opinions + Market Analysis (NOW THE HERO FEED) */}
       <View
         style={financeStyles.unclusteredSection}
         onLayout={(e) => { expertSectionY.current = e.nativeEvent.layout.y; }}
@@ -1235,7 +1299,109 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
         )}
       </View>
 
+      {/* Top Experts link at the bottom, after the infinite-scroll feed */}
+      {leaderboardCount >= 3 && (
+        <Pressable
+          style={financeStyles.crossTabLink}
+          onPress={() => router.push("/expert-leaderboard" as Parameters<typeof router.push>[0])}
+        >
+          <Text style={financeStyles.crossTabLinkText}>See Top Experts →</Text>
+        </Pressable>
+      )}
     </ScrollView>
+
+    {/* ── Pulse bottom sheets ────────────────────────────────────────────── */}
+    <PulseSheet
+      visible={pulseOpen === "events"}
+      onClose={() => setPulseOpen(null)}
+      title="🔥 Policy & Big Events"
+    >
+      <FlagshipEventsCarousel events={flagshipEvents} />
+    </PulseSheet>
+
+    <PulseSheet
+      visible={pulseOpen === "sentiment"}
+      onClose={() => setPulseOpen(null)}
+      title="📊 Today's Analyst Sentiment"
+    >
+      {analystSentiment !== null ? (
+        <AnalystSentimentCard
+          sentiment={analystSentiment}
+          onPress={() => { setPulseOpen(null); handleSentimentCardPress(); }}
+        />
+      ) : (
+        <View style={financeStyles.emptyState}>
+          <Text style={financeStyles.emptyText}>No sentiment data yet.</Text>
+        </View>
+      )}
+    </PulseSheet>
+
+    <PulseSheet
+      visible={pulseOpen === "calendar"}
+      onClose={() => setPulseOpen(null)}
+      title="💼 Policy Calendar"
+    >
+      {data && data.eventClusters.length > 0 ? (
+        data.eventClusters.map((cluster) => (
+          <View key={cluster.id} style={financeStyles.clusterSection}>
+            <View style={financeStyles.clusterHeader}>
+              {cluster.bannerEmoji ? (
+                <Text style={financeStyles.clusterEmoji}>{cluster.bannerEmoji}</Text>
+              ) : null}
+              <View style={financeStyles.clusterHeaderText}>
+                <Text style={financeStyles.clusterName}>{cluster.name}</Text>
+                <Text style={financeStyles.clusterDateRange}>
+                  {formatDateRange(cluster.startsAt, cluster.endsAt)}
+                </Text>
+              </View>
+            </View>
+            {cluster.dataPoints && cluster.dataPoints.length > 0 ? (
+              <View style={financeStyles.dataPanel}>
+                {cluster.dataPoints.map((dp, i) => (
+                  <View
+                    key={i}
+                    style={[
+                      financeStyles.dataPanelRow,
+                      i < cluster.dataPoints.length - 1 && financeStyles.dataPanelRowBorder,
+                    ]}
+                  >
+                    <Text style={financeStyles.dataPanelLabel}>{dp.label}</Text>
+                    <View style={financeStyles.dataPanelValueCol}>
+                      <Text style={financeStyles.dataPanelValue}>{dp.value}</Text>
+                      {dp.date ? <Text style={financeStyles.dataPanelDate}>{dp.date}</Text> : null}
+                      {dp.subtext ? <Text style={financeStyles.dataPanelSubtext}>{dp.subtext}</Text> : null}
+                    </View>
+                  </View>
+                ))}
+              </View>
+            ) : null}
+            <View style={financeStyles.clusterFooter}>
+              {cluster.expertTakeCount > 0 ? (
+                <Pressable
+                  onPress={() => {
+                    setSelectedClusterFilter(cluster.id);
+                    setPulseOpen(null);
+                    setTimeout(() => scrollViewRef.current?.scrollTo({ y: expertSectionY.current, animated: true }), 200);
+                  }}
+                >
+                  <Text style={financeStyles.expertTakesLink}>
+                    {`→ ${cluster.expertTakeCount} expert ${cluster.expertTakeCount === 1 ? "take" : "takes"} on this event`}
+                  </Text>
+                </Pressable>
+              ) : (
+                <Text style={financeStyles.expertTakesMuted}>0 expert takes yet</Text>
+              )}
+            </View>
+          </View>
+        ))
+      ) : (
+        <View style={financeStyles.emptyState}>
+          <Text style={financeStyles.emptyText}>No events on the calendar this week.</Text>
+        </View>
+      )}
+    </PulseSheet>
+
+    </>
   );
 }
 
@@ -1293,6 +1459,33 @@ const financeStyles = StyleSheet.create({
     alignSelf: "flex-end",
   },
   crossTabLinkText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: colors.accent,
+  },
+  heroHeader: {
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  heroTitle: {
+    fontSize: 28,
+    fontWeight: "800",
+    color: "#0f172a",
+    letterSpacing: -0.5,
+    lineHeight: 32,
+  },
+  heroSubtitle: {
+    fontSize: 13,
+    color: "#64748b",
+    marginTop: 4,
+    fontWeight: "500",
+  },
+  heroNewsLink: {
+    marginTop: 6,
+    alignSelf: "flex-start",
+  },
+  heroNewsLinkText: {
     fontSize: 12,
     fontWeight: "700",
     color: colors.accent,
@@ -1455,87 +1648,6 @@ const financeStyles = StyleSheet.create({
     flexWrap: "wrap",
   },
   // Crowd vs Experts card
-  crowdVsExpertsCard: {
-    marginHorizontal: spacing.lg,
-    marginBottom: spacing.lg,
-    padding: spacing.lg,
-    borderRadius: radius.md,
-    backgroundColor: "#F5F3FF",
-    borderWidth: 1,
-    borderColor: "#DDD6FE",
-  },
-  crowdVsExpertsHeader: {
-    fontSize: 10,
-    fontWeight: "800",
-    letterSpacing: 0.8,
-    textTransform: "uppercase",
-    color: "#4338CA",
-    marginBottom: spacing.sm,
-  },
-  crowdVsExpertsStatsRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: spacing.sm,
-  },
-  crowdVsExpertsStat: {
-    flex: 1,
-    alignItems: "center",
-  },
-  crowdVsExpertsWinRate: {
-    fontSize: 28,
-    fontWeight: "800",
-  },
-  crowdVsExpertsStatLabel: {
-    fontSize: 11,
-    fontWeight: "600",
-    color: "#6b7280",
-    marginTop: 2,
-  },
-  crowdVsExpertsDivider: {
-    width: 1,
-    height: 40,
-    backgroundColor: "#DDD6FE",
-  },
-  crowdVsExpertsBarTrack: {
-    flexDirection: "row",
-    height: 8,
-    borderRadius: 4,
-    overflow: "hidden",
-    marginBottom: spacing.sm,
-    gap: 2,
-  },
-  crowdVsExpertsBarSegment: {
-    borderRadius: 4,
-  },
-  crowdVsExpertsWinner: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#374151",
-    marginBottom: spacing.xs ?? 4,
-  },
-  crowdVsExpertsFooter: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm,
-    flexWrap: "wrap",
-  },
-  crowdVsExpertsFooterText: {
-    fontSize: 11,
-    color: "#6b7280",
-  },
-  provisionalBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: radius.pill,
-    backgroundColor: "#FEF3C7",
-    borderWidth: 1,
-    borderColor: "#FDE68A",
-  },
-  provisionalBadgeText: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: "#92400E",
-  },
   // My Analysts row
   myAnalystsSection: {
     marginBottom: spacing.md,

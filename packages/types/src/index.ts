@@ -976,22 +976,6 @@ export interface ApiFinanceMarketsResponse {
   };
 }
 
-/**
- * Crowd vs. Expert accuracy comparison card data.
- * When resolvedCount === 0 the API returns { resolvedCount: 0 } and all other
- * fields are absent — callers should check resolvedCount >= 10 before rendering.
- */
-export interface ApiCrowdVsExperts {
-  resolvedCount: number;
-  crowdCorrect?: number;
-  expertCorrect?: number;
-  crowdWinRate?: number;
-  expertWinRate?: number;
-  sampleSize?: number;
-  provisional?: boolean;
-  lastUpdated?: string;
-}
-
 // ─── Calibration scorecard ─────────────────────────────────────────────────────
 
 export type ApiCalibrationCategoryBreakdown = {

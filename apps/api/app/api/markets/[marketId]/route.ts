@@ -264,7 +264,65 @@ export async function GET(
     resolution: shapedResolution,
   };
 
-  return NextResponse.json({ market: responseMarket, userPositions, analystPositions, userMultiChoicePositions, userVote, userPercentileRank });
+  // For flagship polls: surface related expert opinions/articles so the public
+  // can read what economists are saying before they cast their vote (civic-edu loop).
+  // Matched primarily by eventClusterId; if no cluster, fall back to flagshipEventType
+  // string match against expert opinion instruments/quotes (lightweight fuzzy match).
+  let relatedExpertOpinions: Array<{
+    id: string;
+    quote: string;
+    direction: string;
+    sourceUrl: string;
+    publishedAt: string;
+    instrument: string | null;
+    expert: { id: string; name: string; organization: string; avatarUrl: string | null; verified: boolean };
+  }> = [];
+  if (market.flagshipEventAt) {
+    const opinionWhere = market.eventClusterId
+      ? { eventClusterId: market.eventClusterId, suppressedAt: null }
+      : market.flagshipEventType
+        ? {
+            suppressedAt: null,
+            OR: [
+              { instrument: { contains: market.flagshipEventType, mode: "insensitive" as const } },
+              { quote: { contains: market.flagshipEventType, mode: "insensitive" as const } },
+            ],
+          }
+        : null;
+    if (opinionWhere) {
+      const raw = await prisma.expertOpinion.findMany({
+        where: opinionWhere,
+        orderBy: { publishedAt: "desc" },
+        take: 12,
+        select: {
+          id: true,
+          quote: true,
+          direction: true,
+          sourceUrl: true,
+          publishedAt: true,
+          instrument: true,
+          expert: { select: { id: true, name: true, organization: true, avatarUrl: true, verified: true } },
+        },
+      });
+      relatedExpertOpinions = raw.map((o) => ({
+        id: o.id,
+        quote: o.quote,
+        direction: o.direction,
+        sourceUrl: o.sourceUrl,
+        publishedAt: o.publishedAt.toISOString(),
+        instrument: o.instrument,
+        expert: {
+          id: o.expert.id,
+          name: o.expert.name,
+          organization: o.expert.organization,
+          avatarUrl: o.expert.avatarUrl,
+          verified: o.expert.verified,
+        },
+      }));
+    }
+  }
+
+  return NextResponse.json({ market: responseMarket, userPositions, analystPositions, userMultiChoicePositions, userVote, userPercentileRank, relatedExpertOpinions });
 }
 
 export async function PATCH(

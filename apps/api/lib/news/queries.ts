@@ -131,15 +131,23 @@ export async function getPublishedNewsPage(input?: {
   cursor?: string | null;
   userId?: string | null;
   requireExpertOpinions?: boolean;
+  expertOpinionClusterId?: string;
 }) {
   const limit = Math.max(1, Math.min(50, input?.limit ?? 10));
   const decodedCursor = decodeNewsCursor(input?.cursor);
+  // When filtering by a specific cluster, demand at least one matching opinion.
+  // Otherwise honor the simpler requireExpertOpinions toggle.
+  const expertOpinionsFilter = input?.expertOpinionClusterId
+    ? { expertOpinions: { some: { suppressedAt: null, eventClusterId: input.expertOpinionClusterId } } }
+    : input?.requireExpertOpinions
+      ? { expertOpinions: { some: { suppressedAt: null } } }
+      : {};
   const items = await prisma.story.findMany({
     where: {
       status: { in: visibleNewsStatuses },
       ...(input?.category ? { category: input.category } : {}),
       ...(input?.excludeCategory ? { category: { not: input.excludeCategory } } : {}),
-      ...(input?.requireExpertOpinions ? { expertOpinions: { some: { suppressedAt: null } } } : {}),
+      ...expertOpinionsFilter,
       ...(buildCursorWhere(decodedCursor) ?? {})
     },
     orderBy: [{ publishedAt: "desc" }, { id: "desc" }],
@@ -229,6 +237,7 @@ export async function getPersonalizedNewsPage(input: {
   cursor?: string | null;
   userId: string;
   requireExpertOpinions?: boolean;
+  expertOpinionClusterId?: string;
 }): Promise<NewsCursorPage> {
   const limit = Math.max(1, Math.min(50, input.limit ?? 10));
   const decodedCursor = decodeNewsCursor(input.cursor);
@@ -265,11 +274,17 @@ export async function getPersonalizedNewsPage(input: {
 
   // 3. Fetch two batches in one query: boosted stories first, then the rest.
   // We over-fetch slightly (2× limit) then page correctly.
+  const expertOpinionsFilter = input.expertOpinionClusterId
+    ? { expertOpinions: { some: { suppressedAt: null, eventClusterId: input.expertOpinionClusterId } } }
+    : input.requireExpertOpinions
+      ? { expertOpinions: { some: { suppressedAt: null } } }
+      : {};
+
   const baseWhere: Prisma.StoryWhereInput = {
     status: { in: visibleNewsStatuses },
     ...(input.category ? { category: input.category } : {}),
     ...(input.excludeCategory ? { category: { not: input.excludeCategory } } : {}),
-    ...(input.requireExpertOpinions ? { expertOpinions: { some: { suppressedAt: null } } } : {}),
+    ...expertOpinionsFilter,
     ...(buildCursorWhere(decodedCursor) ?? {}),
   };
 
