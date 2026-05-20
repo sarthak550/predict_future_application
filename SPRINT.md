@@ -381,3 +381,52 @@
 | S32-T4 | HIGH | ✅ done | Expert consensus split on flagship cards |
 | S32-T5 | MED | ✅ done | Push notifications for flagship events |
 | S32-T6 | MED | ✅ done | Admin surface for flagship events |
+
+---
+
+## Sprint 33
+
+**Theme:** Finance Resolution Loop + Live Consensus Bar
+**Status:** COMPLETE — all 4 tickets passed QA.
+
+| ID | Pri | Status | Title |
+|---|---|---|---|
+| S33-T1 | CRIT | ✅ done | Resolution Loop: push notifications + accurate copy on admin expert-opinion resolve |
+| S33-T2 | HIGH | ✅ done | Weekly Calls Digest: server-side digest endpoint + Sunday 09:00 IST cron |
+| S33-T3 | HIGH | ✅ done | Weekly Calls Digest: in-feed card at position 2 of Finance tab + detail screen |
+| S33-T4 | HIGH | ✅ done | Live Consensus Bar on ExpertOpinionCard — pre/post vote aggregate |
+
+---
+
+## Sprint 34
+
+**Theme:** ExpertOpinionPostCard — Finance feed redesign (LinkedIn-style)
+**Status:** IN PROGRESS
+
+| ID | Pri | Status | Title |
+|---|---|---|---|
+| S34-T1 | HIGH | ✅ done | Redesigned ExpertOpinionPostCard for Finance feed |
+
+### S34-T1 detail
+
+**Files touched:**
+- `apps/mobile/src/components/expert-opinion-post-card.tsx` — new standalone card (created)
+- `apps/mobile/src/lib/feature-flags.ts` — `USE_POST_CARD = true` flag (created)
+- `apps/mobile/src/components/expert-opinion-card.tsx` — flag-gated switch: imports new card, renders it when `USE_POST_CARD` is true; legacy `ExpertOpinionRow` path preserved
+- `apps/mobile/src/components/news-feed-card.tsx` — `ExpertTakeSection` now also switches on `USE_POST_CARD` (QA fix)
+- `apps/mobile/package.json` — `react-native-view-shot ^5.1.0` added
+
+**QA verdict (2026-05-21): PASS — 7/7 checks green.** NEUTRAL label corrected (was rendering as "HOLD"), all render sites flag-gated, TS clean.
+
+**Old components preserved:** `ExpertOpinionRow` and original `ExpertOpinionCard` layout remain untouched. Set `USE_POST_CARD = false` to revert.
+
+**Acceptance criteria for QA:**
+1. Card renders without errors in PENDING state (pending opinion, no votes)
+2. Card renders without errors in RESOLVED_HIT and RESOLVED_MISS states — "RESOLVED" stamp visible, verdict badge shows "BUY · HIT" / "SELL · MISS" style label, Poll B surfaced, Poll A hidden
+3. Card renders without errors in voted state (Poll A submitted) — consensus bar switches to split mode, histogram + read-only slider visible
+4. Follow button taps — toggles Follow/Following, calls `onFollowToggle` callback, spinner during pending
+5. Poll A vote submission — slider + Submit Vote button; optimistic update on success; reverts with error message on failure
+6. Share button — triggers screenshot capture + Share sheet; no crash on dismiss
+7. "more" inline expansion — tap body text or "more" label expands to full quote, no new screen
+8. Source strip tap — opens original article URL in browser
+9. TypeScript: `cd apps/mobile && npx tsc --noEmit` passes clean (verified by CTO)

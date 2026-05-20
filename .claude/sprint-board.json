@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "currentSprint": 31,
+  "currentSprint": 33,
   "tickets": [
     {
       "id": "S7-T1",
@@ -1276,6 +1276,121 @@
       "qaVerdict": "pass",
       "failureNotes": null,
       "createdAt": "2026-05-18"
+    },
+    {
+      "id": "S33-T1",
+      "sprint": 33,
+      "title": "Resolution Loop: push notifications + accurate copy on admin expert-opinion resolve",
+      "description": "Upgrade POST /api/admin/expert-opinions/[id]/resolve to: (1) compute each Poll A voter's agreement/disagreement vs outcome, (2) send personalized in-app notification with copy '<Source> <DIRECTION> on <ticker|quote> resolved <HIT|MISS>. You agreed — your accuracy is now <N>%.' (or 'You disagreed'), (3) batch Expo push notifications to those voters who have expoPushToken. Add OPINION_RESOLVED to NotificationType enum + Prisma migration. Add sendOpinionResolutionPushBatch helper to notifications.ts.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": [],
+      "files": [
+        "apps/api/app/api/admin/expert-opinions/[id]/resolve/route.ts",
+        "apps/api/lib/notifications.ts",
+        "apps/api/prisma/schema.prisma"
+      ],
+      "acceptanceCriteria": [
+        "Admin POST resolve returns 200 with opinon resolved",
+        "In-app notification created per Poll A voter with accurate 'agreed/disagreed' copy",
+        "Expo push sent to voters with tokens",
+        "User accuracy % computed from all their resolved opinion votes",
+        "OPINION_RESOLVED notification type in schema"
+      ],
+      "dependencies": [],
+      "createdAt": "2026-05-20"
+    },
+    {
+      "id": "S33-T2",
+      "sprint": 33,
+      "title": "Weekly Calls Digest: server-side digest endpoint + Sunday 09:00 IST cron",
+      "description": "New GET /api/finance/my-calls-digest (auth required) returns: { hits: number; misses: number; pending: number; totalVoted: number; resolvedOpinions: DigestOpinion[] } where DigestOpinion has { opinionId, expertName, instrument, direction, resolutionStatus, userChoice, userAgreed, resolvedAt }. New POST /api/cron/weekly-calls-digest (CRON_SECRET guarded) creates a SYSTEM in-app notification for every user who voted on at least one opinion in the past 7 days, linking to the digest screen. Schedule: Sunday 09:00 IST (03:30 UTC) via vercel.json cron.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "files": [
+        "apps/api/app/api/finance/my-calls-digest/route.ts",
+        "apps/api/app/api/cron/weekly-calls-digest/route.ts",
+        "apps/api/vercel.json",
+        "packages/api-client/src/index.ts",
+        "packages/types/src/index.ts"
+      ],
+      "acceptanceCriteria": [
+        "GET /api/finance/my-calls-digest returns correct hit/miss/pending counts for authenticated user",
+        "Returns resolved opinions with userAgreed boolean",
+        "POST /api/cron/weekly-calls-digest is CRON_SECRET guarded",
+        "Cron sends in-app notification with 'Your week in calls — X HIT, Y MISS' copy",
+        "vercel.json has cron entry for 03:30 UTC on Sunday"
+      ],
+      "dependencies": ["S33-T1"],
+      "createdAt": "2026-05-20"
+    },
+    {
+      "id": "S33-T3",
+      "sprint": 33,
+      "title": "Weekly Calls Digest: in-feed card at position 2 of Finance tab + detail screen",
+      "description": "New WeeklyCallsDigestCard component rendered between PulseRibbon and heroHeader in finance-mode.tsx. Shows 'Your week in calls — X HIT, Y MISS' with a small bar. Tappable → new screen /finance/my-calls showing the full list of resolved opinions the user voted on, each row showing expert name, instrument, direction, HIT/MISS badge, and whether user agreed or disagreed. Fetch digest via GET /api/finance/my-calls-digest. Only show card if user has voted on at least 1 resolved opinion.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "files": [
+        "apps/mobile/src/components/finance-mode.tsx",
+        "apps/mobile/src/app/finance/my-calls.tsx",
+        "packages/api-client/src/index.ts"
+      ],
+      "acceptanceCriteria": [
+        "WeeklyCallsDigestCard renders between PulseRibbon and heroHeader",
+        "Card shows X HIT Y MISS summary",
+        "Card is not shown when user has 0 resolved votes",
+        "Tapping card navigates to /finance/my-calls",
+        "My calls screen lists each resolved opinion with outcome + user agreement",
+        "Pull-to-refresh works on my-calls screen"
+      ],
+      "dependencies": ["S33-T2"],
+      "createdAt": "2026-05-20"
+    },
+    {
+      "id": "S33-T4",
+      "sprint": 33,
+      "title": "Live Consensus Bar on ExpertOpinionCard — pre/post vote aggregate",
+      "description": "Add a slim social-proof consensus bar to ExpertOpinionCard / ExpertOpinionRow. Pre-vote (hasVoted=false, PENDING): render a single thin line bar with '64% of 312 readers agreed' text. Post-vote or resolved: render full split bar (agree side highlighted for user's bucket). The tallies are already fetched on mount by ExpertOpinionRow — use the implication tallies already in state. No new API endpoint needed. Add pollAggregate prop to ApiExpertOpinionItem (optional, for future embedding) but for now compute from the tallies state already fetched.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "files": [
+        "apps/mobile/src/components/news-feed-card.tsx"
+      ],
+      "acceptanceCriteria": [
+        "Pre-vote: thin single-color bar + 'X% of N readers agreed' below Poll A question",
+        "Post-vote: split bar agree/neutral/disagree with user's side highlighted",
+        "Bar renders only when tallies.implication.total > 0",
+        "No extra API call — uses existing tallies state",
+        "No TypeScript errors"
+      ],
+      "dependencies": [],
+      "createdAt": "2026-05-20"
+    },
+    {
+      "id": "S34-T1",
+      "sprint": 34,
+      "title": "Redesigned ExpertOpinionPostCard for Finance feed",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "files": [
+        "apps/mobile/src/components/expert-opinion-post-card.tsx",
+        "apps/mobile/src/lib/feature-flags.ts",
+        "apps/mobile/src/components/expert-opinion-card.tsx",
+        "apps/mobile/src/components/news-feed-card.tsx",
+        "apps/mobile/package.json"
+      ],
+      "createdAt": "2026-05-21",
+      "closedAt": "2026-05-21"
     }
   ]
 }

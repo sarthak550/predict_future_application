@@ -453,6 +453,15 @@ export function createApiClient(options: ApiClientOptions) {
       );
     },
 
+    // ─── Finance: My Calls Digest (S33-T2) ────────────────────────────────
+    getMyCallsDigest() {
+      return request<import("@predict-future/types").ApiMyCallsDigest>(
+        `/api/finance/my-calls-digest`,
+        undefined,
+        { auth: true }
+      );
+    },
+
     // ─── Story detail ──────────────────────────────────────────────────────
     getStory(storyId: string) {
       return request<{ story: ApiStory }>(`/api/news/${storyId}`);

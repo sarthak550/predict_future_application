@@ -19,6 +19,7 @@ import type {
   ApiFinanceExpertSentiment,
   ApiFinanceMarketsResponse,
   ApiMarketSummary,
+  ApiMyCallsDigest,
   ApiNewsFeedItem,
   ApiVerifiedCall,
 } from "@predict-future/types";
@@ -705,6 +706,134 @@ const pulseStyles = StyleSheet.create({
   sheetClose: { fontSize: 14, fontWeight: "700", color: colors.accent },
 });
 
+// ─── S33-T3: Weekly Calls Digest Card ─────────────────────────────────────────
+
+function WeeklyCallsDigestCard({
+  digest,
+  onPress,
+}: {
+  digest: ApiMyCallsDigest;
+  onPress: () => void;
+}) {
+  const total = digest.hits + digest.misses;
+  const hitPct = total > 0 ? Math.round((digest.hits / total) * 100) : 0;
+
+  return (
+    <Pressable style={digestStyles.card} onPress={onPress}>
+      <View style={digestStyles.header}>
+        <Text style={digestStyles.title}>Your week in calls</Text>
+        <Text style={digestStyles.chevron}>›</Text>
+      </View>
+
+      <View style={digestStyles.statRow}>
+        <View style={digestStyles.statBlock}>
+          <Text style={[digestStyles.statCount, { color: "#16a34a" }]}>{digest.hits}</Text>
+          <Text style={digestStyles.statLabel}>HIT</Text>
+        </View>
+        <View style={digestStyles.statDivider} />
+        <View style={digestStyles.statBlock}>
+          <Text style={[digestStyles.statCount, { color: "#dc2626" }]}>{digest.misses}</Text>
+          <Text style={digestStyles.statLabel}>MISS</Text>
+        </View>
+        {digest.pending > 0 && (
+          <>
+            <View style={digestStyles.statDivider} />
+            <View style={digestStyles.statBlock}>
+              <Text style={[digestStyles.statCount, { color: "#6b7280" }]}>{digest.pending}</Text>
+              <Text style={digestStyles.statLabel}>Pending</Text>
+            </View>
+          </>
+        )}
+      </View>
+
+      {total > 0 && (
+        <View style={digestStyles.barTrack}>
+          <View
+            style={[digestStyles.barFill, { flex: hitPct, backgroundColor: "#16a34a" }]}
+          />
+          <View
+            style={[digestStyles.barFill, { flex: 100 - hitPct, backgroundColor: "#dc2626" }]}
+          />
+        </View>
+      )}
+
+      <Text style={digestStyles.tapHint}>Tap to see all your calls</Text>
+    </Pressable>
+  );
+}
+
+const digestStyles = StyleSheet.create({
+  card: {
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.md,
+    marginTop: spacing.sm,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+  },
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: spacing.sm,
+  },
+  title: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#111827",
+    letterSpacing: 0.1,
+  },
+  chevron: {
+    fontSize: 18,
+    color: "#9ca3af",
+    lineHeight: 20,
+  },
+  statRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: spacing.sm,
+  },
+  statBlock: {
+    alignItems: "center",
+    flex: 1,
+  },
+  statDivider: {
+    width: 1,
+    height: 28,
+    backgroundColor: "#e5e7eb",
+  },
+  statCount: {
+    fontSize: 22,
+    fontWeight: "800",
+    lineHeight: 26,
+  },
+  statLabel: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#6b7280",
+    marginTop: 1,
+    letterSpacing: 0.5,
+  },
+  barTrack: {
+    flexDirection: "row",
+    height: 4,
+    borderRadius: 2,
+    overflow: "hidden",
+    backgroundColor: "#f3f4f6",
+    marginBottom: spacing.xs ?? 4,
+  },
+  barFill: {
+    height: 4,
+  },
+  tapHint: {
+    fontSize: 11,
+    color: "#9ca3af",
+    marginTop: 4,
+  },
+});
+
 export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => void }) {
   const [data, setData] = useState<ApiFinanceMarketsResponse | null>(null);
   const [analystSentiment, setAnalystSentiment] = useState<ApiFinanceExpertSentiment | null>(null);
@@ -747,13 +876,16 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
   // Verified calls — fetched independently so they're always visible
   const [verifiedCalls, setVerifiedCalls] = useState<ApiVerifiedCall[]>([]);
 
+  // S33-T3: Weekly calls digest — null means not yet loaded or user has no votes
+  const [callsDigest, setCallsDigest] = useState<ApiMyCallsDigest | null>(null);
+
   const router = useRouter();
 
   const load = async (isRefresh = false) => {
     if (!isRefresh) setLoading(true);
     setError(null);
     try {
-      const [marketsResult, newsResult, sentimentResult, verifiedResult, flagshipResult] = await Promise.all([
+      const [marketsResult, newsResult, sentimentResult, verifiedResult, flagshipResult, digestResult] = await Promise.all([
         mobileApi.getFinanceMarkets(),
         mobileApi.getNews({
           category: "FINANCE",
@@ -764,6 +896,7 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
         mobileApi.getFinanceExpertSentiment().catch(() => null),
         mobileApi.getVerifiedCalls().catch(() => []),
         mobileApi.getFlagshipEvents().catch(() => ({ events: [] })),
+        mobileApi.getMyCallsDigest().catch(() => null),
       ]);
       setData(marketsResult);
       setFinanceNews(newsResult.items ?? []);
@@ -772,6 +905,10 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
       setAnalystSentiment(sentimentResult);
       setVerifiedCalls(verifiedResult ?? []);
       setFlagshipEvents((flagshipResult?.events ?? []) as ApiFlagshipEvent[]);
+      // Only show digest card when the user has voted on at least one resolved opinion
+      if (digestResult && digestResult.resolvedOpinions.length > 0) {
+        setCallsDigest(digestResult);
+      }
 
       // Reset filters on refresh
       if (isRefresh) {
@@ -986,6 +1123,14 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
         clustersCount={data?.eventClusters.length ?? 0}
         onPress={(kind) => setPulseOpen(kind)}
       />
+
+      {/* S33-T3: Weekly calls digest card — position 2, between PulseRibbon and hero header */}
+      {callsDigest !== null && (
+        <WeeklyCallsDigestCard
+          digest={callsDigest}
+          onPress={() => router.push("/finance/my-calls" as Parameters<typeof router.push>[0])}
+        />
+      )}
 
       {/* HERO HEADER — Expert Opinions is the main feature */}
       <View style={financeStyles.heroHeader}>

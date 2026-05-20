@@ -1081,6 +1081,48 @@ export type ApiQuestReward = {
   reward: number;
 };
 
+// ─── Finance: My Calls Digest (S33-T2 / S33-T3) ───────────────────────────────
+
+/**
+ * One resolved expert-opinion entry in the user's calls digest.
+ * userAgreed: true = AGREE/STRONGLY_AGREE bucket; false = DISAGREE/STRONGLY_DISAGREE; null = NEUTRAL.
+ * userWasCorrect: true when the user's stance matched the resolution outcome; null for NEUTRAL.
+ */
+export interface ApiDigestOpinion {
+  opinionId: string;
+  expertId: string;
+  expertName: string;
+  expertOrganization: string;
+  expertVerified: boolean;
+  expertAvatarUrl: string | null;
+  instrument: string | null;
+  instrumentTicker: string | null;
+  direction: "BULLISH" | "BEARISH" | "NEUTRAL";
+  quote: string;
+  resolutionStatus: "RESOLVED_HIT" | "RESOLVED_MISS";
+  resolvedAt: string; // ISO
+  userChoice: string;
+  userWasCorrect: boolean | null;
+  userAgreed: boolean | null;
+  storyId: string | null;
+  storyHeadline: string | null;
+}
+
+/** Response shape of GET /api/finance/my-calls-digest */
+export interface ApiMyCallsDigest {
+  /** Calls where the user's stance was correct (agreed-on-HIT or disagreed-on-MISS) */
+  hits: number;
+  /** Calls where the user's stance was incorrect */
+  misses: number;
+  /** Resolved opinions where user voted NEUTRAL (not scored) */
+  neutrals: number;
+  /** Opinions the user voted on that are still PENDING resolution */
+  pending: number;
+  /** Total IMPLICATION votes cast by this user across all time */
+  totalVoted: number;
+  resolvedOpinions: ApiDigestOpinion[];
+}
+
 /**
  * Response shape of POST /api/markets/[marketId]/positions.
  */

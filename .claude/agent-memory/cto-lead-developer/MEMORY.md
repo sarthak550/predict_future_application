@@ -27,3 +27,5 @@
 - [project_admin_event_clusters.md](project_admin_event_clusters.md) — Admin CRUD for MarketEventCluster: GET/POST collection + PATCH/DELETE resource; replaces manual seed.ts management
 - [project_sprint31.md](project_sprint31.md) — S31 T1-T6: bulk-approve (already done), search/related (already done), trending carousel (already done), Manifold polish (already done), SavedMarket schema+API+mobile, Manifold NUMERIC import (all BINARY in practice)
 - [project_sprint32.md](project_sprint32.md) — S32 T1-T6: flagship events carousel, Create wizard toggle, expert consensus, push notifications, admin surface — all qa-review
+- [project_sprint33.md](project_sprint33.md) — S33 T1-T4: resolution push loop, weekly digest endpoint+cron, digest mobile card+screen, live consensus bar — all qa-review
+- [project_sprint34.md](project_sprint34.md) — S34-T1: ExpertOpinionPostCard redesign (LinkedIn-style), USE_POST_CARD flag, react-native-view-shot, recon findings on component structure

@@ -33,6 +33,29 @@ Finance section fully delivered 2026-05-02 (Sprints 13–18). Sprint 28 queued 2
 - Search bar (< 200 opinions = thin results feel worse than no search)
 - Push notifications for new opinions from followed analysts (volume too low — ramp first)
 - Analyst self-verification / claim profile flow (SEBI legal review pending)
+- Portfolio tracker / holdings sync (broker API cost, inferior to Groww/Zerodha native)
+- Analyst chat/comments section (noise kills credibility signal; StockTwits cautionary tale)
+- Live price widgets or charts (licensing cost, unfavorable comparison to Bloomberg/Moneycontrol)
+- "Trending stocks" or watchlist (commodity feature, dilutes Analyst Scorecard positioning)
+
+**CEO review 2026-05-20 — Next Evolution Decisions:**
+
+Top 3 CEO Priorities (commit this month):
+1. RESOLUTION LOOP: Push notification fires on admin resolution — "Citi BUY on Reliance resolved HIT. You agreed — accuracy now 71%." + weekly in-app digest card at position 2 in Finance feed. One sprint build. This is foundational — all retention mechanics downstream depend on users experiencing outcomes.
+2. LIVE CONSENSUS BAR: Add live social proof bar to every ExpertOpinionCard — "64% of 312 readers agreed." Show before vote (subtle) and after vote (expanded). No new API endpoint needed, vote aggregate already computed. Drives conversion from browser to voter.
+3. OPERATIONAL MILESTONE: 50 resolved opinions by 2026-07-01. Not a feature — a founder/ops commitment. Every unlock (Crowd-vs-Expert, weekly leaderboard drop, B2B data) is gated on this. Admin must treat resolution as a daily habit.
+
+Ranked feature backlog added 2026-05-20:
+- Quick Win: Resolution Alerts + Personal Accuracy Digest (push + weekly digest card). Two-sprint build.
+- Quick Win: Live Consensus Bar on ExpertOpinionCard (no new API). One-sprint build.
+- Strategic Bet: Weekly "Who Called It Right" Leaderboard Drop (Sunday auto-card + shareable screenshot). Build surface now, populate as data accumulates.
+- Q3 Backlog (DO NOT BUILD YET): User "Callout" mechanic — challenge an analyst call with a competing call. Only viable after 50+ resolved opinions and functioning admin resolution workflow.
+
+Business model path agreed 2026-05-20:
+- Tier 1 (launch-ready): Brokerage affiliate referrals. Zerodha/Groww/Angel One INR 300–1000/activated account. Insert CTA after HIT resolution: "Want to act on the next call? Open a Groww account."
+- Tier 2 (6 months): Pro subscription INR 99/month — instant resolution alerts, immediate follow-analyst push, personal accuracy breakdown by sector. Free tier: feed access + voting.
+- Tier 3 (12+ months): B2B aggregated crowd-sentiment data feed to asset managers. Requires 10,000+ active voters. Do NOT build surface yet — just preserve vote timestamps + sector tags in DB.
+- Do NOT monetize with ads. Signals low quality to the prosumer user; kills editorial credibility.
 
 **Technical debt to watch:**
 - Prisma shadow DB limitation: adding enum values requires manual SQL migration pattern (db execute + migrate resolve --applied). Do not use migrate dev for enum changes.

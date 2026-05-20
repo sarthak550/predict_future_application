@@ -5,6 +5,8 @@ import type { ApiExpertOpinionItem } from "@predict-future/types";
 import { colors, radius, spacing } from "@predict-future/ui-tokens";
 
 import { ExpertOpinionRow } from "@/components/news-feed-card";
+import { ExpertOpinionPostCard } from "@/components/expert-opinion-post-card";
+import { USE_POST_CARD } from "@/lib/feature-flags";
 
 /**
  * Expert-opinion-first card for the Finance tab and story detail page.
@@ -35,6 +37,24 @@ export function ExpertOpinionCard({ opinions, storyHeadline, storyId, articlePub
   const router = useRouter();
 
   if (opinions.length === 0) return null;
+
+  // S34-T1: Feature-flagged swap to the redesigned post card.
+  // Each opinion gets its own standalone card in the new design (no grouped rows).
+  if (USE_POST_CARD) {
+    return (
+      <>
+        {opinions.map((opinion) => (
+          <ExpertOpinionPostCard
+            key={opinion.id}
+            opinion={opinion}
+            articlePublishedAt={articlePublishedAt}
+            isFollowed={followedExpertIds?.includes(opinion.expertId)}
+            onFollowToggle={onFollowToggle}
+          />
+        ))}
+      </>
+    );
+  }
 
   const sourceDomain = getSourceDomain(opinions[0].sourceUrl);
 

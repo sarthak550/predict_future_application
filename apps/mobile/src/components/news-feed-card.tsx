@@ -22,6 +22,8 @@ import { colors, radius, shadows, spacing } from "@predict-future/ui-tokens";
 import { mobileApi } from "@/lib/api";
 import { useWatchlist } from "@/providers/watchlist-provider";
 import { getExpertInitials, getExpertInitialsColor } from "@/utils/expertAvatar";
+import { USE_POST_CARD } from "@/lib/feature-flags";
+import { ExpertOpinionPostCard } from "@/components/expert-opinion-post-card";
 
 // ── Expert opinion direction configuration ──
 
@@ -85,6 +87,161 @@ const RETROSPECTIVE_CHOICES = [
   { key: "HIT", label: "Aged well", color: "#16a34a", bg: "#dcfce7", border: "#bbf7d0" },
   { key: "MISS", label: "Missed the mark", color: "#dc2626", bg: "#fee2e2", border: "#fecaca" },
 ] as const;
+
+// ─── S33-T4: Live Consensus Bar ───────────────────────────────────────────────
+
+/**
+ * Slim social-proof bar showing live Poll A aggregate.
+ *
+ * Pre-vote (hasVoted=false): single thin teal/green bar + "X% of N readers agreed" text.
+ * Post-vote or resolved: split bar — agree (green) / neutral (grey) / disagree (red),
+ *   with the user's own side brightened.
+ *
+ * Only renders when tallies.implication.total > 0.
+ */
+function ConsensusBar({
+  tallies,
+  hasVoted,
+  userBucketIndex,
+}: {
+  tallies: ApiExpertOpinionTallies;
+  hasVoted: boolean;
+  /** 0-4 bucket index for the user's current choice; -1 if no vote */
+  userBucketIndex: number;
+}) {
+  const impl = tallies.implication;
+  if (impl.total === 0) return null;
+
+  const agreeCount = impl.agree + impl.stronglyAgree;
+  const disagreeCount = impl.stronglyDisagree + impl.disagree;
+  const neutralCount = impl.neutral;
+  const agreePct = Math.round((agreeCount / impl.total) * 100);
+
+  if (!hasVoted) {
+    // Pre-vote: single thin bar
+    return (
+      <View style={consensusStyles.preVoteWrap}>
+        <View style={consensusStyles.preVoteTrack}>
+          <View style={[consensusStyles.preVoteFill, { flex: agreePct }]} />
+          <View style={[consensusStyles.preVoteRest, { flex: 100 - agreePct }]} />
+        </View>
+        <Text style={consensusStyles.preVoteLabel}>
+          {agreePct}% of {impl.total} reader{impl.total !== 1 ? "s" : ""} agreed
+        </Text>
+      </View>
+    );
+  }
+
+  // Post-vote: split bar — agree / neutral / disagree with user's side highlighted
+  const userIsAgree = userBucketIndex >= 3; // AGREE or STRONGLY_AGREE
+  const userIsDisagree = userBucketIndex <= 1; // DISAGREE or STRONGLY_DISAGREE
+  const userIsNeutral = userBucketIndex === 2;
+
+  const totalSafe = Math.max(impl.total, 1);
+  const agreeFlex = Math.round((agreeCount / totalSafe) * 100);
+  const neutralFlex = Math.round((neutralCount / totalSafe) * 100);
+  const disagreeFlex = 100 - agreeFlex - neutralFlex;
+
+  return (
+    <View style={consensusStyles.postVoteWrap}>
+      <View style={consensusStyles.splitTrack}>
+        {agreeFlex > 0 && (
+          <View
+            style={[
+              consensusStyles.splitSegment,
+              {
+                flex: agreeFlex,
+                backgroundColor: userIsAgree ? "#16a34a" : "#bbf7d0",
+              },
+            ]}
+          />
+        )}
+        {neutralFlex > 0 && (
+          <View
+            style={[
+              consensusStyles.splitSegment,
+              {
+                flex: neutralFlex,
+                backgroundColor: userIsNeutral ? "#9ca3af" : "#e5e7eb",
+              },
+            ]}
+          />
+        )}
+        {disagreeFlex > 0 && (
+          <View
+            style={[
+              consensusStyles.splitSegment,
+              {
+                flex: Math.max(disagreeFlex, 1),
+                backgroundColor: userIsDisagree ? "#dc2626" : "#fecaca",
+              },
+            ]}
+          />
+        )}
+      </View>
+      <View style={consensusStyles.splitLabels}>
+        <Text style={[consensusStyles.splitLabel, { color: userIsAgree ? "#16a34a" : "#6b7280" }]}>
+          {agreePct}% agreed
+        </Text>
+        <Text style={[consensusStyles.splitLabel, { color: "#9ca3af" }]}>
+          {Math.round((neutralCount / totalSafe) * 100)}% neutral
+        </Text>
+        <Text style={[consensusStyles.splitLabel, { color: userIsDisagree ? "#dc2626" : "#6b7280" }]}>
+          {Math.round((disagreeCount / totalSafe) * 100)}% disagreed
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+const consensusStyles = StyleSheet.create({
+  preVoteWrap: {
+    marginBottom: 6,
+  },
+  preVoteTrack: {
+    flexDirection: "row",
+    height: 3,
+    borderRadius: 2,
+    overflow: "hidden",
+    backgroundColor: "#e5e7eb",
+    marginBottom: 4,
+  },
+  preVoteFill: {
+    backgroundColor: "#16a34a",
+    height: 3,
+  },
+  preVoteRest: {
+    backgroundColor: "#e5e7eb",
+    height: 3,
+  },
+  preVoteLabel: {
+    fontSize: 11,
+    color: "#6b7280",
+    letterSpacing: 0.1,
+  },
+  postVoteWrap: {
+    marginBottom: 6,
+  },
+  splitTrack: {
+    flexDirection: "row",
+    height: 5,
+    borderRadius: 3,
+    overflow: "hidden",
+    marginBottom: 4,
+  },
+  splitSegment: {
+    height: 5,
+  },
+  splitLabels: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  splitLabel: {
+    fontSize: 10,
+    fontWeight: "600",
+    letterSpacing: 0.1,
+  },
+});
 
 /** Poll A — crowd implication magnitude vote via snapped 5-position slider. */
 function PollA({
@@ -184,6 +341,15 @@ function PollA({
   return (
     <View style={pollStyles.section}>
       <Text style={pollStyles.sectionHeader}>Where do you stand on this analyst's view?</Text>
+
+      {/* S33-T4: Live consensus bar — pre-vote: thin line; post-vote: split bar */}
+      {tallies !== null && (
+        <ConsensusBar
+          tallies={tallies}
+          hasVoted={hasVoted}
+          userBucketIndex={hasVoted ? votedBucketIndex : -1}
+        />
+      )}
 
       {!hasVoted && isPending ? (
         // ── Pre-vote: interactive slider ──
@@ -742,9 +908,13 @@ function ExpertTakeSection({ opinions }: { opinions: ApiExpertOpinionItem[] }) {
         <Text style={expertStyles.headerText}>Expert Take</Text>
       </View>
 
-      {visibleOpinions.map((opinion) => (
-        <ExpertOpinionRow key={opinion.id} opinion={opinion} />
-      ))}
+      {visibleOpinions.map((opinion) =>
+        USE_POST_CARD ? (
+          <ExpertOpinionPostCard key={opinion.id} opinion={opinion} />
+        ) : (
+          <ExpertOpinionRow key={opinion.id} opinion={opinion} />
+        )
+      )}
 
       {extraCount > 0 && !expanded && (
         <Pressable onPress={() => setExpanded(true)} style={expertStyles.expandBtn}>
