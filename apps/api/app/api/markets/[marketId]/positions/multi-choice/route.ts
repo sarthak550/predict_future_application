@@ -132,6 +132,13 @@ export async function POST(
         }
       });
 
+      // Resolve the canonical positionId so the POSITION_COMMITMENT wallet
+      // transaction below can attach it (M2). We update-or-create on the
+      // commit row so the @@unique([walletId, marketId, type, multiChoicePositionId])
+      // constraint is satisfied by a single per-position row whose amount
+      // tracks the running total stake.
+      let positionId: string;
+
       if (existingPosition) {
         await tx.multiChoicePosition.update({
           where: { id: existingPosition.id },
@@ -141,8 +148,9 @@ export async function POST(
             ...(isFlagshipPoll && payload.reasoning !== undefined ? { reasoning: payload.reasoning } : {}),
           }
         });
+        positionId = existingPosition.id;
       } else {
-        await tx.multiChoicePosition.create({
+        const created = await tx.multiChoicePosition.create({
           data: {
             userId: user.id,
             marketId: market.id,
@@ -151,12 +159,23 @@ export async function POST(
             reasoning: payload.reasoning ?? null,
           }
         });
+        positionId = created.id;
 
-        // Increment participant count only on first stake (any option).
+        // Increment participant count only on the user's first stake (any
+        // option). M3: under default READ COMMITTED isolation, two concurrent
+        // first-stake requests on different options for the same user could
+        // both observe count=1 (each seeing only its own insert), causing a
+        // double-increment of totalParticipants.
+        //
+        // Fix: take a row lock on the Market row before the count read, so
+        // the second transaction blocks until the first commits and then
+        // sees the full count. Postgres FOR UPDATE serializes only the rows
+        // we touch, so this doesn't bottleneck unrelated markets.
+        await tx.$executeRaw`SELECT id FROM "Market" WHERE id = ${market.id} FOR UPDATE`;
         const previousParticipation = await tx.multiChoicePosition.count({
           where: { userId: user.id, marketId: market.id }
         });
-        if (previousParticipation <= 1) {
+        if (previousParticipation === 1) {
           await tx.market.update({
             where: { id: market.id },
             data: { totalParticipants: { increment: 1 } }
@@ -175,15 +194,35 @@ export async function POST(
           throw new Error("Insufficient wallet balance.");
         }
 
-        await tx.walletTransaction.create({
-          data: {
+        // Upsert the POSITION_COMMITMENT row so a re-stake adds to the
+        // existing row's amount instead of creating a duplicate (which would
+        // collide with the unique constraint now that multiChoicePositionId
+        // is set).
+        const existingCommitWT = await tx.walletTransaction.findFirst({
+          where: {
             walletId: user.wallet!.id,
+            marketId: market.id,
             type: "POSITION_COMMITMENT",
-            amount: -payload.amount,
-            description: `Multi-choice stake on market option`,
-            marketId: market.id
-          }
+            multiChoicePositionId: positionId,
+          },
         });
+        if (existingCommitWT) {
+          await tx.walletTransaction.update({
+            where: { id: existingCommitWT.id },
+            data: { amount: { decrement: payload.amount } },
+          });
+        } else {
+          await tx.walletTransaction.create({
+            data: {
+              walletId: user.wallet!.id,
+              type: "POSITION_COMMITMENT",
+              amount: -payload.amount,
+              description: `Multi-choice stake on market option`,
+              marketId: market.id,
+              multiChoicePositionId: positionId,
+            }
+          });
+        }
 
         await tx.marketOption.update({
           where: { id: payload.optionId },

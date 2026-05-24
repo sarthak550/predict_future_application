@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { getSession } from "@/lib/auth";
+import { getUserIdFromRequest } from "@/lib/auth";
 import { settleMultiChoiceMarket } from "@/lib/markets/payouts";
 import { prisma } from "@/lib/prisma";
 import { resolveMultiChoiceSchema } from "@/lib/validations/market";
@@ -23,16 +23,18 @@ export async function POST(
   { params }: { params: { marketId: string } }
 ) {
   try {
-    const session = await getSession();
-    if (!session?.user?.id) {
+    const userId = await getUserIdFromRequest(request);
+    if (!userId) {
       return NextResponse.json({ error: "Authentication required." }, { status: 401 });
     }
 
     const actor = await prisma.user.findUnique({
-      where: { id: session.user.id },
+      where: { id: userId },
       select: { id: true, role: true, isSuspended: true }
     });
 
+    // isSuspended is redundant with the getUserIdFromRequest gate but kept
+    // for local-readability — matches the post-H11 admin-route pattern.
     if (!actor || actor.isSuspended) {
       return NextResponse.json({ error: "Account cannot resolve markets." }, { status: 403 });
     }

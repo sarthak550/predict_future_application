@@ -13,6 +13,9 @@ export async function POST(request: Request) {
   if (session.user.role !== "ADMIN" && session.user.role !== "MODERATOR") {
     return NextResponse.json({ error: "Admin access required." }, { status: 403 });
   }
+  if (session.user.isSuspended) {
+    return NextResponse.json({ error: "Account suspended." }, { status: 403 });
+  }
 
   try {
     const rawPayload = request.headers.get("content-type")?.includes("application/json")

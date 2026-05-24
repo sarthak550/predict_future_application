@@ -413,7 +413,12 @@ export async function settleMarket(
 
     await releaseOrForfeitHostBond(tx, {
       market,
-      releaseHostBond: Boolean(options?.releaseHostBond),
+      // M4: zero-winner branch — every staker has been refunded, so the
+      // host bond can never be paid out as compensation. Force-release it
+      // regardless of the caller's option flag, otherwise the host's bond
+      // stays locked indefinitely on a market that has nothing left to
+      // settle against.
+      releaseHostBond: true,
       forfeitHostBond: false // No real loss — bond stays or is released, never forfeited
     });
 
@@ -823,7 +828,12 @@ export async function settleMultiChoiceMarket(
   // Build payout map.
   const payoutMap = new Map<string, { positionId: string; userId: string; payout: number }>();
 
-  if (winningTotal === 0) {
+  // When no one bet on the winning option we refund every staker. The WT row
+  // is then a refund, not a win — the flag below distinguishes the two branches
+  // so the credit loop can label the wallet transaction correctly.
+  const isNoWinnerRefund = winningTotal === 0;
+
+  if (isNoWinnerRefund) {
     // No one bet on the winning option — refund everyone.
     for (const position of allPositions) {
       payoutMap.set(position.id, {
@@ -882,9 +892,15 @@ export async function settleMultiChoiceMarket(
     const isWinnerEntry = winningPositions.some((p) => p.id === positionId);
     await createUniqueWalletTransaction(tx, {
       walletId: position.user.wallet.id,
-      type: "MARKET_WIN",
+      // Refund branch (no one bet on the winning option) → MARKET_REFUND.
+      // Winning branch → MARKET_WIN. Mislabeling refunds as wins caused them
+      // to surface in win-rate stats and percentile leaderboards, which is
+      // wrong: a refund is a no-op, not a win.
+      type: isNoWinnerRefund ? "MARKET_REFUND" : "MARKET_WIN",
       amount: entry.payout,
-      description: `Payout for multi-choice market "${market.title}"`,
+      description: isNoWinnerRefund
+        ? `Refund — no winner declared for "${market.title}"`
+        : `Payout for multi-choice market "${market.title}"`,
       marketId: market.id,
       multiChoicePositionId: positionId,
       percentileRank: isWinnerEntry && multiChoicePercentileRank != null ? multiChoicePercentileRank : null,

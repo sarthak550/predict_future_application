@@ -17,6 +17,9 @@ export async function POST(
   if (session.user.role !== "ADMIN" && session.user.role !== "MODERATOR") {
     return NextResponse.json({ error: "Admin or Moderator access required." }, { status: 403 });
   }
+  if (session.user.isSuspended) {
+    return NextResponse.json({ error: "Account suspended." }, { status: 403 });
+  }
 
   let body: { resolutionStatus?: string; resolutionNote?: string };
   try {
@@ -89,7 +92,7 @@ export async function POST(
       await tx.adminAction.create({
         data: {
           actorId: session.user.id,
-          type: "RESOLVE_MARKET",
+          type: "RESOLVE_OPINION",
           notes: trimmedNote,
           metadata: { opinionId: params.id, resolutionStatus },
         },

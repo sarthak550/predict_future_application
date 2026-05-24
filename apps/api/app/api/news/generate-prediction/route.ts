@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 
 import { generatePollWithAI } from "@/lib/ai/gemini";
-import { getSession } from "@/lib/auth";
+import { getUserIdFromRequest } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { slugify } from "@/lib/utils";
 
@@ -13,12 +13,29 @@ import { slugify } from "@/lib/utils";
  * Body: { storyId: string }
  *
  * Uses AI to generate an opinion poll from a news story and creates it.
+ *
+ * Admin/moderator only: each call burns one Gemini+Groq generation and
+ * mints a public market on success. Leaving this open to any authed user
+ * was the dominant AI-cost exposure.
  */
 export async function POST(request: Request) {
   try {
-    const session = await getSession();
-    if (!session?.user?.id) {
+    const userId = await getUserIdFromRequest(request);
+    if (!userId) {
       return NextResponse.json({ error: "Authentication required." }, { status: 401 });
+    }
+
+    const actor = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, role: true, isSuspended: true },
+    });
+
+    if (!actor || actor.isSuspended) {
+      return NextResponse.json({ error: "Account cannot create polls." }, { status: 403 });
+    }
+
+    if (actor.role !== "ADMIN" && actor.role !== "MODERATOR") {
+      return NextResponse.json({ error: "Admin or moderator access required." }, { status: 403 });
     }
 
     const body = await request.json();
@@ -44,14 +61,6 @@ export async function POST(request: Request) {
 
     if (!story) {
       return NextResponse.json({ error: "Story not found." }, { status: 404 });
-    }
-
-    const actor = await prisma.user.findUnique({
-      where: { id: session.user.id },
-    });
-
-    if (!actor || actor.isSuspended) {
-      return NextResponse.json({ error: "Account cannot create polls." }, { status: 403 });
     }
 
     const suggestion = await generatePollWithAI({

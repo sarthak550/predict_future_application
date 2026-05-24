@@ -143,6 +143,12 @@ model WalletTransaction {
   MultiChoicePosition   MultiChoicePosition?  @relation(fields: [multiChoicePositionId], references: [id])
   position              MarketPosition?       @relation(fields: [positionId], references: [id])
   wallet                Wallet                @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  // M5: a partial unique index "WalletTransaction_host_market_type_uniq"
+  // is also defined in migration 20260525000001_m5_host_wt_partial_unique
+  // and enforces at-most-one row per (walletId, marketId, type) for the
+  // host-level transaction types (HOST_BOND_LOCK / RELEASE / FORFEIT /
+  // COMPENSATION, HOST_COMMISSION, HOST_REWARD). Prisma cannot model
+  // partial unique indexes natively, so the constraint lives in raw SQL.
 
   @@unique([walletId, marketId, type, positionId])
   @@unique([walletId, marketId, type, multiChoicePositionId], map: "WalletTransaction_walletId_marketId_type_multiChoicePositionId_")
@@ -1180,6 +1186,8 @@ enum AdminActionType {
   CURATE_FEED
   GRANT_VERIFIED_ANALYST
   REVOKE_VERIFIED_ANALYST
+  RESOLVE_OPINION
+  SUPPRESS_OPINION
 }
 
 /// Controls whether a user's identity is shown as their real username or a deterministic anonymous pseudonym.

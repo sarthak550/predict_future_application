@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { trySpendPushBudget } from "@/lib/expo-push-budget";
 import { prisma } from "@/lib/prisma";
 import { getIstDateString } from "@/lib/quests/engine";
 
@@ -73,6 +74,20 @@ export async function POST(request: Request) {
         data: { bigCallNotificationSentAt: new Date() },
       });
       return NextResponse.json({ ok: true, sent: 0, marketId: market.id });
+    }
+
+    // Reserve Expo budget before dispatching. If we don't have enough headroom
+    // in this hour's bucket, defer — don't stamp bigCallNotificationSentAt so a
+    // later cron tick (next hour, when budget resets) can pick it up.
+    const budgetOk = await trySpendPushBudget(allTokens.length);
+    if (!budgetOk) {
+      console.warn(
+        `[big-call-push] Expo hourly budget exhausted (need ${allTokens.length}); deferring market ${market.id}`
+      );
+      return NextResponse.json(
+        { ok: true, deferred: true, reason: "expo-budget-exhausted", marketId: market.id, tokens: allTokens.length },
+        { status: 200 }
+      );
     }
 
     const notifTitle = "Today's Big Call";

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { trySpendPushBudget } from "@/lib/expo-push-budget";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -126,9 +127,21 @@ export async function POST(request: Request) {
     const tokenChunks = buildChunks(allTokens);
     let totalSent = 0;
     const sentMarketIds: string[] = [];
+    const deferredMarketIds: string[] = [];
 
     // Send one broadcast per market, then stamp idempotency guard immediately after.
+    // Each market spends `allTokens.length` from the hourly Expo budget; if the
+    // bucket is exhausted, skip without stamping so the next cron tick retries.
     for (const market of markets) {
+      const budgetOk = await trySpendPushBudget(allTokens.length);
+      if (!budgetOk) {
+        console.warn(
+          `[flagship-reminder] Expo hourly budget exhausted (need ${allTokens.length}); deferring market ${market.id}`
+        );
+        deferredMarketIds.push(market.id);
+        continue;
+      }
+
       const notifTitle = `Tomorrow: ${market.title}`;
       const deepLink = `/market/${market.id}`;
 
@@ -143,7 +156,12 @@ export async function POST(request: Request) {
       sentMarketIds.push(market.id);
     }
 
-    return NextResponse.json({ ok: true, sent: totalSent, marketIds: sentMarketIds });
+    return NextResponse.json({
+      ok: true,
+      sent: totalSent,
+      marketIds: sentMarketIds,
+      ...(deferredMarketIds.length > 0 ? { deferredMarketIds, deferredReason: "expo-budget-exhausted" } : {}),
+    });
   } catch (error) {
     console.error("[flagship-reminder]", error);
     return NextResponse.json({ error: "Unable to send flagship reminders." }, { status: 500 });

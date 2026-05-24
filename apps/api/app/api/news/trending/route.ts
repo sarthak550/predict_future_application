@@ -1,13 +1,16 @@
 import { MarketCategory } from "@prisma/client";
 import { NextResponse } from "next/server";
 
-import { getSession } from "@/lib/auth";
+import { getUserIdFromRequest } from "@/lib/auth";
 import { getFeedStories } from "@/lib/stories/queries";
 import { newsFeedQuerySchema } from "@/lib/validations/news";
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const session = await getSession();
+  // Optional auth — pulls userId from either NextAuth cookie or mobile
+  // Bearer JWT, returns null for anonymous callers. The trending feed is
+  // public; the userId is used downstream for personalisation only.
+  const userId = await getUserIdFromRequest(request);
   const parsed = newsFeedQuerySchema.safeParse({
     category: searchParams.get("category") ?? undefined,
     page: searchParams.get("page") ?? 1,
@@ -25,7 +28,7 @@ export async function GET(request: Request) {
       category && Object.values(MarketCategory).includes(category as MarketCategory)
         ? (category as MarketCategory)
         : undefined,
-    userId: session?.user?.id,
+    userId: userId ?? undefined,
     page,
     limit: pageSize + 1
   });

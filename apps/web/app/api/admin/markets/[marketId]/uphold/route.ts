@@ -19,7 +19,7 @@ export async function POST(
       where: { id: session.user.id }
     });
 
-    if (!actor || (actor.role !== "ADMIN" && actor.role !== "MODERATOR")) {
+    if (!actor || (actor.role !== "ADMIN" && actor.role !== "MODERATOR") || actor.isSuspended) {
       return NextResponse.json({ error: "Admin access required." }, { status: 403 });
     }
 

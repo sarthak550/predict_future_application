@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { getSession } from "@/lib/auth";
+import { getUserIdFromRequest } from "@/lib/auth";
 import { canViewMarket } from "@/lib/markets/access";
 import { createNotification } from "@/lib/notifications";
 import { prisma } from "@/lib/prisma";
@@ -11,13 +11,16 @@ export async function POST(
   { params }: { params: { marketId: string } }
 ) {
   try {
-    const session = await getSession();
-    if (!session?.user?.id) {
+    const userId = await getUserIdFromRequest(request);
+    if (!userId) {
       return NextResponse.json({ error: "Authentication required." }, { status: 401 });
     }
 
+    // We still need role + username for the canViewMarket gate below, so this
+    // findUnique stays — but getUserIdFromRequest has already done the
+    // isSuspended check (Bearer + cookie paths).
     const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
+      where: { id: userId },
       select: {
         id: true,
         username: true,
@@ -25,7 +28,7 @@ export async function POST(
         role: true
       }
     });
-    if (!user || user.isSuspended) {
+    if (!user) {
       return NextResponse.json({ error: "Account cannot submit reports." }, { status: 403 });
     }
 

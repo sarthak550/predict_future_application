@@ -89,7 +89,7 @@ export async function POST(
     await tx.adminAction.create({
       data: {
         actorId: actor.id,
-        type: "FEATURE_MARKET", // closest available type; VERIFY_EXPERT would be ideal
+        type: "GRANT_VERIFIED_ANALYST",
         notes: hasProfileUpdate
           ? `Verified expert and updated profile fields for expert ${params.id}.`
           : `Verified expert ${params.id}.`,

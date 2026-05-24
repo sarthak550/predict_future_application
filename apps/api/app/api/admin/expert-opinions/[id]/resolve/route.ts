@@ -82,7 +82,7 @@ export async function POST(
       await tx.adminAction.create({
         data: {
           actorId: actor.id,
-          type: "RESOLVE_MARKET",
+          type: "RESOLVE_OPINION",
           notes: trimmedNote,
           metadata: { opinionId: params.id, resolutionStatus },
         },

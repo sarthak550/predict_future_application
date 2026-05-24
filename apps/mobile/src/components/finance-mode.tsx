@@ -2447,15 +2447,37 @@ export function FinanceMode({
           };
 
           if (sortMode === "top-week") {
-            // S38 fix: filter "this week" strictly by when the analyst made the
-            // call (articlePublishedAt) — not by max(resolvedAt, articlePublishedAt).
-            // A 30-day-old call that resolved 2 days ago is still a 30-day-old CALL.
-            // Sort within the filtered set by groupSortKey so resolved-this-week
-            // calls still bubble to the top of the visible list.
+            // "This week" pivots on which timestamp the user is actually
+            // looking at:
+            //   - resolvedOnly ON → window is "resolved within the last 7
+            //     days" (matches the server-side latestResolvedAt cursor
+            //     and the date users see on these cards).
+            //   - resolvedOnly OFF → window is "call was made within the
+            //     last 7 days" (articlePublishedAt). A 30-day-old call
+            //     that resolved this week is still a 30-day-old CALL when
+            //     we're showing pending + resolved together.
+            // Sort within the filtered set by groupSortKey so freshly
+            // resolved calls still bubble to the top of the visible list.
             const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
             const now = Date.now();
+            const groupWindowTs = (g: GroupedCard): number => {
+              if (resolvedOnly) {
+                let maxResolvedTs = 0;
+                for (const op of g.opinions) {
+                  if (op.resolvedAt) {
+                    const t = new Date(op.resolvedAt).getTime();
+                    if (t > maxResolvedTs) maxResolvedTs = t;
+                  }
+                }
+                return maxResolvedTs;
+              }
+              return new Date(g.articlePublishedAt).getTime();
+            };
             filteredGroups = [...filteredGroups]
-              .filter((g) => now - new Date(g.articlePublishedAt).getTime() <= SEVEN_DAYS_MS)
+              .filter((g) => {
+                const ts = groupWindowTs(g);
+                return ts > 0 && now - ts <= SEVEN_DAYS_MS;
+              })
               .sort((a, b) => {
                 if (b.opinions.length !== a.opinions.length) {
                   return b.opinions.length - a.opinions.length;

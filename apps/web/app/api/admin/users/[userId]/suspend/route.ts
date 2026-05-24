@@ -22,7 +22,11 @@ export async function POST(
     const actor = await prisma.user.findUnique({
       where: { id: session.user.id }
     });
-    if (!actor || (actor.role !== "ADMIN" && actor.role !== "MODERATOR")) {
+    // Defense in depth (matches the H11 sweep): refuse if the actor is
+    // suspended. Note that mobile callers of admin paths see the suspension
+    // within ~5 minutes due to the process-local cache in lib/auth.ts
+    // (_suspendCache, TTL 5m) — intentional SLA, not a bug.
+    if (!actor || (actor.role !== "ADMIN" && actor.role !== "MODERATOR") || actor.isSuspended) {
       return NextResponse.json({ error: "Admin access required." }, { status: 403 });
     }
 
@@ -34,6 +38,16 @@ export async function POST(
       });
       if (!target) {
         throw new Error("User not found.");
+      }
+
+      // Role hierarchy: a MODERATOR cannot suspend an ADMIN or another MODERATOR.
+      // Only ADMINs can take actions against admin/mod accounts. This prevents
+      // a compromised mod from taking down the platform admin.
+      if (
+        actor.role === "MODERATOR" &&
+        (target.role === "ADMIN" || target.role === "MODERATOR")
+      ) {
+        throw new Error("Moderators cannot suspend admin or moderator accounts.");
       }
 
       const nextSuspended = !target.isSuspended;

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { getSession } from "@/lib/auth";
+import { getUserIdFromRequest } from "@/lib/auth";
 import { addHostBondCap } from "@/lib/markets/bond";
 
 const addBondSchema = z.object({
@@ -13,15 +13,15 @@ export async function POST(
   { params }: { params: { marketId: string } }
 ) {
   try {
-    const session = await getSession();
-    if (!session?.user?.id) {
+    const userId = await getUserIdFromRequest(request);
+    if (!userId) {
       return NextResponse.json({ error: "Authentication required." }, { status: 401 });
     }
 
     const payload = addBondSchema.parse(await request.json());
     const result = await addHostBondCap({
       marketId: params.marketId,
-      hostUserId: session.user.id,
+      hostUserId: userId,
       amount: payload.amount
     });
 

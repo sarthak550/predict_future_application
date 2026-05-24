@@ -5,12 +5,14 @@
  * The headline is extracted/paraphrased from the opinion's quote and stored
  * on the ExpertOpinion.headline field (S35-T2).
  *
- * Uses Gemini (same API key as extractExpertOpinions). Falls back to a
- * simple rule-based summary if the AI call fails.
+ * Uses callGeminiAIText (shared helper). Falls back to a simple rule-based
+ * summary if the AI call fails.
  *
  * In-memory daily cap (env: HEADLINE_DAILY_CAP, default 200) guards against
  * runaway AI spend. Counter resets on UTC day rollover.
  */
+
+import { callGeminiAIText } from "./gemini";
 
 /**
  * Sentinel substrings that should never appear in a legitimate headline AI response.
@@ -107,8 +109,7 @@ export async function generateHeadlineForOpinion(opts: {
   expertName: string;
   opinionId?: string;
 }): Promise<string | null> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
+  if (!process.env.GEMINI_API_KEY) {
     console.warn("[generateHeadline] GEMINI_API_KEY not set — using rule-based fallback");
     return ruleBasedHeadline(opts);
   }
@@ -117,108 +118,26 @@ export async function generateHeadlineForOpinion(opts: {
     return ruleBasedHeadline(opts);
   }
 
+  let raw: string;
   try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${process.env.GEMINI_MODEL ?? "gemini-2.5-flash"}:generateContent`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-        body: JSON.stringify({
-          contents: [
-            {
-              role: "user",
-              parts: [
-                {
-                  text: `${HEADLINE_SYSTEM_PROMPT}\n\n${buildHeadlinePrompt(opts)}`,
-                },
-              ],
-            },
-          ],
-          generationConfig: {
-            temperature: 0.4,
-            maxOutputTokens: 32,
-          },
-        }),
-      }
-    );
-
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error("[generateHeadline] Gemini error:", response.status, errText.slice(0, 200));
-
-      // On 404 (model not found), retry with fallback model once
-      if (response.status === 404) {
-        const fallbackModel = process.env.GEMINI_FALLBACK_MODEL ?? "gemini-1.5-flash";
-        console.warn(`[generateHeadline] Primary model returned 404 — retrying with fallback model ${fallbackModel}`);
-        const fallbackResponse = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${fallbackModel}:generateContent`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-            body: JSON.stringify({
-              contents: [
-                {
-                  role: "user",
-                  parts: [
-                    {
-                      text: `${HEADLINE_SYSTEM_PROMPT}\n\n${buildHeadlinePrompt(opts)}`,
-                    },
-                  ],
-                },
-              ],
-              generationConfig: {
-                temperature: 0.4,
-                maxOutputTokens: 32,
-              },
-            }),
-          }
-        );
-        if (!fallbackResponse.ok) {
-          console.error("[generateHeadline] Fallback model also failed:", fallbackResponse.status);
-          return ruleBasedHeadline(opts);
-        }
-        const fallbackData = (await fallbackResponse.json()) as {
-          candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-        };
-        const fallbackRaw = fallbackData?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-        const fallbackHeadline = fallbackRaw.trim().replace(/^["']|["']$/g, "").trim();
-        const fallbackWordCount = fallbackHeadline.split(/\s+/).filter(Boolean).length;
-        if (fallbackWordCount < 2 || fallbackWordCount > 12 || fallbackHeadline.length < 5) {
-          return ruleBasedHeadline(opts);
-        }
-        // Injection sentinel check
-        if (headlineContainsSentinel(fallbackHeadline)) {
-          console.warn("[generateHeadline] Fallback response contains injection sentinel — using rule-based fallback");
-          return ruleBasedHeadline(opts);
-        }
-        return fallbackHeadline;
-      }
-
-      return ruleBasedHeadline(opts);
-    }
-
-    const data = (await response.json()) as {
-      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-    };
-    const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-    const headline = raw.trim().replace(/^["']|["']$/g, "").trim();
-
-    // Validate: must be 2-12 words
-    const wordCount = headline.split(/\s+/).filter(Boolean).length;
-    if (wordCount < 2 || wordCount > 12 || headline.length < 5) {
-      console.warn(`[generateHeadline] Unexpected output: "${headline}" — falling back`);
-      return ruleBasedHeadline(opts);
-    }
-
-    // Injection sentinel check
-    if (headlineContainsSentinel(headline)) {
-      console.warn("[generateHeadline] Response contains injection sentinel — using rule-based fallback");
-      return ruleBasedHeadline(opts);
-    }
-
-    return headline;
+    raw = await callGeminiAIText(HEADLINE_SYSTEM_PROMPT, buildHeadlinePrompt(opts), {
+      temperature: 0.4,
+      maxOutputTokens: 32,
+    });
   } catch (err) {
-    console.error("[generateHeadline] Exception:", err);
+    console.error("[generateHeadline] callGeminiAIText failed:", err instanceof Error ? err.message : err);
     return ruleBasedHeadline(opts);
   }
+
+  const headline = raw.trim().replace(/^["']|["']$/g, "").trim();
+  const wordCount = headline.split(/\s+/).filter(Boolean).length;
+  if (wordCount < 2 || wordCount > 12 || headline.length < 5) {
+    console.warn(`[generateHeadline] Unexpected output: "${headline}" — falling back`);
+    return ruleBasedHeadline(opts);
+  }
+  if (headlineContainsSentinel(headline)) {
+    console.warn("[generateHeadline] Response contains injection sentinel — using rule-based fallback");
+    return ruleBasedHeadline(opts);
+  }
+  return headline;
 }

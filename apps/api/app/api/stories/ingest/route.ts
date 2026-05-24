@@ -1,21 +1,26 @@
 import { NextResponse } from "next/server";
 
-import { getSession } from "@/lib/auth";
+import { getUserIdFromRequest } from "@/lib/auth";
 import { ingestStories } from "@/lib/news/ingestion";
+import { prisma } from "@/lib/prisma";
 import { storiesIngestSchema } from "@/lib/validations/story";
 
 export async function POST(request: Request) {
   try {
-    const session = await getSession();
-    if (!session?.user?.id) {
+    const userId = await getUserIdFromRequest(request);
+    if (!userId) {
       return NextResponse.json({ error: "Authentication required." }, { status: 401 });
     }
-    if (session.user.role !== "ADMIN" && session.user.role !== "MODERATOR") {
+    const actor = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { role: true, isSuspended: true },
+    });
+    if (!actor || actor.isSuspended || (actor.role !== "ADMIN" && actor.role !== "MODERATOR")) {
       return NextResponse.json({ error: "Admin access required." }, { status: 403 });
     }
 
     const payload = storiesIngestSchema.parse(await request.json());
-    const results = await ingestStories(payload.stories, session.user.id);
+    const results = await ingestStories(payload.stories, userId);
 
     return NextResponse.json(
       {

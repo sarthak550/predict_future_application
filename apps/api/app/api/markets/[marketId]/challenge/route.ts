@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 
-import { getSession } from "@/lib/auth";
+import { getUserIdFromRequest } from "@/lib/auth";
 import { submitMarketChallenge } from "@/lib/markets/resolution";
-import { prisma } from "@/lib/prisma";
 import { marketChallengeSchema } from "@/lib/validations/market";
 
 export async function POST(
@@ -10,27 +9,18 @@ export async function POST(
   { params }: { params: { marketId: string } }
 ) {
   try {
-    const session = await getSession();
-    if (!session?.user?.id) {
+    // getUserIdFromRequest already enforces isSuspended === false on both
+    // cookie and Bearer paths, so the prior duplicate prisma.user.findUnique
+    // check is no longer needed.
+    const userId = await getUserIdFromRequest(request);
+    if (!userId) {
       return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-    }
-
-    const actor = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: {
-        id: true,
-        isSuspended: true
-      }
-    });
-
-    if (!actor || actor.isSuspended) {
-      return NextResponse.json({ error: "Account cannot challenge markets." }, { status: 403 });
     }
 
     const payload = marketChallengeSchema.parse(await request.json());
     const challenge = await submitMarketChallenge({
       marketId: params.marketId,
-      challengerUserId: actor.id,
+      challengerUserId: userId,
       reasonText: payload.reasonText || undefined,
       evidenceText: payload.evidenceText || undefined,
       evidenceUrl: payload.evidenceUrl || undefined

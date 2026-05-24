@@ -6,10 +6,57 @@ import CredentialsProvider from "next-auth/providers/credentials";
 import { redirect } from "next/navigation";
 
 import { prisma } from "@/lib/prisma";
+import { checkRateLimit, resetRateLimit } from "@/lib/rate-limit";
 
 if (!process.env.NEXTAUTH_SECRET) throw new Error("NEXTAUTH_SECRET env var is required");
 // Non-null assertion is safe: the throw above guarantees this is set at module load time.
 const JWT_SECRET: string = process.env.NEXTAUTH_SECRET;
+
+/**
+ * Process-local cache of {userId → isSuspended} with a 5-minute TTL.
+ *
+ * Background: getUserIdFromRequest used to hit the DB on every Bearer-authed
+ * request just to read the isSuspended flag. On a hot mobile route that's
+ * one extra query per request — measurable load and unnecessary if the same
+ * device just made the same call seconds ago.
+ *
+ * TTL is 5 min to match the NextAuth-side stale-window (auth.ts jwt callback).
+ * A suspension propagates to mobile within 5 minutes of being toggled by
+ * admin/moderator action — same SLA the web side has.
+ *
+ * Negative cache: we cache "not suspended" only. A suspended (or deleted)
+ * user is treated as null and never cached, so the next request re-checks
+ * and stays denied — this also covers the unsuspend path naturally.
+ */
+const SUSPEND_CACHE_TTL_MS = 5 * 60 * 1000;
+const _suspendCache = new Map<string, number>(); // userId → "good until" epoch ms
+
+function _suspendCacheHit(userId: string): boolean {
+  const expiresAt = _suspendCache.get(userId);
+  if (!expiresAt) return false;
+  if (Date.now() >= expiresAt) {
+    _suspendCache.delete(userId);
+    return false;
+  }
+  return true;
+}
+
+function _suspendCacheStore(userId: string): void {
+  _suspendCache.set(userId, Date.now() + SUSPEND_CACHE_TTL_MS);
+  // Best-effort cleanup so the Map doesn't grow unbounded on long-running
+  // workers. Cheap because we only walk when the size crosses a soft cap.
+  if (_suspendCache.size > 5000) {
+    const now = Date.now();
+    for (const [id, exp] of _suspendCache) {
+      if (now >= exp) _suspendCache.delete(id);
+    }
+  }
+}
+
+/** Test-only: clear the cache. Not exported via the package boundary. */
+export function _resetSuspendCacheForTests(): void {
+  _suspendCache.clear();
+}
 
 /**
  * Resolves the authenticated user ID from any request — works for both
@@ -23,14 +70,18 @@ export async function getUserIdFromRequest(request: Request): Promise<string | n
     try {
       const payload = jwt.verify(bearer, JWT_SECRET) as { sub?: string };
       if (payload.sub) {
-        // Defense in depth: mobile JWTs are 30-day tokens — check isSuspended on every
-        // request so suspension takes effect immediately rather than at token expiry.
-        // One extra DB lookup per Bearer-authed request is acceptable vs shortening TTL.
+        // 5-min TTL cache: if this user passed the suspension gate recently,
+        // skip the DB lookup. Suspensions still propagate within 5 min — same
+        // SLA as the web/NextAuth jwt callback uses on the cookie side.
+        if (_suspendCacheHit(payload.sub)) {
+          return payload.sub;
+        }
         const user = await prisma.user.findUnique({
           where: { id: payload.sub },
           select: { isSuspended: true },
         });
         if (!user || user.isSuspended) return null;
+        _suspendCacheStore(payload.sub);
         return payload.sub;
       }
     } catch {
@@ -69,8 +120,23 @@ export const authOptions: NextAuthOptions = {
           return null;
         }
 
+        const email = credentials.email.toLowerCase();
+
+        // Brute-force protection. NextAuth's credentials authorize() does not
+        // receive request headers in a portable way (varies by adapter), so we
+        // only do the per-email gate here. The mobile login route adds the IP gate.
+        // 5 failed attempts per 15 min per email; resets on success.
+        const rl = await checkRateLimit(`login:email:${email}`, 5, 15 * 60 * 1000);
+        if (!rl.allowed) {
+          // NextAuth swallows thrown errors into a generic CredentialsSignin error
+          // on the client. Returning null is the standard way to deny — the user sees
+          // "Invalid email or password" which doesn't reveal the lockout. That's OK:
+          // the lockout still applies until the rate-limit window expires.
+          return null;
+        }
+
         const user = await prisma.user.findUnique({
-          where: { email: credentials.email.toLowerCase() }
+          where: { email }
         });
 
         if (!user?.passwordHash) {
@@ -81,6 +147,9 @@ export const authOptions: NextAuthOptions = {
         if (!isValid || user.isSuspended) {
           return null;
         }
+
+        // Successful login — clear the per-email failed-attempt counter.
+        await resetRateLimit(`login:email:${email}`);
 
         return {
           id: user.id,

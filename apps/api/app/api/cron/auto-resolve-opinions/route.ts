@@ -41,6 +41,8 @@ const RESOLVE_MAX_ATTEMPTS = 5;
 
 /** How far back we look for stuck-notification opinions in the sweep (7 days). */
 const SWEEP_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+/** Max stuck opinions notified per cron run — bounds notify burst + DB load. */
+const SWEEP_LIMIT = parseInt(process.env.CRON_SWEEP_LIMIT ?? "50", 10);
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -70,6 +72,8 @@ async function runNotificationSweep(): Promise<{ swept: number }> {
       notifiedAt: null,
     },
     select: { id: true },
+    orderBy: { resolvedAt: "asc" },
+    take: SWEEP_LIMIT,
   });
 
   let swept = 0;
@@ -223,16 +227,6 @@ async function runResolution(): Promise<{
   for (const opinion of opinions) {
     const headline = opinion.story?.headline ?? "";
 
-    // Increment attempt counter before calling AI.
-    const attemptNumber = opinion.resolutionAttempts + 1;
-    await prisma.expertOpinion.update({
-      where: { id: opinion.id },
-      data: {
-        resolutionAttempts: { increment: 1 },
-        lastResolutionAttemptAt: new Date(),
-      },
-    });
-
     // Optimisation: if the parse result (instrument, ticker, window) is already cached
     // on the row, pass skipPass1=true to avoid re-running the parse AI call.
     const hasFullParseCache =
@@ -253,6 +247,27 @@ async function runResolution(): Promise<{
     });
 
     if (result === null) {
+      // Don't burn an attempt on a transient AI rate-limit — the quota is per-minute and
+      // we'll get a fresh budget on the next cron run. Phase 1 does the same thing.
+      if (wasLastCallRateLimited()) {
+        console.warn(
+          `[cron/auto-resolve-opinions] Phase 2 quota exceeded for ${opinion.id} — skipping this run, attempt counter unchanged`
+        );
+        skipped++;
+        await sleep(RESOLVE_DELAY_MS);
+        continue;
+      }
+
+      // Genuine AI failure — increment the counter now.
+      const attemptNumber = opinion.resolutionAttempts + 1;
+      await prisma.expertOpinion.update({
+        where: { id: opinion.id },
+        data: {
+          resolutionAttempts: { increment: 1 },
+          lastResolutionAttemptAt: new Date(),
+        },
+      });
+
       // On the final allowed attempt, permanently mark NOT_GRADED.
       if (attemptNumber >= RESOLVE_MAX_ATTEMPTS) {
         await prisma.expertOpinion.update({

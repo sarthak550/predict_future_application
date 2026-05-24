@@ -4,12 +4,20 @@ import { computeCredibilityScore } from "@/lib/finance/credibility";
 
 const TOP_N = 20;
 const MIN_THRESHOLD = 3; // min qualifying experts to return a list
+/**
+ * Cap on how many Expert rows we load before computing credibility. The query
+ * pulls the full opinions array per expert, so an unbounded findMany would
+ * OOM the lambda once expert count grows large. 2000 is well above the
+ * realistic universe of analysts we'd ever feature; we filter + sort + slice
+ * down to TOP_N from there.
+ */
+const MAX_EXPERTS_SCANNED = 2000;
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const orgFilter = searchParams.get("org") ?? undefined;
 
-  // Fetch all experts with their opinions — credibility is derived from
+  // Fetch experts with their opinions — credibility is derived from
   // admin-set resolutionStatus, no vote data required.
   const experts = await prisma.expert.findMany({
     where: orgFilter ? { organization: orgFilter } : undefined,
@@ -28,6 +36,7 @@ export async function GET(request: Request) {
         },
       },
     },
+    take: MAX_EXPERTS_SCANNED,
   });
 
   // Compute credibility for each expert and filter those with >= 5 resolved

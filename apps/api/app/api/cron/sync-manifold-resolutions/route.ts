@@ -14,6 +14,7 @@
 import { MarketOutcome, MarketStatus, ResolutionStatus } from "@prisma/client";
 import { NextResponse } from "next/server";
 
+import { settleMarket } from "@/lib/markets/payouts";
 import { prisma } from "@/lib/prisma";
 
 const MANIFOLD_BASE = "https://api.manifold.markets/v0";
@@ -110,35 +111,50 @@ export async function POST(request: Request) {
     });
     crowdUpdated++;
 
-    // If now resolved, sync the outcome
+    // If now resolved, sync the outcome AND settle native positions.
+    // Interactive transaction (not batched) so settleMarket sees the updated
+    // market row + can credit wallets + create MARKET_WIN/REFUND/HOST_* transactions
+    // atomically with the status flip. Without settleMarket, users with native
+    // positions on a Manifold-synced market would never get paid out.
     if (detail.isResolved && (detail.resolution === "YES" || detail.resolution === "NO")) {
       const outcome = detail.resolution === "YES" ? MarketOutcome.YES : MarketOutcome.NO;
       const resolvedAt = detail.resolutionTime ? new Date(detail.resolutionTime) : new Date();
 
-      await prisma.$transaction([
-        prisma.market.update({
-          where: { id: m.id },
-          data: {
-            status: MarketStatus.RESOLVED,
-            resolutionStatus: ResolutionStatus.FINALIZED,
-            outcome,
-            finalizationAt: resolvedAt,
+      try {
+        await prisma.$transaction(
+          async (tx) => {
+            await tx.market.update({
+              where: { id: m.id },
+              data: {
+                status: MarketStatus.RESOLVED,
+                resolutionStatus: ResolutionStatus.FINALIZED,
+                outcome,
+                finalizationAt: resolvedAt,
+              },
+            });
+            await tx.marketResolution.upsert({
+              where: { marketId: m.id },
+              create: {
+                marketId: m.id,
+                outcome,
+                sourceName: "Manifold Markets",
+                sourceUrl: `https://manifold.markets/market/${manifoldId}`,
+                explanation: `Synced from Manifold. Original resolution: ${detail.resolution}`,
+                resolvedAt,
+              },
+              update: {},
+            });
+            // Pay out native positions. createUniqueWalletTransaction inside
+            // settleMarket prevents double-credit on cron retry.
+            await settleMarket(tx, m.id);
           },
-        }),
-        prisma.marketResolution.upsert({
-          where: { marketId: m.id },
-          create: {
-            marketId: m.id,
-            outcome,
-            sourceName: "Manifold Markets",
-            sourceUrl: `https://manifold.markets/market/${manifoldId}`,
-            explanation: `Synced from Manifold. Original resolution: ${detail.resolution}`,
-            resolvedAt,
-          },
-          update: {},
-        }),
-      ]);
-      resolved++;
+          { maxWait: 30000, timeout: 30000 }
+        );
+        resolved++;
+      } catch (err) {
+        console.error(`[sync-manifold] settle failed for ${m.id}:`, err);
+        failed++;
+      }
     }
 
     await sleep(REQUEST_DELAY_MS);

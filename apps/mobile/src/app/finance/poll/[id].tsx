@@ -9,11 +9,10 @@
 
 import { Feather, Ionicons } from "@expo/vector-icons";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Linking,
   Modal,
   Pressable,
   RefreshControl,
@@ -260,11 +259,10 @@ function VoteConsensus({
     );
   }
 
-  // Binary
-  const yesPct = useMemo(() => {
-    // We don't have raw counts here — use participation as proxy. Real % comes from API in future iterations.
-    return userSide === "YES" ? 0.5 : 0.5;
-  }, [userSide]);
+  // Binary. yesPct is a placeholder constant (50%) until the API surfaces raw
+  // counts — keeping it as a plain const avoids the Rules-of-Hooks violation
+  // we'd hit by calling useMemo after the conditional early returns above.
+  const yesPct = 0.5;
   return (
     <View style={styles.card}>
       <Text style={styles.sectionLabel}>Your vote</Text>
@@ -281,6 +279,8 @@ function VoteConsensus({
 // ─── Related expert opinions ─────────────────────────────────────────────────
 
 function ExpertOpinionsSection({ opinions }: { opinions: RelatedOpinion[] }) {
+  const router = useRouter();
+
   if (opinions.length === 0) {
     return (
       <View style={styles.card}>
@@ -300,9 +300,12 @@ function ExpertOpinionsSection({ opinions }: { opinions: RelatedOpinion[] }) {
         <Pressable
           key={op.id}
           style={styles.opinionRow}
-          onPress={() => {
-            if (op.sourceUrl) void Linking.openURL(op.sourceUrl);
-          }}
+          // Tap opens the in-app opinion detail screen (full quote + agree/
+          // disagree poll). The "Read source article" link inside that screen
+          // is the only place we hand off to the external publisher URL.
+          onPress={() =>
+            router.push(`/finance/opinion/${op.id}` as Parameters<typeof router.push>[0])
+          }
         >
           <View style={styles.opinionHeader}>
             <Text style={styles.opinionExpert} numberOfLines={1}>
@@ -318,8 +321,8 @@ function ExpertOpinionsSection({ opinions }: { opinions: RelatedOpinion[] }) {
             </View>
           </View>
           <Text style={styles.opinionOrg}>{op.expert.organization}</Text>
-          <Text style={styles.opinionQuote} numberOfLines={3}>"{op.quote}"</Text>
-          <Text style={styles.opinionMeta}>{formatRelativeTime(op.publishedAt)} · tap to read source →</Text>
+          <Text style={styles.opinionQuote}>&quot;{op.quote}&quot;</Text>
+          <Text style={styles.opinionMeta}>{formatRelativeTime(op.publishedAt)} · tap to read full opinion →</Text>
         </Pressable>
       ))}
     </View>

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { getSession, getUserIdFromRequest } from "@/lib/auth";
+import { getUserIdFromRequest } from "@/lib/auth";
 import { canManageMarket, canViewMarket } from "@/lib/markets/access";
 import { finalizeMarketResolution } from "@/lib/markets/resolution";
 import { prisma } from "@/lib/prisma";
@@ -330,8 +330,8 @@ export async function PATCH(
   { params }: { params: { marketId: string } }
 ) {
   try {
-    const session = await getSession();
-    if (!session?.user?.id) {
+    const userId = await getUserIdFromRequest(request);
+    if (!userId) {
       return NextResponse.json({ error: "Authentication required." }, { status: 401 });
     }
 
@@ -343,7 +343,8 @@ export async function PATCH(
     }
 
     const actor = await prisma.user.findUnique({
-      where: { id: session.user.id }
+      where: { id: userId },
+      select: { id: true, role: true, isSuspended: true }
     });
     if (!actor) {
       return NextResponse.json({ error: "User not found." }, { status: 404 });
@@ -392,11 +393,11 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _request: Request,
+  request: Request,
   { params }: { params: { marketId: string } }
 ) {
-  const session = await getSession();
-  if (!session?.user?.id) {
+  const userId = await getUserIdFromRequest(request);
+  if (!userId) {
     return NextResponse.json({ error: "Authentication required." }, { status: 401 });
   }
 
@@ -415,7 +416,7 @@ export async function DELETE(
   }
 
   const actor = await prisma.user.findUnique({
-    where: { id: session.user.id }
+    where: { id: userId }
   });
   if (!actor) {
     return NextResponse.json({ error: "User not found." }, { status: 404 });
