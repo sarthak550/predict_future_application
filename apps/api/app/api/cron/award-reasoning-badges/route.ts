@@ -16,8 +16,7 @@ import { prisma } from "@/lib/prisma";
 function hasCronAccess(request: Request) {
   const secret = process.env.CRON_SECRET;
   if (!secret) {
-    // No secret configured — allow (useful in dev).
-    return true;
+    return false;
   }
   const authHeader = request.headers.get("authorization");
   const cronHeader = request.headers.get("x-cron-secret");

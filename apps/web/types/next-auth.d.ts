@@ -23,5 +23,6 @@ declare module "next-auth/jwt" {
     role?: "USER" | "ADMIN" | "MODERATOR";
     username?: string;
     isSuspended?: boolean;
+    refreshedAt?: number;
   }
 }

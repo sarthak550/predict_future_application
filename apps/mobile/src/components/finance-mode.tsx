@@ -3,12 +3,14 @@ import { useRouter } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Animated,
   Modal,
   NativeScrollEvent,
   NativeSyntheticEvent,
   Pressable,
   RefreshControl,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   View,
@@ -16,22 +18,102 @@ import {
 
 import type {
   ApiFlagshipEvent,
+  ApiFinanceBigCallOpinion,
   ApiFinanceExpertSentiment,
   ApiFinanceMarketsResponse,
   ApiMarketSummary,
   ApiMyCallsDigest,
   ApiNewsFeedItem,
+  ApiUserProfile,
   ApiVerifiedCall,
 } from "@predict-future/types";
 import { colors, radius, spacing } from "@predict-future/ui-tokens";
+import { formatRelativeTime, freshnessColor } from "@predict-future/utils";
+
+import { ApiClientError } from "@predict-future/api-client";
 
 import { ExpertOpinionCard } from "@/components/expert-opinion-card";
 import { mobileApi } from "@/lib/api";
 import { getExpertInitials, getExpertInitialsColor } from "@/utils/expertAvatar";
+import { AnalystTierBadge } from "@/components/analyst-tier-badge";
+import { isNSEHoliday } from "@/constants/nse-holidays-2026";
 
 const FOLLOWED_ANALYSTS_KEY = "finance:followedAnalysts";
+const FEED_DEFAULT_CACHE_KEY = "finance:feed:default";
+
+/**
+ * Persisted shape of the default-filter news feed (no filters active).
+ * Hydrated on mount so users see instant content during a slow / failed
+ * refresh instead of a blank loading spinner or error screen.
+ */
+type FeedCache = {
+  items: ApiNewsFeedItem[];
+  nextCursor: string | null;
+  hasMore: boolean;
+  savedAt: number;
+};
 
 type DirectionFilter = "BULLISH" | "BEARISH" | "NEUTRAL" | "VERIFIED" | null;
+
+// ─── IST time utilities (S35-T3) ──────────────────────────────────────────────
+
+function getISTHourMinute(): { hours: number; minutes: number; dayOfWeek: number; dateKey: string } {
+  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+  const now = new Date(Date.now() + IST_OFFSET_MS);
+  return {
+    hours: now.getUTCHours(),
+    minutes: now.getUTCMinutes(),
+    dayOfWeek: now.getUTCDay(), // 0=Sun, 6=Sat
+    dateKey: now.toISOString().slice(0, 10),
+  };
+}
+
+type MarketWindow =
+  | "pre-market"
+  | "live"
+  | "closing-wrap"
+  | "after-hours"
+  | "weekend"
+  | "holiday";
+
+function getMarketWindow(): MarketWindow {
+  const { hours, minutes, dayOfWeek, dateKey } = getISTHourMinute();
+  if (isNSEHoliday(dateKey)) return "holiday";
+  if (dayOfWeek === 0 || dayOfWeek === 6) return "weekend";
+  const totalMinutes = hours * 60 + minutes;
+  if (totalMinutes < 8 * 60) return "after-hours"; // before 08:00
+  if (totalMinutes < 9 * 60 + 15) return "pre-market"; // 08:00–09:15
+  if (totalMinutes < 15 * 60 + 30) return "live"; // 09:15–15:30
+  if (totalMinutes < 20 * 60) return "closing-wrap"; // 15:30–20:00
+  return "after-hours"; // 20:00+
+}
+
+const MARKET_WINDOW_COPY: Record<MarketWindow, { header: string; subtitle: string }> = {
+  "pre-market": {
+    header: "Pre-market briefing",
+    subtitle: "What experts are saying before the bell",
+  },
+  live: {
+    header: "Live now · markets open",
+    subtitle: "Calls made during today's session",
+  },
+  "closing-wrap": {
+    header: "Closing wrap",
+    subtitle: "How today's calls played out",
+  },
+  "after-hours": {
+    header: "After hours",
+    subtitle: "Analyst takes for tomorrow",
+  },
+  weekend: {
+    header: "Weekend wrap",
+    subtitle: "Calls to watch when markets reopen",
+  },
+  holiday: {
+    header: "Markets closed today",
+    subtitle: "Expert takes for the next session",
+  },
+};
 
 // ─── Flagship Events Carousel (S32-T2) ────────────────────────────────────────
 
@@ -206,31 +288,18 @@ function FlagshipHeroCard({ event }: { event: ApiFlagshipEvent }) {
 }
 
 function FlagshipEventsCarousel({ events }: { events: ApiFlagshipEvent[] }) {
-  const router = useRouter();
-
-  const goCreate = () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (router.push as (href: any) => void)({
-      pathname: "/(tabs)/create",
-      params: { preselectCategory: "FINANCE", flagshipOn: "1" },
-    });
-  };
-
   return (
     <View style={flagshipStyles.section}>
       <View style={flagshipStyles.headerRow}>
         <Text style={flagshipStyles.sectionHeader}>{"🔥 Policy & Big Events"}</Text>
-        <Pressable onPress={goCreate} style={flagshipStyles.createBtn} hitSlop={8}>
-          <Text style={flagshipStyles.createBtnText}>+ Create poll</Text>
-        </Pressable>
       </View>
       {events.length === 0 ? (
-        <Pressable onPress={goCreate} style={flagshipStyles.emptyCard}>
+        <View style={flagshipStyles.emptyCard}>
           <Text style={flagshipStyles.emptyTitle}>No live event polls yet</Text>
           <Text style={flagshipStyles.emptyHint}>
-            Start the first poll on an upcoming RBI meeting, Budget, or global event.
+            Curated RBI meetings, Budget, and global events appear here as admins schedule them.
           </Text>
-        </Pressable>
+        </View>
       ) : (
         <ScrollView
           horizontal
@@ -332,7 +401,7 @@ function AnalystSentimentCard({
   if (sentiment.totalCount === 0) {
     return (
       <View style={financeStyles.analystSentimentCard}>
-        <Text style={financeStyles.analystSentimentTitle}>Today's Analyst Sentiment</Text>
+        <Text style={financeStyles.analystSentimentTitle}>This Week's Analyst Sentiment</Text>
         <Text style={financeStyles.analystSentimentEmpty}>No analyst opinions in the past 7 days</Text>
       </View>
     );
@@ -532,7 +601,9 @@ function MyAnalystsRow({
 }
 
 
-type PulseKind = "events" | "sentiment" | "calendar";
+// PulseKind drives which PulseSheet is currently open. Sentiment was merged
+// into the Weekly Calls card via a toggle (S38) — no sentiment pill / sheet.
+type PulseKind = "events" | "calendar";
 
 type PulsePill = {
   kind: PulseKind;
@@ -542,18 +613,18 @@ type PulsePill = {
   enabled: boolean;
 };
 
+// ─── Today's Pulse ribbon — RBI / Sentiment / Policy Calendar pills ─────────
+// Restored after user pushback that the previous "Live Pulse Tape" lost the
+// named entries to RBI policies + Union Budget + policy calendar.
 function PulseRibbon({
   flagshipEvents,
-  analystSentiment,
   clustersCount,
   onPress,
 }: {
   flagshipEvents: ApiFlagshipEvent[];
-  analystSentiment: ApiFinanceExpertSentiment | null;
   clustersCount: number;
   onPress: (kind: PulseKind) => void;
 }) {
-  // Compose pulse pills based on what data is available.
   const nextEvent = flagshipEvents[0];
   const cdLabel = nextEvent
     ? (() => {
@@ -563,15 +634,6 @@ function PulseRibbon({
         if (days === 1) return "tomorrow";
         return "today";
       })()
-    : "";
-
-  const sentimentLean = analystSentiment
-    ? analystSentiment.bullishPercent >= analystSentiment.bearishPercent &&
-      analystSentiment.bullishPercent >= analystSentiment.neutralPercent
-      ? `${Math.round(analystSentiment.bullishPercent)}% Bullish`
-      : analystSentiment.bearishPercent >= analystSentiment.neutralPercent
-        ? `${Math.round(analystSentiment.bearishPercent)}% Bearish`
-        : `${Math.round(analystSentiment.neutralPercent)}% Neutral`
     : "";
 
   const pills: PulsePill[] = [
@@ -587,13 +649,6 @@ function PulseRibbon({
       enabled: true,
     },
     {
-      kind: "sentiment",
-      icon: "📊",
-      label: "Today's sentiment",
-      value: sentimentLean || "Loading…",
-      enabled: analystSentiment !== null,
-    },
-    {
       kind: "calendar",
       icon: "💼",
       label: "Policy calendar",
@@ -602,7 +657,6 @@ function PulseRibbon({
     },
   ];
 
-  // Show only pills that have meaningful data — hide entire ribbon if all empty.
   const visiblePills = pills.filter((p) => p.value.length > 0);
   if (visiblePills.length === 0) return null;
 
@@ -624,17 +678,17 @@ function PulseRibbon({
               pressed && { transform: [{ scale: 0.97 }], opacity: 0.85 },
             ]}
           >
-            <View style={pulseStyles.pillTop}>
-              <Text style={pulseStyles.pillIcon}>{p.icon}</Text>
-              <Text style={pulseStyles.pillLabel}>{p.label}</Text>
-            </View>
-            <Text style={pulseStyles.pillValue} numberOfLines={1}>{p.value}</Text>
+            <Text style={pulseStyles.pillIcon}>{p.icon}</Text>
+            <Text style={pulseStyles.pillLabel}>{p.label}</Text>
+            <Text style={pulseStyles.pillValue} numberOfLines={1}>· {p.value}</Text>
+            <Text style={pulseStyles.pillChevron}>›</Text>
           </Pressable>
         ))}
       </ScrollView>
     </View>
   );
 }
+
 
 function PulseSheet({
   visible,
@@ -666,32 +720,47 @@ function PulseSheet({
   );
 }
 
+// pulseStyles: kept for PulseSheet (events bottom sheet, still used)
 const pulseStyles = StyleSheet.create({
-  wrapper: { marginBottom: spacing.md },
+  // S38: Pulse pills are now LIGHT context chips, not bold dark cards.
+  // The bold treatment moved to the CALL OF THE WEEK strip (the editorial pick).
+  wrapper: { marginBottom: spacing.xs },
   heading: {
-    fontSize: 11,
-    fontWeight: "800",
+    fontSize: 10,
+    fontWeight: "800" as const,
     letterSpacing: 1,
     color: "#9ca3af",
     paddingHorizontal: spacing.lg,
-    marginBottom: 8,
+    marginBottom: 4,
   },
-  scroll: { paddingHorizontal: spacing.lg, gap: 10 },
+  scroll: { paddingHorizontal: spacing.lg, gap: 8 },
   pill: {
-    width: 140,
-    paddingVertical: 12,
+    // S38: Rectangle card with chevron, not full pill. Signals "tap to open"
+    // rather than "tap to toggle" (which is what filter chips do).
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
     paddingHorizontal: 12,
-    borderRadius: 14,
-    backgroundColor: "#0f172a",
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: "#f8fafc",
     borderWidth: 1,
-    borderColor: "#1f2937",
+    borderColor: "#e2e8f0",
   },
-  pillMuted: { backgroundColor: "#111827", borderColor: "#1f2937" },
-  pillTop: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 8 },
-  pillIcon: { fontSize: 16 },
-  pillLabel: { fontSize: 10, fontWeight: "700", color: "#94a3b8", letterSpacing: 0.3, textTransform: "uppercase" },
-  pillValue: { fontSize: 14, fontWeight: "800", color: "#f9fafb" },
+  pillMuted: { backgroundColor: "#f1f5f9", borderColor: "#e2e8f0" },
+  pillTop: { flexDirection: "row", alignItems: "center", gap: 4 },
+  pillIcon: { fontSize: 13 },
+  pillLabel: {
+    fontSize: 10,
+    fontWeight: "700" as const,
+    color: "#64748b",
+    letterSpacing: 0.3,
+    textTransform: "uppercase" as const,
+  },
+  pillValue: { fontSize: 12, fontWeight: "700" as const, color: "#0f172a" },
+  pillChevron: { fontSize: 14, color: "#94a3b8", marginLeft: 2, fontWeight: "600" as const },
 
+  // Bottom sheet (events / sentiment / calendar)
   sheetBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)" },
   sheetContainer: {
     position: "absolute", left: 0, right: 0, bottom: 0,
@@ -706,8 +775,178 @@ const pulseStyles = StyleSheet.create({
   sheetClose: { fontSize: 14, fontWeight: "700", color: colors.accent },
 });
 
-// ─── S33-T3: Weekly Calls Digest Card ─────────────────────────────────────────
 
+// ─── S38: Weekly Calls + Sentiment Toggle Card ───────────────────────────────
+// Replaces the standalone WeeklyCallsDigestCard. Toggles between two views:
+//   "calls"     → personal performance (HIT / MISS / Pending) — from /api/finance/my-calls-digest
+//   "sentiment" → market-wide analyst sentiment (Bullish / Bearish / Neutral) — from /api/finance/expert-sentiment
+// Toggle state is persisted in AsyncStorage.
+
+function WeekToggleCard({
+  digest,
+  sentiment,
+  onPressCalls,
+}: {
+  digest: ApiMyCallsDigest | null;
+  sentiment: ApiFinanceExpertSentiment | null;
+  onPressCalls: () => void;
+}) {
+  const hasCalls = digest !== null && (digest.hits + digest.misses + digest.pending) > 0;
+  const hasSentiment = sentiment !== null && sentiment.totalCount > 0;
+
+  // Default view: calls if user has activity, else sentiment.
+  const [view, setViewState] = useState<"calls" | "sentiment">(
+    hasCalls ? "calls" : "sentiment"
+  );
+
+  useEffect(() => {
+    void AsyncStorage.getItem("finance.weekCardView").then((v) => {
+      if (v === "calls" || v === "sentiment") setViewState(v);
+    });
+  }, []);
+  const setView = useCallback((next: "calls" | "sentiment") => {
+    setViewState(next);
+    void AsyncStorage.setItem("finance.weekCardView", next);
+  }, []);
+
+  // Hide entire card if both data sources are empty
+  if (!hasCalls && !hasSentiment) return null;
+
+  return (
+    <View style={digestStyles.card}>
+      {/* Toggle pills */}
+      <View style={digestStyles.toggleRow}>
+        <Pressable
+          style={[digestStyles.toggleBtn, view === "calls" && digestStyles.toggleBtnActive]}
+          onPress={() => setView("calls")}
+          disabled={!hasCalls}
+        >
+          <Text
+            style={[
+              digestStyles.toggleText,
+              view === "calls" && digestStyles.toggleTextActive,
+              !hasCalls && { opacity: 0.4 },
+            ]}
+          >
+            Your Week
+          </Text>
+        </Pressable>
+        <Pressable
+          style={[digestStyles.toggleBtn, view === "sentiment" && digestStyles.toggleBtnActive]}
+          onPress={() => setView("sentiment")}
+          disabled={!hasSentiment}
+        >
+          <Text
+            style={[
+              digestStyles.toggleText,
+              view === "sentiment" && digestStyles.toggleTextActive,
+              !hasSentiment && { opacity: 0.4 },
+            ]}
+          >
+            Market Sentiment
+          </Text>
+        </Pressable>
+      </View>
+
+      {/* View body */}
+      {view === "calls" && digest ? (
+        <Pressable onPress={onPressCalls}>
+          <WeekCallsBody digest={digest} />
+          <Text style={digestStyles.tapHint}>Tap to see all your calls</Text>
+        </Pressable>
+      ) : view === "sentiment" && sentiment ? (
+        <SentimentBody sentiment={sentiment} />
+      ) : (
+        <Text style={digestStyles.emptyText}>
+          {view === "calls" ? "Vote on a call to populate." : "No sentiment data yet."}
+        </Text>
+      )}
+    </View>
+  );
+}
+
+function WeekCallsBody({ digest }: { digest: ApiMyCallsDigest }) {
+  const total = digest.hits + digest.misses;
+  const correctPct = total > 0 ? Math.round((digest.hits / total) * 100) : 0;
+  // S38: HIT/MISS were misleading for user stats — those are RESOLUTION
+  // outcomes for the analyst's call. The user's prediction is "Correct" when
+  // their AGREE/DISAGREE vote matched how the call actually resolved.
+  return (
+    <>
+      <View style={digestStyles.statRow}>
+        <View style={digestStyles.statBlock}>
+          <Text style={[digestStyles.statCount, { color: "#16a34a" }]}>{digest.hits}</Text>
+          <Text style={digestStyles.statLabel}>Correct</Text>
+        </View>
+        <View style={digestStyles.statDivider} />
+        <View style={digestStyles.statBlock}>
+          <Text style={[digestStyles.statCount, { color: "#dc2626" }]}>{digest.misses}</Text>
+          <Text style={digestStyles.statLabel}>Wrong</Text>
+        </View>
+        {digest.pending > 0 && (
+          <>
+            <View style={digestStyles.statDivider} />
+            <View style={digestStyles.statBlock}>
+              <Text style={[digestStyles.statCount, { color: "#6b7280" }]}>{digest.pending}</Text>
+              <Text style={digestStyles.statLabel}>Pending</Text>
+            </View>
+          </>
+        )}
+      </View>
+      {total > 0 && (
+        <View style={digestStyles.barTrack}>
+          <View style={[digestStyles.barFill, { flex: correctPct, backgroundColor: "#16a34a" }]} />
+          <View
+            style={[digestStyles.barFill, { flex: 100 - correctPct, backgroundColor: "#dc2626" }]}
+          />
+        </View>
+      )}
+    </>
+  );
+}
+
+function SentimentBody({ sentiment }: { sentiment: ApiFinanceExpertSentiment }) {
+  const bullPct = Math.round(sentiment.bullishPercent);
+  const bearPct = Math.round(sentiment.bearishPercent);
+  const neutPct = Math.round(sentiment.neutralPercent);
+  return (
+    <>
+      <View style={digestStyles.statRow}>
+        <View style={digestStyles.statBlock}>
+          <Text style={[digestStyles.statCount, { color: "#16a34a" }]}>{bullPct}%</Text>
+          <Text style={digestStyles.statLabel}>BULLISH</Text>
+        </View>
+        <View style={digestStyles.statDivider} />
+        <View style={digestStyles.statBlock}>
+          <Text style={[digestStyles.statCount, { color: "#dc2626" }]}>{bearPct}%</Text>
+          <Text style={digestStyles.statLabel}>BEARISH</Text>
+        </View>
+        {neutPct > 0 && (
+          <>
+            <View style={digestStyles.statDivider} />
+            <View style={digestStyles.statBlock}>
+              <Text style={[digestStyles.statCount, { color: "#6b7280" }]}>{neutPct}%</Text>
+              <Text style={digestStyles.statLabel}>Neutral</Text>
+            </View>
+          </>
+        )}
+      </View>
+      <View style={digestStyles.barTrack}>
+        <View style={[digestStyles.barFill, { flex: bullPct || 0.01, backgroundColor: "#16a34a" }]} />
+        {neutPct > 0 && (
+          <View style={[digestStyles.barFill, { flex: neutPct, backgroundColor: "#9ca3af" }]} />
+        )}
+        <View style={[digestStyles.barFill, { flex: bearPct || 0.01, backgroundColor: "#dc2626" }]} />
+      </View>
+      <Text style={digestStyles.tapHint}>
+        Across {sentiment.totalCount} analyst {sentiment.totalCount === 1 ? "call" : "calls"} this week
+      </Text>
+    </>
+  );
+}
+
+// Legacy WeeklyCallsDigestCard — kept as a no-op shim so any other callers
+// (story detail, etc.) don't crash. Renders nothing in this file's usage.
 function WeeklyCallsDigestCard({
   digest,
   onPress,
@@ -728,12 +967,12 @@ function WeeklyCallsDigestCard({
       <View style={digestStyles.statRow}>
         <View style={digestStyles.statBlock}>
           <Text style={[digestStyles.statCount, { color: "#16a34a" }]}>{digest.hits}</Text>
-          <Text style={digestStyles.statLabel}>HIT</Text>
+          <Text style={digestStyles.statLabel}>Correct</Text>
         </View>
         <View style={digestStyles.statDivider} />
         <View style={digestStyles.statBlock}>
           <Text style={[digestStyles.statCount, { color: "#dc2626" }]}>{digest.misses}</Text>
-          <Text style={digestStyles.statLabel}>MISS</Text>
+          <Text style={digestStyles.statLabel}>Wrong</Text>
         </View>
         {digest.pending > 0 && (
           <>
@@ -765,13 +1004,40 @@ function WeeklyCallsDigestCard({
 const digestStyles = StyleSheet.create({
   card: {
     marginHorizontal: spacing.lg,
-    marginBottom: spacing.md,
-    marginTop: spacing.sm,
+    // S38: tightened margins above/below per user request — the card was
+    // feeling like it had too much breathing room.
+    marginTop: spacing.xs,
+    marginBottom: spacing.xs,
     padding: spacing.md,
     borderRadius: radius.md,
     backgroundColor: "#fff",
     borderWidth: 1,
     borderColor: "#E5E7EB",
+  },
+  // S38: toggle row for the merged calls/sentiment card
+  toggleRow: {
+    flexDirection: "row",
+    gap: 6,
+    marginBottom: spacing.sm,
+  },
+  toggleBtn: {
+    flex: 1,
+    paddingVertical: 7,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    backgroundColor: "#f8fafc",
+    alignItems: "center",
+  },
+  toggleBtnActive: { backgroundColor: "#0f172a", borderColor: "#0f172a" },
+  toggleText: { fontSize: 12, fontWeight: "700" as const, color: "#475569" },
+  toggleTextActive: { color: "#fff" },
+  emptyText: {
+    fontSize: 13,
+    color: "#64748b",
+    textAlign: "center",
+    paddingVertical: spacing.md,
+    fontStyle: "italic",
   },
   header: {
     flexDirection: "row",
@@ -834,15 +1100,579 @@ const digestStyles = StyleSheet.create({
   },
 });
 
-export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => void }) {
+// ─── S35-T2: Today's Big Call Hero Card ───────────────────────────────────────
+
+// S38: Compressed Big Call hero — single tappable strip instead of the full card.
+// Reasoning: with sort options "Latest" / "Top week" in the chip strip, the user
+// can already surface top calls in the list. The strip preserves the editorial
+// signal (window-aware label + analyst name on top) at 1/3 the screen real estate.
+function BigCallHeroCard({
+  opinion,
+  windowLabel,
+  onOpenDetail,
+}: {
+  opinion: ApiFinanceBigCallOpinion;
+  windowLabel: string;
+  onOpenDetail: () => void;
+}) {
+  const dirConfig = {
+    BULLISH: { label: "BULLISH", color: "#16a34a", bg: "#dcfce7" },
+    BEARISH: { label: "BEARISH", color: "#dc2626", bg: "#fee2e2" },
+    NEUTRAL: { label: "NEUTRAL", color: "#6b7280", bg: "#f3f4f6" },
+  }[opinion.direction];
+
+  const avatarBg = getExpertInitialsColor(opinion.expertName || opinion.expertOrganization);
+  const initials = getExpertInitials(opinion.expertName, opinion.expertOrganization);
+  const verdictLabel = opinion.isPostResolution ? "CALLED IT ✓" : dirConfig.label;
+  const verdictColor = opinion.isPostResolution ? "#6366f1" : dirConfig.color;
+  const verdictBg = opinion.isPostResolution ? "#ede9fe" : dirConfig.bg;
+
+  return (
+    <Pressable style={heroStyles.strip} onPress={onOpenDetail}>
+      {/* Label row */}
+      <View style={heroStyles.stripLabelRow}>
+        <Text style={heroStyles.stripLabel}>🔥 {windowLabel.toUpperCase()}</Text>
+        <Text style={heroStyles.stripVoteHint}>Vote →</Text>
+      </View>
+
+      {/* Content row */}
+      <View style={heroStyles.stripContent}>
+        <View style={[heroStyles.stripAvatar, { backgroundColor: avatarBg }]}>
+          <Text style={heroStyles.stripAvatarText}>{initials}</Text>
+        </View>
+        <View style={{ flex: 1 }}>
+          <View style={heroStyles.stripNameRow}>
+            <Text style={heroStyles.stripExpertName} numberOfLines={1}>
+              {opinion.expertName || opinion.expertOrganization}
+            </Text>
+            <Text style={[heroStyles.stripCalledAt, { color: freshnessColor(opinion.publishedAt) }]}>
+              · {formatRelativeTime(opinion.publishedAt)}
+            </Text>
+          </View>
+          <View style={heroStyles.stripVerdictRow}>
+            <View style={[heroStyles.stripVerdictPill, { backgroundColor: verdictBg }]}>
+              <Text style={[heroStyles.stripVerdictText, { color: verdictColor }]}>
+                {verdictLabel}
+              </Text>
+            </View>
+            {opinion.instrument && (
+              <Text style={heroStyles.stripInstrument} numberOfLines={1}>
+                on {opinion.instrument}
+              </Text>
+            )}
+          </View>
+        </View>
+      </View>
+    </Pressable>
+  );
+}
+
+// S38 — new filter UX: Show tabs + Sort dropdown + active-filter chip strip.
+const controlsStyles = StyleSheet.create({
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: spacing.lg,
+    marginTop: spacing.sm,
+    marginBottom: spacing.xs,
+    gap: spacing.sm,
+  },
+  // S38 v3: 2 tabs in a flex row (no scroll needed) — equal-width feel.
+  tabsRow: {
+    flexDirection: "row",
+    gap: 8,
+    paddingHorizontal: spacing.lg,
+    marginTop: spacing.sm,
+    marginBottom: spacing.xs,
+  },
+  tab: {
+    flex: 1,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    backgroundColor: "#fff",
+    alignItems: "center" as const,
+  },
+  tabActive: { backgroundColor: "#0f172a", borderColor: "#0f172a" },
+  tabText: { fontSize: 13, fontWeight: "700" as const, color: "#475569" },
+  tabTextActive: { color: "#fff" },
+  // Sort chip lives inside the chip row (after the S38-v2 cramping fix that
+  // moved it out of the tabs row).
+  sortChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    backgroundColor: "#f1f5f9",
+  },
+  sortChipText: { fontSize: 11, fontWeight: "700" as const, color: "#334155" },
+
+  // Active filter chip strip
+  chipRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    paddingHorizontal: spacing.lg,
+    marginTop: spacing.xs,
+    marginBottom: spacing.sm,
+    alignItems: "center",
+  },
+  filterChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    backgroundColor: "#eef2ff",
+    borderWidth: 1,
+    borderColor: "#c7d2fe",
+  },
+  filterChipText: { fontSize: 11, fontWeight: "700" as const, color: "#3730a3" },
+  filterChipX: { fontSize: 14, color: "#6366f1", marginLeft: 2, lineHeight: 14 },
+  addFilterChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    borderStyle: "dashed" as const,
+    backgroundColor: "#fff",
+  },
+  addFilterText: { fontSize: 11, fontWeight: "700" as const, color: "#475569" },
+  // UX3: clear-all chip — visually distinct (red tint) so it reads as a
+  // destructive action vs the neutral "+ Filter" affordance.
+  clearAllChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#fecaca",
+    backgroundColor: "#fef2f2",
+  },
+  clearAllText: { fontSize: 11, fontWeight: "700" as const, color: "#b91c1c" },
+
+  // Action-sheet rows shared by Sort & Add-filter sheets
+  sheetRow: {
+    paddingVertical: 14,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.sm,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  sheetRowActive: { backgroundColor: "#eef2ff" },
+  sheetRowText: { fontSize: 15, fontWeight: "600" as const, color: "#0f172a" },
+  sheetRowTextActive: { color: "#4338ca" },
+  sheetRowCheck: { fontSize: 16, color: "#4338ca" },
+});
+
+const lensStyles = StyleSheet.create({
+  row: {
+    flexDirection: "row",
+    gap: 6,
+    paddingHorizontal: 0,
+    marginTop: spacing.sm,
+    marginBottom: spacing.sm,
+    flexWrap: "wrap",
+  },
+  pill: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    backgroundColor: "#fff",
+  },
+  pillActive: {
+    backgroundColor: "#0f172a",
+    borderColor: "#0f172a",
+  },
+  pillText: { fontSize: 12, fontWeight: "600" as const, color: "#475569" },
+  pillTextActive: { color: "#fff" },
+});
+
+const heroStyles = StyleSheet.create({
+  // S38: Bold dark strip — claims the visual primacy of the screen.
+  // Pulse pills above are now light/secondary; this is THE editorial pick.
+  strip: {
+    marginHorizontal: spacing.lg,
+    marginVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm + 2,
+    borderRadius: radius.md,
+    backgroundColor: "#0f172a", // dark slate
+    borderWidth: 1,
+    borderColor: "#1e293b",
+  },
+  stripLabelRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  stripLabel: {
+    fontSize: 10,
+    fontWeight: "800" as const,
+    letterSpacing: 1.2,
+    color: "#a5b4fc", // light indigo on dark
+  },
+  stripVoteHint: {
+    fontSize: 12,
+    fontWeight: "800" as const,
+    color: "#fff",
+    backgroundColor: "#4338ca",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+  },
+  stripContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  stripAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  stripAvatarText: {
+    fontSize: 14,
+    fontWeight: "800" as const,
+    color: "#fff",
+    letterSpacing: 0.4,
+  },
+  stripExpertName: {
+    fontSize: 15,
+    fontWeight: "700" as const,
+    color: "#fff",
+    flexShrink: 1,
+  },
+  stripNameRow: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    gap: 4,
+  },
+  stripCalledAt: {
+    fontSize: 11,
+    fontWeight: "600" as const,
+    // Note: foreground color is overridden inline by freshnessColor() — but
+    // since the strip bg is dark, we boost saturation by adding a slight
+    // dark-bg-friendly tint when fresh.
+  },
+  stripVerdictRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 2,
+    flexWrap: "wrap",
+  },
+  stripVerdictPill: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  stripVerdictText: {
+    fontSize: 10,
+    fontWeight: "800" as const,
+    letterSpacing: 0.4,
+  },
+  stripInstrument: {
+    fontSize: 12,
+    fontWeight: "600" as const,
+    color: "#cbd5e1", // lighter slate on dark
+    flexShrink: 1,
+  },
+
+  // ── Legacy big-card styles below — retained so any in-flight share-view
+  // or screenshot code that still references them doesn't break. The big
+  // card itself is no longer rendered.
+  windowLabel: {
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.sm,
+    marginBottom: 4,
+    fontSize: 10,
+    fontWeight: "800" as const,
+    letterSpacing: 1.2,
+    color: "#6366f1",
+  },
+  card: {
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    overflow: "hidden",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  inner: {
+    padding: spacing.md,
+  },
+  header: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+    marginBottom: 10,
+  },
+  avatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  avatarText: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: "#fff",
+    letterSpacing: 0.5,
+  },
+  headerMeta: { flex: 1, gap: 2 },
+  expertName: { fontSize: 14, fontWeight: "700", color: "#111827" },
+  expertOrg: { fontSize: 12, color: "#6b7280" },
+  badgeRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 3, flexWrap: "wrap" },
+  verdictBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  verdictBadgeText: { fontSize: 13, fontWeight: "800", letterSpacing: 0.3 },
+  instrumentLabel: {
+    fontSize: 12,
+    fontWeight: "700" as const,
+    color: "#374151",
+    flexShrink: 1,
+  },
+  accuracy: { fontSize: 12, color: "#6b7280" },
+  headline: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#111827",
+    lineHeight: 24,
+    letterSpacing: -0.3,
+    marginBottom: 4,
+  },
+  calledAt: {
+    fontSize: 11,
+    color: "#6b7280",
+    fontWeight: "600" as const,
+    marginBottom: 12,
+  },
+  voteBtn: {
+    backgroundColor: "#4f46e5",
+    borderRadius: 8,
+    paddingVertical: 12,
+    alignItems: "center",
+    marginBottom: 10,
+  },
+  voteBtnText: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#fff",
+    letterSpacing: 0.5,
+  },
+  shareRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  shareBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+  },
+  shareBtnText: { fontSize: 13, fontWeight: "600", color: "#374151" },
+  readerStats: { fontSize: 12, color: "#9ca3af" },
+});
+
+// ─── S35-T3: Personal Accuracy Chip ──────────────────────────────────────────
+
+function PersonalAccuracyChip({
+  financeProfile,
+  onScrollToFirstPending,
+}: {
+  financeProfile: Pick<ApiUserProfile, "financeStreak" | "financeAccuracy" | "financeTotalVotes" | "financeResolvedVotes"> | null;
+  onScrollToFirstPending: () => void;
+}) {
+  const router = useRouter();
+
+  if (!financeProfile) return null;
+
+  const { financeStreak = 0, financeAccuracy, financeTotalVotes = 0, financeResolvedVotes = 0 } = financeProfile;
+
+  const handleTap = () => {
+    if (financeTotalVotes === 0) {
+      onScrollToFirstPending();
+    } else {
+      router.push("/finance/my-calls" as Parameters<typeof router.push>[0]);
+    }
+  };
+
+  let chipText: string;
+  let flameColor: string | null = null;
+  let showFlame = false;
+
+  if (financeTotalVotes === 0) {
+    chipText = "Start voting — track your accuracy";
+  } else if (financeResolvedVotes === 0) {
+    chipText = `${financeTotalVotes} vote${financeTotalVotes !== 1 ? "s" : ""} cast · awaiting results`;
+  } else if (financeStreak === 0 || financeAccuracy === null) {
+    chipText = financeAccuracy !== null
+      ? `Your accuracy: ${financeAccuracy}% · across ${financeResolvedVotes} call${financeResolvedVotes !== 1 ? "s" : ""}`
+      : `${financeResolvedVotes} call${financeResolvedVotes !== 1 ? "s" : ""} resolved`;
+  } else {
+    chipText = `Your accuracy: ${financeAccuracy ?? 0}% · ${financeStreak}-day streak`;
+    if (financeStreak >= 7) {
+      showFlame = true;
+      flameColor = financeStreak >= 30 ? "#F59E0B" : null;
+    }
+  }
+
+  return (
+    <Pressable style={accuracyStyles.chip} onPress={handleTap}>
+      <Text style={accuracyStyles.chipText} numberOfLines={1}>{chipText}</Text>
+      {financeTotalVotes === 0 ? (
+        <Text style={accuracyStyles.arrow}>→</Text>
+      ) : showFlame ? (
+        <Text style={[accuracyStyles.flame, flameColor ? { color: flameColor } : {}]}>🔥</Text>
+      ) : null}
+    </Pressable>
+  );
+}
+
+const accuracyStyles = StyleSheet.create({
+  chip: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.sm,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: radius.pill,
+    backgroundColor: "#F0FDF4",
+    borderWidth: 1,
+    borderColor: "#BBF7D0",
+    gap: 8,
+  },
+  chipText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#166534",
+    flex: 1,
+  },
+  arrow: { fontSize: 16, color: "#166534" },
+  flame: { fontSize: 16 },
+});
+
+export function FinanceMode({
+  onNavigateToFeed,
+  initialClusterId,
+}: {
+  onNavigateToFeed?: () => void;
+  /** When provided (e.g. via deep-link from opinion detail cluster chip), pre-applies cluster filter. */
+  initialClusterId?: string | null;
+}) {
   const [data, setData] = useState<ApiFinanceMarketsResponse | null>(null);
   const [analystSentiment, setAnalystSentiment] = useState<ApiFinanceExpertSentiment | null>(null);
   const [flagshipEvents, setFlagshipEvents] = useState<ApiFlagshipEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Which pulse sheet is open. null = none.
+  // Events bottom sheet — opened by tapping macro countdown chip
   const [pulseOpen, setPulseOpen] = useState<PulseKind | null>(null);
+
+  // S35-T2: Today's Big Call spotlight opinion (window-aware after S37)
+  const [bigCallOpinion, setBigCallOpinion] = useState<ApiFinanceBigCallOpinion | null>(null);
+  const [bigCallWindowLabel, setBigCallWindowLabel] = useState<string>("Today's Big Call");
+  // Ref to big call hero card for scroll-to from expert chip tap
+  const bigCallY = useRef<number>(0);
+  // Highlight ring animation for Big Call hero (300ms ring on expert chip tap)
+  const bigCallHighlight = useRef(new Animated.Value(0)).current;
+
+  // S35-T1: Active instrument filter — toggled by tapping ticker chips
+  const [activeInstrumentFilter, setActiveInstrumentFilter] = useState<string | null>(null);
+
+  // S35-T3: Finance personal stats from profile
+  const [financeProfile, setFinanceProfile] = useState<Pick<ApiUserProfile, "financeStreak" | "financeAccuracy" | "financeTotalVotes" | "financeResolvedVotes"> | null>(null);
+  const [marketWindow] = useState<MarketWindow>(() => getMarketWindow());
+
+  // S38 v4: 2 tabs by CONTENT SOURCE (per user spec).
+  //   "expert-opinions" → individual named analysts only
+  //   "market-analysis" → brokerages / publications only (J.P. Morgan, ET Money, etc.)
+  // Resolved + Verified live as filter chips (toggleable, compound on the tab).
+  // Sort still uses max(resolvedAt, articlePublishedAt) so resolved calls bubble.
+  type ShowScope = "expert-opinions" | "market-analysis";
+  type SortMode = "latest" | "top-week";
+
+  const defaultSortForWindow = (w: MarketWindow): SortMode => {
+    if (w === "weekend" || w === "holiday") return "top-week";
+    return "latest";
+  };
+
+  const [showScope, setShowScopeState] = useState<ShowScope>("expert-opinions");
+  const [sortMode, setSortModeState] = useState<SortMode>(() => defaultSortForWindow(marketWindow));
+  const [verifiedOnly, setVerifiedOnlyState] = useState(false);
+  const [resolvedOnly, setResolvedOnlyState] = useState(false);
+
+  useEffect(() => {
+    // Hydrate persisted user overrides (one-time on mount).
+    void AsyncStorage.getItem("finance.showScope").then((v) => {
+      if (v === "expert-opinions" || v === "market-analysis") setShowScopeState(v);
+    });
+    void AsyncStorage.getItem("finance.sortMode").then((v) => {
+      if (v === "latest" || v === "top-week") setSortModeState(v);
+    });
+    void AsyncStorage.getItem("finance.verifiedOnly").then((v) => {
+      if (v === "1") setVerifiedOnlyState(true);
+    });
+    void AsyncStorage.getItem("finance.resolvedOnly").then((v) => {
+      if (v === "1") setResolvedOnlyState(true);
+    });
+  }, []);
+
+  const setShowScope = useCallback((next: ShowScope) => {
+    setShowScopeState(next);
+    void AsyncStorage.setItem("finance.showScope", next);
+  }, []);
+  const setSortMode = useCallback((next: SortMode) => {
+    setSortModeState(next);
+    void AsyncStorage.setItem("finance.sortMode", next);
+  }, []);
+  const setVerifiedOnly = useCallback((next: boolean) => {
+    setVerifiedOnlyState(next);
+    void AsyncStorage.setItem("finance.verifiedOnly", next ? "1" : "0");
+  }, []);
+  const setResolvedOnly = useCallback((next: boolean) => {
+    setResolvedOnlyState(next);
+    void AsyncStorage.setItem("finance.resolvedOnly", next ? "1" : "0");
+  }, []);
+
+  // Action-sheet open state for Sort and Add-filter (+ each facet picker)
+  const [sortSheetOpen, setSortSheetOpen] = useState(false);
+  const [filterSheetOpen, setFilterSheetOpen] = useState(false);
+  const [directionPickerOpen, setDirectionPickerOpen] = useState(false);
+  const [instrumentPickerOpen, setInstrumentPickerOpen] = useState(false);
+  const [analystPickerOpen, setAnalystPickerOpen] = useState(false);
 
   // Expert leaderboard count for conditional "Top Experts" link
   const [leaderboardCount, setLeaderboardCount] = useState(0);
@@ -860,10 +1690,11 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
   const expertSectionY = useRef<number>(0);
 
   // Cluster filter state: when set, only opinions with matching eventClusterId are shown (S18-T4)
-  const [selectedClusterFilter, setSelectedClusterFilter] = useState<string | null>(null);
+  // Initial value can come from a deep-link param (e.g. tapping the cluster chip on opinion detail).
+  const [selectedClusterFilter, setSelectedClusterFilter] = useState<string | null>(initialClusterId ?? null);
 
   // Toggle between named-analyst expert opinions and trusted-source market analysis
-  const [opinionTab, setOpinionTab] = useState<"expert" | "analysis">("expert");
+  // opinionTab state removed — content type now driven by lens (S37 cleanup).
 
   // S28-T3: Direction filter state
   const [selectedDirectionFilter, setSelectedDirectionFilter] = useState<DirectionFilter>(null);
@@ -881,27 +1712,167 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
 
   const router = useRouter();
 
+  // Builds the server-side filter payload from current filter state. Everything
+  // here gets sent to /api/news so pagination operates on the full filtered
+  // result set, not just whatever has already been loaded client-side.
+  const buildNewsFilterPayload = useCallback(
+    () => ({
+      category: "FINANCE" as const,
+      limit: 10,
+      requireExpertOpinions: true,
+      expertOpinionClusterId: selectedClusterFilter ?? undefined,
+      expertOpinionSourceType:
+        showScope === "expert-opinions"
+          ? ("ANALYST" as const)
+          : showScope === "market-analysis"
+            ? ("PUBLICATION" as const)
+            : undefined,
+      expertOpinionDirection:
+        selectedDirectionFilter === "BULLISH" ||
+        selectedDirectionFilter === "BEARISH" ||
+        selectedDirectionFilter === "NEUTRAL"
+          ? selectedDirectionFilter
+          : undefined,
+      expertOpinionVerified: verifiedOnly || undefined,
+      expertOpinionResolved: resolvedOnly || undefined,
+      expertOpinionInstrument: activeInstrumentFilter ?? undefined,
+      expertOpinionAnalyst: selectedAnalystFilter ?? undefined,
+    }),
+    [
+      selectedClusterFilter,
+      showScope,
+      selectedDirectionFilter,
+      verifiedOnly,
+      resolvedOnly,
+      activeInstrumentFilter,
+      selectedAnalystFilter,
+    ]
+  );
+
+  // Snapshot of filter state at fetch-start. Only the default-state fetch is
+  // worth caching — caching every filter permutation would balloon storage and
+  // confuse the SWR hydration.
+  const captureIsDefaultFilter = useCallback(
+    () =>
+      showScope === "expert-opinions" &&
+      selectedDirectionFilter === null &&
+      !verifiedOnly &&
+      !resolvedOnly &&
+      activeInstrumentFilter === null &&
+      selectedAnalystFilter === null &&
+      selectedClusterFilter === null,
+    [
+      showScope,
+      selectedDirectionFilter,
+      verifiedOnly,
+      resolvedOnly,
+      activeInstrumentFilter,
+      selectedAnalystFilter,
+      selectedClusterFilter,
+    ]
+  );
+
+  // SWR hydrate: read the cached default feed on mount and render it instantly.
+  // The fresh load() will overwrite it as soon as it lands. If the fresh fetch
+  // fails AND we have cache, we keep the cache visible (no error screen).
+  const [feedCacheHydrated, setFeedCacheHydrated] = useState(false);
+  const hadCacheOnMount = useRef(false);
+  useEffect(() => {
+    void AsyncStorage.getItem(FEED_DEFAULT_CACHE_KEY)
+      .then((raw) => {
+        if (!raw) return;
+        try {
+          const cache = JSON.parse(raw) as FeedCache;
+          if (!Array.isArray(cache.items) || cache.items.length === 0) return;
+          // Only apply cache if the fresh fetch hasn't already populated
+          // financeNews — otherwise stale cache would overwrite fresh data
+          // in the load()-finishes-first race.
+          setFinanceNews((prev) => {
+            if (prev.length > 0) return prev; // fresh fetch beat us; do nothing
+            // Use queueMicrotask so the cursor/hasMore/loading updates batch
+            // with the items update rather than triggering 3 separate renders.
+            queueMicrotask(() => {
+              setNextCursor(cache.nextCursor ?? null);
+              setHasMore(Boolean(cache.hasMore));
+              hadCacheOnMount.current = true;
+              setLoading(false);
+            });
+            return cache.items;
+          });
+        } catch (err) {
+          console.warn("[finance-mode] feed cache parse failed:", err);
+        }
+      })
+      .catch((err) => console.error("[finance-mode] feed cache read failed:", err))
+      .finally(() => setFeedCacheHydrated(true));
+  }, []);
+
   const load = async (isRefresh = false) => {
-    if (!isRefresh) setLoading(true);
+    // Skip spinner when we already hydrated content from cache — refresh in
+    // the background instead of blanking the screen.
+    if (!isRefresh && financeNews.length === 0) setLoading(true);
     setError(null);
+    const wasDefaultFilter = captureIsDefaultFilter();
+    // Snapshot the filter epoch at fetch-start — same staleness check pattern
+    // as loadMore. Without this, a slow refresh that lands after the user
+    // toggled a filter would clobber the filter-change refetch with stale data.
+    const epoch = filterEpochRef.current;
     try {
-      const [marketsResult, newsResult, sentimentResult, verifiedResult, flagshipResult, digestResult] = await Promise.all([
+      // Side cards (sentiment, verified, flagship, digest, big call) each have
+      // their own catch so a single failure doesn't blow up the whole screen
+      // load — BUT every failure is logged so we can diagnose missing UI parts.
+      // The two REQUIRED fetches (markets + news) are not catch-wrapped on
+      // purpose: their failure should propagate to the outer catch and trigger
+      // the screen-level error state.
+      const logSideFetch = (label: string) => (err: unknown) => {
+        console.error(`[finance-mode] ${label} fetch failed (card hidden):`, err);
+        return null;
+      };
+      const [marketsResult, newsResult, sentimentResult, verifiedResult, flagshipResult, digestResult, bigCallResult] = await Promise.all([
         mobileApi.getFinanceMarkets(),
-        mobileApi.getNews({
-          category: "FINANCE",
-          limit: 10,
-          requireExpertOpinions: true,
-          expertOpinionClusterId: selectedClusterFilter ?? undefined,
+        mobileApi.getNews(buildNewsFilterPayload()),
+        mobileApi.getFinanceExpertSentiment().catch(logSideFetch("expert-sentiment")),
+        mobileApi.getVerifiedCalls().catch((err) => {
+          console.error("[finance-mode] verified-calls fetch failed (showing empty):", err);
+          return [];
         }),
-        mobileApi.getFinanceExpertSentiment().catch(() => null),
-        mobileApi.getVerifiedCalls().catch(() => []),
-        mobileApi.getFlagshipEvents().catch(() => ({ events: [] })),
-        mobileApi.getMyCallsDigest().catch(() => null),
+        mobileApi.getFlagshipEvents().catch((err) => {
+          console.error("[finance-mode] flagship-events fetch failed (showing empty):", err);
+          return { events: [] };
+        }),
+        mobileApi.getMyCallsDigest().catch(logSideFetch("my-calls-digest")),
+        mobileApi.getFinanceBigCall().catch(logSideFetch("big-call")),
       ]);
+
+      // Staleness check — if the user toggled a filter while load() was in
+      // flight, the filter-change effect has already kicked off a fresh fetch
+      // with the new filter. Applying this stale result would clobber it.
+      // The non-news state (markets/sentiment/etc.) is filter-independent so
+      // we still apply those; only news state is gated by the epoch check.
+      const epochStillValid = filterEpochRef.current === epoch;
+
       setData(marketsResult);
-      setFinanceNews(newsResult.items ?? []);
-      setNextCursor(newsResult.nextCursor ?? null);
-      setHasMore(newsResult.hasMore ?? false);
+      if (epochStillValid) {
+        setFinanceNews(newsResult.items ?? []);
+        setNextCursor(newsResult.nextCursor ?? null);
+        setHasMore(newsResult.hasMore ?? false);
+
+        // SWR write-through: persist the default-filter feed so the next cold
+        // app launch can hydrate instantly even if the network is down.
+        if (wasDefaultFilter && (newsResult.items?.length ?? 0) > 0) {
+          const cache: FeedCache = {
+            items: newsResult.items ?? [],
+            nextCursor: newsResult.nextCursor ?? null,
+            hasMore: newsResult.hasMore ?? false,
+            savedAt: Date.now(),
+          };
+          void AsyncStorage.setItem(FEED_DEFAULT_CACHE_KEY, JSON.stringify(cache)).catch(
+            (err) => console.error("[finance-mode] feed cache write failed:", err)
+          );
+        }
+      } else {
+        console.info("[finance-mode] load() result dropped — filter changed mid-flight");
+      }
       setAnalystSentiment(sentimentResult);
       setVerifiedCalls(verifiedResult ?? []);
       setFlagshipEvents((flagshipResult?.events ?? []) as ApiFlagshipEvent[]);
@@ -909,41 +1880,71 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
       if (digestResult && digestResult.resolvedOpinions.length > 0) {
         setCallsDigest(digestResult);
       }
+      // S35-T2 / S37: Big Call spotlight — window-aware
+      setBigCallOpinion(bigCallResult?.opinion ?? null);
+      if (bigCallResult?.windowLabel) setBigCallWindowLabel(bigCallResult.windowLabel);
 
-      // Reset filters on refresh
-      if (isRefresh) {
-        setSelectedClusterFilter(null);
-        setSelectedDirectionFilter(null);
+      // Note: pull-to-refresh deliberately preserves all filter state.
+      // The user wanted fresh data with their current filter setup intact —
+      // wiping their carefully-set filters on every refresh was a footgun.
+    } catch (err) {
+      console.error("[finance-mode] initial load failed:", err);
+      // If we hydrated from cache, the user is already seeing content —
+      // don't blank the screen with an error. Just log + keep stale data.
+      if (financeNews.length === 0) {
+        setError("Couldn't load finance content. Check your connection and tap Retry.");
       }
-    } catch {
-      setError("Couldn't load finance content. Check your connection and tap Retry.");
     } finally {
       setLoading(false);
       if (isRefresh) setRefreshing(false);
     }
   };
 
-  // S28-T2: Load more items (append to list)
+  // Load more items (append to list). Includes all active server-side filters
+  // so pagination continues over the filtered set. Captures filterEpochRef at
+  // start of fetch — if the user toggles a filter mid-flight, the response is
+  // dropped so it can't corrupt state or the pagination cursor of the new filter.
   const loadMore = useCallback(async () => {
     if (!hasMore || loadingMore || nextCursor === null) return;
+    const epoch = filterEpochRef.current;
     setLoadingMore(true);
     try {
       const result = await mobileApi.getNews({
-        category: "FINANCE",
-        limit: 10,
-        requireExpertOpinions: true,
+        ...buildNewsFilterPayload(),
         cursor: nextCursor,
-        expertOpinionClusterId: selectedClusterFilter ?? undefined,
       });
-      setFinanceNews((prev) => [...prev, ...(result.items ?? [])]);
+      if (filterEpochRef.current !== epoch) {
+        // Filter changed mid-request — discard response so we don't clobber
+        // state with results from a stale filter context.
+        return;
+      }
+      setFinanceNews((prev) => {
+        // Defensive dedup — should be a no-op now that the epoch check above
+        // catches stale responses, but cheap insurance against any other
+        // overlap source (e.g. server-side cursor edge cases on same-timestamp
+        // pages). If this set ever filters anything out, log it because it
+        // means the assumption above is wrong somewhere.
+        const seenIds = new Set(prev.map((p) => p.id));
+        const fresh = (result.items ?? []).filter((it) => !seenIds.has(it.id));
+        const filtered = (result.items ?? []).length - fresh.length;
+        if (filtered > 0) {
+          console.warn(
+            `[finance-mode] loadMore dedup filtered ${filtered} duplicate item(s) — investigate cursor/filter race`
+          );
+        }
+        return [...prev, ...fresh];
+      });
       setNextCursor(result.nextCursor ?? null);
       setHasMore(result.hasMore ?? false);
-    } catch {
-      // Silently fail — user can scroll again to retry
+    } catch (err) {
+      // Surface to console with context — caller can also trigger a retry by
+      // scrolling again. We deliberately don't reset hasMore so the UI keeps
+      // the "load more" affordance available.
+      console.error("[finance-mode] loadMore failed:", err);
     } finally {
       setLoadingMore(false);
     }
-  }, [hasMore, loadingMore, nextCursor, selectedClusterFilter]);
+  }, [hasMore, loadingMore, nextCursor, buildNewsFilterPayload]);
 
   // S28-T2: Scroll handler — trigger loadMore when within 200px of bottom
   const handleScroll = useCallback(
@@ -962,12 +1963,13 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
     try {
       const lb = await mobileApi.getExpertLeaderboard();
       setLeaderboardCount(Array.isArray(lb) ? lb.length : 0);
-    } catch {
+    } catch (err) {
+      console.error("[finance-mode] getExpertLeaderboard failed (hiding See Top Experts link):", err);
       setLeaderboardCount(0);
     }
   };
 
-  // S28-T1: Load followed expert IDs (from cache first, then API)
+  // Load followed expert IDs (from cache first, then API)
   const loadFollowedExperts = useCallback(async () => {
     // Instant render from AsyncStorage cache
     try {
@@ -976,55 +1978,104 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
         const ids: string[] = JSON.parse(cached) as string[];
         setFollowedExpertIds(ids);
       }
-    } catch {
-      // ignore cache errors
+    } catch (err) {
+      console.warn("[finance-mode] reading followed-experts cache failed:", err);
     }
 
-    // Then fetch from API
+    // Then fetch from API. Cache is the fallback — log so a degraded UI
+    // (stale followed-experts list) is diagnosable instead of mysterious.
     try {
       const ids = await mobileApi.getFollowedExperts();
       setFollowedExpertIds(ids);
       await AsyncStorage.setItem(FOLLOWED_ANALYSTS_KEY, JSON.stringify(ids));
-    } catch {
-      // silently fail — cache is good enough
+    } catch (err) {
+      console.error("[finance-mode] getFollowedExperts failed (using cached list):", err);
     }
   }, []);
+
+  // Load finance streak + accuracy from profile. Unauthenticated users will
+  // 401 — that's the only acceptable silent case; everything else is a real
+  // error we want to see.
+  const loadFinanceProfile = useCallback(async () => {
+    try {
+      const profile = await mobileApi.getMyProfile();
+      if (profile?.user) {
+        setFinanceProfile({
+          financeStreak: profile.user.financeStreak ?? 0,
+          financeAccuracy: profile.user.financeAccuracy ?? null,
+          financeTotalVotes: profile.user.financeTotalVotes ?? 0,
+          financeResolvedVotes: profile.user.financeResolvedVotes ?? 0,
+        });
+      }
+    } catch (err) {
+      if (err instanceof ApiClientError && err.status === 401) {
+        // Expected for unauthenticated browse — no log needed.
+        return;
+      }
+      console.error("[finance-mode] getMyProfile failed:", err);
+    }
+  }, []);
+
+  // S35-T1: Toggle instrument filter (tap again to clear)
+  const handleToggleInstrumentFilter = useCallback((label: string) => {
+    setActiveInstrumentFilter((prev) => (prev === label ? null : label));
+  }, []);
+
+  // S35-T2: Scroll to Big Call hero + trigger 300ms highlight ring
+  const handleScrollToBigCall = useCallback(() => {
+    scrollViewRef.current?.scrollTo({ y: bigCallY.current, animated: true });
+    setTimeout(() => {
+      Animated.sequence([
+        Animated.timing(bigCallHighlight, { toValue: 1, duration: 150, useNativeDriver: false }),
+        Animated.timing(bigCallHighlight, { toValue: 0, duration: 150, useNativeDriver: false }),
+      ]).start();
+    }, 300);
+  }, [bigCallHighlight]);
 
   useEffect(() => {
     void load();
     void checkLeaderboard();
     void loadFollowedExperts();
+    void loadFinanceProfile();
   }, []);
 
-  // Refetch news when cluster filter changes so server-side filtering
-  // surfaces all matching stories, not just those in the first page.
+  // Refetch the news feed whenever ANY filter changes so server-side filtering
+  // surfaces all matching stories across the full dataset (not just the first
+  // page that happens to already be loaded). The filter payload itself is the
+  // dependency — useCallback identity changes when any constituent state changes.
+  //
+  // filterEpochRef bumps on every filter change so any in-flight loadMore from
+  // the previous filter context can detect it's stale and drop its response —
+  // otherwise it would clobber state with wrong-filter data and corrupt the
+  // pagination cursor for subsequent scrolls.
   const isInitialMount = useRef(true);
+  const filterEpochRef = useRef(0);
   useEffect(() => {
+    filterEpochRef.current += 1;
     if (isInitialMount.current) {
       isInitialMount.current = false;
       return;
     }
+    const epoch = filterEpochRef.current;
     let cancelled = false;
     (async () => {
       try {
-        const result = await mobileApi.getNews({
-          category: "FINANCE",
-          limit: 10,
-          requireExpertOpinions: true,
-          expertOpinionClusterId: selectedClusterFilter ?? undefined,
-        });
-        if (cancelled) return;
+        const result = await mobileApi.getNews(buildNewsFilterPayload());
+        if (cancelled || filterEpochRef.current !== epoch) return;
         setFinanceNews(result.items ?? []);
         setNextCursor(result.nextCursor ?? null);
         setHasMore(result.hasMore ?? false);
-      } catch {
-        // silently fail — keep current items
+      } catch (err) {
+        if (cancelled) return;
+        // Surface so a busted filter change is visible — user keeps the old
+        // (stale) feed but at least we see the error in the console / Sentry.
+        console.error("[finance-mode] filter-change refetch failed:", err);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [selectedClusterFilter]);
+  }, [buildNewsFilterPayload]);
 
   // S28-T1: Build expert name map from loaded financeNews
   useEffect(() => {
@@ -1062,19 +2113,6 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
     }
   }, []);
 
-  // S28-T3: Handler for sentiment card tap — pre-filter to dominant direction
-  const handleSentimentCardPress = useCallback(() => {
-    if (!analystSentiment || analystSentiment.totalCount === 0) return;
-
-    const dominant = analystSentiment.dominantLean;
-    if (dominant === "BULLISH" || dominant === "BEARISH" || dominant === "NEUTRAL") {
-      setSelectedDirectionFilter(dominant);
-    } else {
-      setSelectedDirectionFilter(null);
-    }
-    scrollViewRef.current?.scrollTo({ y: expertSectionY.current, animated: true });
-  }, [analystSentiment]);
-
   if (loading) {
     return (
       <View style={financeStyles.center}>
@@ -1104,7 +2142,10 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
       style={financeStyles.scroll}
       contentContainerStyle={financeStyles.scrollContent}
       onScroll={handleScroll}
-      scrollEventThrottle={200}
+      // 32ms = ~30fps onScroll fires — responsive enough that loadMore's
+      // 200px-from-bottom trigger catches fast flicks. 200ms (the previous
+      // setting) would miss the window during a quick swipe.
+      scrollEventThrottle={32}
       refreshControl={
         <RefreshControl
           refreshing={refreshing}
@@ -1116,61 +2157,187 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
         />
       }
     >
-      {/* Pulse ribbon — compact glanceable strip at the top */}
+      {/* S38: REORDERED — CALL OF THE WEEK is now FIRST (most important / primary
+          editorial pick). PulseRibbon dropped below as secondary context. */}
+      {bigCallOpinion && (
+        <View onLayout={(e) => { bigCallY.current = e.nativeEvent.layout.y; }}>
+          <BigCallHeroCard
+            opinion={bigCallOpinion}
+            windowLabel={bigCallWindowLabel}
+            onOpenDetail={() =>
+              router.push(`/finance/opinion/${bigCallOpinion.id}` as Parameters<typeof router.push>[0])
+            }
+          />
+        </View>
+      )}
+
+      {/* PulseRibbon — context (next event countdown, policy calendar). Now
+          rendered AFTER the hero with lighter visual treatment so the editorial
+          pick claims primacy. */}
       <PulseRibbon
         flagshipEvents={flagshipEvents}
-        analystSentiment={analystSentiment}
         clustersCount={data?.eventClusters.length ?? 0}
         onPress={(kind) => setPulseOpen(kind)}
       />
 
-      {/* S33-T3: Weekly calls digest card — position 2, between PulseRibbon and hero header */}
-      {callsDigest !== null && (
-        <WeeklyCallsDigestCard
-          digest={callsDigest}
-          onPress={() => router.push("/finance/my-calls" as Parameters<typeof router.push>[0])}
-        />
-      )}
+      {/* S38: Merged Your Week + Market Sentiment toggle card.
+          Replaces the old standalone WeeklyCallsDigestCard. Sentiment moved out
+          of the PulseRibbon and merged here under a toggle. */}
+      <WeekToggleCard
+        digest={callsDigest}
+        sentiment={analystSentiment}
+        onPressCalls={() => router.push("/finance/my-calls" as Parameters<typeof router.push>[0])}
+      />
 
-      {/* HERO HEADER — Expert Opinions is the main feature */}
-      <View style={financeStyles.heroHeader}>
-        <Text style={financeStyles.heroTitle}>Expert Opinions</Text>
-        <Text style={financeStyles.heroSubtitle}>
-          What India&apos;s top analysts are saying right now
-        </Text>
-        <Pressable onPress={onNavigateToFeed} style={financeStyles.heroNewsLink}>
-          <Text style={financeStyles.heroNewsLinkText}>Read Finance News →</Text>
-        </Pressable>
-      </View>
+      {/* Personal Accuracy Chip removed — "Start voting — track your accuracy"
+          didn't have a clear meaning. Accuracy stats live on the user's profile
+          and inside the Weekly Calls Digest card. */}
 
       {/* Section 3: Expert Opinions + Market Analysis (NOW THE HERO FEED) */}
       <View
         style={financeStyles.unclusteredSection}
         onLayout={(e) => { expertSectionY.current = e.nativeEvent.layout.y; }}
       >
-        {/* S28-T1: My Analysts avatar-chip row */}
-        <MyAnalystsRow
-          followedIds={followedExpertIds}
-          expertNames={expertNamesMap}
-          selectedAnalystFilter={selectedAnalystFilter}
-          onSelectAnalyst={(id) => setSelectedAnalystFilter(id)}
-          onClearFilter={() => setSelectedAnalystFilter(null)}
-        />
-
-        {/* Active cluster filter banner */}
-        {selectedClusterFilter !== null ? (() => {
-          const activeCluster = data?.eventClusters.find((c) => c.id === selectedClusterFilter);
-          return (
-            <View style={financeStyles.filterBanner}>
-              <Text style={financeStyles.filterBannerText} numberOfLines={1}>
-                {`Showing: ${activeCluster?.name ?? "Cluster"} opinions`}
-              </Text>
-              <Pressable onPress={() => setSelectedClusterFilter(null)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <Text style={financeStyles.filterClearBtn}>Clear filter ×</Text>
+        {/* S38 v3: Only 2 tabs (content TYPE — exclusive). Verified + Resolved
+            moved to filter chips since they're qualifiers, not content types. */}
+        <View style={controlsStyles.tabsRow}>
+          {([
+            { key: "expert-opinions" as const, label: "Expert Opinions" },
+            { key: "market-analysis" as const, label: "Market Analysis" },
+          ]).map((opt) => {
+            const active = showScope === opt.key;
+            return (
+              <Pressable
+                key={opt.key}
+                onPress={() => setShowScope(opt.key)}
+                style={[controlsStyles.tab, active && controlsStyles.tabActive]}
+              >
+                <Text style={[controlsStyles.tabText, active && controlsStyles.tabTextActive]}>
+                  {opt.label}
+                </Text>
               </Pressable>
-            </View>
-          );
-        })() : null}
+            );
+          })}
+        </View>
+
+        {/* S38: Sort + active-filter chip strip — replaces the 3 separate rows
+            (MY ANALYSTS row + instrument banner + cluster banner) AND hosts the
+            Sort dropdown so it doesn't crowd the Show tabs row above. */}
+        <View style={controlsStyles.chipRow}>
+          {/* Sort chip — leads the row so it's always visible */}
+          <Pressable
+            style={controlsStyles.sortChip}
+            onPress={() => setSortSheetOpen(true)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Text style={controlsStyles.sortChipText}>
+              ⇅ {sortMode === "latest" ? "Latest" : "Top week"}
+            </Text>
+          </Pressable>
+
+          {/* Resolved-only filter chip */}
+          {resolvedOnly && (
+            <Pressable
+              style={controlsStyles.filterChip}
+              onPress={() => setResolvedOnly(false)}
+            >
+              <Text style={controlsStyles.filterChipText}>🎯 Resolved</Text>
+              <Text style={controlsStyles.filterChipX}>×</Text>
+            </Pressable>
+          )}
+
+          {/* Verified-only filter chip */}
+          {verifiedOnly && (
+            <Pressable
+              style={controlsStyles.filterChip}
+              onPress={() => setVerifiedOnly(false)}
+            >
+              <Text style={controlsStyles.filterChipText}>✓ Verified</Text>
+              <Text style={controlsStyles.filterChipX}>×</Text>
+            </Pressable>
+          )}
+
+          {selectedDirectionFilter !== null && selectedDirectionFilter !== "VERIFIED" && (
+            <Pressable
+              style={controlsStyles.filterChip}
+              onPress={() => setSelectedDirectionFilter(null)}
+            >
+              <Text style={controlsStyles.filterChipText}>
+                {selectedDirectionFilter === "BULLISH" ? "↑ Bullish" :
+                 selectedDirectionFilter === "BEARISH" ? "↓ Bearish" : "→ Neutral"}
+              </Text>
+              <Text style={controlsStyles.filterChipX}>×</Text>
+            </Pressable>
+          )}
+          {activeInstrumentFilter !== null && (
+            <Pressable
+              style={controlsStyles.filterChip}
+              onPress={() => setActiveInstrumentFilter(null)}
+            >
+              <Text style={controlsStyles.filterChipText}>📊 {activeInstrumentFilter}</Text>
+              <Text style={controlsStyles.filterChipX}>×</Text>
+            </Pressable>
+          )}
+          {selectedAnalystFilter !== null && (
+            <Pressable
+              style={controlsStyles.filterChip}
+              onPress={() => setSelectedAnalystFilter(null)}
+            >
+              <Text style={controlsStyles.filterChipText}>
+                👤 {expertNamesMap[selectedAnalystFilter]?.name ?? "Analyst"}
+              </Text>
+              <Text style={controlsStyles.filterChipX}>×</Text>
+            </Pressable>
+          )}
+          {selectedClusterFilter !== null && (() => {
+            const activeCluster = data?.eventClusters.find((c) => c.id === selectedClusterFilter);
+            return (
+              <Pressable
+                style={controlsStyles.filterChip}
+                onPress={() => setSelectedClusterFilter(null)}
+              >
+                <Text style={controlsStyles.filterChipText}>
+                  📅 {activeCluster?.name ?? "Cluster"}
+                </Text>
+                <Text style={controlsStyles.filterChipX}>×</Text>
+              </Pressable>
+            );
+          })()}
+          <Pressable
+            style={controlsStyles.addFilterChip}
+            onPress={() => setFilterSheetOpen(true)}
+          >
+            <Text style={controlsStyles.addFilterText}>+ Filter</Text>
+          </Pressable>
+          {/* UX3: Clear-all affordance — only shows when ≥2 filters are active,
+              so it never clutters the single-chip case (which already has its own × on the chip). */}
+          {(() => {
+            const activeCount =
+              (resolvedOnly ? 1 : 0) +
+              (verifiedOnly ? 1 : 0) +
+              (selectedDirectionFilter !== null ? 1 : 0) +
+              (activeInstrumentFilter !== null ? 1 : 0) +
+              (selectedAnalystFilter !== null ? 1 : 0) +
+              (selectedClusterFilter !== null ? 1 : 0);
+            if (activeCount < 2) return null;
+            return (
+              <Pressable
+                style={controlsStyles.clearAllChip}
+                onPress={() => {
+                  setResolvedOnly(false);
+                  setVerifiedOnly(false);
+                  setSelectedDirectionFilter(null);
+                  setActiveInstrumentFilter(null);
+                  setSelectedAnalystFilter(null);
+                  setSelectedClusterFilter(null);
+                }}
+                hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+              >
+                <Text style={controlsStyles.clearAllText}>Clear all ({activeCount}) ×</Text>
+              </Pressable>
+            );
+          })()}
+        </View>
 
         {(() => {
           // Group opinions by (storyId, expertId) so same analyst's takes on one article share a card
@@ -1183,7 +2350,15 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
           }
           const grouped: GroupedCard[] = [];
           const seen = new Map<string, number>();
+          // S38 (per user): Big Call hero is an ADD-ON spotlight, not a
+          // substitute. The same opinion still appears in the list below — so
+          // the math between sentiment count and feed count reconciles 1:1.
+          // Defensive: dedupe items by id before grouping so a duplicate row
+          // in financeNews can't generate two groups with the same key.
+          const seenItemIds = new Set<string>();
           for (const item of financeNews) {
+            if (seenItemIds.has(item.id)) continue;
+            seenItemIds.add(item.id);
             for (const op of (item.expertOpinions ?? [])) {
               const key = `${item.id}::${op.expertId}`;
               const idx = seen.get(key);
@@ -1208,6 +2383,17 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
             );
           }
 
+          // S35-T1: Apply instrument filter from ticker chip tap
+          if (activeInstrumentFilter !== null) {
+            filteredGroups = filteredGroups.filter((g) =>
+              g.opinions.some(
+                (op) =>
+                  op.instrument?.toLowerCase().includes(activeInstrumentFilter.toLowerCase()) ||
+                  op.instrumentTicker?.toLowerCase().includes(activeInstrumentFilter.toLowerCase())
+              )
+            );
+          }
+
           // S28-T3: Apply direction/verified filter at the individual opinion level
           // VERIFIED uses the dedicated verifiedCalls fetch — handled below at render time
           if (selectedDirectionFilter !== null && selectedDirectionFilter !== "VERIFIED") {
@@ -1217,6 +2403,70 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
                 opinions: g.opinions.filter((op) => op.direction === selectedDirectionFilter),
               }))
               .filter((g) => g.opinions.length > 0);
+          }
+
+          // S38 v3: Verified is a separate boolean filter (not a tab).
+          if (verifiedOnly) {
+            filteredGroups = filteredGroups
+              .map((g) => ({ ...g, opinions: g.opinions.filter((op) => op.verified) }))
+              .filter((g) => g.opinions.length > 0);
+          }
+
+          // S38 v4: Resolved-only filter — keep only HIT/MISS calls.
+          if (resolvedOnly) {
+            filteredGroups = filteredGroups
+              .map((g) => ({
+                ...g,
+                opinions: g.opinions.filter(
+                  (op) =>
+                    op.resolutionStatus === "RESOLVED_HIT" ||
+                    op.resolutionStatus === "RESOLVED_MISS"
+                ),
+              }))
+              .filter((g) => g.opinions.length > 0);
+          }
+
+          // Sort key:
+          //   • resolvedOnly mode → strictly by latest resolvedAt (matches the
+          //     server-side latestResolvedAt cursor so loaded items stay in order)
+          //   • otherwise → max(articlePublishedAt, latest resolvedAt) so a
+          //     freshly-resolved old call still bubbles up among pending ones
+          const groupSortKey = (g: GroupedCard): number => {
+            let maxResolvedTs = 0;
+            for (const op of g.opinions) {
+              if (op.resolvedAt) {
+                const t = new Date(op.resolvedAt).getTime();
+                if (t > maxResolvedTs) maxResolvedTs = t;
+              }
+            }
+            if (resolvedOnly) {
+              return maxResolvedTs;
+            }
+            const articleTs = new Date(g.articlePublishedAt).getTime();
+            return Math.max(articleTs, maxResolvedTs);
+          };
+
+          if (sortMode === "top-week") {
+            // S38 fix: filter "this week" strictly by when the analyst made the
+            // call (articlePublishedAt) — not by max(resolvedAt, articlePublishedAt).
+            // A 30-day-old call that resolved 2 days ago is still a 30-day-old CALL.
+            // Sort within the filtered set by groupSortKey so resolved-this-week
+            // calls still bubble to the top of the visible list.
+            const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+            const now = Date.now();
+            filteredGroups = [...filteredGroups]
+              .filter((g) => now - new Date(g.articlePublishedAt).getTime() <= SEVEN_DAYS_MS)
+              .sort((a, b) => {
+                if (b.opinions.length !== a.opinions.length) {
+                  return b.opinions.length - a.opinions.length;
+                }
+                return groupSortKey(b) - groupSortKey(a);
+              });
+          } else {
+            // "latest" default — sorted by max(resolvedAt, articlePublishedAt) desc
+            filteredGroups = [...filteredGroups].sort(
+              (a, b) => groupSortKey(b) - groupSortKey(a)
+            );
           }
 
           // Split into named-analyst opinions vs trusted-source market analysis.
@@ -1260,7 +2510,17 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
             );
           }
 
-          const activeGroups = opinionTab === "expert" ? expertGroups : analysisGroups;
+          // S38 v2: "For You" is now a true union — includes BOTH named-analyst
+          // opinions AND brokerage notes (J.P. Morgan, ET Money, etc.).
+          //   "for-you"  → union (expert + analysis), re-sorted by chosen sortMode
+          //   "verified" → expert-only (already filtered to verified above)
+          //   "resolved" → union (already filtered to resolved above), so brokerage HITs show too
+          //   "analysis" → analysis-only
+          // S38 v4: 2 tabs by source type — strict split.
+          //   expert-opinions → individual named analysts only
+          //   market-analysis → brokerages/publications only
+          const activeGroups =
+            showScope === "market-analysis" ? analysisGroups : expertGroups;
 
           // S28-T3: Count unfiltered groups for toggle badge
           const allExpertGroups = (selectedClusterFilter
@@ -1274,87 +2534,22 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
 
           return (
             <>
-              {/* S28-T3: Direction filter chips */}
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={financeStyles.directionChipsScroll}
-              >
-                {(
-                  [
-                    { label: "All", value: null, activeColor: colors.accent },
-                    { label: "Bullish", value: "BULLISH", activeColor: "#16a34a" },
-                    { label: "Bearish", value: "BEARISH", activeColor: "#dc2626" },
-                    { label: "Neutral", value: "NEUTRAL", activeColor: "#6b7280" },
-                    { label: "Verified ✓", value: "VERIFIED", activeColor: "#2563eb" },
-                  ] as const
-                ).map(({ label, value, activeColor }) => {
-                  const isActive = selectedDirectionFilter === value;
-                  return (
-                    <Pressable
-                      key={label}
-                      style={[
-                        financeStyles.directionChip,
-                        isActive && { backgroundColor: activeColor, borderColor: activeColor },
-                      ]}
-                      onPress={() => setSelectedDirectionFilter(value)}
-                    >
-                      <Text
-                        style={[
-                          financeStyles.directionChipText,
-                          isActive && financeStyles.directionChipTextActive,
-                        ]}
-                      >
-                        {label}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </ScrollView>
+              {/* S38: Direction-chip row + active-filter banner removed — both
+                  replaced by the unified chip strip above (direction is now a
+                  picker on the "+ Filter" button). The "VERIFIED" direction
+                  value retained internally so the dedicated verifiedCalls track
+                  record view can still be invoked from inside the Add-filter
+                  sheet's Track-record option if we re-add that path later. */}
 
-              {/* S28-T3: Direction filter active banner */}
-              {selectedDirectionFilter !== null && (
-                <View style={financeStyles.filterBanner}>
-                  <Text style={financeStyles.filterBannerText} numberOfLines={1}>
-                    {selectedDirectionFilter === "VERIFIED"
-                      ? "Showing: Verified calls (resolved HIT or MISS)"
-                      : `Showing: ${selectedDirectionFilter!.charAt(0) + selectedDirectionFilter!.slice(1).toLowerCase()} opinions`}
-                  </Text>
-                  <Pressable
-                    onPress={() => setSelectedDirectionFilter(null)}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <Text style={financeStyles.filterClearBtn}>Clear filter ×</Text>
-                  </Pressable>
-                </View>
-              )}
-
-              {/* Toggle pill — always visible */}
-              <View style={financeStyles.opinionToggle}>
-                <Pressable
-                  style={[financeStyles.toggleBtn, opinionTab === "expert" && financeStyles.toggleBtnActive]}
-                  onPress={() => setOpinionTab("expert")}
-                >
-                  <Text style={[financeStyles.toggleBtnText, opinionTab === "expert" && financeStyles.toggleBtnTextActive]}>
-                    Expert Opinions</Text>
-                </Pressable>
-                <Pressable
-                  style={[financeStyles.toggleBtn, opinionTab === "analysis" && financeStyles.toggleBtnActive]}
-                  onPress={() => setOpinionTab("analysis")}
-                >
-                  <Text style={[financeStyles.toggleBtnText, opinionTab === "analysis" && financeStyles.toggleBtnTextActive]}>
-                    Market Analysis
-                  </Text>
-                </Pressable>
-              </View>
-
-              {/* Subheader for analysis tab */}
-              {opinionTab === "analysis" && selectedDirectionFilter !== "VERIFIED" && (
-                <Text style={financeStyles.sectionSubheader}>From trusted India-finance publications</Text>
+              {/* Subheader when viewing Market Analysis */}
+              {showScope === "market-analysis" && selectedDirectionFilter !== "VERIFIED" && (
+                <Text style={financeStyles.sectionSubheader}>
+                  Notes from publications like J.P. Morgan, ET Money, Goldman Sachs
+                </Text>
               )}
 
               {/* Cards */}
-              {selectedDirectionFilter === "VERIFIED" && opinionTab === "expert" ? (
+              {selectedDirectionFilter === "VERIFIED" && showScope !== "market-analysis" ? (
                 verifiedCalls.length === 0 ? (
                   <View style={financeStyles.expertEmptyCard}>
                     <Text style={financeStyles.expertEmptyTitle}>No verified calls yet</Text>
@@ -1375,7 +2570,7 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
                       <Pressable
                         key={call.id}
                         style={financeStyles.verifiedCard}
-                        onPress={() => router.push(`/expert/${call.expertId}` as Parameters<typeof router.push>[0])}
+                        onPress={() => router.push(`/finance/opinion/${call.id}` as Parameters<typeof router.push>[0])}
                       >
                         <View style={[financeStyles.verifiedBadge, { backgroundColor: color }]}>
                           <Text style={financeStyles.verifiedBadgeText}>{isHit ? "HIT ✓" : "MISS ✗"}</Text>
@@ -1408,8 +2603,30 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
                 activeGroups.length === 0 ? (
                   <View style={financeStyles.expertEmptyCard}>
                     <Text style={financeStyles.expertEmptyTitle}>
-                      {opinionTab === "expert" ? "No expert opinions yet" : "No market analysis yet"}
+                      {resolvedOnly
+                        ? "No resolved calls match yet"
+                        : verifiedOnly
+                          ? "No verified analysts here yet"
+                          : showScope === "market-analysis"
+                            ? "No market analysis from publications yet"
+                            : sortMode === "top-week"
+                              ? "Nothing from the last 7 days yet"
+                              : "No expert opinions yet"}
                     </Text>
+                    {(verifiedOnly || resolvedOnly || sortMode !== "latest") && (
+                      <Pressable
+                        onPress={() => {
+                          setSortMode("latest");
+                          setVerifiedOnly(false);
+                          setResolvedOnly(false);
+                        }}
+                        style={financeStyles.expertEmptyLink}
+                      >
+                        <Text style={financeStyles.expertEmptyLinkText}>
+                          Reset filters →
+                        </Text>
+                      </Pressable>
+                    )}
                   </View>
                 ) : (
                   activeGroups.map(({ key, storyId, storyHeadline, articlePublishedAt, opinions }) => (
@@ -1455,7 +2672,217 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
       )}
     </ScrollView>
 
-    {/* ── Pulse bottom sheets ────────────────────────────────────────────── */}
+    {/* S38: Sort action sheet — opened by the "Latest ▾" button */}
+    <PulseSheet
+      visible={sortSheetOpen}
+      onClose={() => setSortSheetOpen(false)}
+      title="Sort by"
+    >
+      {(
+        [
+          { key: "latest" as const, label: "Latest", desc: "Most recent calls first" },
+          { key: "top-week" as const, label: "Top this week", desc: "Most engagement in last 7 days" },
+        ]
+      ).map((opt) => {
+        const active = sortMode === opt.key;
+        return (
+          <Pressable
+            key={opt.key}
+            onPress={() => {
+              setSortMode(opt.key);
+              setSortSheetOpen(false);
+            }}
+            style={[controlsStyles.sheetRow, active && controlsStyles.sheetRowActive]}
+          >
+            <View>
+              <Text style={[controlsStyles.sheetRowText, active && controlsStyles.sheetRowTextActive]}>
+                {opt.label}
+              </Text>
+              <Text style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>{opt.desc}</Text>
+            </View>
+            {active ? <Text style={controlsStyles.sheetRowCheck}>✓</Text> : null}
+          </Pressable>
+        );
+      })}
+    </PulseSheet>
+
+    {/* S38: Add-filter action sheet — pick a facet to filter by */}
+    <PulseSheet
+      visible={filterSheetOpen}
+      onClose={() => setFilterSheetOpen(false)}
+      title="Add a filter"
+    >
+      <Pressable
+        style={[controlsStyles.sheetRow, resolvedOnly && controlsStyles.sheetRowActive]}
+        onPress={() => {
+          setResolvedOnly(!resolvedOnly);
+          setFilterSheetOpen(false);
+        }}
+      >
+        <Text style={[controlsStyles.sheetRowText, resolvedOnly && controlsStyles.sheetRowTextActive]}>
+          🎯 Resolved only
+        </Text>
+        <Text style={{ fontSize: 12, color: "#94a3b8" }}>
+          {resolvedOnly ? "On — tap to turn off" : "HIT/MISS calls only"}
+        </Text>
+      </Pressable>
+
+      <Pressable
+        style={[controlsStyles.sheetRow, verifiedOnly && controlsStyles.sheetRowActive]}
+        onPress={() => {
+          setVerifiedOnly(!verifiedOnly);
+          setFilterSheetOpen(false);
+        }}
+      >
+        <Text style={[controlsStyles.sheetRowText, verifiedOnly && controlsStyles.sheetRowTextActive]}>
+          ✓ Verified analysts only
+        </Text>
+        <Text style={{ fontSize: 12, color: "#94a3b8" }}>
+          {verifiedOnly ? "On — tap to turn off" : "Off"}
+        </Text>
+      </Pressable>
+
+      <Pressable
+        style={controlsStyles.sheetRow}
+        onPress={() => {
+          setFilterSheetOpen(false);
+          setDirectionPickerOpen(true);
+        }}
+      >
+        <Text style={controlsStyles.sheetRowText}>↑↓ Direction</Text>
+        <Text style={{ fontSize: 12, color: "#94a3b8" }}>Bullish · Bearish · Neutral</Text>
+      </Pressable>
+      <Pressable
+        style={controlsStyles.sheetRow}
+        onPress={() => {
+          setFilterSheetOpen(false);
+          setInstrumentPickerOpen(true);
+        }}
+      >
+        <Text style={controlsStyles.sheetRowText}>📊 Instrument</Text>
+        <Text style={{ fontSize: 12, color: "#94a3b8" }}>Nifty · Bank Nifty · etc.</Text>
+      </Pressable>
+      <Pressable
+        style={controlsStyles.sheetRow}
+        onPress={() => {
+          setFilterSheetOpen(false);
+          setAnalystPickerOpen(true);
+        }}
+      >
+        <Text style={controlsStyles.sheetRowText}>👤 Analyst</Text>
+        <Text style={{ fontSize: 12, color: "#94a3b8" }}>Pick from followed</Text>
+      </Pressable>
+    </PulseSheet>
+
+    {/* S38: Direction picker (action sheet) */}
+    <PulseSheet
+      visible={directionPickerOpen}
+      onClose={() => setDirectionPickerOpen(false)}
+      title="Filter by direction"
+    >
+      {(
+        [
+          { key: null, label: "All directions" },
+          { key: "BULLISH" as const, label: "↑ Bullish" },
+          { key: "BEARISH" as const, label: "↓ Bearish" },
+          { key: "NEUTRAL" as const, label: "→ Neutral" },
+        ]
+      ).map((opt, i) => {
+        const active = selectedDirectionFilter === opt.key;
+        return (
+          <Pressable
+            key={i}
+            onPress={() => {
+              setSelectedDirectionFilter(opt.key);
+              setDirectionPickerOpen(false);
+            }}
+            style={[controlsStyles.sheetRow, active && controlsStyles.sheetRowActive]}
+          >
+            <Text style={[controlsStyles.sheetRowText, active && controlsStyles.sheetRowTextActive]}>
+              {opt.label}
+            </Text>
+            {active ? <Text style={controlsStyles.sheetRowCheck}>✓</Text> : null}
+          </Pressable>
+        );
+      })}
+    </PulseSheet>
+
+    {/* S38: Instrument picker (action sheet) */}
+    <PulseSheet
+      visible={instrumentPickerOpen}
+      onClose={() => setInstrumentPickerOpen(false)}
+      title="Filter by instrument"
+    >
+      {["NIFTY 50", "BANK NIFTY", "SENSEX", "USD/INR", "Gold"].map((label) => {
+        const active = activeInstrumentFilter === label;
+        return (
+          <Pressable
+            key={label}
+            onPress={() => {
+              setActiveInstrumentFilter(active ? null : label);
+              setInstrumentPickerOpen(false);
+            }}
+            style={[controlsStyles.sheetRow, active && controlsStyles.sheetRowActive]}
+          >
+            <Text style={[controlsStyles.sheetRowText, active && controlsStyles.sheetRowTextActive]}>
+              {label}
+            </Text>
+            {active ? <Text style={controlsStyles.sheetRowCheck}>✓</Text> : null}
+          </Pressable>
+        );
+      })}
+    </PulseSheet>
+
+    {/* S38: Analyst picker (action sheet, from followed list) */}
+    <PulseSheet
+      visible={analystPickerOpen}
+      onClose={() => setAnalystPickerOpen(false)}
+      title="Filter by analyst"
+    >
+      {followedExpertIds.length === 0 ? (
+        <View style={{ padding: spacing.lg, alignItems: "center" }}>
+          <Text style={{ fontSize: 13, color: "#64748b" }}>
+            Follow an analyst first by tapping their name on any opinion.
+          </Text>
+        </View>
+      ) : (
+        <>
+          <Pressable
+            onPress={() => {
+              setSelectedAnalystFilter(null);
+              setAnalystPickerOpen(false);
+            }}
+            style={[controlsStyles.sheetRow, !selectedAnalystFilter && controlsStyles.sheetRowActive]}
+          >
+            <Text style={[controlsStyles.sheetRowText, !selectedAnalystFilter && controlsStyles.sheetRowTextActive]}>
+              All analysts
+            </Text>
+            {!selectedAnalystFilter && <Text style={controlsStyles.sheetRowCheck}>✓</Text>}
+          </Pressable>
+          {followedExpertIds.map((expertId) => {
+            const name = expertNamesMap[expertId]?.name ?? "Analyst";
+            const active = selectedAnalystFilter === expertId;
+            return (
+              <Pressable
+                key={expertId}
+                onPress={() => {
+                  setSelectedAnalystFilter(expertId);
+                  setAnalystPickerOpen(false);
+                }}
+                style={[controlsStyles.sheetRow, active && controlsStyles.sheetRowActive]}
+              >
+                <Text style={[controlsStyles.sheetRowText, active && controlsStyles.sheetRowTextActive]}>
+                  {name}
+                </Text>
+                {active ? <Text style={controlsStyles.sheetRowCheck}>✓</Text> : null}
+              </Pressable>
+            );
+          })}
+        </>
+      )}
+    </PulseSheet>
+
+    {/* ── Pulse bottom sheets — opened by tapping a PulseRibbon pill ───── */}
     <PulseSheet
       visible={pulseOpen === "events"}
       onClose={() => setPulseOpen(null)}
@@ -1464,22 +2891,7 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
       <FlagshipEventsCarousel events={flagshipEvents} />
     </PulseSheet>
 
-    <PulseSheet
-      visible={pulseOpen === "sentiment"}
-      onClose={() => setPulseOpen(null)}
-      title="📊 Today's Analyst Sentiment"
-    >
-      {analystSentiment !== null ? (
-        <AnalystSentimentCard
-          sentiment={analystSentiment}
-          onPress={() => { setPulseOpen(null); handleSentimentCardPress(); }}
-        />
-      ) : (
-        <View style={financeStyles.emptyState}>
-          <Text style={financeStyles.emptyText}>No sentiment data yet.</Text>
-        </View>
-      )}
-    </PulseSheet>
+    {/* Sentiment sheet removed — data is now inline on the WeekToggleCard */}
 
     <PulseSheet
       visible={pulseOpen === "calendar"}
@@ -1487,58 +2899,75 @@ export function FinanceMode({ onNavigateToFeed }: { onNavigateToFeed?: () => voi
       title="💼 Policy Calendar"
     >
       {data && data.eventClusters.length > 0 ? (
-        data.eventClusters.map((cluster) => (
-          <View key={cluster.id} style={financeStyles.clusterSection}>
-            <View style={financeStyles.clusterHeader}>
-              {cluster.bannerEmoji ? (
-                <Text style={financeStyles.clusterEmoji}>{cluster.bannerEmoji}</Text>
+        data.eventClusters.map((cluster) => {
+          const hasTakes = cluster.expertTakeCount > 0;
+          const goToCluster = () => {
+            setSelectedClusterFilter(cluster.id);
+            setPulseOpen(null);
+            setTimeout(
+              () => scrollViewRef.current?.scrollTo({ y: expertSectionY.current, animated: true }),
+              200
+            );
+          };
+          return (
+            // S38 fix: card itself is a non-tappable View. Only the explicit
+            // "See expert takes" footer link triggers navigation, so reading the
+            // data doesn't accidentally filter the feed.
+            <View key={cluster.id} style={financeStyles.clusterSection}>
+              {/* Header: emoji + name + date */}
+              <View style={financeStyles.clusterHeader}>
+                {cluster.bannerEmoji ? (
+                  <Text style={financeStyles.clusterEmoji}>{cluster.bannerEmoji}</Text>
+                ) : null}
+                <View style={financeStyles.clusterHeaderText}>
+                  <Text style={financeStyles.clusterName}>{cluster.name}</Text>
+                  <Text style={financeStyles.clusterDateRange}>
+                    {formatDateRange(cluster.startsAt, cluster.endsAt)}
+                  </Text>
+                </View>
+              </View>
+
+              {/* Description */}
+              {cluster.description ? (
+                <Text style={financeStyles.clusterDescription}>{cluster.description}</Text>
               ) : null}
-              <View style={financeStyles.clusterHeaderText}>
-                <Text style={financeStyles.clusterName}>{cluster.name}</Text>
-                <Text style={financeStyles.clusterDateRange}>
-                  {formatDateRange(cluster.startsAt, cluster.endsAt)}
-                </Text>
-              </View>
-            </View>
-            {cluster.dataPoints && cluster.dataPoints.length > 0 ? (
-              <View style={financeStyles.dataPanel}>
-                {cluster.dataPoints.map((dp, i) => (
-                  <View
-                    key={i}
-                    style={[
-                      financeStyles.dataPanelRow,
-                      i < cluster.dataPoints.length - 1 && financeStyles.dataPanelRowBorder,
-                    ]}
-                  >
-                    <Text style={financeStyles.dataPanelLabel}>{dp.label}</Text>
-                    <View style={financeStyles.dataPanelValueCol}>
-                      <Text style={financeStyles.dataPanelValue}>{dp.value}</Text>
-                      {dp.date ? <Text style={financeStyles.dataPanelDate}>{dp.date}</Text> : null}
-                      {dp.subtext ? <Text style={financeStyles.dataPanelSubtext}>{dp.subtext}</Text> : null}
+
+              {/* Data points (key stats about the event) */}
+              {cluster.dataPoints && cluster.dataPoints.length > 0 ? (
+                <View style={financeStyles.clusterDataGrid}>
+                  {cluster.dataPoints.map((dp, idx) => (
+                    <View key={idx} style={financeStyles.clusterDataItem}>
+                      <Text style={financeStyles.clusterDataLabel}>{dp.label}</Text>
+                      <Text style={financeStyles.clusterDataValue}>{dp.value}</Text>
+                      {dp.subtext ? (
+                        <Text style={financeStyles.clusterDataSubtext}>{dp.subtext}</Text>
+                      ) : null}
                     </View>
-                  </View>
-                ))}
-              </View>
-            ) : null}
-            <View style={financeStyles.clusterFooter}>
-              {cluster.expertTakeCount > 0 ? (
+                  ))}
+                </View>
+              ) : null}
+
+              {/* Footer — ONLY this is tappable (filters the feed) */}
+              {hasTakes ? (
                 <Pressable
-                  onPress={() => {
-                    setSelectedClusterFilter(cluster.id);
-                    setPulseOpen(null);
-                    setTimeout(() => scrollViewRef.current?.scrollTo({ y: expertSectionY.current, animated: true }), 200);
-                  }}
+                  style={financeStyles.clusterFooter}
+                  onPress={goToCluster}
+                  hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
                 >
                   <Text style={financeStyles.expertTakesLink}>
-                    {`→ ${cluster.expertTakeCount} expert ${cluster.expertTakeCount === 1 ? "take" : "takes"} on this event`}
+                    {`→ See ${cluster.expertTakeCount} expert ${cluster.expertTakeCount === 1 ? "take" : "takes"} in the feed`}
                   </Text>
                 </Pressable>
               ) : (
-                <Text style={financeStyles.expertTakesMuted}>0 expert takes yet</Text>
+                <View style={financeStyles.clusterFooter}>
+                  <Text style={financeStyles.expertTakesMuted}>
+                    No expert takes yet — check back closer to the date
+                  </Text>
+                </View>
               )}
             </View>
-          </View>
-        ))
+          );
+        })
       ) : (
         <View style={financeStyles.emptyState}>
           <Text style={financeStyles.emptyText}>No events on the calendar this week.</Text>
@@ -1951,6 +3380,51 @@ const financeStyles = StyleSheet.create({
   clusterName: { fontSize: 14, fontWeight: "800", color: colors.text ?? "#111827" },
   clusterDateRange: { fontSize: 11, color: colors.textMuted ?? "#6b7280", marginTop: 1 },
   clusterScroll: { paddingLeft: spacing.lg },
+  // S38: new cluster sheet styles — description + data point grid
+  clusterDescription: {
+    fontSize: 12,
+    color: "#4b5563",
+    lineHeight: 17,
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.sm,
+  },
+  clusterDataGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.sm,
+    paddingBottom: 4,
+    gap: 8,
+  },
+  clusterDataItem: {
+    flexBasis: "47%",
+    flexGrow: 1,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    backgroundColor: "#f8fafc",
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  clusterDataLabel: {
+    fontSize: 10,
+    color: "#64748b",
+    fontWeight: "700" as const,
+    letterSpacing: 0.3,
+    textTransform: "uppercase" as const,
+  },
+  clusterDataValue: {
+    fontSize: 13,
+    color: "#0f172a",
+    fontWeight: "800" as const,
+    marginTop: 1,
+  },
+  clusterDataSubtext: {
+    fontSize: 10,
+    color: "#94a3b8",
+    fontStyle: "italic" as const,
+    marginTop: 2,
+  },
   dataPanel: {
     paddingHorizontal: spacing.md,
     paddingTop: spacing.xs ?? 4,

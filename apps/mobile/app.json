@@ -23,7 +23,8 @@
           "root": "./src/app"
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-localization"
     ],
     "splash": {
       "backgroundColor": "#F6F7FB",

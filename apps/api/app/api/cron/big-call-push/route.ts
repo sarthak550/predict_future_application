@@ -79,10 +79,13 @@ export async function POST(request: Request) {
     const notifBody = `Today's Big Call: ${market.title}`;
     const deepLink = `/market/${market.id}`;
 
-    // Send in chunks of 100 — Expo Push API limit
-    let totalSent = 0;
+    // Build chunk list then send with bounded parallelism (10 concurrent Expo requests)
+    const chunks: string[][] = [];
     for (let i = 0; i < allTokens.length; i += CHUNK_SIZE) {
-      const chunk = allTokens.slice(i, i + CHUNK_SIZE);
+      chunks.push(allTokens.slice(i, i + CHUNK_SIZE));
+    }
+
+    const sendChunk = async (chunk: string[]): Promise<number> => {
       const messages = chunk.map((to) => ({
         to,
         sound: "default" as const,
@@ -90,21 +93,25 @@ export async function POST(request: Request) {
         body: notifBody,
         data: { href: deepLink },
       }));
-
       try {
         await fetch("https://exp.host/--/api/v2/push/send", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json",
-          },
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
           body: JSON.stringify(messages),
         });
-        totalSent += chunk.length;
+        return chunk.length;
       } catch (chunkError) {
-        // Best-effort: log and continue with remaining chunks
         console.error("[big-call-push] chunk send error:", chunkError);
+        return 0;
       }
+    };
+
+    const PARALLEL = 10;
+    let totalSent = 0;
+    for (let i = 0; i < chunks.length; i += PARALLEL) {
+      const batch = chunks.slice(i, i + PARALLEL);
+      const counts = await Promise.all(batch.map(sendChunk));
+      totalSent += counts.reduce((a, b) => a + b, 0);
     }
 
     // Mark notification as sent — prevents re-fire on subsequent cron ticks

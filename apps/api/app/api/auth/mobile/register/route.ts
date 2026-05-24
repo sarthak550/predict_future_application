@@ -4,10 +4,12 @@ import { NextResponse } from "next/server";
 
 import { STARTING_BALANCE } from "@/lib/constants";
 import { prisma } from "@/lib/prisma";
+import { checkRateLimit } from "@/lib/rate-limit";
 import { generateReferralCode } from "@/lib/referrals/code";
 import { registerSchema } from "@/lib/validations/auth";
 
-const JWT_SECRET = process.env.NEXTAUTH_SECRET ?? "fallback-dev-secret";
+if (!process.env.NEXTAUTH_SECRET) throw new Error("NEXTAUTH_SECRET env var is required");
+const JWT_SECRET: string = process.env.NEXTAUTH_SECRET;
 
 /**
  * Mobile registration. Creates the account and immediately returns a JWT
@@ -19,6 +21,20 @@ const JWT_SECRET = process.env.NEXTAUTH_SECRET ?? "fallback-dev-secret";
  */
 export async function POST(request: Request) {
   try {
+    // IP-based rate limit: 5 registrations per IP per hour.
+    // NOTE: in-memory — resets on cold start. Sprint N should migrate to Redis.
+    const ip = request.headers.get("x-forwarded-for") ?? "unknown";
+    const rl = await checkRateLimit(`register:${ip}`, 5, 60 * 60 * 1000);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { error: "Too many registration attempts. Please try again later." },
+        {
+          status: 429,
+          headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) },
+        }
+      );
+    }
+
     const body = await request.json();
     const payload = registerSchema.parse(body);
 

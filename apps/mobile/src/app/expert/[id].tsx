@@ -55,10 +55,6 @@ function CallRow({ call }: { call: ApiExpertCall }) {
   const dirLabel = DIRECTION_LABEL[call.direction] ?? call.direction;
   const resColor = RESOLUTION_COLOR[call.resolutionStatus] ?? "#6b7280";
   const resLabel = RESOLUTION_LABEL[call.resolutionStatus] ?? call.resolutionStatus;
-  const hasTallies = (call.retrospectiveTallies?.total ?? 0) > 0;
-  const hitPct = hasTallies
-    ? Math.round(((call.retrospectiveTallies!.hit ?? 0) / call.retrospectiveTallies!.total) * 100)
-    : null;
 
   const handlePress = () => {
     if (call.storyId) {
@@ -87,9 +83,6 @@ function CallRow({ call }: { call: ApiExpertCall }) {
         <View style={[expertProfileStyles.badge, { backgroundColor: resColor + "20" }]}>
           <Text style={[expertProfileStyles.badgeText, { color: resColor }]}>{resLabel}</Text>
         </View>
-        {hitPct !== null && (
-          <Text style={expertProfileStyles.crowdNote}>Crowd: {hitPct}% HIT</Text>
-        )}
       </View>
       {call.resolutionNote && call.resolutionStatus !== "PENDING" && call.resolutionStatus !== "NOT_GRADED" ? (
         <View style={[expertProfileStyles.resolutionNote, { borderLeftColor: resColor }]}>

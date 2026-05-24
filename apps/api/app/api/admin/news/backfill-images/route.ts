@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { getSession } from "@/lib/auth";
+import { getUserIdFromRequest } from "@/lib/auth";
 import { fetchOgImage, isGoogleNewsUrl } from "@/lib/news/og-image";
 import { prisma } from "@/lib/prisma";
 
@@ -9,6 +9,8 @@ import { prisma } from "@/lib/prisma";
  *
  * Finds published stories without an image and attempts to fetch og:image
  * from their source URL. Skips Google News redirect URLs.
+ *
+ * Accepts either admin session/Bearer auth OR a CRON_SECRET bearer token.
  */
 export async function POST(request: Request) {
   try {
@@ -17,9 +19,19 @@ export async function POST(request: Request) {
     const isCron = cronSecret && authHeader === `Bearer ${cronSecret}`;
 
     if (!isCron) {
-      const session = await getSession();
-      if (!session?.user?.id) {
+      const userId = await getUserIdFromRequest(request);
+      if (!userId) {
         return NextResponse.json({ error: "Authentication required." }, { status: 401 });
+      }
+      const actor = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { role: true, isSuspended: true },
+      });
+      if (!actor || actor.isSuspended) {
+        return NextResponse.json({ error: "Account cannot perform this action." }, { status: 403 });
+      }
+      if (actor.role !== "ADMIN" && actor.role !== "MODERATOR") {
+        return NextResponse.json({ error: "Admin access required." }, { status: 403 });
       }
     }
 

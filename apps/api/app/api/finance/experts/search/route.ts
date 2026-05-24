@@ -29,10 +29,6 @@ export async function GET(request: Request) {
         select: {
           id: true,
           resolutionStatus: true,
-          votes: {
-            where: { pollType: "RETROSPECTIVE" },
-            select: { pollType: true, choice: true },
-          },
         },
       },
     },

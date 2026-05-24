@@ -11,19 +11,18 @@
  *   - Returns 400 if the user already has phoneVerified=true.
  *   - Returns 409 if the phone is already registered to a different account.
  *   - Generates a 6-digit OTP and persists it in the DB with a 10-minute TTL.
- *   - If PHONE_VERIFY_MODE === "dev" or MSG91_AUTH_KEY is absent: logs OTP to
- *     console and includes { devOtp } in the response (dev fallback).
- *   - If PHONE_VERIFY_MODE === "prod" AND MSG91_AUTH_KEY is set: dispatches an
- *     SMS via the MSG91 OTP API v5. On MSG91 error the request still succeeds —
- *     the OTP is in the DB and an admin can retrieve it if needed.
+ *   - In NODE_ENV !== "production": logs OTP to console and includes { otp }
+ *     in the response body for QA convenience.
+ *   - In NODE_ENV === "production": MSG91_AUTH_KEY is REQUIRED (module throws at
+ *     boot if absent). The response body NEVER includes the OTP. SMS is dispatched
+ *     via MSG91; on SMS failure the OTP remains in the DB for support lookup.
  *   - Saves the (unverified) phone number on the User record immediately so
  *     the confirm endpoint can use it.
  *
- * Required env vars:
- *   MSG91_AUTH_KEY      — from MSG91 dashboard > API Key
+ * Required env vars (production):
+ *   MSG91_AUTH_KEY      — from MSG91 dashboard > API Key (REQUIRED in prod)
  *   MSG91_SENDER_ID     — 6-char sender ID approved by MSG91 (e.g. PRDCFT)
  *   MSG91_TEMPLATE_ID   — DLT-registered template ID from MSG91 dashboard
- *   PHONE_VERIFY_MODE   — 'dev' (logs OTP) or 'prod' (sends SMS)
  */
 
 import { NextResponse } from "next/server";
@@ -31,6 +30,15 @@ import { NextResponse } from "next/server";
 import { getUserIdFromRequest } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { normaliseIndianPhone, storeOtp } from "@/lib/phone-verification";
+import { checkRateLimit } from "@/lib/rate-limit";
+
+// Boot-time assertion: in production, MSG91_AUTH_KEY is mandatory.
+// Failing fast here prevents the silent OTP-echo fallback from activating in prod.
+if (process.env.NODE_ENV === "production" && !process.env.MSG91_AUTH_KEY) {
+  throw new Error(
+    "MSG91_AUTH_KEY required in production. Set it in your environment before deploying."
+  );
+}
 
 /**
  * Dispatch an OTP SMS via the MSG91 OTP API v5.
@@ -100,6 +108,7 @@ export async function POST(request: Request) {
     }
 
     const rawPhone = (body as { phone: string }).phone;
+    // Phone normalization is pure CPU — safe to run before rate-limit checks.
     const phone = normaliseIndianPhone(rawPhone);
 
     if (!phone) {
@@ -109,6 +118,32 @@ export async function POST(request: Request) {
             "Invalid phone number. Please provide a 10-digit Indian mobile number (with or without +91 prefix).",
         },
         { status: 400 }
+      );
+    }
+
+    // Rate limit: apply BEFORE any DB lookups.
+    // Moving rate checks here prevents an attacker who knows valid phone numbers from
+    // probing the DB to enumerate accounts before being throttled.
+    // 3 OTP sends per user per hour AND 5 per phone number per hour.
+    const rlUser = await checkRateLimit(`verify-phone:user:${userId}`, 3, 60 * 60 * 1000);
+    if (!rlUser.allowed) {
+      return NextResponse.json(
+        { error: "Too many OTP requests. Please wait before requesting another code." },
+        {
+          status: 429,
+          headers: { "Retry-After": String(Math.ceil((rlUser.resetAt - Date.now()) / 1000)) },
+        }
+      );
+    }
+
+    const rlPhone = await checkRateLimit(`verify-phone:phone:${phone}`, 5, 60 * 60 * 1000);
+    if (!rlPhone.allowed) {
+      return NextResponse.json(
+        { error: "Too many OTP requests for this phone number. Please wait before trying again." },
+        {
+          status: 429,
+          headers: { "Retry-After": String(Math.ceil((rlPhone.resetAt - Date.now()) / 1000)) },
+        }
       );
     }
 
@@ -147,16 +182,16 @@ export async function POST(request: Request) {
       data: { phone },
     });
 
-    const isDevMode =
-      process.env.PHONE_VERIFY_MODE !== "prod" || !process.env.MSG91_AUTH_KEY;
+    const isProduction = process.env.NODE_ENV === "production";
 
-    if (isDevMode) {
+    if (!isProduction) {
+      // Dev / test: log OTP to stdout and include it in the response for QA convenience.
       console.log(`[phone-verification] OTP for ${phone}: ${otp}`);
       return NextResponse.json({ ok: true, otp });
     }
 
     // Production: dispatch SMS via MSG91. On failure, log and continue — the
-    // OTP is safely persisted in the DB.
+    // OTP is safely persisted in the DB. Never expose the OTP in the response.
     try {
       await sendMsg91Sms(phone, otp);
     } catch (smsError) {

@@ -17,22 +17,46 @@ type CommenterPosition =
   | { kind: "numeric"; value: number; amount: number };
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: { marketId: string } }
 ) {
   try {
+    const viewerId = (await getUserIdFromRequest(request)) ?? undefined;
+    const viewer = viewerId
+      ? await prisma.user.findUnique({
+          where: { id: viewerId },
+          select: { id: true, role: true },
+        })
+      : null;
+
     const market = await prisma.market.findUnique({
       where: { id: params.marketId },
       select: {
         id: true,
+        creatorId: true,
+        status: true,
         marketType: true,
         visibility: true,
         groupId: true,
-        group: { select: { ownerId: true } },
-      }
+        group: viewer?.id
+          ? {
+              select: {
+                ownerId: true,
+                memberships: {
+                  where: { userId: viewer.id },
+                  select: { userId: true },
+                },
+              },
+            }
+          : { select: { ownerId: true } },
+      },
     });
 
     if (!market) {
+      return NextResponse.json({ error: "Market not found." }, { status: 404 });
+    }
+
+    if (!canViewMarket(market, viewer)) {
       return NextResponse.json({ error: "Market not found." }, { status: 404 });
     }
 

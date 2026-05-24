@@ -101,6 +101,20 @@ export type ApiNewsItem = {
   status?: string;
 };
 
+/**
+ * Compact sibling-opinion shape — surfaces "other takes on the same article"
+ * inline on each opinion card without forcing a follow-up request.
+ */
+export type ApiOpinionSibling = {
+  id: string;
+  expertId: string;
+  expertName: string;
+  expertOrganization: string;
+  direction: "BULLISH" | "BEARISH" | "NEUTRAL";
+  instrument?: string | null;
+  verified?: boolean;
+};
+
 export type ApiExpertOpinionItem = {
   id: string;
   expertId: string;
@@ -111,6 +125,14 @@ export type ApiExpertOpinionItem = {
   quote: string;
   direction: "BULLISH" | "BEARISH" | "NEUTRAL";
   sourceUrl: string;
+  /** ISO timestamp when the article carrying this opinion was published. Inherited from the source story. */
+  publishedAt?: string;
+  /**
+   * ISO timestamp when the analyst actually made the call, if the article surfaced
+   * a distinct date (e.g. "in a note dated 12 May"). Null when not stated — use
+   * publishedAt as the fallback in UI ("Called X days ago") and downstream logic.
+   */
+  analystCallAt?: string | null;
   resolutionStatus: "PENDING" | "RESOLVED_HIT" | "RESOLVED_MISS" | "NOT_GRADED";
   resolvedAt?: string | null;
   resolutionNote?: string | null;
@@ -122,6 +144,10 @@ export type ApiExpertOpinionItem = {
   instrument?: string | null;
   /** Yahoo Finance ticker symbol for the primary instrument, e.g. "^NSEI", "HDFCBANK.NS" */
   instrumentTicker?: string | null;
+  /** FK to the source Story — drives "more takes on this story" navigation to /story/[id]. */
+  storyId?: string | null;
+  /** Other opinions extracted from the same article (excludes self). Empty when this opinion is the only take. */
+  siblings?: ApiOpinionSibling[];
 };
 
 export type ApiNewsFeedItem = {
@@ -324,6 +350,8 @@ export type ApiHostEligibility = {
     overturnedHostedMarketsCount: number;
     maxOverturnedCount: number;
   };
+  /** True when this user has the ADMIN role — drives admin-only UI affordances like the flagship-event toggle. */
+  isAdmin: boolean;
 };
 
 export type ApiHostStats = {
@@ -702,6 +730,11 @@ export type ApiUserProfile = {
   totalReasoningUpvotes?: number;
   /** Recent calls on public markets — present on /api/profile/[username] (S30-T3). */
   recentCalls?: ProfileRecentCall[];
+  /** Finance streak + accuracy — present on /api/profile/[username] (S35-T3). */
+  financeStreak?: number;
+  financeAccuracy?: number | null;
+  financeTotalVotes?: number;
+  financeResolvedVotes?: number;
 };
 
 // ── Phone verification (S25-T6) ───────────────────────────────────────────────
@@ -805,7 +838,7 @@ export type ApiNotification = {
 
 // ─── Finance: Expert Opinion Polls ────────────────────────────────────────────
 
-export type ApiExpertOpinionPollType = "IMPLICATION" | "RETROSPECTIVE";
+export type ApiExpertOpinionPollType = "IMPLICATION";
 
 /** Poll A (IMPLICATION) 5-bucket agreement choices (v3). */
 export type ApiImplicationChoice =
@@ -815,10 +848,7 @@ export type ApiImplicationChoice =
   | "AGREE"
   | "STRONGLY_AGREE";
 
-export type ApiExpertOpinionVoteChoice =
-  | ApiImplicationChoice
-  | "HIT"
-  | "MISS";
+export type ApiExpertOpinionVoteChoice = ApiImplicationChoice;
 
 export interface ApiExpertOpinionTallies {
   implication: {
@@ -827,18 +857,15 @@ export interface ApiExpertOpinionTallies {
     neutral: number;
     agree: number;
     stronglyAgree: number;
+    /** Count of locked votes (drives the bucket counts above). */
     total: number;
+    /** Count of unlocked draft votes — for nudging committed participation. */
+    draftTotal: number;
     userChoice: ApiImplicationChoice | null;
+    /** ISO timestamp when the user locked their vote; null = draft or hasn't voted. */
+    userLockedAt: string | null;
     /** 0=STRONGLY_DISAGREE, 1=DISAGREE, 2=NEUTRAL, 3=AGREE, 4=STRONGLY_AGREE; null when total === 0 */
     medianBucket: 0 | 1 | 2 | 3 | 4 | null;
-  };
-  retrospective: {
-    hit: number;
-    miss: number;
-    total: number;
-    userChoice: "HIT" | "MISS" | null;
-    isLocked: boolean;
-    unlockReason: string | null;
   };
 }
 
@@ -878,7 +905,6 @@ export interface ApiExpertCall {
   instrument?: string | null;
   /** Yahoo Finance ticker symbol, e.g. "^NSEI" */
   instrumentTicker?: string | null;
-  retrospectiveTallies?: { hit: number; miss: number; total: number };
 }
 
 export interface ApiExpertProfile {
@@ -1099,9 +1125,16 @@ export interface ApiDigestOpinion {
   instrumentTicker: string | null;
   direction: "BULLISH" | "BEARISH" | "NEUTRAL";
   quote: string;
-  resolutionStatus: "RESOLVED_HIT" | "RESOLVED_MISS";
-  resolvedAt: string; // ISO
+  /** PENDING for pending opinions; RESOLVED_HIT/RESOLVED_MISS for graded ones. */
+  resolutionStatus: "PENDING" | "RESOLVED_HIT" | "RESOLVED_MISS";
+  /** ISO for resolved; null for pending. */
+  resolvedAt: string | null;
+  /** ISO when analyst made the call. */
+  publishedAt: string;
+  /** ISO when the user locked the vote. */
+  votedAt: string;
   userChoice: string;
+  /** Null when pending OR neutral vote. */
   userWasCorrect: boolean | null;
   userAgreed: boolean | null;
   storyId: string | null;
@@ -1121,6 +1154,8 @@ export interface ApiMyCallsDigest {
   /** Total IMPLICATION votes cast by this user across all time */
   totalVoted: number;
   resolvedOpinions: ApiDigestOpinion[];
+  /** S38: pending opinion details so My Calls can show them. */
+  pendingOpinions: ApiDigestOpinion[];
 }
 
 /**
@@ -1256,4 +1291,85 @@ export type ApiProbabilityHistory = {
   marketId: string;
   snapshots: ApiProbabilitySnapshot[];
   resolvedProbability: number | null;
+};
+
+// ─── Finance Big Call spotlight (S35-T2) ─────────────────────────────────────
+
+/**
+ * Spotlight opinion returned by GET /api/finance/big-call.
+ * Highest-scored PENDING ExpertOpinion or a post-resolution HIT spotlight.
+ */
+export type ApiFinanceBigCallOpinion = {
+  id: string;
+  expertId: string;
+  expertName: string;
+  expertOrganization: string;
+  avatarUrl: string | null;
+  analystTier: AppAnalystTier;
+  accuracyScore: number | null;
+  quote: string;
+  /** 4-6 word server-generated headline. Null until backfilled. */
+  headline: string | null;
+  direction: "BULLISH" | "BEARISH" | "NEUTRAL";
+  instrument: string | null;
+  instrumentTicker: string | null;
+  sourceUrl: string;
+  publishedAt: string;
+  resolutionStatus: "PENDING" | "RESOLVED_HIT" | "RESOLVED_MISS" | "NOT_GRADED";
+  resolvedAt: string | null;
+  resolutionNote: string | null;
+  /** True when this opinion is in the post-resolution 24h spotlight window. */
+  isPostResolution: boolean;
+  /** Number of Poll A (IMPLICATION) votes cast on this opinion. */
+  pollAVotes: number;
+  /** Percentage of voters who agreed (AGREE + STRONGLY_AGREE). Null if no votes. */
+  agreePercent: number | null;
+  /** Raw algorithm score — exposed for debugging; not displayed to users. */
+  score: number;
+};
+
+export type ApiFinanceBigCallResponse = {
+  opinion: ApiFinanceBigCallOpinion | null;
+  /** IST market window the hero was curated for. */
+  window?: "live" | "closing-wrap" | "after-hours" | "pre-market" | "weekend" | "holiday";
+  /** Window-appropriate label, e.g. "Today's Big Call" / "Call of the Week". */
+  windowLabel?: string;
+};
+
+/**
+ * Full ExpertOpinion detail returned by GET /api/finance/expert-opinions/:id.
+ * Used by the dedicated opinion detail screen (independent of any market).
+ */
+export type ApiFinanceOpinionDetail = {
+  id: string;
+  expertId: string;
+  expertName: string;
+  expertOrganization: string;
+  avatarUrl: string | null;
+  analystTier: AppAnalystTier;
+  quote: string;
+  headline: string | null;
+  direction: "BULLISH" | "BEARISH" | "NEUTRAL";
+  instrument: string | null;
+  instrumentTicker: string | null;
+  sourceUrl: string;
+  publishedAt: string;
+  resolutionStatus: "PENDING" | "RESOLVED_HIT" | "RESOLVED_MISS" | "NOT_GRADED";
+  resolvedAt: string | null;
+  resolutionNote: string | null;
+  isSourceAttribution: boolean;
+  eventCluster: { id: string; slug: string; name: string } | null;
+};
+
+// ─── Finance streak + accuracy for profile (S35-T3) ─────────────────────────
+
+export type ApiFinancePersonalStats = {
+  /** Consecutive IST calendar days with at least one Poll A vote. */
+  financeStreak: number;
+  /** Accuracy: (agreed votes where opinion resolved HIT) / total resolved votes. Null if no resolved votes. */
+  financeAccuracy: number | null;
+  /** Total Poll A votes cast by this user. */
+  financeTotalVotes: number;
+  /** Number of resolved opinions the user voted on. */
+  financeResolvedVotes: number;
 };

@@ -7,7 +7,7 @@ import { getDisplayName } from "@/lib/users/displayName";
 function hasCronAccess(request: Request) {
   const secret = process.env.CRON_SECRET;
   if (!secret) {
-    return true;
+    return false;
   }
   const authHeader = request.headers.get("authorization");
   const cronHeader = request.headers.get("x-cron-secret");
@@ -53,6 +53,7 @@ async function computeRankedList(
       },
       select: { userId: true, accuracyScore: true, totalNetPoints: true },
       orderBy: [{ accuracyScore: "desc" }, { totalNetPoints: "desc" }],
+      take: 500,
     });
 
     return rows.map((row, idx) => ({ userId: row.userId, rank: idx + 1 }));
@@ -72,6 +73,7 @@ async function computeRankedList(
     where: userIdsInWindow !== undefined ? { id: { in: userIdsInWindow } } : undefined,
     select: { id: true, reputationScore: true, accuracyScore: true },
     orderBy: [{ reputationScore: "desc" }, { accuracyScore: "desc" }],
+    take: 500,
   });
 
   return rows.map((row, idx) => ({ userId: row.id, rank: idx + 1 }));
@@ -98,7 +100,8 @@ export async function POST(request: Request) {
 
         if (ranked.length === 0) continue;
 
-        // Batch-create snapshots for all users in this combination
+        // Batch-create snapshots for all users in this combination.
+        // skipDuplicates prevents errors on retries without needing a unique index.
         await prisma.leaderboardSnapshot.createMany({
           data: ranked.map(({ userId, rank }) => ({
             userId,
@@ -107,6 +110,7 @@ export async function POST(request: Request) {
             category: category ?? null,
             snapshotAt,
           })),
+          skipDuplicates: true,
         });
 
         snapshotsWritten += ranked.length;

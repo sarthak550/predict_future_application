@@ -89,17 +89,14 @@ export interface TalliesResponse {
     neutral: number;
     agree: number;
     stronglyAgree: number;
+    /** Count of locked votes only (these are what bucket counts above are based on). */
     total: number;
+    /** Count of unlocked draft votes — shown to nudge users to commit. */
+    draftTotal: number;
     userChoice: ImplicationBucket | null;
+    /** ISO timestamp when the user locked their vote, null if draft or not voted. */
+    userLockedAt: string | null;
     medianBucket: 0 | 1 | 2 | 3 | 4 | null;
-  };
-  retrospective: {
-    hit: number;
-    miss: number;
-    total: number;
-    userChoice: "HIT" | "MISS" | null;
-    isLocked: boolean;
-    unlockReason: string | null;
   };
 }
 
@@ -107,64 +104,42 @@ export async function buildTalliesResponse(
   opinionId: string,
   userId: string | null
 ): Promise<TalliesResponse> {
-  const [opinion, votes] = await Promise.all([
+  const [opinion, implVotes] = await Promise.all([
     prisma.expertOpinion.findUnique({
       where: { id: opinionId },
-      select: { resolutionStatus: true, resolvedAt: true },
+      select: { resolvedAt: true },
     }),
     prisma.expertOpinionVote.findMany({
-      where: { opinionId },
-      select: { userId: true, pollType: true, choice: true },
+      where: { opinionId, pollType: "IMPLICATION" },
+      select: { userId: true, choice: true, lockedAt: true },
     }),
   ]);
 
-  // ── IMPLICATION tallies (5-bucket, backwards-compatible with legacy 3-value votes) ──
-  const implVotes = votes.filter((v) => v.pollType === "IMPLICATION");
+  // Belt-and-suspenders: when the opinion has resolved, only count votes locked
+  // BEFORE the resolution moment. The vote/lock endpoints already reject post-resolution
+  // writes, but this defends against future bugs / manual DB edits / un-resolve flows.
+  const cutoff = opinion?.resolvedAt ?? null;
 
-  const bucketCounts = [0, 0, 0, 0, 0]; // indexed 0-4
+  // Only locked votes contribute to bucket counts / median (the public consensus signal).
+  const bucketCounts = [0, 0, 0, 0, 0];
   const bucketIndices: number[] = [];
+  let draftTotal = 0;
 
   for (const v of implVotes) {
     const idx = choiceToBucketIndex(v.choice);
-    if (idx >= 0 && idx <= 4) {
+    if (idx < 0 || idx > 4) continue;
+    if (v.lockedAt && (!cutoff || v.lockedAt < cutoff)) {
       bucketCounts[idx]++;
       bucketIndices.push(idx);
+    } else if (!v.lockedAt) {
+      draftTotal++;
     }
   }
 
-  const implTotal = bucketIndices.length;
-  const medianBucket = computeMedianBucket(bucketIndices);
-
-  const userImplVote = userId
-    ? implVotes.find((v) => v.userId === userId)?.choice ?? null
+  const userVote = userId ? implVotes.find((v) => v.userId === userId) ?? null : null;
+  const normalisedUserChoice = userVote
+    ? normaliseImplicationChoice(userVote.choice)
     : null;
-  const normalisedUserChoice = userImplVote
-    ? normaliseImplicationChoice(userImplVote)
-    : null;
-
-  // ── RETROSPECTIVE tallies (unchanged) ──
-  const retroVotes = votes.filter((v) => v.pollType === "RETROSPECTIVE");
-  const hit = retroVotes.filter((v) => v.choice === "HIT").length;
-  const miss = retroVotes.filter((v) => v.choice === "MISS").length;
-  const retroTotal = retroVotes.length;
-  const retroUserVote = userId
-    ? retroVotes.find((v) => v.userId === userId)?.choice ?? null
-    : null;
-
-  const isLocked = !opinion || opinion.resolutionStatus === "PENDING";
-  let unlockReason: string | null = null;
-  if (!isLocked && opinion) {
-    const resLabel =
-      opinion.resolutionStatus === "RESOLVED_HIT" ? "HIT" : "MISS";
-    const resolvedDate = opinion.resolvedAt
-      ? opinion.resolvedAt.toLocaleDateString("en-IN", {
-          day: "numeric",
-          month: "short",
-          year: "numeric",
-        })
-      : "Unknown date";
-    unlockReason = `Resolved ${resLabel} on ${resolvedDate}`;
-  }
 
   return {
     implication: {
@@ -173,17 +148,11 @@ export async function buildTalliesResponse(
       neutral: bucketCounts[2],
       agree: bucketCounts[3],
       stronglyAgree: bucketCounts[4],
-      total: implTotal,
+      total: bucketIndices.length,
+      draftTotal,
       userChoice: normalisedUserChoice,
-      medianBucket,
-    },
-    retrospective: {
-      hit,
-      miss,
-      total: retroTotal,
-      userChoice: retroUserVote as "HIT" | "MISS" | null,
-      isLocked,
-      unlockReason,
+      userLockedAt: userVote?.lockedAt?.toISOString() ?? null,
+      medianBucket: computeMedianBucket(bucketIndices),
     },
   };
 }

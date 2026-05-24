@@ -4,7 +4,8 @@ import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/prisma";
 
-const JWT_SECRET = process.env.NEXTAUTH_SECRET ?? "fallback-dev-secret";
+if (!process.env.NEXTAUTH_SECRET) throw new Error("NEXTAUTH_SECRET env var is required");
+const JWT_SECRET: string = process.env.NEXTAUTH_SECRET;
 
 /**
  * Mobile login endpoint. Validates email + password and returns a signed JWT

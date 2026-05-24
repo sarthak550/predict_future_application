@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { getSession } from "@/lib/auth";
+import { getUserIdFromRequest } from "@/lib/auth";
 import { processLeagueMonthEnd } from "@/lib/leagues/monthEnd";
 import { prisma } from "@/lib/prisma";
 
@@ -39,17 +39,19 @@ function isValidMonth(value: string): boolean {
 }
 
 export async function POST(request: Request) {
-  const session = await getSession();
-  if (!session?.user?.id) {
+  const userId = await getUserIdFromRequest(request);
+  if (!userId) {
     return NextResponse.json({ error: "Authentication required." }, { status: 401 });
   }
 
   const actor = await prisma.user.findUnique({
-    where: { id: session.user.id },
-    select: { role: true },
+    where: { id: userId },
+    select: { role: true, isSuspended: true },
   });
-
-  if (!actor || actor.role !== "ADMIN") {
+  if (!actor || actor.isSuspended) {
+    return NextResponse.json({ error: "Account cannot perform this action." }, { status: 403 });
+  }
+  if (actor.role !== "ADMIN") {
     return NextResponse.json({ error: "Admin access required." }, { status: 403 });
   }
 

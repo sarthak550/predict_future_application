@@ -34,57 +34,104 @@ export async function POST(
     );
   }
 
-  const opinion = await prisma.expertOpinion.findUnique({
-    where: { id: params.id },
-    include: {
-      expert: { select: { name: true, organization: true } },
-      story: { select: { headline: true } },
-    },
-  });
-
-  if (!opinion) {
-    return NextResponse.json({ error: "Opinion not found." }, { status: 404 });
+  const trimmedNote = (resolutionNote ?? "").trim();
+  if (trimmedNote.length < 10) {
+    return NextResponse.json(
+      { error: "resolutionNote is required (min 10 characters) — explain why this call resolved HIT or MISS." },
+      { status: 400 }
+    );
   }
 
-  if (opinion.resolutionStatus !== "PENDING") {
-    return NextResponse.json({ error: "Opinion is already resolved." }, { status: 400 });
+  // Atomic conditional update + audit log in a single transaction.
+  // updateMany with resolutionStatus:"PENDING" in the where clause ensures
+  // only one concurrent request can win — the second gets count:0 → 409.
+  type OpinionSnapshot = {
+    id: string;
+    resolutionStatus: string;
+    resolvedAt: Date | null;
+    resolutionNote: string | null;
+    storyId: string | null;
+    expert: { name: string | null; organization: string };
+    story: { headline: string } | null;
+  };
+
+  let resolvedOpinion: OpinionSnapshot | null = null;
+  let alreadyResolved = false;
+
+  try {
+    resolvedOpinion = await prisma.$transaction(async (tx) => {
+      const result = await tx.expertOpinion.updateMany({
+        where: { id: params.id, resolutionStatus: "PENDING" },
+        data: {
+          resolutionStatus: resolutionStatus as ValidResolutionStatus,
+          resolvedAt: new Date(),
+          resolutionNote: trimmedNote,
+        },
+      });
+
+      if (result.count === 0) {
+        throw Object.assign(new Error("Opinion is already resolved or not found."), { code: "ALREADY_RESOLVED" });
+      }
+
+      const opinion = await tx.expertOpinion.findUnique({
+        where: { id: params.id },
+        select: {
+          id: true,
+          resolutionStatus: true,
+          resolvedAt: true,
+          resolutionNote: true,
+          storyId: true,
+          expert: { select: { name: true, organization: true } },
+          story: { select: { headline: true } },
+        },
+      });
+
+      await tx.adminAction.create({
+        data: {
+          actorId: session.user.id,
+          type: "RESOLVE_MARKET",
+          notes: trimmedNote,
+          metadata: { opinionId: params.id, resolutionStatus },
+        },
+      });
+
+      return opinion;
+    });
+  } catch (err: unknown) {
+    if (err instanceof Error && (err as Error & { code?: string }).code === "ALREADY_RESOLVED") {
+      alreadyResolved = true;
+    } else {
+      throw err;
+    }
   }
 
-  const resolvedAt = new Date();
-  const resolvedStatus = resolutionStatus as ValidResolutionStatus;
+  if (alreadyResolved) {
+    return NextResponse.json({ error: "Opinion is already resolved or not found." }, { status: 409 });
+  }
 
-  const updatedOpinion = await prisma.expertOpinion.update({
-    where: { id: params.id },
-    data: {
-      resolutionStatus: resolvedStatus,
-      resolvedAt,
-      resolutionNote: resolutionNote ?? null,
-    },
-  });
-
-  // Notify all users who voted on Poll A (IMPLICATION) for this opinion
+  // Notify only LOCKED Poll A voters — drafts didn't count toward accuracy.
+  // This runs AFTER the transaction commits so double-notify is impossible.
   const pollAVoters = await prisma.expertOpinionVote.findMany({
-    where: { opinionId: params.id, pollType: "IMPLICATION" },
+    where: { opinionId: params.id, pollType: "IMPLICATION", lockedAt: { not: null } },
     select: { userId: true },
   });
 
   if (pollAVoters.length > 0) {
-    const expertLabel = opinion.expert.name
-      ? `${opinion.expert.name} (${opinion.expert.organization})`
-      : opinion.expert.organization;
+    const expertLabel = resolvedOpinion!.expert.name
+      ? `${resolvedOpinion!.expert.name} (${resolvedOpinion!.expert.organization})`
+      : resolvedOpinion!.expert.organization;
 
-    const storyTitle = opinion.story?.headline
-      ? opinion.story.headline.slice(0, 50) + (opinion.story.headline.length > 50 ? "..." : "")
-      : "a story";
+    const headline = resolvedOpinion!.story?.headline ?? "a story";
+    const storyTitle = headline.slice(0, 50) + (headline.length > 50 ? "..." : "");
 
-    const resolutionLabel = resolvedStatus === "RESOLVED_HIT" ? "HIT" : "MISS";
+    const resolutionLabel = (resolutionStatus as ValidResolutionStatus) === "RESOLVED_HIT" ? "HIT" : "MISS";
 
     const notificationData = pollAVoters.map((voter) => ({
       userId: voter.userId,
       title: `${expertLabel} on "${storyTitle}"`,
-      body: `The call resolved ${resolutionLabel}. Did the take age well? Cast your retrospective vote.`,
-      href: opinion.storyId ? `/story/${opinion.storyId}` : null,
-      type: "SYSTEM" as const,
+      body: `The call resolved ${resolutionLabel}. See how your prediction compared.`,
+      href: resolvedOpinion!.storyId ? `/story/${resolvedOpinion!.storyId}` : null,
+      type: "OPINION_RESOLVED" as const,
     }));
 
     await prisma.notification.createMany({
@@ -93,13 +140,25 @@ export async function POST(
     });
   }
 
+  // S42-T2: Stamp notifiedAt so the auto-resolve cron Phase-0 sweep does not
+  // re-notify this opinion. Best-effort — notifications already sent; if this
+  // update fails we log but do not roll back.
+  try {
+    await prisma.expertOpinion.update({
+      where: { id: params.id },
+      data: { notifiedAt: new Date() },
+    });
+  } catch (stampErr) {
+    console.error("[web/admin/resolve] Failed to stamp notifiedAt — cron may re-notify", stampErr);
+  }
+
   return NextResponse.json({
     ok: true,
     opinion: {
-      id: updatedOpinion.id,
-      resolutionStatus: updatedOpinion.resolutionStatus,
-      resolvedAt: updatedOpinion.resolvedAt?.toISOString() ?? null,
-      resolutionNote: updatedOpinion.resolutionNote,
+      id: resolvedOpinion!.id,
+      resolutionStatus: resolvedOpinion!.resolutionStatus,
+      resolvedAt: resolvedOpinion!.resolvedAt?.toISOString() ?? null,
+      resolutionNote: resolvedOpinion!.resolutionNote,
     },
   });
 }

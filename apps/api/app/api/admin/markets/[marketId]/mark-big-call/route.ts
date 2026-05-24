@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { getSession } from "@/lib/auth";
+import { getUserIdFromRequest } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getIstDateString } from "@/lib/quests/engine";
 
@@ -19,16 +19,19 @@ export async function POST(
   request: Request,
   { params }: { params: { marketId: string } }
 ) {
-  const session = await getSession();
-  if (!session?.user?.id) {
+  const userId = await getUserIdFromRequest(request);
+  if (!userId) {
     return NextResponse.json({ error: "Authentication required." }, { status: 401 });
   }
 
   const actor = await prisma.user.findUnique({
-    where: { id: session.user.id },
-    select: { role: true },
+    where: { id: userId },
+    select: { id: true, role: true, isSuspended: true },
   });
-  if (!actor || actor.role !== "ADMIN") {
+  if (!actor || actor.isSuspended) {
+    return NextResponse.json({ error: "Account cannot perform this action." }, { status: 403 });
+  }
+  if (actor.role !== "ADMIN") {
     return NextResponse.json({ error: "Admin access required." }, { status: 403 });
   }
 
@@ -77,15 +80,29 @@ export async function POST(
       },
     });
 
-    // Set this market as the Big Call and reset the sent-at guard so the cron
-    // can fire even if this market was previously designated for another day.
-    const updated = await prisma.market.update({
-      where: { id: params.marketId },
-      data: {
-        isBigCallDate: bigCallDateUtc,
-        bigCallNotificationSentAt: null,
-      },
-      select: { id: true, isBigCallDate: true },
+    const updated = await prisma.$transaction(async (tx) => {
+      // Set this market as the Big Call and reset the sent-at guard so the cron
+      // can fire even if this market was previously designated for another day.
+      const updatedMarket = await tx.market.update({
+        where: { id: params.marketId },
+        data: {
+          isBigCallDate: bigCallDateUtc,
+          bigCallNotificationSentAt: null,
+        },
+        select: { id: true, isBigCallDate: true },
+      });
+
+      await tx.adminAction.create({
+        data: {
+          actorId: actor.id,
+          marketId: params.marketId,
+          type: "FEATURE_MARKET",
+          notes: `Marked as Big Call for ${dateStr}.`,
+          metadata: { isBigCallDate: bigCallDateUtc.toISOString(), date: dateStr },
+        },
+      });
+
+      return updatedMarket;
     });
 
     return NextResponse.json({

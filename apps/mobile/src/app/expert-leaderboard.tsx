@@ -137,7 +137,7 @@ export default function ExpertLeaderboardScreen() {
           keyExtractor={(e) => e.expert.id}
           ListHeaderComponent={
             <Text style={lbStyles.subtitle}>
-              Ranked by retrospective accuracy (resolved calls only)
+              Ranked by verified accuracy (resolved calls only)
             </Text>
           }
           renderItem={({ item }) => <LeaderboardRow entry={item} />}

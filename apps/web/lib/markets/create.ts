@@ -215,7 +215,7 @@ export async function createPredictionMarket(input: {
         resolutionSourceType: resolutionFields.resolutionSourceType,
         resolutionSourceName: resolutionFields.resolutionSourceName,
         resolutionSourceUrl: resolutionFields.resolutionSourceUrl,
-        resolutionRuleText: input.payload.resolutionRuleText,
+        resolutionRuleText: input.payload.resolutionRuleText ?? "",
         fallbackRuleText: resolutionFields.fallbackRuleText,
         unit: input.payload.unit || null,
         minValue: input.payload.minValue ?? null,

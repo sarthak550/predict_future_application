@@ -28,19 +28,23 @@ import {
 } from "@prisma/client";
 import { NextResponse } from "next/server";
 
-import { getSession } from "@/lib/auth";
+import { getUserIdFromRequest } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
 export async function POST(request: Request) {
-  const session = await getSession();
-  if (!session?.user?.id) {
+  const userId = await getUserIdFromRequest(request);
+  if (!userId) {
     return NextResponse.json({ error: "Authentication required." }, { status: 401 });
   }
+
   const actor = await prisma.user.findUnique({
-    where: { id: session.user.id },
-    select: { role: true },
+    where: { id: userId },
+    select: { id: true, role: true, isSuspended: true },
   });
-  if (!actor || (actor.role !== "ADMIN" && actor.role !== "MODERATOR")) {
+  if (!actor || actor.isSuspended) {
+    return NextResponse.json({ error: "Account cannot perform this action." }, { status: 403 });
+  }
+  if (actor.role !== "ADMIN" && actor.role !== "MODERATOR") {
     return NextResponse.json({ error: "Admin access required." }, { status: 403 });
   }
 
@@ -101,8 +105,8 @@ export async function POST(request: Request) {
       closeAt: flagshipDate,
       resolveAt: flagshipDate,
       approvedAt: new Date(),
-      approvedById: session.user.id,
-      creatorId: session.user.id,
+      approvedById: actor.id,
+      creatorId: actor.id,
       ...(marketType === MarketType.MULTIPLE_CHOICE
         ? {
             options: {

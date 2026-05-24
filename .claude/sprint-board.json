@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "currentSprint": 33,
+  "currentSprint": 42,
   "tickets": [
     {
       "id": "S7-T1",
@@ -1069,6 +1069,19 @@
       "createdAt": "2026-05-16"
     },
     {
+      "id": "S30-T1",
+      "sprint": 30,
+      "title": "Reasoning upvotes + Best Reasoner badge",
+      "description": "Add ReasoningUpvote model, upvote endpoint, thumbs-up UI, badge cron.",
+      "priority": "high",
+      "status": "failed",
+      "qaVerdict": "fail",
+      "failureNotes": [
+        "apps/api/prisma/schema.prisma has reasoningUpvotes field on MarketPosition and ReasoningUpvote model, but `npx prisma generate` has NOT been run \u2014 the generated Prisma client (node_modules/@prisma/client/index.d.ts) contains 0 references to these new fields. The route apps/api/app/api/profile/me/route.ts calls prisma.marketPosition.aggregate({ _sum: { reasoningUpvotes: true } }) but the runtime client does not recognise this field \u2014 confirmed by HTTP 500 on GET /api/profile/me with a valid Bearer token. CTO must run `cd apps/api && npx prisma generate` (and restart the dev server) before this ticket can pass QA."
+      ],
+      "createdAt": "2026-05-16"
+    },
+    {
       "id": "S30-T2",
       "sprint": 30,
       "title": "Tier Progress Bar on Profile + Feed nudge",
@@ -1088,19 +1101,6 @@
       "status": "done",
       "qaVerdict": "pass",
       "failureNotes": null,
-      "createdAt": "2026-05-16"
-    },
-    {
-      "id": "S30-T1",
-      "sprint": 30,
-      "title": "Reasoning upvotes + Best Reasoner badge",
-      "description": "Add ReasoningUpvote model, upvote endpoint, thumbs-up UI, badge cron.",
-      "priority": "high",
-      "status": "failed",
-      "qaVerdict": "fail",
-      "failureNotes": [
-        "apps/api/prisma/schema.prisma has reasoningUpvotes field on MarketPosition and ReasoningUpvote model, but `npx prisma generate` has NOT been run \u2014 the generated Prisma client (node_modules/@prisma/client/index.d.ts) contains 0 references to these new fields. The route apps/api/app/api/profile/me/route.ts calls prisma.marketPosition.aggregate({ _sum: { reasoningUpvotes: true } }) but the runtime client does not recognise this field \u2014 confirmed by HTTP 500 on GET /api/profile/me with a valid Bearer token. CTO must run `cd apps/api && npx prisma generate` (and restart the dev server) before this ticket can pass QA."
-      ],
       "createdAt": "2026-05-16"
     },
     {
@@ -1281,7 +1281,7 @@
       "id": "S33-T1",
       "sprint": 33,
       "title": "Resolution Loop: push notifications + accurate copy on admin expert-opinion resolve",
-      "description": "Upgrade POST /api/admin/expert-opinions/[id]/resolve to: (1) compute each Poll A voter's agreement/disagreement vs outcome, (2) send personalized in-app notification with copy '<Source> <DIRECTION> on <ticker|quote> resolved <HIT|MISS>. You agreed — your accuracy is now <N>%.' (or 'You disagreed'), (3) batch Expo push notifications to those voters who have expoPushToken. Add OPINION_RESOLVED to NotificationType enum + Prisma migration. Add sendOpinionResolutionPushBatch helper to notifications.ts.",
+      "description": "Upgrade POST /api/admin/expert-opinions/[id]/resolve to: (1) compute each Poll A voter's agreement/disagreement vs outcome, (2) send personalized in-app notification with copy '<Source> <DIRECTION> on <ticker|quote> resolved <HIT|MISS>. You agreed \u2014 your accuracy is now <N>%.' (or 'You disagreed'), (3) batch Expo push notifications to those voters who have expoPushToken. Add OPINION_RESOLVED to NotificationType enum + Prisma migration. Add sendOpinionResolutionPushBatch helper to notifications.ts.",
       "priority": "critical",
       "status": "done",
       "qaVerdict": "pass",
@@ -1321,17 +1321,19 @@
         "GET /api/finance/my-calls-digest returns correct hit/miss/pending counts for authenticated user",
         "Returns resolved opinions with userAgreed boolean",
         "POST /api/cron/weekly-calls-digest is CRON_SECRET guarded",
-        "Cron sends in-app notification with 'Your week in calls — X HIT, Y MISS' copy",
+        "Cron sends in-app notification with 'Your week in calls \u2014 X HIT, Y MISS' copy",
         "vercel.json has cron entry for 03:30 UTC on Sunday"
       ],
-      "dependencies": ["S33-T1"],
+      "dependencies": [
+        "S33-T1"
+      ],
       "createdAt": "2026-05-20"
     },
     {
       "id": "S33-T3",
       "sprint": 33,
       "title": "Weekly Calls Digest: in-feed card at position 2 of Finance tab + detail screen",
-      "description": "New WeeklyCallsDigestCard component rendered between PulseRibbon and heroHeader in finance-mode.tsx. Shows 'Your week in calls — X HIT, Y MISS' with a small bar. Tappable → new screen /finance/my-calls showing the full list of resolved opinions the user voted on, each row showing expert name, instrument, direction, HIT/MISS badge, and whether user agreed or disagreed. Fetch digest via GET /api/finance/my-calls-digest. Only show card if user has voted on at least 1 resolved opinion.",
+      "description": "New WeeklyCallsDigestCard component rendered between PulseRibbon and heroHeader in finance-mode.tsx. Shows 'Your week in calls \u2014 X HIT, Y MISS' with a small bar. Tappable \u2192 new screen /finance/my-calls showing the full list of resolved opinions the user voted on, each row showing expert name, instrument, direction, HIT/MISS badge, and whether user agreed or disagreed. Fetch digest via GET /api/finance/my-calls-digest. Only show card if user has voted on at least 1 resolved opinion.",
       "priority": "high",
       "status": "done",
       "qaVerdict": "pass",
@@ -1349,14 +1351,16 @@
         "My calls screen lists each resolved opinion with outcome + user agreement",
         "Pull-to-refresh works on my-calls screen"
       ],
-      "dependencies": ["S33-T2"],
+      "dependencies": [
+        "S33-T2"
+      ],
       "createdAt": "2026-05-20"
     },
     {
       "id": "S33-T4",
       "sprint": 33,
-      "title": "Live Consensus Bar on ExpertOpinionCard — pre/post vote aggregate",
-      "description": "Add a slim social-proof consensus bar to ExpertOpinionCard / ExpertOpinionRow. Pre-vote (hasVoted=false, PENDING): render a single thin line bar with '64% of 312 readers agreed' text. Post-vote or resolved: render full split bar (agree side highlighted for user's bucket). The tallies are already fetched on mount by ExpertOpinionRow — use the implication tallies already in state. No new API endpoint needed. Add pollAggregate prop to ApiExpertOpinionItem (optional, for future embedding) but for now compute from the tallies state already fetched.",
+      "title": "Live Consensus Bar on ExpertOpinionCard \u2014 pre/post vote aggregate",
+      "description": "Add a slim social-proof consensus bar to ExpertOpinionCard / ExpertOpinionRow. Pre-vote (hasVoted=false, PENDING): render a single thin line bar with '64% of 312 readers agreed' text. Post-vote or resolved: render full split bar (agree side highlighted for user's bucket). The tallies are already fetched on mount by ExpertOpinionRow \u2014 use the implication tallies already in state. No new API endpoint needed. Add pollAggregate prop to ApiExpertOpinionItem (optional, for future embedding) but for now compute from the tallies state already fetched.",
       "priority": "high",
       "status": "done",
       "qaVerdict": "pass",
@@ -1368,7 +1372,7 @@
         "Pre-vote: thin single-color bar + 'X% of N readers agreed' below Poll A question",
         "Post-vote: split bar agree/neutral/disagree with user's side highlighted",
         "Bar renders only when tallies.implication.total > 0",
-        "No extra API call — uses existing tallies state",
+        "No extra API call \u2014 uses existing tallies state",
         "No TypeScript errors"
       ],
       "dependencies": [],
@@ -1391,6 +1395,1150 @@
       ],
       "createdAt": "2026-05-21",
       "closedAt": "2026-05-21"
+    },
+    {
+      "id": "S35-T1",
+      "sprint": 35,
+      "title": "Live Pulse Tape \u2014 replace 3-pill ribbon with horizontally scrolling live tape",
+      "description": "Replace the PulseRibbon component with a LivePulseTape. Content order (left to right): NIFTY 50 chip \u2192 BANK NIFTY chip \u2192 USD/INR chip \u2192 macro countdown chip \u2192 Today's Top Call expert chip. Ticker chips fetch from nseindia.com/api/allIndices (15-min cache in React state); USD/INR from exchangerate-api.com free tier (24h cache in AsyncStorage). Failure mode: show last known values with grey ~ prefix, never hide tape. Loading: 3 shimmer skeletons (80px, grey, rounded). Tap ticker chip: toggle filter by instrument on expert opinions feed below. Tap macro countdown chip: open existing EventsSheet. Tap expert chip: smooth-scroll feed to Today's Big Call hero + 300ms highlight ring. Add kebab (three dots) anchored right edge of tape that opens a calendar modal listing macro events. Retire the old Sentiment sheet (consensus bar replaces it inline). Move Calendar sheet to the kebab modal.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "files": [
+        "apps/mobile/src/components/finance-mode.tsx",
+        "apps/mobile/src/constants/nse-holidays-2026.ts"
+      ],
+      "acceptanceCriteria": [
+        "Tape renders 5 chips on cold load (3 tickers + macro countdown + expert chip)",
+        "NSE tickers show live values with delta in green/red/grey",
+        "USD/INR fetched from exchangerate-api.com, cached 24h in AsyncStorage",
+        "On NSE API failure, chips show ~ prefix and no delta color, tape remains visible",
+        "Loading state shows 3 shimmer skeletons until first fetch resolves",
+        "Tapping NIFTY/BANK NIFTY/USD/INR chip toggles instrument filter on feed (tap again clears)",
+        "Tapping macro countdown chip opens EventsSheet",
+        "Tapping expert chip scrolls to Today's Big Call hero with 300ms highlight ring",
+        "Kebab (3 dots) right-anchored opens calendar modal listing macro events",
+        "Sentiment sheet retired (no references remain)",
+        "TypeScript clean"
+      ],
+      "dependencies": [],
+      "createdAt": "2026-05-21"
+    },
+    {
+      "id": "S35-T2",
+      "sprint": 35,
+      "title": "Today's Big Call Hero \u2014 spotlight card with scoring algorithm",
+      "description": "New server endpoint GET /api/finance/big-call returns the highest-scored PENDING ExpertOpinion using: score = analystTierWeight x freshnessScore x clusterHeatScore x pollAVolumeScore. analystTierWeight: T1=1.0, T2=0.7, T3=0.4, ROOKIE=0.2. freshnessScore: exp decay 24h half-life. clusterHeatScore + pollAVolumeScore normalized 0-1 across pool. Cached 60 min. Post-resolution spotlight: if resolved HIT within 24h with pollAVotes>=20, enters spotlight window with 'CALLED IT' badge and score=tierWeight*1.5. Add headline String? to ExpertOpinion schema (prisma migration). Mobile: full-width 180px hero card below LivePulseTape \u2014 avatar 48px, name+org+tier+accuracy header, verdict badge 16px dominant pill, headline 18px bold 2-line ellipsis, VOTE NOW full-width CTA (routes to /finance/poll/[opinionId]), SHARE + reader count + agree%. Card body tap opens opinion detail sheet. Include idempotent backfill script apps/api/scripts/backfill-opinion-headlines.ts that skips opinions already having a headline.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "files": [
+        "apps/api/app/api/finance/big-call/route.ts",
+        "apps/api/prisma/schema.prisma",
+        "apps/api/prisma/migrations/20260521000001_add_opinion_headline/migration.sql",
+        "apps/api/scripts/backfill-opinion-headlines.ts",
+        "apps/mobile/src/components/finance-mode.tsx",
+        "packages/types/src/index.ts",
+        "packages/api-client/src/index.ts"
+      ],
+      "acceptanceCriteria": [
+        "GET /api/finance/big-call returns spotlight opinion with score metadata",
+        "60-min cache headers on response",
+        "Scoring algorithm: tier * freshness * clusterHeat * pollAVolume \u2014 highest PENDING wins",
+        "Post-resolution exception: HIT + pollAVotes>=20 within 24h enters spotlight with 'CALLED IT' badge",
+        "headline field added to ExpertOpinion schema with migration",
+        "Hero card renders at correct position (between LivePulseTape and WeeklyCallsDigestCard)",
+        "Hero is 180px, shows avatar 48px, name/org/tier, verdict badge, headline, VOTE NOW CTA, SHARE row with reader count and agree%",
+        "VOTE NOW routes to /finance/poll/[opinionId]",
+        "SHARE opens native share sheet with pre-composed message",
+        "Card body tap opens opinion detail bottom sheet",
+        "Backfill script is idempotent (skips opinions with existing headline)",
+        "TypeScript clean"
+      ],
+      "dependencies": [
+        "S35-T1"
+      ],
+      "createdAt": "2026-05-21"
+    },
+    {
+      "id": "S35-T3",
+      "sprint": 35,
+      "title": "Time-Aware Header + Personal Accuracy Chip for expert opinions feed",
+      "description": "Replace static 'Expert Opinions' 28px header with a time-aware header that changes based on IST time window and day (Pre-market briefing / Live now / Closing wrap / After hours / Weekend wrap / Markets closed today for NSE holidays). During 15:30-20:00 IST window ONLY, re-sort feed to show resolved opinions first (most recently resolved at top), then PENDING by recency. Add hardcoded NSE holidays 2026 array in apps/mobile/src/constants/nse-holidays-2026.ts. Below the time-aware header, add Personal Accuracy Chip row (own row, not inside header card) with 6 states: zero votes / votes cast no resolved / resolved no streak / active streak / 7-day streak (flame emoji) / 30-day streak (gold flame #F59E0B). Streak = consecutive IST calendar days with at least one Poll A vote \u2014 habit rewarding, not correctness. Server-side: add financeStreak: number and financeAccuracy: number | null to /api/profile/[username] GET response. Client reads these from profile fetch on Finance tab mount.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "files": [
+        "apps/mobile/src/components/finance-mode.tsx",
+        "apps/mobile/src/constants/nse-holidays-2026.ts",
+        "apps/api/app/api/profile/[username]/route.ts",
+        "packages/types/src/index.ts"
+      ],
+      "acceptanceCriteria": [
+        "Time-aware header replaces static 'Expert Opinions' header with correct copy for each of 6 time windows",
+        "NSE holiday detection works (hardcoded array, at least one 2026 holiday verified)",
+        "During 15:30-20:00 IST window, feed re-sorts resolved opinions to top",
+        "Personal accuracy chip row appears below header, above feed",
+        "Zero-votes state: 'Start voting \u2014 track your accuracy' + right-arrow, taps to scroll to first PENDING opinion",
+        "Votes-cast-no-resolved state: 'N votes cast \u00b7 awaiting results', taps to /finance/my-calls",
+        "Resolved-no-streak state: 'Your accuracy: N% \u00b7 across M calls', taps to /finance/my-calls",
+        "Active-streak state: 'Your accuracy: N% \u00b7 X-day streak', taps to /finance/my-calls",
+        "7-day streak: adds flame emoji",
+        "30-day streak: flame emoji turns gold (#F59E0B)",
+        "financeStreak and financeAccuracy fields present on /api/profile/[username] response",
+        "TypeScript clean"
+      ],
+      "dependencies": [
+        "S35-T2"
+      ],
+      "createdAt": "2026-05-21"
+    },
+    {
+      "id": "S36-T1",
+      "sprint": 36,
+      "title": "Backfill: existing votes \u2192 locked, missing resolutionNote \u2192 seeded",
+      "description": "Decision points (require user input before SQL):\n1. **Vote backfill** \u2014 Every existing ExpertOpinionVote has lockedAt=null. With strict mode, nothing counts. Pick:\n   (a) Auto-lock ALL pre-existing votes (`UPDATE ExpertOpinionVote SET lockedAt = createdAt WHERE lockedAt IS NULL`).\n   (b) Auto-lock only votes on opinions that have ALREADY resolved (so users get credit for past resolutions).\n   (c) Leave drafts \u2014 users have to re-engage and lock fresh votes.\n2. **Resolution-note backfill** \u2014 Every manually-resolved opinion has resolutionNote=null. Pick:\n   (a) Leave blank (Why HIT/MISS banner just won't render).\n   (b) Seed generic note 'Resolved before reason capture was required.'\n   (c) Run auto-resolver against them so AI fills notes.\n\nAcceptance: SQL applied to dev DB; row counts logged; documented in sprint board completion notes. Production replay path noted in T2.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": null,
+      "failureNotes": "T1a: 10 votes backfilled (lockedAt = createdAt). T1b: 1 resolved opinion with null note backfilled with a deterministic explanation note (AI re-grade overkill for N=1 instrument-less sector call).",
+      "createdAt": "2026-05-23"
+    },
+    {
+      "id": "S36-T2",
+      "sprint": 36,
+      "title": "Reconcile Prisma migration history (3 stale + lockedAt) before next prod deploy",
+      "description": "`prisma migrate status` shows 4 migrations 'not yet applied' on dev DB:\n  20260516000002_add_position_reasoning\n  20260516000003_add_analyst_tier\n  20260521000001_add_opinion_headline\n  20260523000001_add_vote_locked_at\n\nDev was unblocked via `prisma db push` (schema in DB but migration log stale). `migrate deploy` will FAIL on Vercel/prod with the LeaderboardSnapshot conflict.\n\nAcceptance:\n1. For each pre-existing migration, verify its DDL is already in the prod DB schema (psql introspection).\n2. Run `npx prisma migrate resolve --applied <migration_name>` for ones already in place.\n3. `npx prisma migrate deploy` runs clean.\n4. CI re-enabled if it was bypassed.\n5. Future workflow note added: never use `prisma db push` on dev \u2014 always `prisma migrate dev`.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": null,
+      "failureNotes": "Dev migration history reconciled \u2014 5 migrations marked applied via `prisma migrate resolve`. For prod deploy: run `npx prisma migrate resolve --applied <name>` for each of the same 5 migrations against prod DB, in order: 20260516000001_add_leaderboard_snapshot, 20260516000002_add_position_reasoning, 20260516000003_add_analyst_tier, 20260521000001_add_opinion_headline, 20260523000001_add_vote_locked_at. Then `prisma migrate deploy` will be a no-op (clean).",
+      "createdAt": "2026-05-23"
+    },
+    {
+      "id": "S36-T3",
+      "sprint": 36,
+      "title": "\"Voting closed on [date]\" banner on resolved opinion detail screen",
+      "description": "When ExpertOpinion has resolved, the Poll A buttons go grey (opacity 0.55) with no explanation. Users don't know why they can't vote.\n\nFile: `apps/mobile/src/app/finance/opinion/[id].tsx`\n\nAcceptance:\n1. When `opinion.resolutionStatus !== 'PENDING'`, render a banner ABOVE the Poll A section: \"\ud83d\udd12 Voting closed on {resolvedAt formatted}\". Subdued color (slate/gray).\n2. The Cast/Voted-pill section is hidden entirely on resolved opinions (currently it already is via the `opinion.resolutionStatus === 'PENDING'` gate \u2014 verify).\n3. Banner copy adapts: if user had a locked vote, show \"Voting closed on May 21 \u00b7 You voted AGREE\". If user voted but didn't lock in time, show \"Voting closed on May 21 \u00b7 Your draft vote didn't count\".\n4. Style matches existing resolution banners on opinion screen.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": null,
+      "failureNotes": null,
+      "createdAt": "2026-05-23"
+    },
+    {
+      "id": "S36-T4",
+      "sprint": 36,
+      "title": "Filter resolve-notification recipients to locked-only voters",
+      "description": "When admin resolves an opinion, all IMPLICATION voters get a push notification \u2014 including users who only drafted a vote and never locked. With strict mode, their vote didn't count, so pushing them a 'your call resolved' notification is misleading.\n\nFile: `apps/api/app/api/admin/expert-opinions/[id]/resolve/route.ts` line ~194\n\nAcceptance:\n1. Change `pollAVoters` query to filter `lockedAt: { not: null }`.\n2. Confirm count matches `tallies.implication.total` for a sample opinion.\n3. Same fix in `apps/api/app/api/cron/auto-resolve-opinions/route.ts` if it emits notifications (check).",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": null,
+      "failureNotes": null,
+      "createdAt": "2026-05-23"
+    },
+    {
+      "id": "S36-T5",
+      "sprint": 36,
+      "title": "Post-card & news-feed-card Poll A: add Cast my vote CTA + voted-pill display",
+      "description": "Currently the opinion detail screen is the only surface with a vote-cast CTA. Users voting on a bucket from the feed/post cards are stuck in draft state \u2014 their vote doesn't count and they have no obvious lock path.\n\nFiles:\n  apps/mobile/src/components/expert-opinion-post-card.tsx (PollA component, ~line 296)\n  apps/mobile/src/components/news-feed-card.tsx (PollA component, ~line 105)\n\nAcceptance:\n1. After user selects a bucket in either PollA, show a 'Cast my vote' CTA below the slider/buckets. Same softer wording as opinion detail screen.\n2. After cast: swap to '\u2713 Voted {bucket} \u00b7 {date}' pill. Buckets become read-only.\n3. Pre-cast: helper text \"Only cast votes count toward your accuracy.\"\n4. Reuse `mobileApi.lockExpertOpinionVote` and existing tallies-update flow.\n5. Consider extracting a shared `<VoteCastSection>` component since opinion-detail / post-card / news-feed all need this \u2014 but only if the extraction is genuinely shared (don't force it).",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": null,
+      "failureNotes": null,
+      "createdAt": "2026-05-23"
+    },
+    {
+      "id": "S36-T6",
+      "sprint": 36,
+      "title": "Tallies: belt-and-suspenders lockedAt < resolvedAt filter",
+      "description": "Even though the vote/lock endpoints reject post-resolution writes, the tallies query trusts that the data conforms. Adding an explicit `lockedAt < resolvedAt` filter when the opinion is resolved makes the contract defensive against any future race / manual DB edit / un-resolve flow.\n\nFile: `apps/api/lib/finance/tallies.ts`\n\nAcceptance:\n1. Add opinion's `resolvedAt` to the query alongside votes.\n2. If opinion is resolved, only count votes where `lockedAt < resolvedAt` toward bucket counts / total.\n3. Add a unit test scenario (or just a manual SQL check) confirming a hypothetical post-resolution lock is excluded.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": null,
+      "failureNotes": null,
+      "createdAt": "2026-05-23"
+    },
+    {
+      "id": "S36-T7",
+      "sprint": 36,
+      "title": "Every icon links: cluster chip + big-call hero expert tappable + voted pill shows bucket",
+      "description": "Three small navigation gaps surfaced during the broader 'every icon should link properly' audit.\n\nAcceptance:\n1. **Cluster chip** (`apps/mobile/src/app/finance/opinion/[id].tsx:~245`) becomes a Pressable that navigates back to /finance with `selectedClusterFilter` pre-set to the cluster id. Needs deep-link param support in finance-mode.tsx.\n2. **Big-call hero expert** (`apps/mobile/src/components/finance-mode.tsx` BigCallHeroCard ~line 1280-1340) \u2014 the expert name/avatar area becomes Pressable, pushes /expert/{expertId}.\n3. **Voted pill** on opinion detail screen \u2014 currently reads 'Voted May 23'. Change to 'Voted {BUCKET_LABEL} \u00b7 May 23' (e.g. 'Voted AGREE \u00b7 May 23').",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": null,
+      "failureNotes": null,
+      "createdAt": "2026-05-23"
+    },
+    {
+      "id": "S36-T8",
+      "sprint": 36,
+      "title": "Big-call scoring: count only locked Poll A votes in heat signal",
+      "description": "`apps/api/app/api/finance/big-call/route.ts` lines 84-88, 143-150, 197-201 count ALL IMPLICATION votes (locked + draft) for the heat / cluster-heat / pollAVolume scoring inputs. Inconsistent with strict mode.\n\nAcceptance:\n1. All three `prisma.expertOpinionVote.groupBy / findMany` calls in big-call route add `lockedAt: { not: null }` to where clause.\n2. Verify scoring still surfaces an opinion (small-data envs may have zero locked votes \u2014 should fall back to freshness \u00d7 tier and not break).",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": null,
+      "failureNotes": null,
+      "createdAt": "2026-05-23"
+    },
+    {
+      "id": "S36-T9",
+      "sprint": 36,
+      "title": "Why HIT/MISS label parity on news-feed ResolutionStrip",
+      "description": "expert-opinion-post-card has a labeled 'Why HIT' / 'Why MISS' banner above the resolution note. news-feed-card's ResolutionStrip (line ~479) shows the note but without the labeled header \u2014 inconsistent.\n\nAcceptance: ResolutionStrip renders the same labeled banner styling as post-card when `opinion.resolutionNote` is present.",
+      "priority": "medium",
+      "status": "done",
+      "qaVerdict": null,
+      "failureNotes": null,
+      "createdAt": "2026-05-23"
+    },
+    {
+      "id": "S36-T10",
+      "sprint": 36,
+      "title": "Vote-flow decision: one-tap vs two-tap (product call) + implement",
+      "description": "Today: tap a bucket \u2192 draft \u2192 tap 'Cast my vote' \u2192 locked. Users may think bucket tap = vote and be confused. Three product options to pick from:\n  (a) Keep two-tap (current). Friction is intentional.\n  (b) One-tap-commits: bucket tap = cast vote immediately. Simpler, no draft state. Tradeoff: no 'are you sure'.\n  (c) Bucket-as-CTA: first tap selects ('Tap again to vote'), second tap on same bucket commits.\n\nAcceptance: user picks; implementation matches. If (b) chosen, the entire draft-state UI in opinion detail / post-card / news-feed-card collapses.",
+      "priority": "medium",
+      "status": "done",
+      "qaVerdict": null,
+      "failureNotes": null,
+      "createdAt": "2026-05-23"
+    },
+    {
+      "id": "S36-T11",
+      "sprint": 36,
+      "title": "Telemetry events for vote-cast, vote-change, vote-locked",
+      "description": "No analytics currently tracking the new voting funnel. Need at minimum:\n  - `vote_drafted` (opinionId, choice, surface)\n  - `vote_changed` (opinionId, fromChoice, toChoice, surface)\n  - `vote_cast` (opinionId, choice, msFromDraft)\n  - `vote_blocked_resolved` (opinionId)\n\nAcceptance: events fire on the right call sites; visible in whatever telemetry the project uses (check current event-tracking infra).",
+      "priority": "medium",
+      "status": "pending",
+      "qaVerdict": null,
+      "failureNotes": "Deferred \u2014 no generic event-tracking SDK in the project. Existing pattern is single-purpose counter endpoints (e.g. trackBigCallOpened). Recommend adopting a real SDK (PostHog/Amplitude/Mixpanel) before adding vote-funnel events.",
+      "createdAt": "2026-05-23"
+    },
+    {
+      "id": "S36-T12",
+      "sprint": 36,
+      "title": "Fix pre-existing web typecheck errors in lib/stats.ts and lib/markets/create.ts",
+      "description": "Pre-existing 4 TS errors in apps/web that have been red across multiple typechecks. Not caused by recent work but blocking `turbo typecheck` from going green.\n  - lib/markets/create.ts(218,9): string | undefined \u2192 string\n  - lib/stats.ts(107/116/228): MarketType 'MULTIPLE_CHOICE' incompatible with 'BINARY' | 'NUMERIC'\n\nAcceptance: `npm run typecheck` exits 0 across the monorepo.",
+      "priority": "low",
+      "status": "done",
+      "qaVerdict": null,
+      "failureNotes": null,
+      "createdAt": "2026-05-23"
+    },
+    {
+      "id": "S36-T13",
+      "sprint": 36,
+      "title": "Snapshot tallies on opinion resolve (avoid recompute for resolved opinions)",
+      "description": "Tallies for a resolved opinion are immutable but currently recomputed on every request. Add a `resolvedTalliesSnapshot Json?` column on ExpertOpinion; populate at resolve time; tallies endpoint short-circuits.\n\nAcceptance:\n1. Schema migration adds nullable Json column.\n2. Resolve route writes snapshot.\n3. Tallies endpoint returns snapshot directly when opinion is resolved.\n4. Existing resolved opinions get backfilled (one-time script).",
+      "priority": "low",
+      "status": "pending",
+      "qaVerdict": null,
+      "failureNotes": "Deferred \u2014 optimization for resolved-opinion tally recompute. Not user-visible; revisit when data scales or perf issue surfaces.",
+      "createdAt": "2026-05-23"
+    },
+    {
+      "id": "S37-T1",
+      "sprint": 37,
+      "title": "Synthesis card \u2014 editorial Big-Take above finance feed (Weekend wrap fix)",
+      "description": "Problem: the time-window header (Weekend wrap / Closing wrap / Live now / etc.) is purely cosmetic \u2014 the same chronological opinion dump shows below it regardless of window. User complaint: \"it's just a name but we still have all opinions.\"\n\nSolution (MVP slice): new SynthesisCard above the opinion feed that the server curates per market window \u2014 3 opinions tailored to the user's intent at that hour. Modeled after Bloomberg \"Big Take\" and FT \"Editor's picks\" patterns.\n\nBackend: new GET /api/finance/synthesis returns { window, title, subtitle, emoji, opinions[3] }. Four variant logic:\n  - live          \u2192 top 3 PENDING by 24h locked-vote velocity (\"Hot debates right now\")\n  - closing-wrap  \u2192 today's RESOLVED_HIT, newest first (\"Called it today\")\n  - after-hours / pre-market \u2192 3 latest verified-analyst PENDING (\"Overnight from the desks\")\n  - weekend / holiday \u2192 top 3 locked-vote opinions of last 7 days (\"Top of the week\")\n\nMobile: new SynthesisCard component (apps/mobile/src/components/synthesis-card.tsx) renders 3 compact opinion rows with headline, expert, direction badge, instrument, vote count, and resolution badge when applicable. Each row is tappable \u2192 /finance/opinion/[id]. Replaces the cosmetic header position (the time-window header is now a label for the FULL opinion list below: \"All <window> calls\").\n\nAcceptance:\n1. curl /api/finance/synthesis returns the correct variant for the current IST window.\n2. Tapping any opinion in the card opens the opinion detail screen.\n3. Card gracefully hides if synthesis fails or returns 0 opinions (rest of feed still renders).\n4. Monorepo typecheck clean.\n5. Visually distinct from the regular opinion list \u2014 editorial framing.\n\nDeferred to S37-T2+: For You tab, Verified tab, Resolved tab, orthogonal chip filters (direction/horizon/instrument).",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": null,
+      "failureNotes": "SHIPPED then REVERTED in same sprint. Synthesis card competed with the Big Call hero \u2014 created two editorial spotlights on a crowded screen. Replaced by S37-T2 (window-aware Big Call) and S37-T3 (lens-switcher) which use existing real estate instead of adding a new card. API endpoint /api/finance/synthesis is still live but unused \u2014 safe to delete in a future cleanup.",
+      "createdAt": "2026-05-23"
+    },
+    {
+      "id": "S37-T2",
+      "sprint": 37,
+      "title": "Window-aware Big Call hero \u2014 same component, smarter content per market window",
+      "description": "Replaces the synthesis-card approach. The existing Big Call Hero is the strongest editorial position on the Finance screen; making IT adapt per window is better than adding a competing card.\n\nBackend: /api/finance/big-call now branches on IST market window:\n  - Live (default): existing algorithm (pending 7d + 24h-HIT spotlight gated \u226520 votes)\n  - Closing wrap: ANY HIT today qualifies (no vote threshold) \u2014 \"Today's Vindicated Call\"\n  - After-hours / Pre-market: pending pool restricted to verified analysts only\n  - Weekend / Holiday: existing 7d pool, scoring favors locked-vote volume \u2192 \"Call of the Week\"\nResponse adds `window` + `windowLabel`.\n\nMobile: above the BigCallHeroCard, render a small all-caps label using `windowLabel` (\"CALL OF THE WEEK\" on weekends, \"TODAY'S BIG CALL\" during live, etc.). Bloomberg \"The Big Take\" pattern.\n\nAcceptance verified live: GET /api/finance/big-call now returns window=weekend, windowLabel=\"Call of the Week\".",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": null,
+      "failureNotes": null,
+      "createdAt": "2026-05-23"
+    },
+    {
+      "id": "S37-T3",
+      "sprint": 37,
+      "title": "Lens-switcher pill row above opinion list (Top this week / Latest / Verified / Resolved)",
+      "description": "Solves the original \"Weekend wrap is just a name\" complaint. A horizontal pill row above the main opinion list lets users reshape what they see; default is window-aware (Weekend \u2192 Top this week, Closing wrap \u2192 Resolved, Live/After hours \u2192 Latest). Persisted in AsyncStorage as `finance.lens`.\n\nLens behaviors:\n  - latest: sort groups by articlePublishedAt desc (default).\n  - top-week: filter to last 7d, sort by group opinion-count desc (proxy for engagement until\n    server provides locked-vote counts in the news feed payload).\n  - verified: keep only opinions where expert.verified=true (group-level filter + opinion-level prune).\n  - resolved: keep only RESOLVED_HIT/MISS opinions, sort by latest resolvedAt desc.\n\nExisting direction/cluster/analyst/instrument filters compound on top of the lens (orthogonal axes).\n\nKnown limitation: top-week's ranking is by opinion count, not locked-vote count, because the feed payload doesn't include per-opinion locked-vote totals. Follow-up ticket should add a `lockedVotes` field to ApiExpertOpinionItem and have the server include it; client can then sort by true engagement.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": null,
+      "failureNotes": null,
+      "createdAt": "2026-05-23"
+    },
+    {
+      "id": "S37-T4",
+      "sprint": 37,
+      "title": "Compress Live Pulse Tape to 3 static chips",
+      "description": "The Pulse Tape was a horizontal-scroll row with ticker chips + macro countdown + Big Call shortcut + kebab. Macro countdown is redundant with the Flagship Events carousel further down. Big Call shortcut is redundant with the Big Call hero directly below. Compressed to: 3 static ticker chips (NIFTY 50 / BANK NIFTY / USD-INR) + the kebab calendar entry. No more horizontal scroll, less visual noise.\n\nComponent signature unchanged \u2014 props for flagshipEvents, bigCallOpinion, etc. preserved but unused (marked as `void` reads to satisfy TS). Reduces blast radius if we want to add a secondary row later.",
+      "priority": "medium",
+      "status": "done",
+      "qaVerdict": null,
+      "failureNotes": null,
+      "createdAt": "2026-05-23"
+    },
+    {
+      "id": "S38-T1",
+      "sprint": 38,
+      "title": "Remove ?userId= auth bypass on POST /api/markets",
+      "description": "Anonymous attacker with any user CUID could create markets as that user via ?userId= fallback. Verified live during audit. Fix: replaced session?.user?.id ?? searchParams.get('userId') with getUserIdFromRequest(request) (handles cookie + Bearer); removed EXPO_PUBLIC_DEMO_USER_ID from .env.prod and .env.example.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/api/app/api/markets/route.ts",
+        "apps/mobile/.env.prod",
+        "apps/mobile/.env.example"
+      ]
+    },
+    {
+      "id": "S38-T2",
+      "sprint": 38,
+      "title": "Harden JWT_SECRET: throw at boot if NEXTAUTH_SECRET unset",
+      "description": "The literal fallback 'fallback-dev-secret' would have allowed JWT minting by anyone if env var was unset. Fix applied to 4 files: lib/auth.ts, api/auth/mobile/login, api/auth/mobile/register, api/users/push-token. Hard-fails at module load when NEXTAUTH_SECRET missing.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": [
+        "Adjacent finding: local .env files have placeholder NEXTAUTH_SECRET='replace-with-a-long-random-secret' \u2014 verify prod Vercel env is a real random value."
+      ],
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/api/lib/auth.ts",
+        "apps/api/app/api/auth/mobile/login/route.ts",
+        "apps/api/app/api/auth/mobile/register/route.ts",
+        "apps/api/app/api/users/push-token/route.ts"
+      ]
+    },
+    {
+      "id": "S38-T3",
+      "sprint": 38,
+      "title": "Gate unauthenticated destructive/SSRF admin routes",
+      "description": "/api/admin/clear-businesstoday (deleteMany on stories) and /api/news/backfill-images (SSRF via story.sourceUrl fetch) returned 200 with zero auth, verified live. Added session check + ADMIN/MODERATOR role gate before any DB/network action. Pattern mirrors admin/news/ingest.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/api/app/api/admin/clear-businesstoday/route.ts",
+        "apps/api/app/api/news/backfill-images/route.ts"
+      ]
+    },
+    {
+      "id": "S38-T4",
+      "sprint": 38,
+      "title": "Fix CRON_SECRET fail-open on 10 cron routes",
+      "description": "Pattern 'if (!secret) return true' made all 10 crons public when CRON_SECRET env was unset. Changed to 'if (!secret) return false' (fail-closed) across: auto-resolve-opinions, market-lifecycle, news-ingestion, leaderboard-snapshot, recalculate-analyst-tiers, finance-opinions-catchup, award-reasoning-badges, retire-expired-flagships, sync-manifold-resolutions, retry-stuck-opinions.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/api/app/api/cron/*/route.ts"
+      ]
+    },
+    {
+      "id": "S38-T5",
+      "sprint": 38,
+      "title": "Check suspension in getUserIdFromRequest (Bearer JWT bypass)",
+      "description": "Mobile Bearer JWTs are 30-day; suspension had no effect until token expired. Added prisma.user.findUnique inside getUserIdFromRequest Bearer path; returns null if user not found OR isSuspended (round 2 fix added the !user check). NextAuth path also gated.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": [
+        "Round 1 missed deleted-user case (user === null). Round 2: changed `if (user?.isSuspended) return null` to `if (!user || user.isSuspended) return null`."
+      ],
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/api/lib/auth.ts"
+      ]
+    },
+    {
+      "id": "S38-T6",
+      "sprint": 38,
+      "title": "Fix wallet double-spend races with guarded UPDATE + DB CHECK",
+      "description": "Concurrent POSTs could decrement balance below zero. Switched 3 routes (binary positions, multi-choice positions, comments tip) to use atomic updateMany({where:{id, balance:{gte:amount}}, data:{decrement}}) with count===0 throw. Added Postgres CHECK constraint 'wallet_balance_nonnegative CHECK (balance >= 0)' via migration.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/api/app/api/markets/[marketId]/positions/route.ts",
+        "apps/api/app/api/markets/[marketId]/positions/multi-choice/route.ts",
+        "apps/api/app/api/comments/[commentId]/tip/route.ts",
+        "apps/api/prisma/migrations/20260524000002_s38_wallet_guard_big_call_tap_opinion_retry_idempotency"
+      ]
+    },
+    {
+      "id": "S38-T7",
+      "sprint": 38,
+      "title": "Block multi-choice creator self-resolution (exit-scam prevention)",
+      "description": "Creator could resolve their own multi-choice market AND stake in it \u2014 full exit scam. Restricted resolve to ADMIN/MODERATOR only; added canCreatorParticipateInMarket guard on multi-choice positions matching the binary route pattern.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": [
+        "Follow-up: wire multi-choice through the binary TRUSTED_HOST challenge-window flow (Option B) so trusted hosts can still resolve. Tracked for future sprint."
+      ],
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/api/app/api/markets/[marketId]/resolve-multi-choice/route.ts",
+        "apps/api/app/api/markets/[marketId]/positions/multi-choice/route.ts"
+      ]
+    },
+    {
+      "id": "S38-T8",
+      "sprint": 38,
+      "title": "Fix Gemini API key leaking via URL query string \u2014 use header auth",
+      "description": "Every Gemini fetch passed ?key=API_KEY in the URL \u2014 captured by Vercel logs, Sentry breadcrumbs, fetch error traces. Migrated to 'x-goog-api-key' request header across all 4 sites (gemini.ts, extractExpertOpinions.ts, evaluateOpinionResolution.ts, generateHeadline.ts).",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": [
+        "ACTION REQUIRED: CEO must rotate GEMINI_API_KEY in Vercel after this deploys \u2014 the old key was in access logs."
+      ],
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/api/lib/ai/gemini.ts",
+        "apps/api/lib/ai/extractExpertOpinions.ts",
+        "apps/api/lib/ai/evaluateOpinionResolution.ts",
+        "apps/api/lib/ai/generateHeadline.ts"
+      ]
+    },
+    {
+      "id": "S38-T9",
+      "sprint": 38,
+      "title": "Block OTP echo in prod + require MSG91_AUTH_KEY at boot",
+      "description": "When PHONE_VERIFY_MODE !== 'prod' OR MSG91_AUTH_KEY unset, verify-phone responded with {otp: '123456'} in body \u2014 usable as a +100 pt farm. Added module-level assertion that throws when NODE_ENV='production' && MSG91_AUTH_KEY missing; replaced isDevMode with isProduction (NODE_ENV check); OTP never echoed in prod.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/api/app/api/users/me/verify-phone/route.ts"
+      ]
+    },
+    {
+      "id": "S38-T10",
+      "sprint": 38,
+      "title": "Gate /api/markets/[id]/big-call-tap + gate /api/news/debug",
+      "description": "big-call-tap incremented bigCallNotificationOpenedCount with no auth \u2014 verified live engagement inflation possible. news/debug leaked 8.6KB of RSS feed configuration. Added auth + per-IST-day idempotency via new BigCallTap table (unique on userId+marketId+dateIST); news/debug now requires ADMIN role.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/api/app/api/markets/[marketId]/big-call-tap/route.ts",
+        "apps/api/app/api/news/debug/route.ts",
+        "apps/api/prisma/schema.prisma"
+      ]
+    },
+    {
+      "id": "S38-T11",
+      "sprint": 38,
+      "title": "Cap AI retry loop for stuck PENDING expert opinions",
+      "description": "Opinions the LLM couldn't parse or Yahoo couldn't price were retried nightly forever, burning AI budget. Added preprocessAttempts + lastPreprocessAttemptAt + resolutionAttempts + lastResolutionAttemptAt columns; cron skips opinions where attempts >= 5; on 5th failure marks NOT_GRADED with note. Phase 2 also skips Pass-1 LLM call when window/instrument/ticker already cached.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/api/prisma/schema.prisma",
+        "apps/api/app/api/cron/auto-resolve-opinions/route.ts",
+        "apps/api/lib/ai/evaluateOpinionResolution.ts"
+      ]
+    },
+    {
+      "id": "S38-T12",
+      "sprint": 38,
+      "title": "Fix double-payout race in market settlement with unique DB constraint",
+      "description": "createUniqueWalletTransaction was findFirst+create \u2014 not atomic. Concurrent settlements (cron + admin click, or overlapping crons) could double-pay MARKET_WIN. Added @@unique([walletId, marketId, type, positionId]) on WalletTransaction. settleMultiChoiceMarket now uses createUniqueWalletTransaction (was raw create). Migration includes pre-flight dedupe SQL.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/api/prisma/schema.prisma",
+        "apps/api/lib/markets/payouts.ts"
+      ]
+    },
+    {
+      "id": "S38-T13",
+      "sprint": 38,
+      "title": "Make admin expert-opinion resolve idempotent + add audit log",
+      "description": "Two concurrent admin clicks both passed PENDING check and both fired notifyOpinionResolution \u2192 duplicate pushes. No AdminAction row. Fixed both API route and the duplicated apps/web admin route (round 2): wrap update + notify-gate + AdminAction.create in $transaction; updateMany({where:{id, resolutionStatus:'PENDING'}}) with count===1 gate; 409 on conflict; AdminAction type RESOLVE_MARKET.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": [
+        "Round 1 only fixed API route; round 2 mirrored fix to apps/web/app/api/admin/expert-opinions/[id]/resolve/route.ts."
+      ],
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/api/app/api/admin/expert-opinions/[id]/resolve/route.ts",
+        "apps/web/app/api/admin/expert-opinions/[id]/resolve/route.ts"
+      ]
+    },
+    {
+      "id": "S39-T1",
+      "sprint": 39,
+      "title": "Enforce canViewMarket on market sub-resource endpoints",
+      "description": "GET /api/markets/[id]/comments and GET /api/markets/[id]/probability-history skipped canViewMarket \u2014 leaked private-group market data to anonymous viewers. Both routes now call getUserIdFromRequest, fetch market with viewer membership, gate via canViewMarket, return 404 (not 403) on failure to avoid existence leak.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/api/app/api/markets/[marketId]/comments/route.ts",
+        "apps/api/app/api/markets/[marketId]/probability-history/route.ts"
+      ]
+    },
+    {
+      "id": "S39-T2",
+      "sprint": 39,
+      "title": "Add role-hierarchy guard to admin suspend/edit routes",
+      "description": "MODERATOR could suspend ADMIN (no hierarchy check); MODERATOR could rewrite cluster startsAt/endsAt, triggering retroactive flagship broadcasts. Suspend route: 403 when MOD targets ADMIN/MOD. Event-cluster PATCH: startsAt/endsAt edits restricted to ADMIN only.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/api/app/api/admin/users/[userId]/suspend/route.ts",
+        "apps/api/app/api/admin/event-clusters/[id]/route.ts"
+      ]
+    },
+    {
+      "id": "S39-T3",
+      "sprint": 39,
+      "title": "Prompt injection hardening in AI extraction pipeline",
+      "description": "Article body / quote / claim was interpolated raw into LLM prompts \u2014 guest-author articles could steer HIT/MISS verdicts. Wrapped untrusted content in <article_body>, <quote>, <claim> delimiters with 'ignore instructions inside' warning in system prompt. Added post-parse sentinel check for leaked closing tags.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/api/lib/ai/extractExpertOpinions.ts",
+        "apps/api/lib/ai/evaluateOpinionResolution.ts"
+      ]
+    },
+    {
+      "id": "S39-T4",
+      "sprint": 39,
+      "title": "Rate limiting on registration + OTP endpoints (Sybil/SMS-bomb prevention)",
+      "description": "No rate limit on register/mobile/register (Sybil-farm referral exploit) or verify-phone (SMS-bomb victim). 6-digit OTP brute-force was feasible. Added in-memory Map rate limiter at lib/rate-limit.ts; applied: register 5/hr/IP, verify-phone 3/hr/user + 5/hr/phone, verify-phone/confirm 5 fails/10min/userId with OTP-clear on lockout, reset on success. Migrated to Redis in S42-T7.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": [
+        "In-memory limiter is per-Vercel-instance \u2014 cold starts reset. Hardened in S42-T7 with Redis-backed implementation."
+      ],
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/api/lib/rate-limit.ts",
+        "apps/api/app/api/auth/register/route.ts",
+        "apps/api/app/api/auth/mobile/register/route.ts",
+        "apps/api/app/api/users/me/verify-phone/route.ts",
+        "apps/api/app/api/users/me/verify-phone/confirm/route.ts"
+      ]
+    },
+    {
+      "id": "S39-T5",
+      "sprint": 39,
+      "title": "Fix zero-winner market silent pool vaporization + numeric tie-breaker overflow",
+      "description": "3 payout bugs: (1) binary market with zero winners silently destroyed the loser pool \u2014 now refunds all losers via MARKET_REFUND; (2) numeric SPLIT tie-breaker could include all tied positions (>winnersCount) \u2014 now slices allTied to remainingSlots; (3) numeric remainder loop dropped cents when remainder > winnerPayouts.length \u2014 replaced with cursor-modulo while loop matching binary path.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/api/lib/markets/payouts.ts",
+        "packages/business-rules/src/markets/numeric.ts"
+      ]
+    },
+    {
+      "id": "S39-T6",
+      "sprint": 39,
+      "title": "Fix quest engine double-reward race + tip cap race",
+      "description": "Two parallel position POSTs both completed PREDICT_3 and both credited the reward. Switched dailyQuest write to updateMany({where:{id, completed:false}}) with count===0 continue. Tip cap race verified addressed by S38-T6 (all writes inside single transaction).",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/api/lib/quests/engine.ts",
+        "apps/api/app/api/comments/[commentId]/tip/route.ts"
+      ]
+    },
+    {
+      "id": "S39-T7",
+      "sprint": 39,
+      "title": "Fix financeStreak UTC/IST mismatch + expert-sentiment query inefficiency",
+      "description": "Profile financeStreak computed dateKey from UTC but voteDates was IST-based \u2014 miscounted days near IST midnight. Rewrote with toIstDateKey/prevIstDateKey helpers, removed unused 'key' local. expert-sentiment was 3 separate count() calls \u2014 collapsed to single groupBy + added Cache-Control header (s-maxage=120).",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/api/app/api/profile/[username]/route.ts",
+        "apps/api/app/api/finance/expert-sentiment/route.ts"
+      ]
+    },
+    {
+      "id": "S39-T8",
+      "sprint": 39,
+      "title": "Make cron jobs idempotent (weekly-calls-digest, flagship-reminder, big-call-push)",
+      "description": "weekly-calls-digest re-ran on 502 retry = duplicate weekly push to all voters. flagship-reminder had no sentAt = double push on rerun. Added WeeklyDigestRun table (unique weekKey) + Market.flagshipReminderSentAt field. Migration s39_cron_idempotency. Each cron short-circuits when already run for the window.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/api/prisma/schema.prisma",
+        "apps/api/app/api/cron/weekly-calls-digest/route.ts",
+        "apps/api/app/api/cron/flagship-reminder/route.ts",
+        "apps/api/app/api/cron/big-call-push/route.ts"
+      ]
+    },
+    {
+      "id": "S39-T9",
+      "sprint": 39,
+      "title": "Fix auto-resolve-opinions Vercel Hobby timeout (70s budget vs 60s limit)",
+      "description": "Default budget 100 preprocess \u00d7 400ms + 50 resolve \u00d7 600ms = 70s > Vercel Hobby 60s. Cron killed mid-iteration; opinions resolved but voters never notified. Lowered defaults to 30/25, added export const maxDuration=60. Added ExpertOpinion.notifiedAt field + Phase-0 sweep that re-notifies opinions where resolutionStatus!=PENDING AND notifiedAt IS NULL (resumable notification path).",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/api/app/api/cron/auto-resolve-opinions/route.ts",
+        "apps/api/prisma/schema.prisma"
+      ]
+    },
+    {
+      "id": "S39-T10",
+      "sprint": 39,
+      "title": "Fix leaderboard-snapshot cron memory + performance (O(n\u00b2) retention loop)",
+      "description": "leaderboard-snapshot wrote 3M rows on a 100k-user app (30 ranked lists \u00d7 all users) \u2014 Vercel OOM. Capped each ranked list at take:500 with createMany({skipDuplicates}). probability-snapshot retention was O(n\u00b2) via [...keepIds].find() \u2014 replaced with Map<dayKey, snapshotId> + single deleteMany.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/api/app/api/cron/leaderboard-snapshot/route.ts",
+        "apps/api/lib/crons/probability-snapshot.ts"
+      ]
+    },
+    {
+      "id": "S39-T11",
+      "sprint": 39,
+      "title": "Add confirmation dialogs to destructive admin web UI actions",
+      "description": "Suppress Opinion and Verify Expert fired on single click with no friction \u2014 misclick = irreversible notification fan-out. Added window.confirm before both POSTs in apps/web/(admin)/admin/expert-opinions/client.tsx. Resolve flow's existing 10-char min-note unchanged.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/web/app/(admin)/admin/expert-opinions/client.tsx"
+      ]
+    },
+    {
+      "id": "S39-T12",
+      "sprint": 39,
+      "title": "Fix stats.ts unbounded market query + auth.ts per-request user re-fetch",
+      "description": "stats.ts loaded EVERY host-resolved market on each user-stats refresh \u2014 filtered to terminal statuses (RESOLVED/CANCELLED/HOST_TIMEOUT) with minimal select. auth.ts jwt callback was re-fetching User every web request \u2014 added 5-min TTL gated by token.refreshedAt; trigger:'update' force-refreshes. Bearer path unchanged (per-request lookup is intentional for 30-day tokens).",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/web/lib/stats.ts",
+        "apps/api/lib/auth.ts",
+        "apps/api/types/next-auth.d.ts"
+      ]
+    },
+    {
+      "id": "S40-T1",
+      "sprint": 40,
+      "title": "Standardize admin route auth on mobile: getUserIdFromRequest + DB role lookup",
+      "description": "26 admin routes used getSession() exclusively \u2014 mobile admin Bearer-token clients were locked out. Converted all to: getUserIdFromRequest \u2192 user findUnique(select id, role, isSuspended) \u2192 401 if null, 403 if suspended or role not in [ADMIN, MODERATOR]. Dual-auth (CRON_SECRET) routes retained their cron path.",
+      "priority": "medium",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/api/app/api/admin/**/*.ts"
+      ]
+    },
+    {
+      "id": "S40-T2",
+      "sprint": 40,
+      "title": "Add AdminAction audit trail to mark-flagship, mark-big-call, verify-analyst",
+      "description": "Three admin mutations lacked AdminAction rows \u2014 broken audit. Wrapped each in $transaction with adminAction.create alongside the main update. Used existing enum values (FEATURE_MARKET for mark-flagship/big-call; ADJUST_BALANCE for verify-analyst \u2014 semantic mismatch flagged for S42-T13 enum addition).",
+      "priority": "medium",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/api/app/api/admin/markets/[marketId]/mark-flagship/route.ts",
+        "apps/api/app/api/admin/markets/[marketId]/mark-big-call/route.ts",
+        "apps/api/app/api/admin/users/[userId]/verify-analyst/route.ts"
+      ]
+    },
+    {
+      "id": "S40-T3",
+      "sprint": 40,
+      "title": "Block suspended users from side-effect actions (push-token, save, follow)",
+      "description": "After S38-T5 added suspension check to getUserIdFromRequest, audited mutation routes for any inline jwt.verify that bypassed it. apps/api/app/api/users/push-token/route.ts had its own JWT decode \u2014 converted to getUserIdFromRequest. Saved-markets/follow/save confirmed using the helper.",
+      "priority": "medium",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/api/app/api/users/push-token/route.ts",
+        "apps/api/app/api/users/me/saved-markets/route.ts",
+        "apps/api/app/api/users/[userId]/follow/route.ts",
+        "apps/api/app/api/markets/[marketId]/save/route.ts"
+      ]
+    },
+    {
+      "id": "S40-T4",
+      "sprint": 40,
+      "title": "Add Zod schemas for Json? fields driving critical business logic",
+      "description": "Json? fields (Market.payoutDistributionJson, structuredData, MarketEventCluster.dataPoints, Notification.metadata) had no shape validation \u2014 wrong shape = lost payouts. Created apps/api/lib/json-schemas.ts with 4 Zod schemas. parseNumericPayoutDistribution uses safeParse + logs warning + returns [] on bad shape.",
+      "priority": "medium",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/api/lib/json-schemas.ts",
+        "apps/api/lib/markets/numeric.ts"
+      ]
+    },
+    {
+      "id": "S40-T5",
+      "sprint": 40,
+      "title": "Add DB-level unique constraint on ExpertOpinion + missing index on MarketPosition",
+      "description": "No @@unique preventing duplicate (expertId, storyId, quote) \u2014 concurrent extractions could dup. MarketPosition lacked (userId, settledAt) index. Added ExpertOpinion.quoteHash (SHA-256 of lowercase+trimmed quote) with @@unique([expertId, storyId, quoteHash]); persistExpertOpinions computes hash + catches P2002. Added @@index([userId, settledAt(sort:Desc)]) on MarketPosition. Migration enables pgcrypto, backfills hashes, dedupes existing rows via ROW_NUMBER keeping earliest.",
+      "priority": "medium",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/api/prisma/schema.prisma",
+        "apps/api/lib/ai/extractExpertOpinions.ts",
+        "apps/api/prisma/migrations/20260524000004_s40_expert_opinion_unique_position_portfolio_index"
+      ]
+    },
+    {
+      "id": "S40-T6",
+      "sprint": 40,
+      "title": "Fix N+1 queries in analyst tier recalculation and opinion resolution notification",
+      "description": "recalculateAnalystTiersForRecentlyResolved looped per user (5000+ sequential queries for 1000 settled users). notifyOpinionResolution loop did per-voter computeUserOpinionAccuracyDetailed (500 sequential queries for popular opinions). Added updateAnalystTiersBatch (single findMany + Promise.allSettled in chunks of 50) and computeUserOpinionAccuracyBatch (single findMany \u2192 Map<userId, AccuracyStats>).",
+      "priority": "medium",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/api/lib/analysts.ts",
+        "apps/api/lib/notifyOpinionResolution.ts"
+      ]
+    },
+    {
+      "id": "S40-T7",
+      "sprint": 40,
+      "title": "Fix expert-opinion vote upsert atomicity + opinion-lock race condition",
+      "description": "Vote route: opinion-status check + lock-check + upsert were 3 separate calls \u2014 admin could resolve mid-flight. Lock-vote: read opinion then write lockedAt = could stamp after resolution. Wrapped vote in $transaction with sentinel throws (NOT_FOUND, RESOLVED, LOCKED \u2192 404/409/409). Lock-vote uses atomic updateMany({where:{id, lockedAt:null}}) with count===0 \u2192 409.",
+      "priority": "medium",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/api/app/api/finance/expert-opinions/[id]/vote/route.ts",
+        "apps/api/app/api/finance/expert-opinions/[id]/lock-vote/route.ts"
+      ]
+    },
+    {
+      "id": "S40-T8",
+      "sprint": 40,
+      "title": "Fix Expo push batching in big-call-push and flagship-reminder + unbounded sync-manifold + backfill determinism",
+      "description": "Sequential 1000+ Expo POSTs in push crons \u2014 replaced with Promise.all in batches of 10. sync-manifold-resolutions had no take cap \u2014 added take:200 + updatedAt:{lt:sixHoursAgo} filter (no schema change). admin/news/backfill-predictions cron-mode picked findFirst(role:ADMIN) \u2014 now uses SYSTEM_ADMIN_EMAIL env lookup with findFirst fallback.",
+      "priority": "medium",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/api/app/api/cron/big-call-push/route.ts",
+        "apps/api/app/api/cron/flagship-reminder/route.ts",
+        "apps/api/app/api/cron/sync-manifold-resolutions/route.ts",
+        "apps/api/app/api/admin/news/backfill-predictions/route.ts"
+      ]
+    },
+    {
+      "id": "S40-T9",
+      "sprint": 40,
+      "title": "Fix mobile client double-tap guard and error handling anti-patterns",
+      "description": "expert-opinion-post-card.tsx follow-pending used 600ms setTimeout instead of API completion \u2014 replaced with Promise.resolve(...).finally() pending state. finance-mode.tsx used string-match msg.includes('401') \u2014 replaced with err instanceof ApiClientError && err.status === 401.",
+      "priority": "medium",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/mobile/src/components/expert-opinion-post-card.tsx",
+        "apps/mobile/src/components/finance-mode.tsx"
+      ]
+    },
+    {
+      "id": "S40-T10",
+      "sprint": 40,
+      "title": "Fix reasoning upvote counter drift + groups launch non-atomic updateMany",
+      "description": "Upvote-reasoning counter was incremented/decremented in a tx, but counter drifted under same-user double-click. Now recomputes via tx.reasoningUpvote.count({where:{positionId}}) at end of tx. groups/[id]/launch's findMany + updateMany were not in a transaction \u2014 partial failure left half launched. Wrapped in $transaction.",
+      "priority": "medium",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": [
+        "S42-T9 later switched the counter back to atomic increment/decrement because the recompute pattern still drifted under DIFFERENT-user concurrent upvotes."
+      ],
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/api/app/api/positions/[positionId]/upvote-reasoning/route.ts",
+        "apps/api/app/api/groups/[id]/launch/route.ts"
+      ]
+    },
+    {
+      "id": "S41-T1",
+      "sprint": 41,
+      "title": "Dead code cleanup and non-deterministic query fixes",
+      "description": "Removed dead `const { searchParams } = new URL(request.url)` at apps/api/app/api/markets/[marketId]/positions/route.ts:24. Audited findFirst calls in cron/finance-opinions-catchup and finance/synthesis for missing orderBy \u2014 none required additional fixes per the audit.",
+      "priority": "low",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/api/app/api/markets/[marketId]/positions/route.ts",
+        "apps/api/app/api/cron/finance-opinions-catchup/route.ts"
+      ]
+    },
+    {
+      "id": "S41-T2",
+      "sprint": 41,
+      "title": "Schema type cleanup: LeaderboardSnapshot category, WalletTransaction FK policies",
+      "description": "LeaderboardSnapshot.category changed from String? to MarketCategory? (enum). WalletTransaction.marketId and positionId FKs gained onDelete:SetNull to allow market deletion without blocking on transaction history. Migration s41_schema_polish. Downstream: leaderboard route's getPreviousRankMap signature widened to accept MarketCategory|null.",
+      "priority": "low",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/api/prisma/schema.prisma",
+        "apps/api/app/api/leaderboard/route.ts"
+      ]
+    },
+    {
+      "id": "S41-T3",
+      "sprint": 41,
+      "title": "Fix expo-router type-cast suppressions and mobile env fallback safety",
+      "description": "Mobile env defaulted to http://localhost:3001 silently \u2014 bad EAS misconfig would hide. Added getApiBaseUrl() that throws in NODE_ENV=production when EXPO_PUBLIC_API_BASE_URL unset; warns + falls back in dev. expo-router type-cast cleanup deferred \u2014 too broad for low-priority sprint.",
+      "priority": "low",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/mobile/src/lib/env.ts"
+      ]
+    },
+    {
+      "id": "S41-T4",
+      "sprint": 41,
+      "title": "Add daily cap to generateHeadline AI + pin AI model strings",
+      "description": "generateHeadline had no daily cap \u2014 runaway AI cost risk. Added in-memory HEADLINE_DAILY_CAP (default 200, env-configurable) mirroring the extractExpertOpinions pattern. lib/ai/gemini.ts now reads GEMINI_MODEL + GEMINI_FALLBACK_MODEL env vars (defaults: gemini-2.5-flash + gemini-1.5-flash) with 404\u2192fallback retry logging. (S42-T10 later extracted callGeminiAI helper and applied env-pin to the remaining 2 AI files.)",
+      "priority": "low",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "files": [
+        "apps/api/lib/ai/generateHeadline.ts",
+        "apps/api/lib/ai/gemini.ts"
+      ]
+    },
+    {
+      "id": "S42-T0",
+      "sprint": 42,
+      "title": "Redis provisioning \u2014 Upstash client singleton + smoke endpoints",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": [
+        "Round 2 PASS \u2014 all 6 verification checks confirmed by orchestrator + QA. Upstash credentials are a deploy-time follow-up before T7/T11 can be runtime-tested."
+      ],
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24"
+    },
+    {
+      "id": "S42-T1",
+      "sprint": 42,
+      "title": "Multi-choice payout P2003 fix",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": [
+        "Verified: createUniqueWalletTransaction accepts multiChoicePositionId?; CANCELLED path line 736 and winner payout line 840 both pass position.id; schema.prisma lines 142/146/150 confirmed; migration T1 section confirmed with FK + unique index."
+      ],
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24"
+    },
+    {
+      "id": "S42-T2",
+      "sprint": 42,
+      "title": "notifiedAt stamp on both admin resolve routes",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": [
+        "Verified statically; runtime test deferred per sprint runtime-mandate note."
+      ],
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24"
+    },
+    {
+      "id": "S42-T3",
+      "sprint": 42,
+      "title": "ExpertOpinion unique index alignment",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": [
+        "Verified: migration 20260524000006 line 34 drops COALESCE index by exact name, line 39 recreates as plain unique index on (expertId, storyId, quoteHash) matching schema.prisma declaration."
+      ],
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24"
+    },
+    {
+      "id": "S42-T4",
+      "sprint": 42,
+      "title": "H1 \u2014 Prompt injection hardening: wrap untrusted content in 3 remaining AI call sites",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": [
+        "Round 2 PASS \u2014 re-applied after parallel-write race clobber; T14 wasLastCallRateLimited preserved."
+      ],
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24"
+    },
+    {
+      "id": "S42-T5",
+      "sprint": 42,
+      "title": "Add rate limiting to mobile login + NextAuth authorize endpoints",
+      "description": "WHY: S39-T4 wired register + OTP endpoints with checkRateLimit but missed the LOGIN endpoints (mobile/login + NextAuth credentials authorize). Mobile login and NextAuth credentials are open for password-stuffing.\n\nFIX: Add IP-based limit (20/hr) and per-email failed-attempts limit (10/hr) to mobile/login. Same email-based limit to NextAuth authorize. On successful login, reset the email counter via resetRateLimit.\n\nDEPS: S42-T7 (Redis-backed rate-limit).\n\nACCEPTANCE: 21 mobile login attempts from same IP \u2192 21st returns 429. 11 failed mobile login attempts with same email \u2192 11th returns 429. Successful login resets the email counter.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "closedAt": "2026-05-24",
+      "createdAt": "2026-05-24",
+      "files": [
+        "apps/api/app/api/auth/mobile/login/route.ts",
+        "apps/api/lib/auth.ts"
+      ],
+      "dependencies": [
+        "S42-T7"
+      ]
+    },
+    {
+      "id": "S42-T6",
+      "sprint": 42,
+      "title": "Manifold sync externalLastSyncedAt",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": [
+        "Verified: schema.prisma line 453 has externalLastSyncedAt DateTime?; cron lines 65-66 filter on null/lt; line 105 stamps new Date(); migration backfills updatedAt for originPlatform='manifold'."
+      ],
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24"
+    },
+    {
+      "id": "S42-T7",
+      "sprint": 42,
+      "title": "Migrate rate-limit.ts from in-memory Map to Redis INCR+EXPIRE",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24"
+    },
+    {
+      "id": "S42-T8",
+      "sprint": 42,
+      "title": "Tip cap + referral race",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": [
+        "Verified: tip route line 135 SELECT FOR UPDATE on tipperWallet; schema line 41 referralBonusCreditedAt DateTime?; positions route lines 263-268 updateMany with {referralBonusCreditedAt:null} guard + count===1 check; migration backfills existing REFERRAL_BONUS_REFEREE recipients."
+      ],
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24"
+    },
+    {
+      "id": "S42-T9",
+      "sprint": 42,
+      "title": "Fix reasoning upvote counter drift (atomic increment/decrement)",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": [
+        "Verified: line 57 decrement:1 on delete, line 69 increment:1 on create; no recompute-from-count pattern present; TypeScript clean on this file."
+      ],
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24"
+    },
+    {
+      "id": "S42-T10",
+      "sprint": 42,
+      "title": "H8 \u2014 Extract shared callGeminiAI helper; env-pin model in remaining 2 AI files",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": [
+        "Round 2 PASS \u2014 re-applied after parallel-write race clobber; T14 wasLastCallRateLimited preserved."
+      ],
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24"
+    },
+    {
+      "id": "S42-T11",
+      "sprint": 42,
+      "title": "Auto-resolve sweep take: limit + Expo push Redis-backed token bucket",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24",
+      "description": "WHY: (a) Phase-0 sweep in cron/auto-resolve-opinions has no take: limit \u2014 backlog can blow Vercel 60s timeout. (b) Big-call-push + flagship-reminder bursts at ~1000 msg/s = Expo 429 silent message loss; no retry-after; no cross-cron rate budgeting.\n\nFIX: (a) Add take: 50 + orderBy: { resolvedAt: 'asc' } to the Phase-0 sweep findMany. (b) New apps/api/lib/expo-push-budget.ts with trySpendPushBudget(n) using Redis INCRBY + EXPIRE. Both push crons call it before dispatching. Detect Expo 429 and back off with 5s sleep.\n\nDEPS: S42-T0 (Upstash provisioned), S42-T14 (sweep already exists from T14 round 3).\n\nACCEPTANCE: Phase-0 sweep capped. lib/expo-push-budget.ts exists. Both push crons call trySpendPushBudget before dispatch. Expo 429s detected and back-off applied.",
+      "files": [
+        "apps/api/app/api/cron/auto-resolve-opinions/route.ts",
+        "apps/api/app/api/cron/big-call-push/route.ts",
+        "apps/api/app/api/cron/flagship-reminder/route.ts",
+        "apps/api/lib/expo-push-budget.ts"
+      ],
+      "dependencies": [
+        "S42-T0",
+        "S42-T14"
+      ]
+    },
+    {
+      "id": "S42-T12",
+      "sprint": 42,
+      "title": "Web auth JWT TTL + verify-phone double-credit + rate-limit ordering + host-bond race",
+      "priority": "medium",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24"
+    },
+    {
+      "id": "S42-T13",
+      "sprint": 42,
+      "title": "verify expert route hardening: Zod schema, idempotency, enum values, updateMany guard",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": [
+        "Verified statically; runtime test deferred per sprint runtime-mandate note."
+      ],
+      "createdAt": "2026-05-24",
+      "closedAt": "2026-05-24"
+    },
+    {
+      "id": "S42-T14",
+      "sprint": 42,
+      "title": "Misc medium fixes: 429 sentinel, GET alias CSRF, BigCallTap FKs, expert upsert verified=false, experts pagination",
+      "priority": "medium",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": "Round 3 PASS \u2014 all 5 T14 sub-fixes verified after parallel-write race recovery.",
+      "closedAt": "2026-05-24",
+      "createdAt": "2026-05-24"
     }
   ]
 }

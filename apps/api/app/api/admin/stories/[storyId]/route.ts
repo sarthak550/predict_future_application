@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import { MarketStatus, Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 
-import { getSession } from "@/lib/auth";
+import { getUserIdFromRequest } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { slugify } from "@/lib/utils";
 import { adminStoryUpdateSchema, approvedStoryStatuses } from "@/lib/validations/news";
@@ -11,12 +11,19 @@ export async function PATCH(
   request: Request,
   { params }: { params: { storyId: string } }
 ) {
-  const session = await getSession();
-  if (!session?.user?.id) {
+  const userId = await getUserIdFromRequest(request);
+  if (!userId) {
     return NextResponse.json({ error: "Authentication required." }, { status: 401 });
   }
 
-  if (session.user.role !== "ADMIN" && session.user.role !== "MODERATOR") {
+  const actor = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, role: true, isSuspended: true },
+  });
+  if (!actor || actor.isSuspended) {
+    return NextResponse.json({ error: "Account cannot perform this action." }, { status: 403 });
+  }
+  if (actor.role !== "ADMIN" && actor.role !== "MODERATOR") {
     return NextResponse.json({ error: "Admin access required." }, { status: 403 });
   }
 
@@ -56,7 +63,7 @@ export async function PATCH(
           description: payload.prediction.description,
           category: payload.category,
           template: payload.prediction.template,
-          creatorId: existing.market?.creatorId ?? session.user.id,
+          creatorId: existing.market?.creatorId ?? actor.id,
           status: nextMarketStatus,
           closeAt: new Date(payload.prediction.closeAt),
           resolveAt: new Date(payload.prediction.resolveAt),
@@ -67,7 +74,7 @@ export async function PATCH(
           fallbackRuleText: payload.prediction.fallbackRuleText || null,
           structuredData: payload.prediction.structuredData as Prisma.InputJsonValue | undefined,
           approvedAt: isApproved ? existing.market?.approvedAt ?? new Date() : null,
-          approvedById: isApproved ? existing.market?.approvedById ?? session.user.id : null
+          approvedById: isApproved ? existing.market?.approvedById ?? actor.id : null
         };
 
         if (existing.market) {
@@ -87,7 +94,7 @@ export async function PATCH(
 
       await tx.adminAction.create({
         data: {
-          actorId: session.user.id,
+          actorId: actor.id,
           storyId: existing.id,
           marketId: existing.market?.id ?? null,
           type: "CURATE_FEED",

@@ -46,6 +46,9 @@ export function ExpertOpinionsAdminClient({ initialOpinions, initialExperts }: P
   const [verifiedIds, setVerifiedIds] = useState<Set<string>>(new Set());
   const [avatarInputs, setAvatarInputs] = useState<Record<string, string>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [resolutionNotes, setResolutionNotes] = useState<Record<string, string>>({});
+
+  const MIN_NOTE_LENGTH = 10;
 
   async function handleOpinionAction(
     opinionId: string,
@@ -60,11 +63,28 @@ export function ExpertOpinionsAdminClient({ initialOpinions, initialExperts }: P
       let body: Record<string, string> = {};
 
       if (action === "suppress") {
+        const confirmed = window.confirm(
+          "Suppress this opinion? This hides it from the feed for all users."
+        );
+        if (!confirmed) {
+          setLoadingId(null);
+          return;
+        }
         url = `/api/admin/expert-opinions/${opinionId}/suppress`;
       } else {
+        const note = (resolutionNotes[opinionId] ?? "").trim();
+        if (note.length < MIN_NOTE_LENGTH) {
+          setErrors((prev) => ({
+            ...prev,
+            [opinionId]: `Reason is required (min ${MIN_NOTE_LENGTH} characters).`,
+          }));
+          setLoadingId(null);
+          return;
+        }
         url = `/api/admin/expert-opinions/${opinionId}/resolve`;
         body = {
           resolutionStatus: action === "hit" ? "RESOLVED_HIT" : "RESOLVED_MISS",
+          resolutionNote: note,
         };
       }
 
@@ -93,6 +113,12 @@ export function ExpertOpinionsAdminClient({ initialOpinions, initialExperts }: P
 
   async function handleVerifyExpert(expertId: string) {
     if (loadingId) return;
+
+    const confirmed = window.confirm(
+      "Verify this expert? They will appear with a verified badge across the app."
+    );
+    if (!confirmed) return;
+
     setLoadingId(expertId);
     setErrors((prev) => ({ ...prev, [expertId]: "" }));
 
@@ -159,6 +185,7 @@ export function ExpertOpinionsAdminClient({ initialOpinions, initialExperts }: P
                   <th className="px-4 py-3 max-w-[280px]">Quote</th>
                   <th className="px-4 py-3 max-w-[200px]">Story</th>
                   <th className="px-4 py-3">Published</th>
+                  <th className="px-4 py-3 min-w-[240px]">Resolution reason</th>
                   <th className="px-4 py-3">Actions</th>
                 </tr>
               </thead>
@@ -166,6 +193,8 @@ export function ExpertOpinionsAdminClient({ initialOpinions, initialExperts }: P
                 {opinions.map((opinion) => {
                   const dirStyle = DIRECTION_STYLES[opinion.direction] ?? DIRECTION_STYLES.NEUTRAL;
                   const isLoading = loadingId === opinion.id;
+                  const noteValue = resolutionNotes[opinion.id] ?? "";
+                  const noteOk = noteValue.trim().length >= MIN_NOTE_LENGTH;
                   return (
                     <tr key={opinion.id} className="bg-white hover:bg-ink-50/50">
                       <td className="px-4 py-3">
@@ -190,19 +219,42 @@ export function ExpertOpinionsAdminClient({ initialOpinions, initialExperts }: P
                       <td className="px-4 py-3 whitespace-nowrap text-ink-500">
                         {formatDate(opinion.publishedAt)}
                       </td>
+                      <td className="px-4 py-3 min-w-[240px]">
+                        <textarea
+                          value={noteValue}
+                          onChange={(e) =>
+                            setResolutionNotes((prev) => ({
+                              ...prev,
+                              [opinion.id]: e.target.value,
+                            }))
+                          }
+                          placeholder="Why HIT or MISS? (visible to users)"
+                          rows={2}
+                          className="w-full rounded-md border border-ink-200 px-2 py-1 text-xs text-ink-800 placeholder:text-ink-400 focus:border-ink-500 focus:outline-none"
+                        />
+                        <p
+                          className={`mt-1 text-[10px] ${
+                            noteOk ? "text-ink-400" : "text-amber-600"
+                          }`}
+                        >
+                          {noteValue.trim().length}/{MIN_NOTE_LENGTH} min · required for HIT/MISS
+                        </p>
+                      </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                           <button
                             onClick={() => void handleOpinionAction(opinion.id, "hit")}
-                            disabled={isLoading || !!loadingId}
-                            className="rounded-md bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700 disabled:opacity-50"
+                            disabled={isLoading || !!loadingId || !noteOk}
+                            title={!noteOk ? "Enter a resolution reason first" : undefined}
+                            className="rounded-md bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             HIT
                           </button>
                           <button
                             onClick={() => void handleOpinionAction(opinion.id, "miss")}
-                            disabled={isLoading || !!loadingId}
-                            className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+                            disabled={isLoading || !!loadingId || !noteOk}
+                            title={!noteOk ? "Enter a resolution reason first" : undefined}
+                            className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             MISS
                           </button>

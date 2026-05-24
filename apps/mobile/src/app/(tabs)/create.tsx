@@ -103,12 +103,11 @@ export default function CreateScreen() {
   const { session, status: sessionStatus } = useSession();
   const userId = session?.userId;
 
-  // Prefill params passed from Sports tab, Finance flagship CTA, or other deep links
+  // Prefill params passed from Sports tab or other deep links
   const params = useLocalSearchParams<{
     initialTitle?: string;
     initialCategory?: string;
     preselectCategory?: string;
-    flagshipOn?: string;
   }>();
   const initialTitle = typeof params.initialTitle === "string" ? params.initialTitle : undefined;
   const initialCategory =
@@ -117,7 +116,6 @@ export default function CreateScreen() {
       : typeof params.preselectCategory === "string"
         ? (params.preselectCategory as AppMarketCategory)
         : undefined;
-  const startWithFlagshipOn = params.flagshipOn === "1";
 
   const eligibilityFetcher = useCallback(
     () => mobileApi.getHostEligibility(),
@@ -153,7 +151,7 @@ export default function CreateScreen() {
         userId={userId}
         initialTitle={initialTitle}
         initialCategory={initialCategory}
-        startWithFlagshipOn={startWithFlagshipOn}
+        isAdmin={eligibility?.isAdmin ?? false}
       />
     </View>
   );
@@ -313,12 +311,12 @@ function CreateWizard({
   userId,
   initialTitle,
   initialCategory,
-  startWithFlagshipOn,
+  isAdmin,
 }: {
   userId: string;
   initialTitle?: string;
   initialCategory?: AppMarketCategory;
-  startWithFlagshipOn?: boolean;
+  isAdmin: boolean;
 }) {
   const router = useRouter();
   const [stepIdx, setStepIdx] = useState(0);
@@ -360,11 +358,9 @@ function CreateWizard({
   const [challengeWindowHours, setChallengeWindowHours] = useState(12);
   const [gracePeriodHours, setGracePeriodHours] = useState(48);
 
-  // Flagship event (S32-T3) — FINANCE category only
-  const [isFlagshipEvent, setIsFlagshipEvent] = useState<boolean>(Boolean(startWithFlagshipOn));
-  const [flagshipEventAt, setFlagshipEventAt] = useState<Date | null>(
-    startWithFlagshipOn ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) : null
-  );
+  // Flagship event — admin-only toggle for FINANCE markets
+  const [isFlagshipEvent, setIsFlagshipEvent] = useState<boolean>(false);
+  const [flagshipEventAt, setFlagshipEventAt] = useState<Date | null>(null);
   const [flagshipEventType, setFlagshipEventType] = useState<string>("RBI");
 
   // Draft banner state
@@ -532,10 +528,10 @@ function CreateWizard({
         ...(visibility === "PRIVATE" && groupId
           ? { groupId, structuredData: { groupId } }
           : {}),
-        ...(isFlagshipEvent && flagshipEventAt
+        ...(isAdmin && isFlagshipEvent && flagshipEventAt
           ? {
               flagshipEventAt: flagshipEventAt.toISOString(),
-              flagshipEventType: flagshipEventType,
+              flagshipEventType,
             }
           : {}),
         ...(marketType === "NUMERIC"
@@ -792,19 +788,17 @@ function CreateWizard({
               isHostResolved={resolutionMode === "HOST"}
               gracePeriodHours={gracePeriodHours}
             />
-            {/* S32-T3: Flagship event toggle — visible only for FINANCE category */}
-            {category === "FINANCE" && (
+            {/* Flagship event toggle — admin-only, FINANCE category only */}
+            {isAdmin && category === "FINANCE" && (
               <FlagshipEventSection
                 isFlagshipEvent={isFlagshipEvent}
                 setIsFlagshipEvent={(val) => {
                   setIsFlagshipEvent(val);
-                  // When toggling on, pre-set flagshipEventAt to 7 days from now if unset
                   if (val && !flagshipEventAt) {
                     const defaultDate = new Date(Date.now() + 7 * 24 * 3600000);
                     setFlagshipEventAt(defaultDate);
                     setCloseAt(defaultDate);
                   }
-                  // When toggling off, restore closeAt to 24h default
                   if (!val) {
                     setCloseAt(new Date(Date.now() + 24 * 3600000));
                   }
@@ -812,7 +806,6 @@ function CreateWizard({
                 flagshipEventAt={flagshipEventAt}
                 setFlagshipEventAt={(date) => {
                   setFlagshipEventAt(date);
-                  // Keep closeAt in sync
                   if (date) setCloseAt(date);
                 }}
                 flagshipEventType={flagshipEventType}
@@ -1962,7 +1955,7 @@ function TimelineRow({ emoji, label, date, sub }: { emoji?: string; label: strin
 }
 
 // ---------------------------------------------------------------------------
-// Flagship Event Section — S32-T3
+// Flagship Event Section — admin-only, FINANCE category
 // ---------------------------------------------------------------------------
 
 const FLAGSHIP_EVENT_TYPES = [
@@ -1989,8 +1982,8 @@ function FlagshipEventSection({
   flagshipEventType: string;
   setFlagshipEventType: (type: string) => void;
 }) {
-  const minDate = new Date(Date.now() + 2 * 24 * 3600000); // > today + 1 day
-  const maxDate = new Date(Date.now() + 90 * 24 * 3600000); // <= today + 90 days
+  const minDate = new Date(Date.now() + 2 * 24 * 3600000);
+  const maxDate = new Date(Date.now() + 90 * 24 * 3600000);
 
   function handleEventAtChange(dateStr: string) {
     const parsed = new Date(dateStr);
@@ -2004,9 +1997,14 @@ function FlagshipEventSection({
     <View style={styles.flagshipSection}>
       <View style={styles.flagshipToggleRow}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.flagshipToggleLabel}>Flagship event poll</Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+            <Text style={styles.flagshipToggleLabel}>Flagship event poll</Text>
+            <View style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, backgroundColor: "#fef3c7" }}>
+              <Text style={{ fontSize: 9, fontWeight: "800", color: "#b45309", letterSpacing: 0.4 }}>ADMIN</Text>
+            </View>
+          </View>
           <Text style={styles.flagshipToggleSub}>
-            Tie this market to a high-impact upcoming event. It will appear in the Policy &amp; Big Events carousel on the Finance tab.
+            Curated high-impact event. Appears in the Policy &amp; Big Events carousel on the Finance tab.
           </Text>
         </View>
         <Pressable

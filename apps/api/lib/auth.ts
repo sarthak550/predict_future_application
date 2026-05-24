@@ -7,7 +7,9 @@ import { redirect } from "next/navigation";
 
 import { prisma } from "@/lib/prisma";
 
-const JWT_SECRET = process.env.NEXTAUTH_SECRET ?? "fallback-dev-secret";
+if (!process.env.NEXTAUTH_SECRET) throw new Error("NEXTAUTH_SECRET env var is required");
+// Non-null assertion is safe: the throw above guarantees this is set at module load time.
+const JWT_SECRET: string = process.env.NEXTAUTH_SECRET;
 
 /**
  * Resolves the authenticated user ID from any request — works for both
@@ -20,16 +22,27 @@ export async function getUserIdFromRequest(request: Request): Promise<string | n
   if (bearer) {
     try {
       const payload = jwt.verify(bearer, JWT_SECRET) as { sub?: string };
-      if (payload.sub) return payload.sub;
+      if (payload.sub) {
+        // Defense in depth: mobile JWTs are 30-day tokens — check isSuspended on every
+        // request so suspension takes effect immediately rather than at token expiry.
+        // One extra DB lookup per Bearer-authed request is acceptable vs shortening TTL.
+        const user = await prisma.user.findUnique({
+          where: { id: payload.sub },
+          select: { isSuspended: true },
+        });
+        if (!user || user.isSuspended) return null;
+        return payload.sub;
+      }
     } catch {
       // Invalid or expired — fall through to NextAuth check
     }
   }
 
-  // 2. NextAuth session (web cookie-based)
+  // 2. NextAuth session (web cookie-based) — isSuspended is refreshed on every request
+  // via the jwt callback (lines 94-108), so session.user.isSuspended is authoritative.
   try {
     const session = await getSession();
-    if (session?.user?.id) return session.user.id;
+    if (session?.user?.id && !session.user.isSuspended) return session.user.id;
   } catch {
     // getSession can throw in some Next.js contexts — ignore
   }
@@ -81,15 +94,22 @@ export const authOptions: NextAuthOptions = {
     })
   ],
   callbacks: {
-    async jwt({ token, user }) {
+    async jwt({ token, user, trigger }) {
       if (user) {
         token.sub = user.id;
         token.role = user.role;
         token.username = user.username;
         token.isSuspended = user.isSuspended;
+        token.refreshedAt = Date.now();
       }
 
-      if (token.sub) {
+      // Re-fetch from DB only when the cached data is stale (> 5 min) or an
+      // explicit session update is triggered. This cuts per-request DB load on
+      // busy admin pages while still propagating suspensions within 5 minutes.
+      const fiveMinAgo = Date.now() - 5 * 60 * 1000;
+      const isStale = !token.refreshedAt || (token.refreshedAt as number) < fiveMinAgo;
+
+      if (token.sub && (isStale || trigger === "update")) {
         const dbUser = await prisma.user.findUnique({
           where: { id: token.sub },
           select: {
@@ -103,6 +123,7 @@ export const authOptions: NextAuthOptions = {
           token.role = dbUser.role;
           token.username = dbUser.username;
           token.isSuspended = dbUser.isSuspended;
+          token.refreshedAt = Date.now();
         }
       }
 

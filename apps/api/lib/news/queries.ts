@@ -100,28 +100,118 @@ const newsFeedInclude = () =>
     },
   }) satisfies Prisma.StoryInclude;
 
-function buildCursorWhere(cursor?: { publishedAt: Date; id: string } | null): Prisma.StoryWhereInput | undefined {
-  if (!cursor) return undefined;
+/**
+ * Sort key for the news feed pagination. Defaults to publishedAt; switches to
+ * latestResolvedAt when the user has the "Resolved only" filter active so the
+ * most recently resolved stories surface first regardless of original publish date.
+ */
+type NewsSortField = "publishedAt" | "latestResolvedAt";
 
+function buildCursorWhere(
+  cursor: { date: Date; id: string } | null | undefined,
+  sortField: NewsSortField
+): Prisma.StoryWhereInput | undefined {
+  if (!cursor) return undefined;
   return {
     OR: [
-      { publishedAt: { lt: cursor.publishedAt } },
-      { AND: [{ publishedAt: cursor.publishedAt }, { id: { lt: cursor.id } }] }
-    ]
+      { [sortField]: { lt: cursor.date } },
+      { AND: [{ [sortField]: cursor.date }, { id: { lt: cursor.id } }] },
+    ] as Prisma.StoryWhereInput["OR"],
   };
 }
 
-export function encodeNewsCursor(input: { publishedAt: Date | string; id: string }) {
-  return `${new Date(input.publishedAt).toISOString()}::${input.id}`;
+export function encodeNewsCursor(input: { date: Date | string; id: string }) {
+  return `${new Date(input.date).toISOString()}::${input.id}`;
+}
+
+/**
+ * Raised when a cursor string is present in the request but doesn't match the
+ * expected `ISO_DATE::id` format. Callers (route handlers) should map this to
+ * a 400 response so client-side cursor bugs surface immediately instead of
+ * silently degrading to "no cursor → page 1" behavior.
+ */
+export class InvalidCursorError extends Error {
+  constructor(public readonly raw: string, reason: string) {
+    super(`Invalid news cursor (${reason}): ${raw}`);
+    this.name = "InvalidCursorError";
+  }
 }
 
 export function decodeNewsCursor(cursor?: string | null) {
-  if (!cursor) return null;
-  const [publishedAt, id] = cursor.split("::");
-  if (!publishedAt || !id) return null;
-  const parsedDate = new Date(publishedAt);
-  if (Number.isNaN(parsedDate.getTime())) return null;
-  return { publishedAt: parsedDate, id };
+  // Absent cursor is fine — just means "start from page 1".
+  if (cursor === undefined || cursor === null || cursor === "") return null;
+  const [date, id] = cursor.split("::");
+  if (!date || !id) {
+    throw new InvalidCursorError(cursor, "expected ISO_DATE::id format");
+  }
+  const parsedDate = new Date(date);
+  if (Number.isNaN(parsedDate.getTime())) {
+    throw new InvalidCursorError(cursor, "date component is not a valid ISO timestamp");
+  }
+  return { date: parsedDate, id };
+}
+
+type OpinionFilterInput = {
+  expertOpinionClusterId?: string;
+  expertOpinionDirection?: "BULLISH" | "BEARISH" | "NEUTRAL";
+  expertOpinionVerified?: boolean;
+  expertOpinionResolved?: boolean;
+  expertOpinionInstrument?: string;
+  expertOpinionAnalyst?: string;
+  expertOpinionSourceType?: "ANALYST" | "PUBLICATION";
+};
+
+/**
+ * Builds the Story.where filter for opinion-level constraints. When any opinion
+ * filter is set, requires at least one matching opinion via `some`. When nothing
+ * is set, honors the simpler requireExpertOpinions toggle.
+ */
+function buildOpinionWhere(input: OpinionFilterInput & { requireExpertOpinions?: boolean }) {
+  const opinionWhere: Record<string, unknown> = { suppressedAt: null };
+  let hasAnyOpinionFilter = false;
+
+  if (input.expertOpinionClusterId) {
+    opinionWhere.eventClusterId = input.expertOpinionClusterId;
+    hasAnyOpinionFilter = true;
+  }
+  if (input.expertOpinionDirection) {
+    opinionWhere.direction = input.expertOpinionDirection;
+    hasAnyOpinionFilter = true;
+  }
+  if (input.expertOpinionResolved === true) {
+    opinionWhere.resolutionStatus = { in: ["RESOLVED_HIT", "RESOLVED_MISS"] };
+    hasAnyOpinionFilter = true;
+  }
+  if (input.expertOpinionInstrument) {
+    opinionWhere.OR = [
+      { instrument: { contains: input.expertOpinionInstrument, mode: "insensitive" } },
+      { instrumentTicker: { contains: input.expertOpinionInstrument, mode: "insensitive" } },
+    ];
+    hasAnyOpinionFilter = true;
+  }
+  if (input.expertOpinionAnalyst) {
+    opinionWhere.expertId = input.expertOpinionAnalyst;
+    hasAnyOpinionFilter = true;
+  }
+  if (input.expertOpinionSourceType === "ANALYST") {
+    opinionWhere.isSourceAttribution = false;
+    hasAnyOpinionFilter = true;
+  } else if (input.expertOpinionSourceType === "PUBLICATION") {
+    opinionWhere.isSourceAttribution = true;
+    hasAnyOpinionFilter = true;
+  }
+  if (input.expertOpinionVerified === true) {
+    opinionWhere.expert = { verified: true };
+    hasAnyOpinionFilter = true;
+  }
+
+  if (hasAnyOpinionFilter) {
+    return { expertOpinions: { some: opinionWhere } };
+  }
+  if (input.requireExpertOpinions) {
+    return { expertOpinions: { some: { suppressedAt: null } } };
+  }
+  return {};
 }
 
 export async function getPublishedNewsPage(input?: {
@@ -131,26 +221,28 @@ export async function getPublishedNewsPage(input?: {
   cursor?: string | null;
   userId?: string | null;
   requireExpertOpinions?: boolean;
-  expertOpinionClusterId?: string;
-}) {
+} & OpinionFilterInput) {
   const limit = Math.max(1, Math.min(50, input?.limit ?? 10));
   const decodedCursor = decodeNewsCursor(input?.cursor);
-  // When filtering by a specific cluster, demand at least one matching opinion.
-  // Otherwise honor the simpler requireExpertOpinions toggle.
-  const expertOpinionsFilter = input?.expertOpinionClusterId
-    ? { expertOpinions: { some: { suppressedAt: null, eventClusterId: input.expertOpinionClusterId } } }
-    : input?.requireExpertOpinions
-      ? { expertOpinions: { some: { suppressedAt: null } } }
-      : {};
+  const expertOpinionsFilter = buildOpinionWhere(input ?? {});
+
+  // When "Resolved only" is on, paginate by the most recent resolution time
+  // instead of original publish date so a 60-day-old call that just resolved
+  // surfaces near the top rather than being buried on page 6.
+  const sortField: NewsSortField = input?.expertOpinionResolved === true ? "latestResolvedAt" : "publishedAt";
+  const sortNullFilter: Prisma.StoryWhereInput =
+    sortField === "latestResolvedAt" ? { latestResolvedAt: { not: null } } : {};
+
   const items = await prisma.story.findMany({
     where: {
       status: { in: visibleNewsStatuses },
       ...(input?.category ? { category: input.category } : {}),
       ...(input?.excludeCategory ? { category: { not: input.excludeCategory } } : {}),
       ...expertOpinionsFilter,
-      ...(buildCursorWhere(decodedCursor) ?? {})
+      ...sortNullFilter,
+      ...(buildCursorWhere(decodedCursor, sortField) ?? {})
     },
-    orderBy: [{ publishedAt: "desc" }, { id: "desc" }],
+    orderBy: [{ [sortField]: "desc" }, { id: "desc" }] as Prisma.StoryOrderByWithRelationInput[],
     include: newsFeedInclude(),
     take: limit + 1
   });
@@ -158,6 +250,10 @@ export async function getPublishedNewsPage(input?: {
   const hasMore = items.length > limit;
   const slice = items.slice(0, limit);
   const lastItem = slice.at(-1);
+  const cursorDateFor = (item: typeof slice[number]): Date =>
+    sortField === "latestResolvedAt"
+      ? (item.latestResolvedAt ?? item.publishedAt)
+      : item.publishedAt;
 
   return {
     items: slice.map<NewsFeedItem>((item) => ({
@@ -204,6 +300,9 @@ export async function getPublishedNewsPage(input?: {
         quote: opinion.quote,
         direction: opinion.direction,
         sourceUrl: opinion.sourceUrl,
+        storyId: opinion.storyId ?? null,
+        publishedAt: opinion.publishedAt.toISOString(),
+        analystCallAt: opinion.analystCallAt?.toISOString() ?? null,
         resolutionStatus: opinion.resolutionStatus,
         resolvedAt: opinion.resolvedAt ?? null,
         resolutionNote: opinion.resolutionNote ?? null,
@@ -211,9 +310,20 @@ export async function getPublishedNewsPage(input?: {
         isSourceAttribution: opinion.isSourceAttribution,
         instrument: opinion.instrument ?? null,
         instrumentTicker: opinion.instrumentTicker ?? null,
+        siblings: (item.expertOpinions ?? [])
+          .filter((sib) => sib.id !== opinion.id)
+          .map((sib) => ({
+            id: sib.id,
+            expertId: sib.expertId,
+            expertName: sib.expert.name,
+            expertOrganization: sib.expert.organization,
+            direction: sib.direction,
+            instrument: sib.instrument ?? null,
+            verified: sib.expert.verified,
+          })),
       })),
     })),
-    nextCursor: hasMore && lastItem ? encodeNewsCursor(lastItem) : null,
+    nextCursor: hasMore && lastItem ? encodeNewsCursor({ date: cursorDateFor(lastItem), id: lastItem.id }) : null,
     hasMore
   } satisfies NewsCursorPage;
 }
@@ -237,8 +347,7 @@ export async function getPersonalizedNewsPage(input: {
   cursor?: string | null;
   userId: string;
   requireExpertOpinions?: boolean;
-  expertOpinionClusterId?: string;
-}): Promise<NewsCursorPage> {
+} & OpinionFilterInput): Promise<NewsCursorPage> {
   const limit = Math.max(1, Math.min(50, input.limit ?? 10));
   const decodedCursor = decodeNewsCursor(input.cursor);
 
@@ -274,24 +383,29 @@ export async function getPersonalizedNewsPage(input: {
 
   // 3. Fetch two batches in one query: boosted stories first, then the rest.
   // We over-fetch slightly (2× limit) then page correctly.
-  const expertOpinionsFilter = input.expertOpinionClusterId
-    ? { expertOpinions: { some: { suppressedAt: null, eventClusterId: input.expertOpinionClusterId } } }
-    : input.requireExpertOpinions
-      ? { expertOpinions: { some: { suppressedAt: null } } }
-      : {};
+  const expertOpinionsFilter = buildOpinionWhere(input);
+
+  // Same sort-key switch as getPublishedNewsPage — when "Resolved only" is on,
+  // paginate by latestResolvedAt so newly-resolved stories surface first.
+  const sortField: NewsSortField = input.expertOpinionResolved === true ? "latestResolvedAt" : "publishedAt";
+  const sortNullFilter: Prisma.StoryWhereInput =
+    sortField === "latestResolvedAt" ? { latestResolvedAt: { not: null } } : {};
 
   const baseWhere: Prisma.StoryWhereInput = {
     status: { in: visibleNewsStatuses },
     ...(input.category ? { category: input.category } : {}),
     ...(input.excludeCategory ? { category: { not: input.excludeCategory } } : {}),
     ...expertOpinionsFilter,
-    ...(buildCursorWhere(decodedCursor) ?? {}),
+    ...sortNullFilter,
+    ...(buildCursorWhere(decodedCursor, sortField) ?? {}),
   };
+
+  const orderBy = [{ [sortField]: "desc" }, { id: "desc" }] as Prisma.StoryOrderByWithRelationInput[];
 
   const [boostedItems, regularItems] = await Promise.all([
     prisma.story.findMany({
       where: { ...baseWhere, market: { id: { in: boostedMarketIds } } },
-      orderBy: [{ publishedAt: "desc" }, { id: "desc" }],
+      orderBy,
       include: newsFeedInclude(),
       take: limit + 1,
     }),
@@ -301,7 +415,7 @@ export async function getPersonalizedNewsPage(input: {
         // Exclude stories already in the boosted batch so no duplicates.
         NOT: { market: { id: { in: boostedMarketIds } } },
       },
-      orderBy: [{ publishedAt: "desc" }, { id: "desc" }],
+      orderBy,
       include: newsFeedInclude(),
       take: limit + 1,
     }),
@@ -320,6 +434,10 @@ export async function getPersonalizedNewsPage(input: {
   const hasMore = merged.length > limit;
   const slice = merged.slice(0, limit);
   const lastItem = slice.at(-1);
+  const personalizedCursorDateFor = (item: typeof slice[number]): Date =>
+    sortField === "latestResolvedAt"
+      ? (item.latestResolvedAt ?? item.publishedAt)
+      : item.publishedAt;
 
   return {
     items: slice.map<NewsFeedItem>((item) => ({
@@ -366,6 +484,9 @@ export async function getPersonalizedNewsPage(input: {
         quote: opinion.quote,
         direction: opinion.direction,
         sourceUrl: opinion.sourceUrl,
+        storyId: opinion.storyId ?? null,
+        publishedAt: opinion.publishedAt.toISOString(),
+        analystCallAt: opinion.analystCallAt?.toISOString() ?? null,
         resolutionStatus: opinion.resolutionStatus,
         resolvedAt: opinion.resolvedAt ?? null,
         resolutionNote: opinion.resolutionNote ?? null,
@@ -373,9 +494,20 @@ export async function getPersonalizedNewsPage(input: {
         isSourceAttribution: opinion.isSourceAttribution,
         instrument: opinion.instrument ?? null,
         instrumentTicker: opinion.instrumentTicker ?? null,
+        siblings: (item.expertOpinions ?? [])
+          .filter((sib) => sib.id !== opinion.id)
+          .map((sib) => ({
+            id: sib.id,
+            expertId: sib.expertId,
+            expertName: sib.expert.name,
+            expertOrganization: sib.expert.organization,
+            direction: sib.direction,
+            instrument: sib.instrument ?? null,
+            verified: sib.expert.verified,
+          })),
       })),
     })),
-    nextCursor: hasMore && lastItem ? encodeNewsCursor(lastItem) : null,
+    nextCursor: hasMore && lastItem ? encodeNewsCursor({ date: personalizedCursorDateFor(lastItem), id: lastItem.id }) : null,
     hasMore,
   } satisfies NewsCursorPage;
 }

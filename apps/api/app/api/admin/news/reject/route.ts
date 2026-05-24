@@ -1,17 +1,24 @@
 import { NextResponse } from "next/server";
 
-import { getSession } from "@/lib/auth";
+import { getUserIdFromRequest } from "@/lib/auth";
 import { createNotification } from "@/lib/notifications";
 import { prisma } from "@/lib/prisma";
 import { adminStoryRejectSchema, pendingStoryStatuses } from "@/lib/validations/news";
 
 export async function POST(request: Request) {
-  const session = await getSession();
-  if (!session?.user?.id) {
+  const userId = await getUserIdFromRequest(request);
+  if (!userId) {
     return NextResponse.json({ error: "Authentication required." }, { status: 401 });
   }
 
-  if (session.user.role !== "ADMIN" && session.user.role !== "MODERATOR") {
+  const actor = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, role: true, isSuspended: true },
+  });
+  if (!actor || actor.isSuspended) {
+    return NextResponse.json({ error: "Account cannot perform this action." }, { status: 403 });
+  }
+  if (actor.role !== "ADMIN" && actor.role !== "MODERATOR") {
     return NextResponse.json({ error: "Admin access required." }, { status: 403 });
   }
 
@@ -58,7 +65,7 @@ export async function POST(request: Request) {
 
       await tx.adminAction.create({
         data: {
-          actorId: session.user.id,
+          actorId: actor.id,
           storyId: story.id,
           marketId: story.market?.id ?? null,
           type: "REJECT_STORY",
@@ -66,7 +73,7 @@ export async function POST(request: Request) {
         }
       });
 
-      if (story.createdById && story.createdById !== session.user.id) {
+      if (story.createdById && story.createdById !== actor.id) {
         await createNotification(tx, {
           userId: story.createdById,
           storyId: story.id,

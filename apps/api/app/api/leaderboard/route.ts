@@ -12,7 +12,7 @@ import { getDisplayName } from "@/lib/users/displayName";
 async function getPreviousRankMap(
   userIds: string[],
   timeWindow: string,
-  category: string | null
+  category: MarketCategory | null
 ): Promise<Map<string, number>> {
   if (userIds.length === 0) return new Map();
 
@@ -152,7 +152,7 @@ export async function GET(request: Request) {
     const categoryPrevRanks = await getPreviousRankMap(
       categoryUserIds,
       timeWindow,
-      category
+      category as MarketCategory
     );
 
     const entries = rawCategoryEntries.map((row, idx) => {

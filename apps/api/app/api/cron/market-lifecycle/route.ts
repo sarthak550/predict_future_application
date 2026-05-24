@@ -5,7 +5,7 @@ import { runMarketLifecycleJobs } from "@/lib/markets/lifecycle";
 function hasCronAccess(request: Request) {
   const secret = process.env.CRON_SECRET;
   if (!secret) {
-    return true;
+    return false;
   }
 
   const authHeader = request.headers.get("authorization");

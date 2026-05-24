@@ -45,6 +45,24 @@ export function formatRelativeTime(date: Date | string) {
   return `${formatDistanceToNowStrict(new Date(date), { addSuffix: true })}`;
 }
 
+/**
+ * Returns a hex color tuned to opinion-call freshness:
+ *   <  24h  → green   (#16a34a) — fresh, actionable
+ *   <  72h  → gray    (#6b7280) — a few days old
+ *   <  120h → amber   (#d97706) — getting stale
+ *   ≥  120h → red-ish (#dc2626) — old call
+ *
+ * Used by the "Called X ago" timestamps on opinion cards / hero.
+ */
+export function freshnessColor(date: Date | string): string {
+  const ms = Date.now() - new Date(date).getTime();
+  const hours = ms / (1000 * 60 * 60);
+  if (hours < 24) return "#16a34a";
+  if (hours < 72) return "#6b7280";
+  if (hours < 120) return "#d97706";
+  return "#b91c1c";
+}
+
 export function safeJsonParse<T>(value: string, fallback: T) {
   try {
     return JSON.parse(value) as T;

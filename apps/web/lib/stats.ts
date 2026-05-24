@@ -76,11 +76,14 @@ export async function refreshUserStats(tx: TxClient, userId: string) {
     }
   });
 
+  // Restrict to terminal-state markets only — open/pending markets do not
+  // contribute to benchmarks and loading them on every stats refresh is wasteful.
   const platformHostedMarkets = await tx.market.findMany({
     where: {
       resolutionMode: {
         in: ["HOST", "TRUSTED_HOST", "HOST_RESOLVED"]
-      }
+      },
+      status: { in: ["RESOLVED", "CANCELLED", "HOST_TIMEOUT"] }
     },
     select: {
       creatorId: true,
@@ -233,9 +236,9 @@ function didPositionWin(position: {
   amount: number;
   payoutAmount: number | null;
   side: "YES" | "NO" | null;
-  market: { marketType: "BINARY" | "NUMERIC"; outcome: "YES" | "NO" | "CANCELLED" | "UNRESOLVED" };
+  market: { marketType: "BINARY" | "NUMERIC" | "MULTIPLE_CHOICE"; outcome: "YES" | "NO" | "CANCELLED" | "UNRESOLVED" };
 }) {
-  if (position.market.marketType === "NUMERIC") {
+  if (position.market.marketType === "NUMERIC" || position.market.marketType === "MULTIPLE_CHOICE") {
     return (position.payoutAmount ?? 0) > 0;
   }
 
@@ -254,7 +257,7 @@ async function syncCategoryStats(
     side: "YES" | "NO" | null;
     market: {
       category: MarketCategory;
-      marketType: "BINARY" | "NUMERIC";
+      marketType: "BINARY" | "NUMERIC" | "MULTIPLE_CHOICE";
       outcome: "YES" | "NO" | "CANCELLED" | "UNRESOLVED";
     };
   }>

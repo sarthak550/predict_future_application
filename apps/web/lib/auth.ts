@@ -51,13 +51,27 @@ export const authOptions: NextAuthOptions = {
   ],
   callbacks: {
     async jwt({ token, user }) {
+      // On initial sign-in, seed the token payload from the authorize() result
+      // and stamp a refreshedAt timestamp.
       if (user) {
         token.sub = user.id;
         token.role = user.role;
         token.username = user.username;
         token.isSuspended = user.isSuspended;
+        token.refreshedAt = Date.now();
+        return token;
       }
 
+      // On subsequent requests, skip the DB re-fetch if the cached data is
+      // less than 5 minutes old. This prevents an O(N-requests) DB query pattern
+      // that adds latency and load on every authenticated web request.
+      const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+      const refreshedAt = typeof token.refreshedAt === "number" ? token.refreshedAt : 0;
+      if (Date.now() - refreshedAt < CACHE_TTL_MS) {
+        return token;
+      }
+
+      // TTL expired — refresh role/suspension status from DB and reset the clock.
       if (token.sub) {
         const dbUser = await prisma.user.findUnique({
           where: { id: token.sub },
@@ -73,6 +87,8 @@ export const authOptions: NextAuthOptions = {
           token.username = dbUser.username;
           token.isSuspended = dbUser.isSuspended;
         }
+
+        token.refreshedAt = Date.now();
       }
 
       return token;

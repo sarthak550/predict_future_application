@@ -138,6 +138,86 @@ export async function GET(
   });
   const totalReasoningUpvotes = upvoteAggregate._sum.reasoningUpvotes ?? 0;
 
+  // ── Finance streak + accuracy (S35-T3) ──────────────────────────────────────
+  // Fetch locked Poll A (IMPLICATION) votes only — drafts don't count.
+  const allFinanceVotes = await prisma.expertOpinionVote.findMany({
+    where: { userId: user.id, pollType: "IMPLICATION", lockedAt: { not: null } },
+    select: {
+      choice: true,
+      createdAt: true,
+      opinion: {
+        select: {
+          resolutionStatus: true,
+          resolvedAt: true,
+        },
+      },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  const financeTotalVotes = allFinanceVotes.length;
+
+  // Streak: consecutive IST calendar days with at least one Poll A vote.
+  // IST = UTC+5:30. All date comparisons are done in IST to avoid midnight edge cases.
+  function toIstDateKey(d: Date): string {
+    const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+    return new Date(d.getTime() + IST_OFFSET_MS).toISOString().slice(0, 10);
+  }
+
+  // Move an IST date-key back by one IST calendar day.
+  function prevIstDateKey(istKey: string): string {
+    const [y, m, d] = istKey.split("-").map(Number);
+    // Reconstruct the UTC instant that corresponds to the start of this IST day,
+    // then subtract 24 h to reach the previous IST day, then re-key.
+    const istMidnightUtc = new Date(Date.UTC(y, m - 1, d) - 5.5 * 60 * 60 * 1000);
+    istMidnightUtc.setUTCDate(istMidnightUtc.getUTCDate() - 1);
+    return toIstDateKey(istMidnightUtc);
+  }
+
+  const voteDates = new Set(allFinanceVotes.map((v) => toIstDateKey(v.createdAt)));
+  let financeStreak = 0;
+
+  if (voteDates.size > 0) {
+    const todayIst = toIstDateKey(new Date());
+    let cursor = todayIst;
+
+    // Walk back from today counting consecutive IST days with votes.
+    while (voteDates.has(cursor)) {
+      financeStreak++;
+      cursor = prevIstDateKey(cursor);
+    }
+
+    // Grace period: if today has no vote yet, try starting from yesterday.
+    if (financeStreak === 0) {
+      cursor = prevIstDateKey(todayIst);
+      while (voteDates.has(cursor)) {
+        financeStreak++;
+        cursor = prevIstDateKey(cursor);
+      }
+    }
+  }
+
+  // Accuracy: among resolved opinions the user voted on, what % did they agree with (opinion was HIT)?
+  const resolvedVotes = allFinanceVotes.filter(
+    (v) =>
+      v.opinion.resolutionStatus === "RESOLVED_HIT" ||
+      v.opinion.resolutionStatus === "RESOLVED_MISS"
+  );
+  const financeResolvedVotes = resolvedVotes.length;
+
+  let financeAccuracy: number | null = null;
+  if (financeResolvedVotes > 0) {
+    // "Correct" = user agreed (AGREE/STRONGLY_AGREE) and opinion was HIT,
+    //          OR user disagreed (DISAGREE/STRONGLY_DISAGREE) and opinion was MISS.
+    const correct = resolvedVotes.filter((v) => {
+      const isHit = v.opinion.resolutionStatus === "RESOLVED_HIT";
+      const userAgreed = v.choice === "AGREE" || v.choice === "STRONGLY_AGREE";
+      const userDisagreed = v.choice === "STRONGLY_DISAGREE" || v.choice === "DISAGREE";
+      return (isHit && userAgreed) || (!isHit && userDisagreed);
+    }).length;
+    financeAccuracy = Math.round((correct / financeResolvedVotes) * 100);
+  }
+
   // Resolve the public display name. When displayMode=ANONYMOUS, the username
   // field in the response is replaced with the deterministic pseudonym. The
   // URL continues to resolve via the real username (anonymity is display-only).
@@ -168,6 +248,10 @@ export async function GET(
       followerCount: user._count.followers,
       followingCount: user._count.following,
       isFollowedByMe,
+      financeStreak,
+      financeAccuracy,
+      financeTotalVotes,
+      financeResolvedVotes,
     },
     recentCalls: recentCalls.map((p) => ({
       marketId: p.market.id,

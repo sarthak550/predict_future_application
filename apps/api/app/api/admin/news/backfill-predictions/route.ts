@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import { NextResponse } from "next/server";
 
 import { generatePollWithAI } from "@/lib/ai/gemini";
-import { getSession } from "@/lib/auth";
+import { getUserIdFromRequest } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { slugify } from "@/lib/utils";
 
@@ -10,6 +10,7 @@ import { slugify } from "@/lib/utils";
  * POST /api/admin/news/backfill-predictions
  *
  * Finds published stories without a poll and generates AI polls for them.
+ * Accepts either admin session/Bearer auth OR a CRON_SECRET bearer token.
  */
 export async function POST(request: Request) {
   try {
@@ -17,10 +18,37 @@ export async function POST(request: Request) {
     const authHeader = request.headers.get("authorization");
     const isCron = cronSecret && authHeader === `Bearer ${cronSecret}`;
 
-    const session = isCron ? null : await getSession();
-    const actorId = isCron
-      ? (await prisma.user.findFirst({ where: { role: "ADMIN" }, select: { id: true } }))?.id
-      : session?.user?.id;
+    let actorId: string | undefined;
+
+    if (isCron) {
+      // Prefer deterministic lookup via SYSTEM_ADMIN_EMAIL env var to avoid
+      // non-deterministic findFirst when multiple ADMIN rows exist.
+      const systemEmail = process.env.SYSTEM_ADMIN_EMAIL;
+      if (systemEmail) {
+        actorId = (await prisma.user.findUnique({ where: { email: systemEmail }, select: { id: true } }))?.id;
+      }
+      // Fallback: first ADMIN row (non-deterministic if >1 admin exists, but acceptable
+      // when SYSTEM_ADMIN_EMAIL is not configured).
+      if (!actorId) {
+        actorId = (await prisma.user.findFirst({ where: { role: "ADMIN" }, select: { id: true } }))?.id;
+      }
+    } else {
+      const userId = await getUserIdFromRequest(request);
+      if (!userId) {
+        return NextResponse.json({ error: "Authentication required." }, { status: 401 });
+      }
+      const actor = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true, role: true, isSuspended: true },
+      });
+      if (!actor || actor.isSuspended) {
+        return NextResponse.json({ error: "Account cannot perform this action." }, { status: 403 });
+      }
+      if (actor.role !== "ADMIN" && actor.role !== "MODERATOR") {
+        return NextResponse.json({ error: "Admin access required." }, { status: 403 });
+      }
+      actorId = actor.id;
+    }
 
     if (!actorId) {
       return NextResponse.json({ error: "Authentication required." }, { status: 401 });

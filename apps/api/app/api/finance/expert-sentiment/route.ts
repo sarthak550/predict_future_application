@@ -7,39 +7,29 @@ export const dynamic = "force-dynamic";
 /**
  * GET /api/finance/expert-sentiment
  *
- * Returns an aggregate of all PENDING ExpertOpinion rows created in the last
- * 7 days. No auth required — this is a public aggregate.
+ * Returns an aggregate of all ExpertOpinion rows whose analyst made the call
+ * in the last 7 days. Includes PENDING and RESOLVED — a call made this week
+ * is a this-week data point regardless of whether it later resolved.
+ *
+ * No auth required — this is a public aggregate.
  */
 export async function GET() {
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
-  // Count by direction for PENDING opinions in the last 7 days
-  const [bullishCount, bearishCount, neutralCount] = await Promise.all([
-    prisma.expertOpinion.count({
-      where: {
-        resolutionStatus: "PENDING",
-        suppressedAt: null,
-        createdAt: { gte: sevenDaysAgo },
-        direction: "BULLISH",
-      },
-    }),
-    prisma.expertOpinion.count({
-      where: {
-        resolutionStatus: "PENDING",
-        suppressedAt: null,
-        createdAt: { gte: sevenDaysAgo },
-        direction: "BEARISH",
-      },
-    }),
-    prisma.expertOpinion.count({
-      where: {
-        resolutionStatus: "PENDING",
-        suppressedAt: null,
-        createdAt: { gte: sevenDaysAgo },
-        direction: "NEUTRAL",
-      },
-    }),
-  ]);
+  // Single groupBy replaces 3 separate count() round-trips.
+  // No resolutionStatus filter — resolved calls still count as "this week's sentiment".
+  const directionCounts = await prisma.expertOpinion.groupBy({
+    by: ["direction"],
+    where: {
+      suppressedAt: null,
+      publishedAt: { gte: sevenDaysAgo },
+    },
+    _count: { _all: true },
+  });
+
+  const bullishCount = directionCounts.find((c) => c.direction === "BULLISH")?._count._all ?? 0;
+  const bearishCount = directionCounts.find((c) => c.direction === "BEARISH")?._count._all ?? 0;
+  const neutralCount = directionCounts.find((c) => c.direction === "NEUTRAL")?._count._all ?? 0;
 
   const totalCount = bullishCount + bearishCount + neutralCount;
 
@@ -62,7 +52,7 @@ export async function GET() {
     dominantLean = "NEUTRAL";
   }
 
-  return NextResponse.json({
+  const response = NextResponse.json({
     bullishCount,
     bearishCount,
     neutralCount,
@@ -73,4 +63,6 @@ export async function GET() {
     dominantLean,
     samplePeriod: "7d" as const,
   });
+  response.headers.set("Cache-Control", "public, max-age=120, s-maxage=120");
+  return response;
 }

@@ -38,11 +38,13 @@ import type {
   ApiExpertOpinionItem,
   ApiExpertOpinionTallies,
   ApiImplicationChoice,
+  ApiOpinionSibling,
   AppAnalystTier,
 } from "@predict-future/types";
-import { formatRelativeTime } from "@predict-future/utils";
+import { formatRelativeTime, freshnessColor } from "@predict-future/utils";
 import { colors, radius, spacing } from "@predict-future/ui-tokens";
 import { SnappedSlider as Slider } from "@/components/snapped-slider";
+import { trackVoteEvent } from "@/lib/analytics";
 import { mobileApi } from "@/lib/api";
 import { getExpertInitials, getExpertInitialsColor } from "@/utils/expertAvatar";
 import { AnalystTierBadge } from "@/components/analyst-tier-badge";
@@ -113,13 +115,6 @@ function implicationChoiceToIndex(choice: string): number {
       return 2;
   }
 }
-
-// ─── Poll B retrospective configuration ───────────────────────────────────────
-
-const RETROSPECTIVE_CHOICES = [
-  { key: "HIT", label: "Aged well", color: "#16a34a", bg: "#dcfce7", border: "#bbf7d0" },
-  { key: "MISS", label: "Missed the mark", color: "#dc2626", bg: "#fee2e2", border: "#fecaca" },
-] as const;
 
 // ─── Utility ───────────────────────────────────────────────────────────────────
 
@@ -206,7 +201,17 @@ function ConsensusBar({
   const neutralCount = impl.neutral;
   const agreePct = Math.round((agreeCount / impl.total) * 100);
 
+  // S38: hide engagement % below N=5 — same threshold as the Big Call hero.
+  const ENGAGEMENT_MIN = 5;
+
   if (!hasVoted) {
+    if (impl.total < ENGAGEMENT_MIN) {
+      return (
+        <View style={consensusStyles.preVoteWrap}>
+          <Text style={consensusStyles.preVoteLabel}>Vote to see how others stand</Text>
+        </View>
+      );
+    }
     return (
       <View style={consensusStyles.preVoteWrap}>
         <View style={consensusStyles.preVoteTrack}>
@@ -327,11 +332,31 @@ function PollA({
   const isPending = opinion.resolutionStatus === "PENDING";
   const hasVoted = localChoice !== null;
   const impTallies = tallies?.implication;
+  const isLocked = Boolean(impTallies?.userLockedAt);
+  const isDraftEditable = hasVoted && !isLocked && isPending;
+
+  // When a draft vote becomes editable (or its server-side bucket changes),
+  // align the slider position so the user can drag from where they currently sit.
+  useEffect(() => {
+    if (isDraftEditable && localChoice) {
+      setPendingBucket(implicationChoiceToIndex(localChoice));
+    }
+  }, [isDraftEditable, localChoice]);
 
   const handleSubmit = async () => {
     if (voting) return;
     const choice = IMPLICATION_BUCKETS[pendingBucket]?.key;
     if (!choice) return;
+    if (!isPending) {
+      trackVoteEvent("opinion_vote_blocked", {
+        opinionId: opinion.id,
+        expertId: opinion.expertId,
+        expertOrganization: opinion.expertOrganization,
+        direction: opinion.direction as "BULLISH" | "BEARISH" | "NEUTRAL",
+        resolutionStatus: opinion.resolutionStatus as "RESOLVED_HIT" | "RESOLVED_MISS",
+      });
+      return;
+    }
     setVoting(true);
     setError(null);
     const prev = localChoice;
@@ -342,9 +367,91 @@ function PollA({
         choice,
       });
       onVoted(updated);
-    } catch {
+      trackVoteEvent(prev === null ? "opinion_vote_cast" : "opinion_vote_changed", {
+        opinionId: opinion.id,
+        expertId: opinion.expertId,
+        expertOrganization: opinion.expertOrganization,
+        direction: opinion.direction as "BULLISH" | "BEARISH" | "NEUTRAL",
+        choice,
+        previousChoice: prev,
+      });
+    } catch (err) {
       setLocalChoice(prev);
       setError("Vote failed. Tap to retry.");
+      console.error("[poll-a] castExpertOpinionVote failed:", err);
+    } finally {
+      setVoting(false);
+    }
+  };
+
+  const handleLock = async () => {
+    if (voting || isLocked) return;
+    if (!isPending) {
+      trackVoteEvent("opinion_vote_blocked", {
+        opinionId: opinion.id,
+        expertId: opinion.expertId,
+        expertOrganization: opinion.expertOrganization,
+        direction: opinion.direction as "BULLISH" | "BEARISH" | "NEUTRAL",
+        resolutionStatus: opinion.resolutionStatus as "RESOLVED_HIT" | "RESOLVED_MISS",
+      });
+      return;
+    }
+    setVoting(true);
+    setError(null);
+    try {
+      const updated = await mobileApi.lockExpertOpinionVote(opinion.id);
+      onVoted(updated);
+      trackVoteEvent("opinion_vote_locked", {
+        opinionId: opinion.id,
+        expertId: opinion.expertId,
+        expertOrganization: opinion.expertOrganization,
+        direction: opinion.direction as "BULLISH" | "BEARISH" | "NEUTRAL",
+        choice: localChoice ?? undefined,
+      });
+    } catch (err) {
+      setError("Couldn't cast vote. Tap to retry.");
+      console.error("[poll-a] lockExpertOpinionVote failed:", err);
+    } finally {
+      setVoting(false);
+    }
+  };
+
+  // UX2: atomic re-cast + lock for the "user changed their draft bucket" case.
+  // Without this, switching from drafted-A to locked-B is a 2-tap flow:
+  // "Update draft to B" → "Cast my vote: B". One tap is more direct.
+  const handleSubmitAndLock = async () => {
+    if (voting || isLocked || !isPending) return;
+    const choice = IMPLICATION_BUCKETS[pendingBucket]?.key;
+    if (!choice) return;
+    setVoting(true);
+    setError(null);
+    const prev = localChoice;
+    setLocalChoice(choice);
+    try {
+      // 1. Re-cast with new bucket
+      await mobileApi.castExpertOpinionVote(opinion.id, { pollType: "IMPLICATION", choice });
+      trackVoteEvent(prev === null ? "opinion_vote_cast" : "opinion_vote_changed", {
+        opinionId: opinion.id,
+        expertId: opinion.expertId,
+        expertOrganization: opinion.expertOrganization,
+        direction: opinion.direction as "BULLISH" | "BEARISH" | "NEUTRAL",
+        choice,
+        previousChoice: prev,
+      });
+      // 2. Lock immediately so user gets a single-tap commit
+      const updated = await mobileApi.lockExpertOpinionVote(opinion.id);
+      onVoted(updated);
+      trackVoteEvent("opinion_vote_locked", {
+        opinionId: opinion.id,
+        expertId: opinion.expertId,
+        expertOrganization: opinion.expertOrganization,
+        direction: opinion.direction as "BULLISH" | "BEARISH" | "NEUTRAL",
+        choice,
+      });
+    } catch (err) {
+      setLocalChoice(prev);
+      setError("Couldn't cast vote. Tap to retry.");
+      console.error("[poll-a] submit+lock failed:", err);
     } finally {
       setVoting(false);
     }
@@ -464,31 +571,77 @@ function PollA({
             minimumValue={0}
             maximumValue={4}
             step={1}
-            value={votedBucketIndex}
-            minimumTrackTintColor={IMPLICATION_BUCKETS[votedBucketIndex]?.color ?? "#6b7280"}
+            value={isDraftEditable ? pendingBucket : votedBucketIndex}
+            onValueChange={isDraftEditable ? (val) => setPendingBucket(Math.round(val)) : undefined}
+            minimumTrackTintColor={
+              IMPLICATION_BUCKETS[isDraftEditable ? pendingBucket : votedBucketIndex]?.color ?? "#6b7280"
+            }
             maximumTrackTintColor="#E5E7EB"
-            thumbTintColor={IMPLICATION_BUCKETS[votedBucketIndex]?.color ?? "#6b7280"}
-            disabled={true}
+            thumbTintColor={
+              IMPLICATION_BUCKETS[isDraftEditable ? pendingBucket : votedBucketIndex]?.color ?? "#6b7280"
+            }
+            disabled={!isDraftEditable || voting}
           />
 
           <View style={pollStyles.tickRow}>
-            {IMPLICATION_BUCKETS.map((b, i) => (
-              <Text
-                key={b.key}
-                style={[
-                  pollStyles.tickLabel,
-                  votedBucketIndex === i && { color: b.color, fontWeight: "800" },
-                ]}
-              >
-                {b.tickLabel}
-              </Text>
-            ))}
+            {IMPLICATION_BUCKETS.map((b, i) => {
+              const activeIdx = isDraftEditable ? pendingBucket : votedBucketIndex;
+              return (
+                <Text
+                  key={b.key}
+                  style={[
+                    pollStyles.tickLabel,
+                    activeIdx === i && { color: b.color, fontWeight: "800" },
+                  ]}
+                >
+                  {b.tickLabel}
+                </Text>
+              );
+            })}
           </View>
 
-          {localChoice && (
+          {localChoice && isLocked && impTallies?.userLockedAt && (
             <Text style={pollStyles.youVotedChip}>
-              You voted {IMPLICATION_BUCKETS[votedBucketIndex]?.label ?? localChoice}
+              ✓ Voted {IMPLICATION_BUCKETS[votedBucketIndex]?.label ?? localChoice}
+              {" · "}
+              {new Date(impTallies.userLockedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
               {!isPending && " · Poll closed"}
+            </Text>
+          )}
+
+          {isDraftEditable && (() => {
+            const draftChanged = pendingBucket !== votedBucketIndex;
+            // Button label always shows the bucket being committed (pendingBucket
+            // when changed, votedBucketIndex when not). Handler is atomic when
+            // changed — single tap re-casts AND locks.
+            const committingBucket = draftChanged ? pendingBucket : votedBucketIndex;
+            return (
+              <>
+                <Pressable
+                  style={[pollStyles.castVoteBtn, voting && pollStyles.submitVoteBtnDisabled]}
+                  onPress={() => void (draftChanged ? handleSubmitAndLock() : handleLock())}
+                  disabled={voting}
+                >
+                  {voting ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Text style={pollStyles.castVoteBtnText}>
+                      Cast my vote: {IMPLICATION_BUCKETS[committingBucket]?.label ?? localChoice}
+                    </Text>
+                  )}
+                </Pressable>
+                <Text style={pollStyles.castVoteHint}>
+                  {draftChanged
+                    ? "Drag to change · One tap locks in your updated vote."
+                    : "Draft only — only cast votes count toward your accuracy."}
+                </Text>
+              </>
+            );
+          })()}
+
+          {localChoice && !isLocked && !isPending && (
+            <Text style={pollStyles.youVotedChip}>
+              Your draft of {IMPLICATION_BUCKETS[votedBucketIndex]?.label ?? localChoice} didn't count · Poll closed
             </Text>
           )}
         </>
@@ -553,6 +706,15 @@ const pollStyles = StyleSheet.create({
   },
   submitVoteBtnDisabled: { opacity: 0.55 },
   submitVoteBtnText: { color: "#fff", fontSize: 13, fontWeight: "700", letterSpacing: 0.3 },
+  castVoteBtn: {
+    backgroundColor: "#4338ca",
+    borderRadius: radius.sm,
+    paddingVertical: 9,
+    alignItems: "center",
+    marginTop: spacing.sm,
+  },
+  castVoteBtnText: { color: "#fff", fontSize: 12, fontWeight: "700", letterSpacing: 0.2 },
+  castVoteHint: { fontSize: 10, color: "#6b7280", marginTop: 4, textAlign: "center" },
   histogramRow: {
     flexDirection: "row",
     alignItems: "flex-end",
@@ -572,173 +734,6 @@ const pollStyles = StyleSheet.create({
     fontStyle: "italic",
   },
   errorText: { fontSize: 11, color: "#dc2626", marginTop: 4, textAlign: "center" },
-});
-
-// ─── Poll B ────────────────────────────────────────────────────────────────────
-
-function PollB({
-  opinion,
-  tallies,
-  onVoted,
-}: {
-  opinion: ApiExpertOpinionItem;
-  tallies: ApiExpertOpinionTallies | null;
-  onVoted: (tallies: ApiExpertOpinionTallies) => void;
-}) {
-  const [voting, setVoting] = useState(false);
-  const [localChoice, setLocalChoice] = useState<string | null>(
-    tallies?.retrospective.userChoice ?? null
-  );
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (tallies?.retrospective.userChoice) {
-      setLocalChoice(tallies.retrospective.userChoice);
-    }
-  }, [tallies?.retrospective.userChoice]);
-
-  const isLocked = tallies?.retrospective.isLocked ?? opinion.resolutionStatus === "PENDING";
-  const hasVoted = localChoice !== null;
-  const retroTallies = tallies?.retrospective;
-
-  const computePercent = (count: number, total: number) =>
-    total > 0 ? Math.round((count / total) * 100) : 0;
-
-  const handleVote = async (choice: string) => {
-    if (voting || isLocked) return;
-    setVoting(true);
-    setError(null);
-    const prev = localChoice;
-    setLocalChoice(choice);
-    try {
-      const updated = await mobileApi.castExpertOpinionVote(opinion.id, {
-        pollType: "RETROSPECTIVE",
-        choice,
-      });
-      onVoted(updated);
-    } catch {
-      setLocalChoice(prev);
-      setError("Vote failed. Tap to retry.");
-    } finally {
-      setVoting(false);
-    }
-  };
-
-  const resolutionLabel =
-    opinion.resolutionStatus === "RESOLVED_HIT"
-      ? "HIT"
-      : opinion.resolutionStatus === "RESOLVED_MISS"
-        ? "MISS"
-        : null;
-
-  const resolvedDateStr = opinion.resolvedAt
-    ? new Date(opinion.resolvedAt).toLocaleDateString("en-IN", {
-        day: "numeric",
-        month: "short",
-        year: "numeric",
-      })
-    : null;
-
-  if (isLocked) return null; // hidden until resolved; PollA is shown instead
-
-  return (
-    <View style={[pollStyles.section, pollBStyles.wrap]}>
-      <Text style={pollStyles.sectionHeader}>Did this call age well?</Text>
-
-      {resolutionLabel && resolvedDateStr && (
-        <View
-          style={[
-            pollBStyles.resolutionChip,
-            { backgroundColor: resolutionLabel === "HIT" ? "#dcfce7" : "#fee2e2" },
-          ]}
-        >
-          <Text
-            style={[
-              pollBStyles.resolutionChipText,
-              { color: resolutionLabel === "HIT" ? "#16a34a" : "#dc2626" },
-            ]}
-          >
-            Resolution: {resolutionLabel} · Resolved {resolvedDateStr}
-          </Text>
-        </View>
-      )}
-
-      {!hasVoted ? (
-        <View style={pollBStyles.choiceRow}>
-          {RETROSPECTIVE_CHOICES.map((c) => (
-            <Pressable
-              key={c.key}
-              style={[pollBStyles.choiceBtn, { borderColor: c.border, backgroundColor: c.bg }]}
-              onPress={() => void handleVote(c.key)}
-              disabled={voting}
-            >
-              <Text style={[pollBStyles.choiceBtnText, { color: c.color }]}>{c.label}</Text>
-            </Pressable>
-          ))}
-        </View>
-      ) : (
-        <>
-          {RETROSPECTIVE_CHOICES.map((c) => {
-            const count = c.key === "HIT" ? retroTallies?.hit ?? 0 : retroTallies?.miss ?? 0;
-            const pct = computePercent(count, retroTallies?.total ?? 0);
-            const isUserChoice = localChoice === c.key;
-            return (
-              <View key={c.key} style={pollBStyles.tallyRow}>
-                <Text style={[pollBStyles.tallyLabel, isUserChoice && { fontWeight: "800" }]}>
-                  {c.label}
-                </Text>
-                <View style={pollBStyles.barTrack}>
-                  <View style={[pollBStyles.barFill, { width: `${pct}%`, backgroundColor: c.color }]} />
-                </View>
-                <Text style={[pollBStyles.pctLabel, { color: c.color }]}>{pct}%</Text>
-              </View>
-            );
-          })}
-          {localChoice && (
-            <Text style={pollStyles.youVotedChip}>
-              You voted{" "}
-              {RETROSPECTIVE_CHOICES.find((c) => c.key === localChoice)?.label ?? localChoice}
-            </Text>
-          )}
-        </>
-      )}
-
-      {error && <Text style={pollStyles.errorText}>{error}</Text>}
-    </View>
-  );
-}
-
-const pollBStyles = StyleSheet.create({
-  wrap: { backgroundColor: "#fafafa", borderRadius: radius.sm, padding: spacing.sm },
-  resolutionChip: {
-    borderRadius: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    marginBottom: 10,
-    alignSelf: "flex-start",
-  },
-  resolutionChipText: { fontSize: 12, fontWeight: "600" },
-  choiceRow: { flexDirection: "row", gap: 10 },
-  choiceBtn: {
-    flex: 1,
-    borderWidth: 1.5,
-    borderRadius: radius.sm,
-    paddingVertical: 10,
-    alignItems: "center",
-  },
-  choiceBtnText: { fontSize: 13, fontWeight: "700" },
-  tallyRow: { flexDirection: "row", alignItems: "center", marginBottom: 8 },
-  tallyLabel: { fontSize: 12, color: "#374151", width: 110 },
-  barTrack: {
-    flex: 1,
-    height: 6,
-    backgroundColor: "#E5E7EB",
-    borderRadius: 3,
-    overflow: "hidden",
-    marginHorizontal: 8,
-  },
-  barFill: { height: 6, borderRadius: 3 },
-  pctLabel: { fontSize: 11, fontWeight: "700", width: 34, textAlign: "right" },
 });
 
 // ─── Share-only composed view (off-screen) ─────────────────────────────────────
@@ -923,6 +918,12 @@ export function ExpertOpinionPostCard({
   // ── Body expansion ──
   const [bodyExpanded, setBodyExpanded] = useState(false);
 
+  // ── Sibling opinions (chip links to /story/[id] for full grouped view) ──
+  const siblings: ApiOpinionSibling[] = opinion.siblings ?? [];
+  const siblingBullish = siblings.filter((s) => s.direction === "BULLISH").length;
+  const siblingBearish = siblings.filter((s) => s.direction === "BEARISH").length;
+  const siblingNeutral = siblings.filter((s) => s.direction === "NEUTRAL").length;
+
   // ── Share ──
   const [sharing, setSharing] = useState(false);
   const cardRef = useRef<View>(null);
@@ -971,11 +972,14 @@ export function ExpertOpinionPostCard({
   }, []);
 
   // ── Follow handler ──
+  // followPending is set to true before the API call and cleared in finally —
+  // no setTimeout needed; the button is disabled until the request settles.
   const handleFollowPress = useCallback(() => {
     if (!onFollowToggle || followPending) return;
     setFollowPending(true);
-    onFollowToggle(opinion.expertId, isFollowed ?? false);
-    setTimeout(() => setFollowPending(false), 600);
+    Promise.resolve(onFollowToggle(opinion.expertId, isFollowed ?? false)).finally(() => {
+      setFollowPending(false);
+    });
   }, [onFollowToggle, followPending, opinion.expertId, isFollowed]);
 
   // ── Share handler ──
@@ -1036,12 +1040,8 @@ export function ExpertOpinionPostCard({
   return (
     <View ref={cardRef} style={styles.card} collapsable={false}>
 
-      {/* RESOLVED stamp — top-right corner overlay */}
-      {isResolved && (
-        <View style={styles.resolvedStamp} pointerEvents="none">
-          <Text style={styles.resolvedStampText}>RESOLVED</Text>
-        </View>
-      )}
+      {/* S38 fix: RESOLVED stamp moved INLINE — used to be absolute top-right
+          and collided with the Follow button. Now lives inside the org row. */}
 
       {/* ── HEADER ── */}
       <View style={styles.header}>
@@ -1090,7 +1090,23 @@ export function ExpertOpinionPostCard({
             {showVerifiedBadge && hitRatePct != null && (
               <Text style={styles.hitRateLabel}>{hitRatePct}% hit rate</Text>
             )}
+            {isResolved && (
+              <View style={styles.resolvedStampInline}>
+                <Text style={styles.resolvedStampText}>RESOLVED</Text>
+              </View>
+            )}
           </View>
+          {/* When the analyst made the call — prefers analystCallAt when the
+              extractor surfaced it, falls back to article publishedAt otherwise.
+              Color is tuned to recency. */}
+          {(() => {
+            const callTime = opinion.analystCallAt ?? opinion.publishedAt;
+            return callTime ? (
+              <Text style={[styles.calledAt, { color: freshnessColor(callTime) }]}>
+                Called {formatRelativeTime(callTime)}
+              </Text>
+            ) : null;
+          })()}
         </View>
 
         {/* Follow button */}
@@ -1112,27 +1128,31 @@ export function ExpertOpinionPostCard({
         )}
       </View>
 
-      {/* ── VERDICT BADGE ── */}
+      {/* ── VERDICT BADGE (direction + asset name) ── */}
       <View
         style={[
           styles.verdictBadge,
           { backgroundColor: verdictBg, borderColor: verdictBorder },
         ]}
       >
-        <Text style={[styles.verdictText, { color: verdictColor }]}>
+        <Text style={[styles.verdictText, { color: verdictColor }]} numberOfLines={1}>
           {dirConfig.icon}{"  "}{verdictLabel}
+          {opinion.instrument ? (
+            <Text style={[styles.verdictAssetText, { color: verdictColor }]}>
+              {" on "}{opinion.instrument}
+            </Text>
+          ) : null}
         </Text>
       </View>
 
-      {/* ── TICKER ROW ── */}
-      {(opinion.instrumentTicker || opinion.instrument) && (
+      {/* ── TICKER CHIP (the actual symbol — for users who track by ticker) ── */}
+      {opinion.instrumentTicker && (
         <View style={styles.tickerRow}>
-          {opinion.instrumentTicker && (
-            <Text style={styles.ticker}>{opinion.instrumentTicker}</Text>
-          )}
-          {opinion.instrument && (
-            <Text style={styles.instrumentName}>{opinion.instrument}</Text>
-          )}
+          <View style={[styles.tickerChip, { borderColor: verdictBorder }]}>
+            <Text style={[styles.tickerSymbol, { color: verdictColor }]}>
+              {opinion.instrumentTicker}
+            </Text>
+          </View>
         </View>
       )}
 
@@ -1162,17 +1182,108 @@ export function ExpertOpinionPostCard({
         </Text>
       </Pressable>
 
-      {/* ── ENGAGEMENT ZONE ── */}
-      {isResolved ? (
-        <PollB opinion={opinion} tallies={tallies} onVoted={handleTalliesUpdate} />
-      ) : (
-        <PollA
-          opinion={opinion}
-          tallies={tallies}
-          loadingTallies={loadingTallies && showSkeleton}
-          onVoted={handleTalliesUpdate}
-        />
+      {/* ── SIBLINGS CHIP — links to story detail which renders all takes
+            stacked together with the article hero on top. */}
+      {siblings.length > 0 && opinion.storyId && (
+        <Pressable
+          onPress={() =>
+            router.push(`/story/${opinion.storyId}` as Parameters<typeof router.push>[0])
+          }
+          style={styles.siblingsChip}
+          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+        >
+          <Text style={styles.siblingsChipText} numberOfLines={1} ellipsizeMode="tail">
+            +{siblings.length} other take{siblings.length === 1 ? "" : "s"} on this story
+            {(siblingBullish > 0 || siblingBearish > 0 || siblingNeutral > 0) && " · "}
+            {siblingBullish > 0 && (
+              <Text style={styles.siblingsChipBullish}>{siblingBullish} bullish</Text>
+            )}
+            {siblingBullish > 0 && siblingBearish > 0 && <Text style={styles.siblingsChipText}> · </Text>}
+            {siblingBearish > 0 && (
+              <Text style={styles.siblingsChipBearish}>{siblingBearish} bearish</Text>
+            )}
+            {(siblingBullish > 0 || siblingBearish > 0) && siblingNeutral > 0 && (
+              <Text style={styles.siblingsChipText}> · </Text>
+            )}
+            {siblingNeutral > 0 && (
+              <Text style={styles.siblingsChipNeutral}>{siblingNeutral} neutral</Text>
+            )}
+          </Text>
+          <Text style={styles.siblingsChipChevron}>›</Text>
+        </Pressable>
       )}
+
+      {/* ── RESOLUTION REASON ── */}
+      {isResolved && opinion.resolutionNote && (
+        <View
+          style={[
+            styles.resolutionBanner,
+            { backgroundColor: isHit ? "#f0fdf4" : "#fef2f2", borderLeftColor: isHit ? "#16a34a" : "#dc2626" },
+          ]}
+        >
+          <Text style={[styles.resolutionBannerLabel, { color: isHit ? "#16a34a" : "#dc2626" }]}>
+            Why {isHit ? "HIT" : "MISS"}
+          </Text>
+          <Text style={styles.resolutionBannerText}>{opinion.resolutionNote}</Text>
+        </View>
+      )}
+
+      {/* ── M6: NARRATIVE STRIP (resolved-only) ── */}
+      {isResolved && (() => {
+        const callTime = opinion.analystCallAt ?? opinion.publishedAt;
+        const daysToResolve = opinion.resolvedAt && callTime
+          ? Math.max(1, Math.round((new Date(opinion.resolvedAt).getTime() - new Date(callTime).getTime()) / 86_400_000))
+          : null;
+        const resolvedDateLabel = opinion.resolvedAt
+          ? new Date(opinion.resolvedAt).toLocaleDateString("en-IN", {
+              day: "numeric",
+              month: "short",
+              year: "numeric",
+            })
+          : null;
+        const impl = tallies?.implication;
+        const scoreable = impl ? impl.agree + impl.stronglyAgree + impl.disagree + impl.stronglyDisagree : 0;
+        const crowdRight = impl
+          ? isHit
+            ? impl.agree + impl.stronglyAgree
+            : impl.disagree + impl.stronglyDisagree
+          : 0;
+        const crowdPct = scoreable > 0 ? Math.round((crowdRight / scoreable) * 100) : null;
+        const accentColor = isHit ? "#16a34a" : "#dc2626";
+
+        if (!resolvedDateLabel && !daysToResolve && crowdPct === null) return null;
+        return (
+          <View style={styles.narrativeStrip}>
+            {resolvedDateLabel && (
+              <View style={styles.narrativeChip}>
+                <Text style={styles.narrativeChipText}>
+                  📅 Resolved {resolvedDateLabel}
+                  {daysToResolve !== null && (
+                    <Text style={styles.narrativeChipSubtle}>
+                      {"  ·  in "}{daysToResolve} day{daysToResolve === 1 ? "" : "s"}
+                    </Text>
+                  )}
+                </Text>
+              </View>
+            )}
+            {crowdPct !== null && scoreable >= 5 && (
+              <View style={[styles.narrativeChip, { backgroundColor: isHit ? "#dcfce7" : "#fee2e2" }]}>
+                <Text style={[styles.narrativeChipText, { color: accentColor, fontWeight: "700" }]}>
+                  {crowdRight}/{scoreable} voters got this right ({crowdPct}%)
+                </Text>
+              </View>
+            )}
+          </View>
+        );
+      })()}
+
+      {/* ── ENGAGEMENT ZONE ── */}
+      <PollA
+        opinion={opinion}
+        tallies={tallies}
+        loadingTallies={loadingTallies && showSkeleton}
+        onVoted={handleTalliesUpdate}
+      />
 
       {/* ── FOOTER ── */}
       <View style={styles.footer}>
@@ -1244,6 +1355,58 @@ const styles = StyleSheet.create({
     color: "#64748b",
     letterSpacing: 1.2,
   },
+  resolvedStampInline: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    backgroundColor: "#f1f5f9",
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+  },
+
+  // Resolution-reason inline banner
+  resolutionBanner: {
+    marginTop: spacing.sm,
+    borderLeftWidth: 3,
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+  },
+  resolutionBannerLabel: {
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.6,
+    marginBottom: 2,
+  },
+  resolutionBannerText: {
+    fontSize: 12,
+    color: "#374151",
+    lineHeight: 17,
+  },
+
+  // M6: Narrative strip below resolution banner
+  narrativeStrip: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    marginTop: spacing.sm,
+  },
+  narrativeChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: "#f1f5f9",
+  },
+  narrativeChipText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#475569",
+  },
+  narrativeChipSubtle: {
+    fontSize: 11,
+    fontWeight: "500",
+    color: "#94a3b8",
+  },
 
   // Header zone
   header: {
@@ -1292,6 +1455,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#6b7280",
   },
+  calledAt: { fontSize: 11, color: "#9ca3af", marginTop: 2, fontWeight: "500" as const },
   hitRateLabel: {
     fontSize: 11,
     color: "#16a34a",
@@ -1336,24 +1500,31 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     letterSpacing: 1.5,
   },
+  verdictAssetText: {
+    fontSize: 14,
+    fontWeight: "700",
+    letterSpacing: 0.3,
+    textTransform: "none" as const,
+  },
 
-  // Ticker
+  // Ticker chip — small monospace-style badge of the actual Yahoo ticker
   tickerRow: {
     flexDirection: "row",
-    alignItems: "baseline",
-    gap: 8,
+    alignItems: "center",
     marginBottom: 10,
   },
-  ticker: {
-    fontSize: 13,
-    fontWeight: "800",
-    color: "#111827",
-    letterSpacing: 0.5,
+  tickerChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    backgroundColor: "#fff",
   },
-  instrumentName: {
-    fontSize: 12,
-    color: "#6b7280",
-    fontWeight: "400",
+  tickerSymbol: {
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.8,
+    fontVariant: ["tabular-nums" as const],
   },
 
   // Body
@@ -1387,6 +1558,24 @@ const styles = StyleSheet.create({
     color: colors.accent ?? "#4338ca",
     fontWeight: "600",
   },
+
+  // Siblings chip + sheet
+  siblingsChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 999,
+    backgroundColor: "#f1f5f9",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  siblingsChipText: { fontSize: 12, fontWeight: "600", color: "#475569", flex: 1 },
+  siblingsChipBullish: { color: "#16a34a", fontWeight: "700" },
+  siblingsChipBearish: { color: "#dc2626", fontWeight: "700" },
+  siblingsChipNeutral: { color: "#6b7280", fontWeight: "700" },
+  siblingsChipChevron: { fontSize: 16, color: "#94a3b8", marginLeft: 6 },
 
   // Footer
   footer: {

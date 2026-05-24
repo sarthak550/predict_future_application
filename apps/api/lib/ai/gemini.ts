@@ -237,29 +237,159 @@ async function callGroq(apiKey: string, story: NewsStoryInput, modelIndex = 0): 
   return validateAndNormalize(JSON.parse(text) as PollResult, story.summary);
 }
 
+// ─── Shared callGeminiAI helper ──────────────────────────────────────────────
+//
+// Generic Gemini caller used by all AI lib files that need Gemini for
+// non-poll tasks (resolution, extraction, headline generation, etc.).
+//
+// Features:
+//   - Env-pinned model: GEMINI_MODEL (default gemini-2.5-flash)
+//   - Env-pinned fallback: GEMINI_FALLBACK_MODEL (default gemini-1.5-flash)
+//   - On primary 404: retries once with fallback model
+//   - 1-hour in-memory "primary is down" cache: skips primary entirely during
+//     the window so every call in a bad-model scenario doesn't pay 2x cost.
+//     Resets automatically on the first successful primary call after the window.
+
+const GEMINI_PRIMARY_MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
+const GEMINI_FALLBACK_MODEL_ENV = process.env.GEMINI_FALLBACK_MODEL ?? "gemini-1.5-flash";
+
+/** Timestamp (ms) until which the primary model is considered unavailable. 0 = available. */
+let _primary404Until = 0;
+
+/**
+ * Shared helper for structured-JSON Gemini calls across all AI pipelines.
+ *
+ * @param systemPrompt  - Task instructions for the model.
+ * @param userPrompt    - The user turn content (may contain delimiter-wrapped untrusted data).
+ * @param opts.maxOutputTokens - Default 512. Callers can raise for longer outputs.
+ * @param opts.temperature     - Default 0.1 (low for extraction tasks).
+ * @returns Parsed JSON object, or throws on unrecoverable error.
+ */
+export async function callGeminiAI<T>(
+  systemPrompt: string,
+  userPrompt: string,
+  opts: { maxOutputTokens?: number; temperature?: number } = {}
+): Promise<T> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("[callGeminiAI] GEMINI_API_KEY is not set");
+  }
+
+  const { maxOutputTokens = 512, temperature = 0.1 } = opts;
+
+  const buildBody = (model: string): string =>
+    JSON.stringify({
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }],
+        },
+      ],
+      generationConfig: {
+        temperature,
+        maxOutputTokens,
+        responseMimeType: "application/json",
+      },
+    });
+
+  const fetchModel = (model: string): Promise<Response> =>
+    fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+      body: buildBody(model),
+    });
+
+  const now = Date.now();
+  const primaryDown = now < _primary404Until;
+
+  let response: Response;
+  let usedModel: string;
+
+  if (primaryDown) {
+    // Primary is cached-down; go straight to fallback
+    console.warn(
+      `[callGeminiAI] Primary model ${GEMINI_PRIMARY_MODEL} is in 404-cooldown until ${new Date(_primary404Until).toISOString()} — using fallback ${GEMINI_FALLBACK_MODEL_ENV} directly`
+    );
+    response = await fetchModel(GEMINI_FALLBACK_MODEL_ENV);
+    usedModel = GEMINI_FALLBACK_MODEL_ENV;
+  } else {
+    response = await fetchModel(GEMINI_PRIMARY_MODEL);
+    usedModel = GEMINI_PRIMARY_MODEL;
+
+    if (response.status === 404) {
+      // Cache the primary outage for 1 hour
+      _primary404Until = Date.now() + 60 * 60 * 1000;
+      console.warn(
+        `[callGeminiAI] Primary model ${GEMINI_PRIMARY_MODEL} returned 404 — caching outage for 1h, retrying with fallback ${GEMINI_FALLBACK_MODEL_ENV}`
+      );
+      response = await fetchModel(GEMINI_FALLBACK_MODEL_ENV);
+      usedModel = GEMINI_FALLBACK_MODEL_ENV;
+    } else if (response.ok) {
+      // Successful primary call — reset the cooldown if it was somehow set
+      _primary404Until = 0;
+    }
+  }
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`[callGeminiAI] Gemini (${usedModel}) returned ${response.status}: ${errText.slice(0, 200)}`);
+  }
+
+  const data = (await response.json()) as Record<string, unknown>;
+  const rawText = (
+    ((data?.candidates as unknown[])?.[0] as Record<string, unknown> | undefined)
+      ?.content as Record<string, unknown> | undefined
+  )?.parts?.[0 as never] as Record<string, unknown> | undefined;
+  const text = rawText?.text as string | undefined;
+
+  if (!text) {
+    throw new Error(`[callGeminiAI] Gemini (${usedModel}) returned no text content`);
+  }
+
+  const cleaned = text.replace(/^```json\s*/i, "").replace(/\s*```$/, "").trim();
+  return JSON.parse(cleaned) as T;
+}
+
 // ---- Gemini (fallback) ----
 
-async function callGemini(apiKey: string, story: NewsStoryInput): Promise<PollResult> {
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+const PRIMARY_MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
+const FALLBACK_MODEL = process.env.GEMINI_FALLBACK_MODEL ?? "gemini-1.5-flash";
+
+function buildGeminiRequestBody(story: NewsStoryInput): string {
+  return JSON.stringify({
+    contents: [
+      {
+        role: "user",
+        parts: [{ text: `${SYSTEM_PROMPT}\n\n${buildUserPrompt(story)}` }],
+      },
+    ],
+    generationConfig: {
+      temperature: 0.7,
+      maxOutputTokens: 1024,
+      responseMimeType: "application/json",
+    },
+  });
+}
+
+async function callGeminiModel(apiKey: string, model: string, story: NewsStoryInput): Promise<Response> {
+  return fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [
-          {
-            role: "user",
-            parts: [{ text: `${SYSTEM_PROMPT}\n\n${buildUserPrompt(story)}` }],
-          },
-        ],
-        generationConfig: {
-          temperature: 0.7,
-          maxOutputTokens: 1024,
-          responseMimeType: "application/json",
-        },
-      }),
+      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+      body: buildGeminiRequestBody(story),
     }
   );
+}
+
+async function callGemini(apiKey: string, story: NewsStoryInput): Promise<PollResult> {
+  let response = await callGeminiModel(apiKey, PRIMARY_MODEL, story);
+
+  // On 404 (model not found / deprecated), retry once with the fallback model
+  if (response.status === 404) {
+    console.warn(`[gemini] Primary model ${PRIMARY_MODEL} returned 404 — retrying with fallback model ${FALLBACK_MODEL}`);
+    response = await callGeminiModel(apiKey, FALLBACK_MODEL, story);
+  }
 
   if (!response.ok) {
     const errorText = await response.text();

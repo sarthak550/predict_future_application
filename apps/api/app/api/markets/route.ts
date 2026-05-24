@@ -1,7 +1,7 @@
 import { MarketCategory, MarketStatus } from "@prisma/client";
 import { NextResponse } from "next/server";
 
-import { getSession, getUserIdFromRequest } from "@/lib/auth";
+import { getUserIdFromRequest } from "@/lib/auth";
 import { createPredictionMarket } from "@/lib/markets/create";
 import { computeMarketRankScore, rankMarkets } from "@/lib/markets/ranking";
 import { prisma } from "@/lib/prisma";
@@ -171,9 +171,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const { searchParams } = new URL(request.url);
-    const session = await getSession();
-    const userId = session?.user?.id ?? searchParams.get("userId");
+    const userId = await getUserIdFromRequest(request);
     if (!userId) {
       return NextResponse.json({ error: "Authentication required." }, { status: 401 });
     }
@@ -194,6 +192,13 @@ export async function POST(request: Request) {
     let flagshipEventType: string | null = null;
 
     if (rawBody.flagshipEventAt != null || rawBody.flagshipEventType != null) {
+      if (actor.role !== "ADMIN") {
+        return NextResponse.json(
+          { error: "Flagship event polls can only be created by admins. Create a regular poll instead." },
+          { status: 403 }
+        );
+      }
+
       const fatRaw = rawBody.flagshipEventAt;
       const fetRaw = rawBody.flagshipEventType;
 

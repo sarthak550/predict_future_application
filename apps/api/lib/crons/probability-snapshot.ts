@@ -61,23 +61,15 @@ export async function snapshotMarketProbabilities(): Promise<{
     });
 
     if (oldSnapshots.length > 0) {
-      // Build a map of "marketId|YYYY-MM-DD" => latest snapshot id
-      const keepIds = new Set<string>();
+      // Build a map of "marketId|YYYY-MM-DD" => snapshot id to keep.
+      // oldSnapshots is ordered ASC by snapshotAt, so each overwrite keeps the latest (last) id per day-key.
+      // O(n) — one pass through the array with Map lookups instead of O(n²) nested find calls.
+      const keepByDayKey = new Map<string, string>(); // dayKey → snapshotId
       for (const snap of oldSnapshots) {
         const dayKey = `${snap.marketId}|${snap.snapshotAt.toISOString().slice(0, 10)}`;
-        // Because we ordered ASC, later iterations overwrite earlier ones — the final write wins.
-        keepIds.delete(
-          // remove any previously added id for this day-key (we only want the latest)
-          [...keepIds].find((id) => {
-            const existing = oldSnapshots.find((s) => s.id === id);
-            return (
-              existing &&
-              `${existing.marketId}|${existing.snapshotAt.toISOString().slice(0, 10)}` === dayKey
-            );
-          }) ?? ""
-        );
-        keepIds.add(snap.id);
+        keepByDayKey.set(dayKey, snap.id); // overwrite → last write wins (most recent, ASC order)
       }
+      const keepIds = new Set(keepByDayKey.values());
 
       const deleteIds = oldSnapshots
         .map((s) => s.id)

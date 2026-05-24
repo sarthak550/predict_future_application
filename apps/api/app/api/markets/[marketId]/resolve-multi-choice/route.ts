@@ -8,8 +8,13 @@ import { resolveMultiChoiceSchema } from "@/lib/validations/market";
 /**
  * POST /api/markets/[marketId]/resolve-multi-choice
  *
- * Admin/creator endpoint to resolve a MULTIPLE_CHOICE market by selecting
- * the winning option. Only admins and the market creator (host) may call this.
+ * Admin-only endpoint to resolve a MULTIPLE_CHOICE market by selecting the
+ * winning option. Only ADMIN or MODERATOR roles may resolve — creator
+ * self-resolution is intentionally blocked to prevent exit-scam abuse
+ * (creator stakes on option A, instantly resolves A as winner).
+ *
+ * TODO (follow-up): add the same challenge-window / bond flow that the binary
+ * host-resolve route uses, then re-enable trusted-host resolution here.
  *
  * Body: { winningOptionId: string }
  */
@@ -56,10 +61,12 @@ export async function POST(
     }
 
     const isAdmin = actor.role === "ADMIN" || actor.role === "MODERATOR";
-    const isCreator = actor.id === market.creatorId;
 
-    if (!isAdmin && !isCreator) {
-      return NextResponse.json({ error: "Not authorized to resolve this market." }, { status: 403 });
+    // Creator self-resolution is blocked — admin/moderator only.
+    // Reason: no challenge window or bond exists for multi-choice markets yet; allowing
+    // creator resolution enables exit-scam (stake on option A → resolve A instantly).
+    if (!isAdmin) {
+      return NextResponse.json({ error: "Only admins can resolve multi-choice markets." }, { status: 403 });
     }
 
     if (market.winningOptionId) {
@@ -117,16 +124,16 @@ export async function POST(
         where: { marketId: market.id },
         update: {
           outcome: "YES",
-          sourceName: "Host resolution",
-          explanation: `Multi-choice market resolved with winning option by ${actor.role === "ADMIN" ? "admin" : "host"}.`,
+          sourceName: "Admin resolution",
+          explanation: `Multi-choice market resolved with winning option by ${actor.role.toLowerCase()}.`,
           resolvedAt: new Date(),
           resolvedById: actor.id
         },
         create: {
           marketId: market.id,
           outcome: "YES",
-          sourceName: "Host resolution",
-          explanation: `Multi-choice market resolved with winning option by ${actor.role === "ADMIN" ? "admin" : "host"}.`,
+          sourceName: "Admin resolution",
+          explanation: `Multi-choice market resolved with winning option by ${actor.role.toLowerCase()}.`,
           resolvedAt: new Date(),
           resolvedById: actor.id
         }

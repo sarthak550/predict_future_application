@@ -1,17 +1,25 @@
 import { NextResponse } from "next/server";
 
-import { getSession } from "@/lib/auth";
+import { getUserIdFromRequest } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
 export async function POST(
   _request: Request,
   { params }: { params: { id: string } }
 ) {
-  const session = await getSession();
-  if (!session?.user?.id) {
+  const userId = await getUserIdFromRequest(_request);
+  if (!userId) {
     return NextResponse.json({ error: "Authentication required." }, { status: 401 });
   }
-  if (session.user.role !== "ADMIN" && session.user.role !== "MODERATOR") {
+
+  const actor = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, role: true, isSuspended: true },
+  });
+  if (!actor || actor.isSuspended) {
+    return NextResponse.json({ error: "Account cannot perform this action." }, { status: 403 });
+  }
+  if (actor.role !== "ADMIN" && actor.role !== "MODERATOR") {
     return NextResponse.json({ error: "Admin or Moderator access required." }, { status: 403 });
   }
 

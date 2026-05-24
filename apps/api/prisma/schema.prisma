@@ -8,82 +8,84 @@ datasource db {
 }
 
 model User {
-  id                         String               @id @default(cuid())
-  username                   String               @unique
-  email                      String               @unique
+  id                         String                @id @default(cuid())
+  username                   String                @unique
+  email                      String                @unique
   emailVerified              DateTime?
   passwordHash               String?
   image                      String?
   avatarUrl                  String?
-  role                       Role                 @default(USER)
-  isSuspended                Boolean              @default(false)
+  role                       Role                  @default(USER)
+  isSuspended                Boolean               @default(false)
   suspendedReason            String?
-  isVerifiedAnalyst          Boolean              @default(false)
-  reputationScore            Int                  @default(50)
+  reputationScore            Int                   @default(50)
   expoPushToken              String?
-  accuracyScore              Float                @default(0)
-  level                      Int                  @default(1)
-  streak                     Int                  @default(0)
-  createdAt                  DateTime             @default(now())
-  updatedAt                  DateTime             @updatedAt
-  referralCode               String?              @unique
+  accuracyScore              Float                 @default(0)
+  level                      Int                   @default(1)
+  streak                     Int                   @default(0)
+  createdAt                  DateTime              @default(now())
+  updatedAt                  DateTime              @updatedAt
+  referralCode               String?               @unique
   referredById               String?
   currentLeagueTier          LeagueTier?
-  phone                      String?              @unique
-  phoneVerified              Boolean              @default(false)
+  isVerifiedAnalyst          Boolean               @default(false)
+  phone                      String?               @unique
+  phoneVerified              Boolean               @default(false)
   /// Lifetime tip points received across all comments. Incremented atomically on each tip transaction.
-  tipsReceivedTotal          Int                  @default(0)
+  tipsReceivedTotal          Int                   @default(0)
   /// Controls whether the user appears under their real username or an anonymised pseudonym on public surfaces.
-  displayMode                UserDisplayMode      @default(USERNAME)
+  displayMode                UserDisplayMode       @default(USERNAME)
   /// Analyst tier earned through prediction accuracy and volume. Recomputed on market resolution and nightly cron.
-  analystTier                AnalystTier          @default(ROOKIE)
+  analystTier                AnalystTier           @default(ROOKIE)
+  referralBonusCreditedAt    DateTime?
   accounts                   Account[]
-  adminActions               AdminAction[]        @relation("AdminActor")
-  targetAdminActions         AdminAction[]        @relation("AdminTargetUser")
-  challenges                 Challenge[]          @relation("UserChallenges")
-  reviewedChallenges         Challenge[]          @relation("UserReviewedChallenges")
+  adminActions               AdminAction[]         @relation("AdminActor")
+  targetAdminActions         AdminAction[]         @relation("AdminTargetUser")
+  BigCallTap                 BigCallTap[]
+  challenges                 Challenge[]           @relation("UserChallenges")
+  reviewedChallenges         Challenge[]           @relation("UserReviewedChallenges")
   dailyQuests                DailyQuest[]
+  expertFollows              ExpertFollow[]
   expertOpinionVotes         ExpertOpinionVote[]
-  followers                  Follow[]             @relation("Followee")
-  following                  Follow[]             @relation("Follower")
-  ownedGroups                Group[]              @relation("OwnedGroups")
+  followers                  Follow[]              @relation("Followee")
+  following                  Follow[]              @relation("Follower")
+  ownedGroups                Group[]               @relation("OwnedGroups")
   groupMemberships           GroupMembership[]
-  approvedMarkets            Market[]             @relation("ApprovedMarkets")
-  createdMarkets             Market[]             @relation("CreatedMarkets")
-  finalizedMarketResolutions Market[]             @relation("FinalizedMarketResolutions")
+  leaderboardSnapshots       LeaderboardSnapshot[]
+  approvedMarkets            Market[]              @relation("ApprovedMarkets")
+  createdMarkets             Market[]              @relation("CreatedMarkets")
+  finalizedMarketResolutions Market[]              @relation("FinalizedMarketResolutions")
   comments                   MarketComment[]
   positions                  MarketPosition[]
-  reports                    MarketReport[]       @relation("ReportedByUser")
-  reviewedReports            MarketReport[]       @relation("ReviewedReports")
-  resolutions                MarketResolution[]   @relation("ResolvedByUser")
+  reports                    MarketReport[]        @relation("ReportedByUser")
+  reviewedReports            MarketReport[]        @relation("ReviewedReports")
+  resolutions                MarketResolution[]    @relation("ResolvedByUser")
   monthlyLeagueEntries       MonthlyLeagueEntry[]
+  multiChoicePositions       MultiChoicePosition[]
   notifications              Notification[]
+  phoneVerificationOtp       PhoneVerificationOtp?
+  reasoningUpvotes           ReasoningUpvote[]
+  savedMarkets               SavedMarket[]
   sessions                   Session[]
-  reviewedStories            Story[]              @relation("ReviewedStories")
-  createdStories             Story[]              @relation("CreatedStories")
-  referredBy                 User?                @relation("Referrer", fields: [referredById], references: [id])
-  referrals                  User[]               @relation("Referrer")
+  reviewedStories            Story[]               @relation("ReviewedStories")
+  createdStories             Story[]               @relation("CreatedStories")
+  referredBy                 User?                 @relation("Referrer", fields: [referredById], references: [id])
+  referrals                  User[]                @relation("Referrer")
   badges                     UserBadge[]
   categoryStats              UserCategoryStat[]
   stats                      UserStat?
   votes                      Vote[]
   wallet                     Wallet?
-  multiChoicePositions       MultiChoicePosition[]
-  expertFollows              ExpertFollow[]
-  phoneVerificationOtp       PhoneVerificationOtp?
-  leaderboardSnapshots       LeaderboardSnapshot[]
-  reasoningUpvotes           ReasoningUpvote[]
-  savedMarkets               SavedMarket[]
 }
 
 model LeaderboardSnapshot {
-  id         String   @id @default(cuid())
+  id         String          @id @default(cuid())
   userId     String
   rank       Int
   timeWindow String
-  category   String?
-  snapshotAt DateTime @default(now())
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category   MarketCategory?
+  snapshotAt DateTime        @default(now())
+  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, timeWindow, category, snapshotAt])
 }
@@ -123,23 +125,27 @@ model Wallet {
 }
 
 model WalletTransaction {
-  id            String                @id @default(cuid())
-  walletId      String
-  type          WalletTransactionType
-  amount        Int
-  description   String
-  marketId      String?
-  positionId    String?
-  adminActionId String?
+  id                    String                @id @default(cuid())
+  walletId              String
+  type                  WalletTransactionType
+  amount                Int
+  description           String
+  marketId              String?
+  positionId            String?
+  adminActionId         String?
+  createdAt             DateTime              @default(now())
   /// Percentile rank stored at market resolution for MARKET_WIN transactions.
   /// Represents the % of other participants the user beat (0–99). Null for non-WIN transactions or solo markets.
-  percentileRank Int?
-  createdAt     DateTime              @default(now())
-  adminAction   AdminAction?          @relation(fields: [adminActionId], references: [id])
-  market        Market?               @relation(fields: [marketId], references: [id])
-  position      MarketPosition?       @relation(fields: [positionId], references: [id])
-  wallet        Wallet                @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  percentileRank        Int?
+  multiChoicePositionId String?
+  adminAction           AdminAction?          @relation(fields: [adminActionId], references: [id])
+  market                Market?               @relation(fields: [marketId], references: [id])
+  MultiChoicePosition   MultiChoicePosition?  @relation(fields: [multiChoicePositionId], references: [id])
+  position              MarketPosition?       @relation(fields: [positionId], references: [id])
+  wallet                Wallet                @relation(fields: [walletId], references: [id], onDelete: Cascade)
 
+  @@unique([walletId, marketId, type, positionId])
+  @@unique([walletId, marketId, type, multiChoicePositionId], map: "WalletTransaction_walletId_marketId_type_multiChoicePositionId_")
   @@index([walletId, createdAt])
   @@index([marketId])
 }
@@ -272,6 +278,7 @@ model Story {
   bodyFetchFailed   Boolean            @default(false)
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
+  latestResolvedAt  DateTime?
   adminActions      AdminAction[]
   curatedItems      CuratedFeedItem[]
   expertOpinions    ExpertOpinion[]
@@ -288,6 +295,7 @@ model Story {
   @@index([isFeatured, isTrending, publishedAt])
   @@index([dedupeKey])
   @@index([ingestionFeedId, ingestedAt])
+  @@index([latestResolvedAt(sort: Desc)])
 }
 
 model CuratedFeed {
@@ -348,117 +356,120 @@ model GroupMembership {
 }
 
 model Market {
-  id                         String                 @id @default(cuid())
-  storyId                    String?                @unique
-  slug                       String                 @unique
-  title                      String
-  description                String
-  category                   MarketCategory
-  template                   MarketTemplate
-  marketType                 MarketType             @default(BINARY)
-  creatorId                  String
-  visibility                 MarketVisibility       @default(PUBLIC)
-  marketScope                MarketScope            @default(GLOBAL)
-  groupId                    String?
-  status                     MarketStatus           @default(DRAFT)
-  closeAt                    DateTime
-  resolveAt                  DateTime
-  resolutionMode             ResolutionMode         @default(SOURCE_BASED)
-  resolutionStatus           ResolutionStatus       @default(OPEN)
-  resolutionSourceType       ResolutionSourceType
-  resolutionSourceName       String
-  resolutionSourceUrl        String?
-  resolutionRuleText         String
-  fallbackRuleText           String?
-  unit                       String?
-  minValue                   Float?
-  maxValue                   Float?
-  precision                  Int?
-  winnersCount               Int                    @default(1)
-  payoutDistributionJson     Json?
-  tieBreakerRule             NumericTieBreakerRule?
-  rulesLockedAt              DateTime?
-  structuredData             Json?
-  outcome                    MarketOutcome          @default(UNRESOLVED)
-  actualValue                Float?
-  yesPool                    Int                    @default(0)
-  noPool                     Int                    @default(0)
-  totalParticipants          Int                    @default(0)
-  totalVolume                Int                    @default(0)
-  creatorReputationSnapshot  Int                    @default(0)
-  qualityScore               Int                    @default(0)
-  disputeCount               Int                    @default(0)
-  poolRewardMode             PoolRewardMode         @default(COMMISSION_BASED)
-  hostCommissionBps          Int                    @default(0)
-  bondCap                    Int                    @default(0)
-  lockedBondAmount           Int                    @default(0)
-  currentRequiredBond        Int                    @default(0)
-  dynamicPoolEnabled         Boolean                @default(false)
-  maxPoolAllowed             Int?
-  challengeWindowHours       Int                    @default(24)
-  challengeWindowEndsAt      DateTime?
-  gracePeriodHours           Int                    @default(48)
-  finalResolutionDeadline    DateTime?
-  finalizationAt             DateTime?
-  hostResolutionNote         String?
-  hostResolutionEvidenceJson Json?
-  resolutionFinalizedById    String?
-  overturnedReason           String?
-  yesCount                   Int                    @default(0)
-  noCount                    Int                    @default(0)
-  totalVotes                 Int                    @default(0)
-  averageNumericValue        Float?
-  isFlagged                  Boolean                @default(false)
-  isFeatured                 Boolean                @default(false)
-  approvedAt                 DateTime?
-  approvedById               String?
-  createdAt                  DateTime               @default(now())
-  updatedAt                  DateTime               @updatedAt
-  eventClusterId             String?
-  sumToHundred               Boolean                @default(false)
-  winningOptionId            String?
-  /// Free-text identifier for the originating platform (e.g. 'manifold'). Null for native markets.
-  originPlatform             String?
+  id                             String                      @id @default(cuid())
+  storyId                        String?                     @unique
+  slug                           String                      @unique
+  title                          String
+  description                    String
+  category                       MarketCategory
+  template                       MarketTemplate
+  marketType                     MarketType                  @default(BINARY)
+  creatorId                      String
+  visibility                     MarketVisibility            @default(PUBLIC)
+  marketScope                    MarketScope                 @default(GLOBAL)
+  groupId                        String?
+  status                         MarketStatus                @default(DRAFT)
+  closeAt                        DateTime
+  resolveAt                      DateTime
+  resolutionMode                 ResolutionMode              @default(SOURCE_BASED)
+  resolutionStatus               ResolutionStatus            @default(OPEN)
+  resolutionSourceType           ResolutionSourceType
+  resolutionSourceName           String
+  resolutionSourceUrl            String?
+  resolutionRuleText             String
+  fallbackRuleText               String?
+  unit                           String?
+  minValue                       Float?
+  maxValue                       Float?
+  precision                      Int?
+  winnersCount                   Int                         @default(1)
+  payoutDistributionJson         Json?
+  tieBreakerRule                 NumericTieBreakerRule?
+  rulesLockedAt                  DateTime?
+  structuredData                 Json?
+  outcome                        MarketOutcome               @default(UNRESOLVED)
+  actualValue                    Float?
+  yesPool                        Int                         @default(0)
+  noPool                         Int                         @default(0)
+  totalParticipants              Int                         @default(0)
+  totalVolume                    Int                         @default(0)
+  creatorReputationSnapshot      Int                         @default(0)
+  qualityScore                   Int                         @default(0)
+  disputeCount                   Int                         @default(0)
+  poolRewardMode                 PoolRewardMode              @default(COMMISSION_BASED)
+  hostCommissionBps              Int                         @default(0)
+  bondCap                        Int                         @default(0)
+  lockedBondAmount               Int                         @default(0)
+  currentRequiredBond            Int                         @default(0)
+  dynamicPoolEnabled             Boolean                     @default(false)
+  maxPoolAllowed                 Int?
+  challengeWindowHours           Int                         @default(24)
+  challengeWindowEndsAt          DateTime?
+  gracePeriodHours               Int                         @default(48)
+  finalResolutionDeadline        DateTime?
+  finalizationAt                 DateTime?
+  hostResolutionNote             String?
+  hostResolutionEvidenceJson     Json?
+  resolutionFinalizedById        String?
+  overturnedReason               String?
+  yesCount                       Int                         @default(0)
+  noCount                        Int                         @default(0)
+  totalVotes                     Int                         @default(0)
+  averageNumericValue            Float?
+  isFlagged                      Boolean                     @default(false)
+  isFeatured                     Boolean                     @default(false)
+  approvedAt                     DateTime?
+  approvedById                   String?
+  createdAt                      DateTime                    @default(now())
+  updatedAt                      DateTime                    @updatedAt
+  eventClusterId                 String?
+  sumToHundred                   Boolean                     @default(false)
+  winningOptionId                String?
   /// Composite idempotency key in the form '<platform>:<remoteId>'. Unique so re-running import scripts is safe.
-  externalId                 String?                @unique
-  /// Crowd consensus from origin platform (0..1 implied YES probability at resolution / latest snapshot). Null for native markets.
-  externalProbability        Float?
-  /// Total trading volume on the origin platform (USD equivalent). Null for native markets.
-  externalVolume             Float?
-  /// Unique trader count on the origin platform. Null for native markets.
-  externalTraderCount        Int?
-  /// Date this market was marked as 'Today's Big Call' (stored as IST midnight UTC). Null = not designated.
-  isBigCallDate              DateTime?
-  /// Timestamp when the Big Call push notification was sent — used as idempotency guard to prevent double-sends.
-  bigCallNotificationSentAt  DateTime?
+  externalId                     String?                     @unique
+  /// Free-text identifier for the originating platform (e.g. 'manifold'). Null for native markets.
+  originPlatform                 String?
   /// Engagement analytics: total opens of this market from Big Call notifications/card.
-  bigCallNotificationOpenedCount Int               @default(0)
+  bigCallNotificationOpenedCount Int                         @default(0)
+  /// Timestamp when the Big Call push notification was sent — used as idempotency guard to prevent double-sends.
+  bigCallNotificationSentAt      DateTime?
+  /// Date this market was marked as 'Today's Big Call' (stored as IST midnight UTC). Null = not designated.
+  isBigCallDate                  DateTime?
+  /// Crowd consensus from origin platform (0..1 implied YES probability at resolution / latest snapshot). Null for native markets.
+  externalProbability            Float?
+  /// Unique trader count on the origin platform. Null for native markets.
+  externalTraderCount            Int?
+  /// Total trading volume on the origin platform (USD equivalent). Null for native markets.
+  externalVolume                 Float?
   /// When set, this market is a Finance "flagship event" tied to a specific upcoming
   /// real-world date (RBI MPC, Budget, etc.). Used by the Finance tab Policy & Big Events
   /// carousel. Null for normal markets.
-  flagshipEventAt            DateTime?
+  flagshipEventAt                DateTime?
   /// One of: 'RBI' | 'BUDGET' | 'GST' | 'GLOBAL' | 'FED' | 'OTHER'.
   /// Plain string so we can add types without migrations.
-  flagshipEventType          String?
-  adminActions               AdminAction[]
-  challenges                 Challenge[]
-  approvedBy                 User?                  @relation("ApprovedMarkets", fields: [approvedById], references: [id])
-  creator                    User                   @relation("CreatedMarkets", fields: [creatorId], references: [id], onDelete: Cascade)
-  eventCluster               MarketEventCluster?    @relation(fields: [eventClusterId], references: [id])
-  group                      Group?                 @relation(fields: [groupId], references: [id])
-  resolutionFinalizedBy      User?                  @relation("FinalizedMarketResolutions", fields: [resolutionFinalizedById], references: [id])
-  story                      Story?                 @relation(fields: [storyId], references: [id])
-  comments                   MarketComment[]
-  positions                  MarketPosition[]
-  options                    MarketOption[]
-  multiChoicePositions       MultiChoicePosition[]
-  probabilitySnapshots       MarketProbabilitySnapshot[]
-  reports                    MarketReport[]
-  resolution                 MarketResolution?
-  notifications              Notification[]
-  votes                      Vote[]
-  walletTransactions         WalletTransaction[]
-  savedByUsers               SavedMarket[]
+  flagshipEventType              String?
+  flagshipReminderSentAt         DateTime?
+  externalLastSyncedAt           DateTime?
+  adminActions                   AdminAction[]
+  BigCallTap                     BigCallTap[]
+  challenges                     Challenge[]
+  approvedBy                     User?                       @relation("ApprovedMarkets", fields: [approvedById], references: [id])
+  creator                        User                        @relation("CreatedMarkets", fields: [creatorId], references: [id], onDelete: Cascade)
+  eventCluster                   MarketEventCluster?         @relation(fields: [eventClusterId], references: [id])
+  group                          Group?                      @relation(fields: [groupId], references: [id])
+  resolutionFinalizedBy          User?                       @relation("FinalizedMarketResolutions", fields: [resolutionFinalizedById], references: [id])
+  story                          Story?                      @relation(fields: [storyId], references: [id])
+  comments                       MarketComment[]
+  options                        MarketOption[]
+  positions                      MarketPosition[]
+  probabilitySnapshots           MarketProbabilitySnapshot[]
+  reports                        MarketReport[]
+  resolution                     MarketResolution?
+  multiChoicePositions           MultiChoicePosition[]
+  notifications                  Notification[]
+  savedByUsers                   SavedMarket[]
+  votes                          Vote[]
+  walletTransactions             WalletTransaction[]
 
   @@index([status, closeAt])
   @@index([status, resolveAt])
@@ -476,12 +487,12 @@ model Market {
 
 /// Hourly snapshot of binary/multi-choice market probability for the consensus-line chart.
 model MarketProbabilitySnapshot {
-  id            String   @id @default(cuid())
-  marketId      String
+  id          String   @id @default(cuid())
+  marketId    String
   /// Probability of YES (or highest-staked option) as a fraction 0.0–1.0.
-  probability   Float
-  snapshotAt    DateTime @default(now())
-  market        Market   @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  probability Float
+  snapshotAt  DateTime @default(now())
+  market      Market   @relation(fields: [marketId], references: [id], onDelete: Cascade)
 
   @@index([marketId, snapshotAt])
 }
@@ -530,19 +541,20 @@ model MarketPosition {
   estimatedReturnAtEntry Float?
   payoutAmount           Int?
   settledAt              DateTime?
+  createdAt              DateTime            @default(now())
   /// Optional free-text rationale attached by the user when placing the position (max 500 chars).
   reasoning              String?
   /// Running total of reasoning upvotes from other users (S30-T1).
   reasoningUpvotes       Int                 @default(0)
-  createdAt              DateTime            @default(now())
   market                 Market              @relation(fields: [marketId], references: [id], onDelete: Cascade)
   user                   User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  walletTransactions     WalletTransaction[]
   reasoningUpvoteRecords ReasoningUpvote[]
+  walletTransactions     WalletTransaction[]
 
   @@index([marketId, createdAt])
   @@index([userId, createdAt])
   @@index([marketId, numericValue])
+  @@index([userId, settledAt(sort: Desc)])
 }
 
 /// Tracks which users have upvoted reasoning on a specific position (S30-T1).
@@ -561,15 +573,15 @@ model ReasoningUpvote {
 
 /// One selectable option in a MULTIPLE_CHOICE market.
 model MarketOption {
-  id           String              @id @default(cuid())
-  marketId     String
-  label        String
-  sortOrder    Int                 @default(0)
-  isWinner     Boolean             @default(false)
-  totalStaked  Int                 @default(0)
-  createdAt    DateTime            @default(now())
-  market       Market              @relation(fields: [marketId], references: [id], onDelete: Cascade)
-  positions    MultiChoicePosition[]
+  id          String                @id @default(cuid())
+  marketId    String
+  label       String
+  sortOrder   Int                   @default(0)
+  isWinner    Boolean               @default(false)
+  totalStaked Int                   @default(0)
+  createdAt   DateTime              @default(now())
+  market      Market                @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  positions   MultiChoicePosition[]
 
   @@unique([marketId, sortOrder])
   @@index([marketId])
@@ -577,20 +589,21 @@ model MarketOption {
 
 /// A user's stake on one option of a MULTIPLE_CHOICE market.
 model MultiChoicePosition {
-  id          String       @id @default(cuid())
-  userId      String
-  marketId    String
-  optionId    String
-  amount      Int
+  id                String              @id @default(cuid())
+  userId            String
+  marketId          String
+  optionId          String
+  amount            Int
+  payoutAmount      Int?                @default(0)
+  settledAt         DateTime?
+  createdAt         DateTime            @default(now())
   /// Optional free-text reasoning attached to this pick. Used for flagship polls
   /// where users explain why they chose this option.
-  reasoning   String?
-  payoutAmount Int?        @default(0)
-  settledAt   DateTime?
-  createdAt   DateTime     @default(now())
-  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  market      Market       @relation(fields: [marketId], references: [id], onDelete: Cascade)
-  option      MarketOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  reasoning         String?
+  market            Market              @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  option            MarketOption        @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  user              User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  WalletTransaction WalletTransaction[]
 
   @@unique([userId, marketId, optionId])
   @@index([marketId, optionId])
@@ -602,10 +615,10 @@ model MarketComment {
   userId       String
   marketId     String
   body         String
-  /// Lifetime tip total received on this comment (incremented on each tip).
-  tipsReceived Int      @default(0)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+  /// Lifetime tip total received on this comment (incremented on each tip).
+  tipsReceived Int      @default(0)
   market       Market   @relation(fields: [marketId], references: [id], onDelete: Cascade)
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -755,8 +768,8 @@ model Expert {
   linkedinUrl  String?
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt
-  opinions     ExpertOpinion[]
   followers    ExpertFollow[]
+  opinions     ExpertOpinion[]
 
   @@unique([name, organization])
 }
@@ -766,47 +779,57 @@ model ExpertFollow {
   userId    String
   expertId  String
   createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   expert    Expert   @relation(fields: [expertId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, expertId])
   @@index([userId, createdAt])
 }
 
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
 model ExpertOpinion {
-  id               String                  @id @default(cuid())
-  expertId         String
-  storyId          String?
-  marketId         String?
+  id                      String                  @id @default(cuid())
+  expertId                String
+  storyId                 String?
+  marketId                String?
   /// Nullable FK to event cluster — used for expert-takes footer count and filter UX (S18-T4)
-  eventClusterId   String?
-  quote            String
-  direction        OpinionDirection
-  sourceUrl        String
-  extractedAt      DateTime                @default(now())
-  publishedAt      DateTime
-  resolutionStatus OpinionResolutionStatus @default(PENDING)
-  resolvedAt       DateTime?
-  resolutionNote   String?
-  suppressedAt     DateTime?
-  /// Human-readable instrument name, e.g. "Nifty 50", "HDFC Bank", "Sensex"
-  instrument       String?
-  /// Yahoo Finance ticker symbol, e.g. "^NSEI", "HDFCBANK.NS", "^BSESN"
-  instrumentTicker String?
+  eventClusterId          String?
+  quote                   String
+  direction               OpinionDirection
+  sourceUrl               String
+  extractedAt             DateTime                @default(now())
+  publishedAt             DateTime
+  resolutionStatus        OpinionResolutionStatus @default(PENDING)
+  resolvedAt              DateTime?
+  resolutionNote          String?
+  suppressedAt            DateTime?
+  createdAt               DateTime                @default(now())
+  updatedAt               DateTime                @updatedAt
   /// When true, opinion is sourced from trusted publication (not attributed to named analyst).
   /// Display as "Market Analysis from [Source]" instead of "Expert: [Analyst Name]"
-  isSourceAttribution Boolean               @default(false)
-  /// Days from publishedAt after which this call can be evaluated. Populated by AI during pre-processing.
-  resolutionWindowDays  Int?
+  isSourceAttribution     Boolean                 @default(false)
+  /// Human-readable instrument name, e.g. "Nifty 50", "HDFC Bank", "Sensex"
+  instrument              String?
+  /// Yahoo Finance ticker symbol, e.g. "^NSEI", "HDFCBANK.NS", "^BSESN"
+  instrumentTicker        String?
   /// publishedAt + resolutionWindowDays. Null until pre-processed. Index for daily cron query.
-  resolutionEligibleAt  DateTime?
-  createdAt        DateTime                @default(now())
-  updatedAt        DateTime                @updatedAt
-  eventCluster     MarketEventCluster?     @relation(fields: [eventClusterId], references: [id])
-  expert           Expert                  @relation(fields: [expertId], references: [id])
-  story            Story?                  @relation(fields: [storyId], references: [id])
-  votes            ExpertOpinionVote[]
+  resolutionEligibleAt    DateTime?
+  /// Days from publishedAt after which this call can be evaluated. Populated by AI during pre-processing.
+  resolutionWindowDays    Int?
+  headline                String?
+  analystCallAt           DateTime?
+  lastPreprocessAttemptAt DateTime?
+  lastResolutionAttemptAt DateTime?
+  preprocessAttempts      Int                     @default(0)
+  resolutionAttempts      Int                     @default(0)
+  notifiedAt              DateTime?
+  quoteHash               String                  @default("")
+  eventCluster            MarketEventCluster?     @relation(fields: [eventClusterId], references: [id])
+  expert                  Expert                  @relation(fields: [expertId], references: [id])
+  story                   Story?                  @relation(fields: [storyId], references: [id])
+  votes                   ExpertOpinionVote[]
 
+  @@unique([expertId, storyId, quoteHash])
   @@index([expertId, publishedAt])
   @@index([isSourceAttribution])
   @@index([eventClusterId])
@@ -821,11 +844,13 @@ model ExpertOpinionVote {
   choice    String
   createdAt DateTime              @default(now())
   updatedAt DateTime              @updatedAt
+  lockedAt  DateTime?
   opinion   ExpertOpinion         @relation(fields: [opinionId], references: [id], onDelete: Cascade)
   user      User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, opinionId, pollType])
   @@index([opinionId, pollType])
+  @@index([userId, lockedAt])
 }
 
 /// Monthly league entry — one per (userId, month). Records tier standing and net points earned in the month.
@@ -863,6 +888,41 @@ model DailyQuest {
 
   @@unique([userId, date, questType])
   @@index([userId, date])
+}
+
+/// A market bookmarked by a user for later reference.
+model SavedMarket {
+  id        String   @id @default(cuid())
+  userId    String
+  marketId  String
+  createdAt DateTime @default(now())
+  market    Market   @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, marketId])
+  @@index([userId, createdAt])
+}
+
+model BigCallTap {
+  id        String   @id @default(cuid())
+  userId    String
+  marketId  String
+  dateIST   String
+  createdAt DateTime @default(now())
+  Market    Market   @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  User      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, marketId, dateIST])
+  @@index([marketId, dateIST])
+}
+
+model WeeklyDigestRun {
+  id          String    @id @default(cuid())
+  weekKey     String    @unique
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+  userCount   Int       @default(0)
+  pushCount   Int       @default(0)
 }
 
 enum AnalystTier {
@@ -1084,11 +1144,11 @@ enum NotificationType {
   LEVEL_UP
   FOLLOWED_USER_MARKET
   FOLLOWED_USER_OPINION
-  FOLLOWED_USER_PREDICTION
   QUEST_COMPLETED
   STREAK_MILESTONE
   REFERRAL_REWARD
   COMMENT_TIPPED
+  FOLLOWED_USER_PREDICTION
   OPINION_RESOLVED
 }
 
@@ -1097,19 +1157,6 @@ enum ReportStatus {
   REVIEWING
   RESOLVED
   DISMISSED
-}
-
-/// A market bookmarked by a user for later reference.
-model SavedMarket {
-  id        String   @id @default(cuid())
-  userId    String
-  marketId  String
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  market    Market   @relation(fields: [marketId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, marketId])
-  @@index([userId, createdAt])
 }
 
 enum AdminActionType {
@@ -1131,6 +1178,8 @@ enum AdminActionType {
   FEATURE_MARKET
   FEATURE_STORY
   CURATE_FEED
+  GRANT_VERIFIED_ANALYST
+  REVOKE_VERIFIED_ANALYST
 }
 
 /// Controls whether a user's identity is shown as their real username or a deterministic anonymous pseudonym.

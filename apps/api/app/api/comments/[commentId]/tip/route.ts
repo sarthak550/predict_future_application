@@ -103,14 +103,6 @@ export async function POST(
       return NextResponse.json({ error: "Wallet not found." }, { status: 400 });
     }
 
-    // Check tipper wallet balance (fast-fail UX optimisation — transaction enforces this too)
-    if (tipperWallet.balance < amount) {
-      return NextResponse.json(
-        { error: "Insufficient balance." },
-        { status: 400 }
-      );
-    }
-
     // Fetch commenter wallet
     const commenterWallet = await prisma.wallet.findUnique({
       where: { userId: comment.userId },
@@ -124,13 +116,18 @@ export async function POST(
     // Compute IST day bounds outside the transaction (pure function, no DB hit)
     const { startOfDayUtc, endOfDayUtc } = getIstDayBoundsUtc();
 
-    // Execute tip in a single transaction — daily-cap check is the FIRST step so concurrent
-    // requests cannot both pass the cap before either TIP_GIVEN row is committed.
+    // Execute tip in a serialisable transaction — we lock the tipper's wallet row at the start
+    // with SELECT FOR UPDATE so concurrent requests from the same user queue behind this lock
+    // rather than both passing the daily-cap aggregate check before either has committed.
     type TxResult = { newTipsReceived: number; alreadyGivenToday: number };
     let txResult: TxResult;
     try {
       txResult = await prisma.$transaction(async (tx): Promise<TxResult> => {
-        // 1. Daily cap check (serialised inside the transaction)
+        // 1. Acquire a row-level lock on the tipper's wallet to serialise concurrent tips.
+        //    Any other concurrent tip from the same user will block here until we commit.
+        await tx.$queryRaw`SELECT id FROM "Wallet" WHERE id = ${tipperWallet.id} FOR UPDATE`;
+
+        // 2. Daily cap check — reads WalletTransaction rows committed prior to our lock.
         const dailyTipAggregate = await tx.walletTransaction.aggregate({
           where: {
             wallet: { userId: requestingUserId },
@@ -150,11 +147,14 @@ export async function POST(
           });
         }
 
-        // 2. Deduct from tipper wallet
-        await tx.wallet.update({
-          where: { id: tipperWallet.id },
+        // 2. Deduct from tipper wallet — guarded atomic decrement prevents double-spend.
+        const tipperDebitResult = await tx.wallet.updateMany({
+          where: { id: tipperWallet.id, balance: { gte: amount } },
           data: { balance: { decrement: amount } }
         });
+        if (tipperDebitResult.count === 0) {
+          throw Object.assign(new Error("Insufficient balance."), { code: "INSUFFICIENT_BALANCE" });
+        }
 
         await tx.walletTransaction.create({
           data: {
@@ -218,6 +218,9 @@ export async function POST(
           { error: "Daily tip cap exceeded", dailyTipsRemaining: err.remaining ?? 0 },
           { status: 429 }
         );
+      }
+      if (err.code === "INSUFFICIENT_BALANCE") {
+        return NextResponse.json({ error: "Insufficient balance." }, { status: 400 });
       }
       throw txError;
     }

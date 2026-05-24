@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { getSession } from "@/lib/auth";
+import { getUserIdFromRequest } from "@/lib/auth";
 import { createNotification } from "@/lib/notifications";
 import { prisma } from "@/lib/prisma";
 
@@ -15,15 +15,19 @@ export async function PATCH(
   { params }: { params: { reportId: string } }
 ) {
   try {
-    const session = await getSession();
-    if (!session?.user?.id) {
+    const userId = await getUserIdFromRequest(request);
+    if (!userId) {
       return NextResponse.json({ error: "Authentication required." }, { status: 401 });
     }
 
     const actor = await prisma.user.findUnique({
-      where: { id: session.user.id }
+      where: { id: userId },
+      select: { id: true, role: true, isSuspended: true },
     });
-    if (!actor || (actor.role !== "ADMIN" && actor.role !== "MODERATOR")) {
+    if (!actor || actor.isSuspended) {
+      return NextResponse.json({ error: "Account cannot perform this action." }, { status: 403 });
+    }
+    if (actor.role !== "ADMIN" && actor.role !== "MODERATOR") {
       return NextResponse.json({ error: "Admin access required." }, { status: 403 });
     }
 

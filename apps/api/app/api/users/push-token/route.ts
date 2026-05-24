@@ -1,9 +1,7 @@
-import jwt from "jsonwebtoken";
 import { NextResponse } from "next/server";
 
+import { getUserIdFromRequest } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-
-const JWT_SECRET = process.env.NEXTAUTH_SECRET ?? "fallback-dev-secret";
 
 /**
  * POST /api/users/push-token
@@ -17,22 +15,11 @@ const JWT_SECRET = process.env.NEXTAUTH_SECRET ?? "fallback-dev-secret";
  */
 export async function POST(request: Request) {
   try {
-    // --- Auth: extract and verify Bearer token ---
-    const authHeader = request.headers.get("authorization") ?? "";
-    const bearer = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : null;
-    if (!bearer) {
+    // --- Auth: getUserIdFromRequest handles both Bearer JWT and NextAuth session.
+    // Suspended users receive null and are rejected at the 401 gate below.
+    const userId = await getUserIdFromRequest(request);
+    if (!userId) {
       return NextResponse.json({ error: "Authorization required." }, { status: 401 });
-    }
-
-    let userId: string;
-    try {
-      const payload = jwt.verify(bearer, JWT_SECRET) as { sub?: string };
-      if (!payload.sub) {
-        return NextResponse.json({ error: "Invalid token payload." }, { status: 401 });
-      }
-      userId = payload.sub;
-    } catch {
-      return NextResponse.json({ error: "Invalid or expired token." }, { status: 401 });
     }
 
     // --- Validate request body ---

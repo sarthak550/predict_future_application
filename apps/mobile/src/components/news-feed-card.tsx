@@ -16,7 +16,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { SnappedSlider as Slider } from "@/components/snapped-slider";
 
 import type { ApiExpertOpinionItem, ApiExpertOpinionTallies, ApiImplicationChoice, ApiNewsFeedItem } from "@predict-future/types";
-import { formatPercent, formatRelativeTime } from "@predict-future/utils";
+import { formatPercent, formatRelativeTime, freshnessColor } from "@predict-future/utils";
 import { colors, radius, shadows, spacing } from "@predict-future/ui-tokens";
 
 import { mobileApi } from "@/lib/api";
@@ -81,13 +81,6 @@ function implicationChoiceToIndex(choice: string): number {
   }
 }
 
-// ── Poll B (Retrospective) configuration ──
-
-const RETROSPECTIVE_CHOICES = [
-  { key: "HIT", label: "Aged well", color: "#16a34a", bg: "#dcfce7", border: "#bbf7d0" },
-  { key: "MISS", label: "Missed the mark", color: "#dc2626", bg: "#fee2e2", border: "#fecaca" },
-] as const;
-
 // ─── S33-T4: Live Consensus Bar ───────────────────────────────────────────────
 
 /**
@@ -117,8 +110,20 @@ function ConsensusBar({
   const neutralCount = impl.neutral;
   const agreePct = Math.round((agreeCount / impl.total) * 100);
 
+  // S38: hide engagement signal below N=5 — small-N percentages mislead.
+  const ENGAGEMENT_MIN = 5;
+
   if (!hasVoted) {
-    // Pre-vote: single thin bar
+    // Pre-vote: only show consensus bar when sample is meaningful
+    if (impl.total < ENGAGEMENT_MIN) {
+      return (
+        <View style={consensusStyles.preVoteWrap}>
+          <Text style={consensusStyles.preVoteLabel}>
+            Vote to see how others stand
+          </Text>
+        </View>
+      );
+    }
     return (
       <View style={consensusStyles.preVoteWrap}>
         <View style={consensusStyles.preVoteTrack}>
@@ -273,6 +278,7 @@ function PollA({
   const isPending = opinion.resolutionStatus === "PENDING";
   const hasVoted = localChoice !== null;
   const impTallies = tallies?.implication;
+  const isLocked = Boolean(impTallies?.userLockedAt);
 
   const handleSubmit = async () => {
     if (voting) return;
@@ -291,6 +297,20 @@ function PollA({
     } catch {
       setLocalChoice(prev); // revert
       setError("Vote failed. Try again.");
+    } finally {
+      setVoting(false);
+    }
+  };
+
+  const handleLock = async () => {
+    if (voting || isLocked) return;
+    setVoting(true);
+    setError(null);
+    try {
+      const updated = await mobileApi.lockExpertOpinionVote(opinion.id);
+      onVoted(updated);
+    } catch {
+      setError("Couldn't cast vote. Try again.");
     } finally {
       setVoting(false);
     }
@@ -460,10 +480,39 @@ function PollA({
             ))}
           </View>
 
-          {localChoice && (
+          {localChoice && isLocked && impTallies?.userLockedAt && (
             <Text style={pollStyles.youVotedChip}>
-              You voted {IMPLICATION_BUCKETS[votedBucketIndex]?.label ?? localChoice}
+              ✓ Voted {IMPLICATION_BUCKETS[votedBucketIndex]?.label ?? localChoice}
+              {" · "}
+              {new Date(impTallies.userLockedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
               {!isPending && " · Poll closed"}
+            </Text>
+          )}
+
+          {localChoice && !isLocked && isPending && (
+            <>
+              <Pressable
+                style={[pollStyles.castVoteBtn, voting && pollStyles.submitVoteBtnDisabled]}
+                onPress={() => void handleLock()}
+                disabled={voting}
+              >
+                {voting ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={pollStyles.castVoteBtnText}>
+                    Cast my vote: {IMPLICATION_BUCKETS[votedBucketIndex]?.label ?? localChoice}
+                  </Text>
+                )}
+              </Pressable>
+              <Text style={pollStyles.castVoteHint}>
+                Draft only — only cast votes count toward your accuracy.
+              </Text>
+            </>
+          )}
+
+          {localChoice && !isLocked && !isPending && (
+            <Text style={pollStyles.youVotedChip}>
+              Your draft of {IMPLICATION_BUCKETS[votedBucketIndex]?.label ?? localChoice} didn't count · Poll closed
             </Text>
           )}
 
@@ -477,150 +526,6 @@ function PollA({
         <Pressable onPress={() => void handleSubmit()}>
           <Text style={pollStyles.errorText}>{error}</Text>
         </Pressable>
-      )}
-    </View>
-  );
-}
-
-/** Poll B — retrospective vote: did this call age well? */
-function PollB({
-  opinion,
-  tallies,
-  onVoted,
-}: {
-  opinion: ApiExpertOpinionItem;
-  tallies: ApiExpertOpinionTallies | null;
-  onVoted: (tallies: ApiExpertOpinionTallies) => void;
-}) {
-  const [voting, setVoting] = useState(false);
-  const [localChoice, setLocalChoice] = useState<string | null>(
-    tallies?.retrospective.userChoice ?? null
-  );
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (tallies?.retrospective.userChoice) {
-      setLocalChoice(tallies.retrospective.userChoice);
-    }
-  }, [tallies?.retrospective.userChoice]);
-
-  const isLocked = tallies?.retrospective.isLocked ?? opinion.resolutionStatus === "PENDING";
-  const hasVoted = localChoice !== null;
-  const retroTallies = tallies?.retrospective;
-
-  const computePercent = (count: number, total: number) =>
-    total > 0 ? Math.round((count / total) * 100) : 0;
-
-  const handleVote = async (choice: string) => {
-    if (voting || isLocked) return;
-    setVoting(true);
-    setError(null);
-    const prev = localChoice;
-    setLocalChoice(choice); // optimistic
-    try {
-      const updated = await mobileApi.castExpertOpinionVote(opinion.id, {
-        pollType: "RETROSPECTIVE",
-        choice,
-      });
-      onVoted(updated);
-    } catch {
-      setLocalChoice(prev); // revert
-      setError("Vote failed. Tap to retry.");
-    } finally {
-      setVoting(false);
-    }
-  };
-
-  const resolutionLabel =
-    opinion.resolutionStatus === "RESOLVED_HIT"
-      ? "HIT"
-      : opinion.resolutionStatus === "RESOLVED_MISS"
-        ? "MISS"
-        : null;
-
-  const resolvedDateStr = opinion.resolvedAt
-    ? new Date(opinion.resolvedAt).toLocaleDateString("en-IN", {
-        day: "numeric",
-        month: "short",
-        year: "numeric",
-      })
-    : null;
-
-  return (
-    <View style={[pollStyles.section, pollStyles.pollBSection]}>
-      <View style={pollStyles.sectionHeaderRow}>
-        <Text style={pollStyles.sectionHeader}>Did this call age well?</Text>
-        {/* Poll B unlock path: triggered by POST /api/admin/expert-opinions/[id]/resolve (S16-T1) */}
-      </View>
-
-      {isLocked ? (
-        <View style={pollStyles.lockedContainer}>
-          <Ionicons name="lock-closed-outline" size={16} color="#9CA3AF" />
-          <Text style={pollStyles.lockedText}>Re-opens when this event resolves</Text>
-        </View>
-      ) : (
-        <>
-          {resolutionLabel && resolvedDateStr && (
-            <View
-              style={[
-                pollStyles.resolutionChip,
-                { backgroundColor: resolutionLabel === "HIT" ? "#dcfce7" : "#fee2e2" },
-              ]}
-            >
-              <Text
-                style={[
-                  pollStyles.resolutionChipText,
-                  { color: resolutionLabel === "HIT" ? "#16a34a" : "#dc2626" },
-                ]}
-              >
-                Resolution: {resolutionLabel} · Resolved {resolvedDateStr}
-              </Text>
-            </View>
-          )}
-
-          {!hasVoted ? (
-            <View style={pollStyles.choiceRow}>
-              {RETROSPECTIVE_CHOICES.map((c) => (
-                <Pressable
-                  key={c.key}
-                  style={[pollStyles.choiceBtn, { borderColor: c.border, backgroundColor: c.bg }]}
-                  onPress={() => void handleVote(c.key)}
-                  disabled={voting}
-                >
-                  <Text style={[pollStyles.choiceBtnText, { color: c.color }]}>{c.label}</Text>
-                </Pressable>
-              ))}
-            </View>
-          ) : (
-            <>
-              {RETROSPECTIVE_CHOICES.map((c) => {
-                const count = c.key === "HIT" ? retroTallies?.hit ?? 0 : retroTallies?.miss ?? 0;
-                const pct = computePercent(count, retroTallies?.total ?? 0);
-                const isUserChoice = localChoice === c.key;
-                return (
-                  <View key={c.key} style={pollStyles.tallyRow}>
-                    <Text style={[pollStyles.tallyLabel, isUserChoice && { fontWeight: "800" }]}>
-                      {c.label}
-                    </Text>
-                    <View style={pollStyles.barTrack}>
-                      <View
-                        style={[pollStyles.barFill, { width: `${pct}%`, backgroundColor: c.color }]}
-                      />
-                    </View>
-                    <Text style={[pollStyles.pctLabel, { color: c.color }]}>{pct}%</Text>
-                  </View>
-                );
-              })}
-              {localChoice && (
-                <Text style={pollStyles.youVotedChip}>
-                  You voted{" "}
-                  {RETROSPECTIVE_CHOICES.find((c) => c.key === localChoice)?.label ?? localChoice}
-                </Text>
-              )}
-            </>
-          )}
-          {error && <Text style={pollStyles.errorText}>{error}</Text>}
-        </>
       )}
     </View>
   );
@@ -653,9 +558,14 @@ function ResolutionStrip({ opinion, articlePublishedAt }: { opinion: ApiExpertOp
       </View>
       <View style={{ flex: 1 }}>
         {note ? (
-          <Text style={[expertStyles.resolutionNoteText, { color }]}>
-            {note}
-          </Text>
+          <>
+            <Text style={[expertStyles.resolutionWhyLabel, { color }]}>
+              Why {isHit ? "HIT" : "MISS"}
+            </Text>
+            <Text style={[expertStyles.resolutionNoteText, { color }]}>
+              {note}
+            </Text>
+          </>
         ) : null}
         {(calledDate || resolvedDate) ? (
           <Text style={expertStyles.resolutionDates}>
@@ -788,6 +698,16 @@ export function ExpertOpinionRow({
                   <Text style={expertStyles.expertOrg} numberOfLines={1}>
                     {isSourceAttribution ? "Trusted Source" : opinion.expertOrganization}
                   </Text>
+                  {opinion.publishedAt && (
+                    <Text
+                      style={[
+                        expertStyles.calledAt,
+                        { color: freshnessColor(opinion.publishedAt) },
+                      ]}
+                    >
+                      Called {formatRelativeTime(opinion.publishedAt)}
+                    </Text>
+                  )}
                 </View>
 
                 <View style={expertStyles.bylineRight}>
@@ -887,7 +807,6 @@ export function ExpertOpinionRow({
         loadingTallies={loadingTallies && showSkeleton}
         onVoted={handleTalliesUpdate}
       />
-      <PollB opinion={opinion} tallies={tallies} onVoted={handleTalliesUpdate} />
     </View>
   );
 }
@@ -1732,6 +1651,7 @@ const expertStyles = StyleSheet.create({
     fontSize: 12,
     color: colors.textMuted ?? "#6b7280",
   },
+  calledAt: { fontSize: 11, color: "#9ca3af", marginTop: 2, fontWeight: "500" as const },
   verifiedBadge: {
     width: 13,
     height: 13,
@@ -1798,6 +1718,12 @@ const expertStyles = StyleSheet.create({
     fontSize: 10,
     fontWeight: "800",
     color: "#fff",
+  },
+  resolutionWhyLabel: {
+    fontSize: 9,
+    fontWeight: "800" as const,
+    letterSpacing: 0.6,
+    marginBottom: 1,
   },
   resolutionNoteText: {
     fontSize: 11,
@@ -1981,6 +1907,25 @@ const pollStyles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "700",
     color: "#fff",
+  },
+  castVoteBtn: {
+    backgroundColor: "#4338CA",
+    borderRadius: radius.md,
+    paddingVertical: 9,
+    alignItems: "center",
+    marginTop: 8,
+  },
+  castVoteBtnText: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 0.2,
+  },
+  castVoteHint: {
+    fontSize: 10,
+    color: "#6b7280",
+    marginTop: 4,
+    textAlign: "center",
   },
   // Histogram overlay (post-vote)
   histogramRow: {

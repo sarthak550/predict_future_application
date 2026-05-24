@@ -5,7 +5,7 @@ import { recalculateAnalystTiersForRecentlyResolved } from "@/lib/analysts";
 function hasCronAccess(request: Request) {
   const secret = process.env.CRON_SECRET;
   if (!secret) {
-    return true;
+    return false;
   }
   const authHeader = request.headers.get("authorization");
   const cronHeader = request.headers.get("x-cron-secret");

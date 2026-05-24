@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getUserIdFromRequest } from "@/lib/auth";
 import { notifyFollowersOnPosition } from "@/lib/notifications";
+import { canCreatorParticipateInMarket } from "@/lib/markets/policies";
 import { recordProbabilitySnapshot } from "@/lib/markets/probabilitySnapshot";
 import { prisma } from "@/lib/prisma";
 import { checkAndCompleteQuests, type CompletedQuestReward } from "@/lib/quests/engine";
@@ -47,7 +48,9 @@ export async function POST(
         status: true,
         marketType: true,
         closeAt: true,
-        flagshipEventAt: true
+        flagshipEventAt: true,
+        creatorId: true,
+        resolutionMode: true
       }
     });
 
@@ -64,6 +67,14 @@ export async function POST(
 
     if (market.status !== "OPEN") {
       return NextResponse.json({ error: "Market is not open for predictions." }, { status: 409 });
+    }
+
+    // Mirror the binary positions check: creators cannot stake in their own host-resolved markets.
+    if (market.creatorId === userId && !canCreatorParticipateInMarket(market.resolutionMode)) {
+      return NextResponse.json(
+        { error: "Hosts cannot take positions in their own host-resolved markets." },
+        { status: 403 }
+      );
     }
 
     if (new Date() > market.closeAt) {
@@ -86,10 +97,6 @@ export async function POST(
     }
     if (payload.amount > 0 && payload.amount < 10) {
       return NextResponse.json({ error: "Minimum stake is 10 points." }, { status: 400 });
-    }
-
-    if (user.wallet.balance < payload.amount) {
-      return NextResponse.json({ error: "Insufficient wallet balance." }, { status: 400 });
     }
 
     // For flagship polls, only ONE option per user (it's a poll, not a stake spread).
@@ -159,10 +166,14 @@ export async function POST(
 
       // Skip wallet update for flagship-poll votes (amount=0). They're free votes, not stakes.
       if (payload.amount > 0) {
-        await tx.wallet.update({
-          where: { id: user.wallet!.id },
+        // Guarded atomic decrement — prevents double-spend under concurrent requests.
+        const walletUpdateResult = await tx.wallet.updateMany({
+          where: { id: user.wallet!.id, balance: { gte: payload.amount } },
           data: { balance: { decrement: payload.amount } }
         });
+        if (walletUpdateResult.count === 0) {
+          throw new Error("Insufficient wallet balance.");
+        }
 
         await tx.walletTransaction.create({
           data: {

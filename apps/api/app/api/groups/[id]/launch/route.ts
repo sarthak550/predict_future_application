@@ -33,28 +33,32 @@ export async function POST(
     return NextResponse.json({ error: "Only the group owner can launch markets." }, { status: 403 });
   }
 
-  // Capture the target market ids before the bulk update so we can return
-  // them to the caller for optimistic UI updates.
-  const targetMarkets = await prisma.market.findMany({
-    where: {
-      groupId: params.id,
-      status: { in: ["DRAFT", "PENDING_REVIEW"] },
-    },
-    select: { id: true },
-  });
+  // Wrap the find + bulk-update in a transaction so a partial failure cannot
+  // leave some markets in DRAFT while others are OPEN.
+  const { result, launchedMarkets } = await prisma.$transaction(async (tx) => {
+    // Capture target IDs first so we can return them to the caller for
+    // optimistic UI updates — done inside the tx to avoid a TOCTOU gap.
+    const targetMarkets = await tx.market.findMany({
+      where: {
+        groupId: params.id,
+        status: { in: ["DRAFT", "PENDING_REVIEW"] },
+      },
+      select: { id: true },
+    });
 
-  const result = await prisma.market.updateMany({
-    where: {
-      groupId: params.id,
-      status: { in: ["DRAFT", "PENDING_REVIEW"] },
-    },
-    data: {
-      status: "OPEN",
-      approvedAt: new Date(),
-    },
-  });
+    const updateResult = await tx.market.updateMany({
+      where: {
+        groupId: params.id,
+        status: { in: ["DRAFT", "PENDING_REVIEW"] },
+      },
+      data: {
+        status: "OPEN",
+        approvedAt: new Date(),
+      },
+    });
 
-  const launchedMarkets = targetMarkets;
+    return { result: updateResult, launchedMarkets: targetMarkets };
+  });
 
   return NextResponse.json({
     launched: result.count,

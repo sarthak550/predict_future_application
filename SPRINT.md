@@ -2,8 +2,8 @@
 
 > Human-readable view of `.claude/sprint-board.json`. Auto-maintained by the CEO/CTO/QA agents — do not edit by hand.
 
-**Current sprint:** 32
-**Status:** Sprint 32 IN PROGRESS. Sprints 12, 25–31 COMPLETE.
+**Current sprint:** 42
+**Status:** Sprints 38–42 COMPLETE (security/correctness hardening, 54 tickets). Sprints 12, 25–34 COMPLETE.
 
 ---
 
@@ -430,3 +430,132 @@
 7. "more" inline expansion — tap body text or "more" label expands to full quote, no new screen
 8. Source strip tap — opens original article URL in browser
 9. TypeScript: `cd apps/mobile && npx tsc --noEmit` passes clean (verified by CTO)
+
+---
+
+## Sprint 42
+
+| ID | Pri | Status | Title |
+|---|---|---|---|
+| S42-T0 | CRIT | ✅ done | Redis provisioning — Upstash client singleton + smoke endpoints |
+| S42-T1 | CRIT | ✅ done | Multi-choice payout P2003 fix |
+| S42-T2 | HIGH | ✅ done | notifiedAt stamp on both admin resolve routes |
+| S42-T3 | HIGH | ✅ done | ExpertOpinion unique index alignment |
+| S42-T4 | HIGH | 🔍 qa-review | H1 — Prompt injection hardening: wrap untrusted content in 3 remaining AI call sites |
+| S42-T6 | HIGH | ✅ done | Manifold sync externalLastSyncedAt |
+| S42-T7 | HIGH | 🔍 qa-review | Migrate rate-limit.ts from in-memory Map to Redis INCR+EXPIRE |
+| S42-T8 | HIGH | ✅ done | Tip cap + referral race |
+| S42-T9 | HIGH | ✅ done | Fix reasoning upvote counter drift (atomic increment/decrement) |
+| S42-T10 | HIGH | 🔍 qa-review | H8 — Extract shared callGeminiAI helper; env-pin model in remaining 2 AI files |
+| S42-T11 | HIGH | ✅ done | Auto-resolve sweep take: limit + Expo push Redis-backed token bucket |
+| S42-T12 | MED | qa-review | Web auth JWT TTL + verify-phone double-credit + rate-limit ordering + host-bond race |
+| S42-T13 | HIGH | ✅ done | verify expert route hardening: Zod schema, idempotency, enum values, updateMany guard |
+| S42-T14 | MED | ✅ done | Misc medium fixes: 429 sentinel, GET alias CSRF, BigCallTap FKs, expert upsert verified=false, experts pagination |
+
+---
+
+## Sprint 38
+
+**Theme:** CRITICAL security findings from deep audit — production-blocking
+**Status:** ✅ COMPLETE (13/13 done)
+
+| ID | Pri | Status | Title |
+|---|---|---|---|
+| S38-T1 | CRIT | ✅ done | Remove `?userId=` auth bypass on POST /api/markets |
+| S38-T2 | CRIT | ✅ done | Harden JWT_SECRET — throw at boot if NEXTAUTH_SECRET unset |
+| S38-T3 | CRIT | ✅ done | Gate unauthenticated destructive/SSRF admin routes |
+| S38-T4 | CRIT | ✅ done | Fix CRON_SECRET fail-open on 10 cron routes |
+| S38-T5 | CRIT | ✅ done | Check `isSuspended` in `getUserIdFromRequest` (Bearer JWT bypass) |
+| S38-T6 | CRIT | ✅ done | Fix wallet double-spend races + Postgres CHECK constraint |
+| S38-T7 | CRIT | ✅ done | Block multi-choice creator self-resolution (exit-scam prevention) |
+| S38-T8 | CRIT | ✅ done | Fix Gemini API key leaking via URL — use header auth |
+| S38-T9 | CRIT | ✅ done | Block OTP echo in prod + require MSG91_AUTH_KEY at boot |
+| S38-T10 | CRIT | ✅ done | Gate big-call-tap + news/debug + BigCallTap idempotency table |
+| S38-T11 | CRIT | ✅ done | Cap AI retry loop for stuck PENDING expert opinions |
+| S38-T12 | CRIT | ✅ done | WalletTransaction unique idempotency (`@@unique([walletId, marketId, type, positionId])`) |
+| S38-T13 | CRIT | ✅ done | Admin expert-opinion resolve idempotent + AdminAction audit log |
+
+---
+
+## Sprint 39
+
+**Theme:** HIGH severity findings — access control, race conditions, AI hardening, cron idempotency
+**Status:** ✅ COMPLETE (12/12 done)
+
+| ID | Pri | Status | Title |
+|---|---|---|---|
+| S39-T1 | HIGH | ✅ done | Enforce `canViewMarket` on market sub-resource endpoints |
+| S39-T2 | HIGH | ✅ done | Role-hierarchy guard on admin suspend/cluster-edit routes |
+| S39-T3 | HIGH | ✅ done | AI prompt injection hardening (`<article_body>` wrap + sentinel checks) |
+| S39-T4 | HIGH | ✅ done | Rate limiting on registration + OTP (in-memory; upgraded to Redis in S42-T7) |
+| S39-T5 | HIGH | ✅ done | Zero-winner market refund + numeric tie-breaker cap + remainder cents fix |
+| S39-T6 | HIGH | ✅ done | Quest engine double-reward race + tip cap race verification |
+| S39-T7 | HIGH | ✅ done | financeStreak UTC/IST fix + expert-sentiment `groupBy` perf |
+| S39-T8 | HIGH | ✅ done | Cron idempotency (WeeklyDigestRun, flagshipReminderSentAt) |
+| S39-T9 | HIGH | ✅ done | auto-resolve-opinions timeout fix + `notifiedAt` resumable sweep |
+| S39-T10 | HIGH | ✅ done | Leaderboard-snapshot cap + probability-snapshot O(n²) retention fix |
+| S39-T11 | HIGH | ✅ done | Confirmation dialogs on destructive admin web UI actions |
+| S39-T12 | HIGH | ✅ done | stats.ts unbounded market query + auth.ts JWT 5-min TTL cache |
+
+---
+
+## Sprint 40
+
+**Theme:** MEDIUM findings — admin auth standardization, JSON schemas, N+1 fixes, race conditions
+**Status:** ✅ COMPLETE (10/10 done)
+
+| ID | Pri | Status | Title |
+|---|---|---|---|
+| S40-T1 | MED | ✅ done | Admin route auth standardization (26 routes → `getUserIdFromRequest`) |
+| S40-T2 | MED | ✅ done | AdminAction audit trail on mark-flagship, mark-big-call, verify-analyst |
+| S40-T3 | MED | ✅ done | Block suspended users on push-token + side-effect mutators |
+| S40-T4 | MED | ✅ done | Zod schemas for Json? fields driving critical business logic |
+| S40-T5 | MED | ✅ done | ExpertOpinion `quoteHash` unique + MarketPosition portfolio index |
+| S40-T6 | MED | ✅ done | N+1 fixes (analyst tier batch + opinion-resolution accuracy batch) |
+| S40-T7 | MED | ✅ done | Expert-opinion vote/lock-vote atomicity (transaction + atomic conditional update) |
+| S40-T8 | MED | ✅ done | Push batching (10 parallel chunks) + sync-manifold cap + backfill determinism |
+| S40-T9 | MED | ✅ done | Mobile client double-tap guard + ApiClientError 401 handling |
+| S40-T10 | MED | ✅ done | Reasoning upvote drift fix + groups launch transaction wrap |
+
+---
+
+## Sprint 41
+
+**Theme:** LOW findings cleanup — dead code, schema polish, env safety, AI caps
+**Status:** ✅ COMPLETE (4/4 done)
+
+| ID | Pri | Status | Title |
+|---|---|---|---|
+| S41-T1 | LOW | ✅ done | Dead code cleanup + findFirst orderBy audit |
+| S41-T2 | LOW | ✅ done | LeaderboardSnapshot.category enum + WalletTransaction FK SetNull |
+| S41-T3 | LOW | ✅ done | Mobile env prod safety (throw on missing EXPO_PUBLIC_API_BASE_URL) |
+| S41-T4 | LOW | ✅ done | generateHeadline daily cap + Gemini model env-pin with 404 fallback |
+
+---
+
+## Sprint 42
+
+**Theme:** HOTFIX — regressions from S38–S41 re-audit + complete-fix migration to Redis-backed state
+**Status:** ✅ COMPLETE (15/15 done)
+
+| ID | Pri | Status | Title |
+|---|---|---|---|
+| S42-T0 | CRIT | ✅ done | Provision Upstash Redis singleton + smoke endpoint |
+| S42-T1 | CRIT | ✅ done | Multi-choice payout P2003 fix (`multiChoicePositionId` FK) |
+| S42-T2 | CRIT | ✅ done | Stamp `notifiedAt` on admin expert-opinion resolve |
+| S42-T3 | CRIT | ✅ done | ExpertOpinion unique index alignment (plain index, no COALESCE) |
+| S42-T4 | HIGH | ✅ done | Prompt injection wrap on 3 remaining AI sites |
+| S42-T5 | HIGH | ✅ done | Rate limiting on mobile login + NextAuth authorize |
+| S42-T6 | HIGH | ✅ done | Manifold sync uses `externalLastSyncedAt` (not `updatedAt`) |
+| S42-T7 | HIGH | ✅ done | Redis-backed rate-limit (replaces per-instance Map) |
+| S42-T8 | HIGH | ✅ done | Tip cap row-lock + referral bonus atomic claim |
+| S42-T9 | HIGH | ✅ done | Reasoning upvote atomic increment/decrement |
+| S42-T10 | HIGH | ✅ done | Shared `callGeminiAI` helper + env-pin + 1-hr cooldown |
+| S42-T11 | HIGH | ✅ done | Auto-resolve Phase-0 sweep cap + Redis Expo push budget |
+| S42-T12 | MED | ✅ done | Web auth TTL + verify-phone double-credit + bond guarded UPDATE |
+| S42-T13 | MED | ✅ done | Admin hardening (avatar URL Zod + GRANT/REVOKE enum) |
+| S42-T14 | MED | ✅ done | `wasLastCallRateLimited` sentinel + GET removal + BigCallTap FKs + experts pagination |
+
+---
+
+> ⚠ **Pipeline lesson:** During S42 several parallel CTO bundles wrote to centralized files (`schema.prisma`, `sprint-board.json`, `SPRINT.md`) concurrently. The harness has no merge layer — last writer wins. Recovery: `prisma db pull` for schema, manual reconstruction for the board (see backup `.claude/sprint-board.json.pre-reconstruction-backup`). Future sprints: serialize edits to any centralized file. Tracked in agent memory at `feedback_serialize_schema_writes.md`.

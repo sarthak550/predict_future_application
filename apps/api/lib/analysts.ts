@@ -89,6 +89,64 @@ export async function updateAnalystTier(userId: string): Promise<AnalystTier> {
 }
 
 /**
+ * Batch-recompute and persist AnalystTiers for the given user IDs.
+ *
+ * Fetches all UserStat rows and user flags in two queries, computes new tiers
+ * in JS, then writes back in chunks of 50 concurrent updates.
+ *
+ * Returns the number of users successfully updated.
+ */
+export async function updateAnalystTiersBatch(userIds: string[]): Promise<number> {
+  if (userIds.length === 0) return 0;
+
+  // One query for all relevant users (flags + embedded stats).
+  const users = await prisma.user.findMany({
+    where: { id: { in: userIds } },
+    select: {
+      id: true,
+      isVerifiedAnalyst: true,
+      stats: {
+        select: {
+          totalPredictions: true,
+          accuracyScore: true,
+        },
+      },
+    },
+  });
+
+  // Compute new tier for every user in JS — no extra DB round-trips.
+  const updates = users.map((u) => ({
+    userId: u.id,
+    newTier: computeTierFromStats({
+      totalPredictions: u.stats?.totalPredictions ?? 0,
+      accuracyScore: u.stats?.accuracyScore ?? 0,
+      isVerifiedAnalyst: u.isVerifiedAnalyst,
+    }),
+  }));
+
+  // Write back in chunks of 50 concurrent updates to avoid connection exhaustion.
+  const CHUNK = 50;
+  let updated = 0;
+  for (let i = 0; i < updates.length; i += CHUNK) {
+    const chunk = updates.slice(i, i + CHUNK);
+    const results = await Promise.allSettled(
+      chunk.map(({ userId, newTier }) =>
+        prisma.user.update({ where: { id: userId }, data: { analystTier: newTier } })
+      )
+    );
+    for (const r of results) {
+      if (r.status === "fulfilled") {
+        updated++;
+      } else {
+        console.error("[analyst-tier] batch update failed:", r.reason);
+      }
+    }
+  }
+
+  return updated;
+}
+
+/**
  * Recompute and persist analyst tiers for all users whose predictions were
  * resolved after the given cutoff date. Intended for the nightly cron job.
  *
@@ -106,15 +164,6 @@ export async function recalculateAnalystTiersForRecentlyResolved(
     distinct: ["userId"],
   });
 
-  let updated = 0;
-  for (const { userId } of recentlyAffectedUsers) {
-    try {
-      await updateAnalystTier(userId);
-      updated++;
-    } catch (err) {
-      console.error(`[analyst-tier] Failed to update tier for userId=${userId}:`, err);
-    }
-  }
-
-  return updated;
+  const userIds = recentlyAffectedUsers.map((r) => r.userId);
+  return updateAnalystTiersBatch(userIds);
 }

@@ -6,9 +6,8 @@ export interface CredibilityResult {
   provisional: boolean;
 }
 
-type OpinionWithVotes = {
+type OpinionForCredibility = {
   resolutionStatus: string;
-  votes: Array<{ pollType: string; choice: string }>;
 };
 
 /**
@@ -16,10 +15,10 @@ type OpinionWithVotes = {
  * Score = RESOLVED_HIT / (RESOLVED_HIT + RESOLVED_MISS).
  * resolutionStatus is the source of truth — set by auto-resolution.
  *
- * Returns null with provisional=true if resolvedCount < 5.
+ * Returns null with provisional=true if resolvedCount < 3.
  */
 export function computeCredibilityScore(
-  opinions: OpinionWithVotes[]
+  opinions: OpinionForCredibility[]
 ): CredibilityResult {
   const resolved = opinions.filter(
     (o) => o.resolutionStatus === "RESOLVED_HIT" || o.resolutionStatus === "RESOLVED_MISS"

@@ -21,7 +21,6 @@ export async function POST(
   { params }: { params: { marketId: string } }
 ) {
   try {
-    const { searchParams } = new URL(request.url);
     const userId = await getUserIdFromRequest(request);
     if (!userId) {
       return NextResponse.json({ error: "Authentication required." }, { status: 401 });
@@ -94,10 +93,6 @@ export async function POST(
       if (payload.amount > 0 && payload.amount < 50) {
         throw new Error("Minimum bet is 50 points.");
       }
-      if (wallet.balance < payload.amount) {
-        throw new Error("Insufficient virtual points.");
-      }
-
       const projectedTotalVolume = market.totalVolume + payload.amount;
       if (
         isHostResolvedMode(market.resolutionMode) &&
@@ -185,16 +180,15 @@ export async function POST(
 
       // Skip wallet update for flagship-poll votes (amount=0). They're free votes, not stakes.
       if (payload.amount > 0) {
-        await tx.wallet.update({
-          where: {
-            id: wallet.id
-          },
-          data: {
-            balance: {
-              decrement: payload.amount
-            }
-          }
+        // Guarded atomic decrement — prevents double-spend under concurrent requests.
+        // updateMany with balance >= amount fails (count=0) if funds are insufficient.
+        const walletUpdateResult = await tx.wallet.updateMany({
+          where: { id: wallet.id, balance: { gte: payload.amount } },
+          data: { balance: { decrement: payload.amount } }
         });
+        if (walletUpdateResult.count === 0) {
+          throw new Error("Insufficient virtual points.");
+        }
 
         await tx.walletTransaction.create({
           data: {
@@ -251,38 +245,36 @@ export async function POST(
       }
 
       // Referral reward — fires on the user's FIRST ever position, if they were referred.
-      // Gate: referredById is set AND no REFERRAL_BONUS_REFEREE transaction exists yet.
+      // Race-condition fix (S42-T8): use a guarded updateMany on User.referralBonusCreditedAt
+      // as the idempotency gate instead of a read-then-write count check. The DB-level conditional
+      // update is atomic under READ COMMITTED, so two concurrent first-position requests can only
+      // both pass the gate if referralBonusCreditedAt is null in both reads — but only ONE write
+      // will succeed (count === 1). The other gets count === 0 and skips the credit.
       // Non-fatal: errors must never roll back the position itself.
       try {
         if (user.referredById) {
-          // Count all positions for this user (including the one just created)
-          const totalPositions = await tx.marketPosition.count({
-            where: { userId: user.id },
+          const REFERRAL_BONUS = 250;
+
+          // Atomic gate: stamp referralBonusCreditedAt only if it is still null.
+          const claimResult = await tx.user.updateMany({
+            where: { id: user.id, referralBonusCreditedAt: null },
+            data: { referralBonusCreditedAt: new Date() },
           });
 
-          if (totalPositions === 1) {
-            // Check idempotency: has the referee already been credited?
-            const referrerWallet = await tx.wallet.findUnique({
-              where: { userId: user.referredById },
-              select: { id: true },
-            });
-            const refereeWallet = await tx.wallet.findUnique({
-              where: { userId: user.id },
-              select: { id: true },
-            });
+          if (claimResult.count === 1) {
+            // We won the race — credit both parties.
+            const [referrerWallet, refereeWallet] = await Promise.all([
+              tx.wallet.findUnique({
+                where: { userId: user.referredById },
+                select: { id: true },
+              }),
+              tx.wallet.findUnique({
+                where: { userId: user.id },
+                select: { id: true },
+              }),
+            ]);
 
-            const alreadyCredited = refereeWallet
-              ? await tx.walletTransaction.count({
-                  where: {
-                    walletId: refereeWallet.id,
-                    type: "REFERRAL_BONUS_REFEREE",
-                  },
-                })
-              : 1; // treat as "already credited" if wallet not found — skip safely
-
-            if (alreadyCredited === 0 && refereeWallet) {
-              const REFERRAL_BONUS = 250;
-
+            if (refereeWallet) {
               // Credit the referee (+250 pts)
               await tx.wallet.update({
                 where: { id: refereeWallet.id },
@@ -296,35 +288,37 @@ export async function POST(
                   description: "Referral bonus — your first prediction",
                 },
               });
+            }
 
+            if (referrerWallet) {
               // Credit the referrer (+250 pts)
-              if (referrerWallet) {
-                await tx.wallet.update({
-                  where: { id: referrerWallet.id },
-                  data: { balance: { increment: REFERRAL_BONUS } },
-                });
-                await tx.walletTransaction.create({
-                  data: {
-                    walletId: referrerWallet.id,
-                    type: "REFERRAL_BONUS_REFERRER",
-                    amount: REFERRAL_BONUS,
-                    description: `Referral bonus — ${user.username} made their first prediction`,
-                  },
-                });
+              await tx.wallet.update({
+                where: { id: referrerWallet.id },
+                data: { balance: { increment: REFERRAL_BONUS } },
+              });
+              await tx.walletTransaction.create({
+                data: {
+                  walletId: referrerWallet.id,
+                  type: "REFERRAL_BONUS_REFERRER",
+                  amount: REFERRAL_BONUS,
+                  description: `Referral bonus — ${user.username} made their first prediction`,
+                },
+              });
 
-                // Notify the referrer
-                await tx.notification.create({
-                  data: {
-                    userId: user.referredById,
-                    type: "REFERRAL_REWARD",
-                    title: "Referral reward!",
-                    body: `${user.username} made their first prediction. You both earned ${REFERRAL_BONUS} pts!`,
-                    href: "/profile",
-                  },
-                });
-              }
+              // Notify the referrer
+              await tx.notification.create({
+                data: {
+                  userId: user.referredById,
+                  type: "REFERRAL_REWARD",
+                  title: "Referral reward!",
+                  body: `${user.username} made their first prediction. You both earned ${REFERRAL_BONUS} pts!`,
+                  href: "/profile",
+                },
+              });
             }
           }
+          // claimResult.count === 0 means another concurrent request already claimed the bonus —
+          // silently skip without error.
         }
       } catch (referralErr) {
         console.error("[referral reward] non-fatal error:", referralErr);

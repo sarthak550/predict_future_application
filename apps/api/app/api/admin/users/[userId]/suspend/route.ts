@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { getSession } from "@/lib/auth";
+import { getUserIdFromRequest } from "@/lib/auth";
 import { createNotification } from "@/lib/notifications";
 import { prisma } from "@/lib/prisma";
 
@@ -14,28 +14,44 @@ export async function POST(
   { params }: { params: { userId: string } }
 ) {
   try {
-    const session = await getSession();
-    if (!session?.user?.id) {
+    const userId = await getUserIdFromRequest(request);
+    if (!userId) {
       return NextResponse.json({ error: "Authentication required." }, { status: 401 });
     }
 
     const actor = await prisma.user.findUnique({
-      where: { id: session.user.id }
+      where: { id: userId },
+      select: { id: true, role: true, isSuspended: true },
     });
-    if (!actor || (actor.role !== "ADMIN" && actor.role !== "MODERATOR")) {
+    if (!actor || actor.isSuspended) {
+      return NextResponse.json({ error: "Account cannot perform this action." }, { status: 403 });
+    }
+    if (actor.role !== "ADMIN" && actor.role !== "MODERATOR") {
       return NextResponse.json({ error: "Admin access required." }, { status: 403 });
     }
 
     const payload = suspendSchema.parse(await request.json());
 
-    await prisma.$transaction(async (tx) => {
-      const target = await tx.user.findUnique({
-        where: { id: params.userId }
-      });
-      if (!target) {
-        throw new Error("User not found.");
-      }
+    // Fetch target outside the transaction so we can return a proper HTTP status
+    // before entering the DB transaction.
+    const target = await prisma.user.findUnique({
+      where: { id: params.userId }
+    });
+    if (!target) {
+      return NextResponse.json({ error: "User not found." }, { status: 404 });
+    }
 
+    // Role hierarchy: MODERATORs cannot suspend ADMINs or other MODERATORs.
+    if (actor.role === "MODERATOR") {
+      if (target.role === "ADMIN" || target.role === "MODERATOR") {
+        return NextResponse.json(
+          { error: "Moderators cannot suspend admins or other moderators." },
+          { status: 403 }
+        );
+      }
+    }
+
+    await prisma.$transaction(async (tx) => {
       const nextSuspended = !target.isSuspended;
       await tx.user.update({
         where: { id: target.id },

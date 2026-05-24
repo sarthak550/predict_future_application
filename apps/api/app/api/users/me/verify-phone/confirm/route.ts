@@ -24,6 +24,7 @@ import { NextResponse } from "next/server";
 import { getUserIdFromRequest } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { clearOtp, verifyOtp } from "@/lib/phone-verification";
+import { checkRateLimit, resetRateLimit } from "@/lib/rate-limit";
 
 export async function POST(request: Request) {
   try {
@@ -64,6 +65,22 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true, phoneVerified: true, bonusCredited: 100, alreadyVerified: true });
     }
 
+    // Brute-force guard: 5 failed attempts within 10 min → 30 min lockout.
+    // Key tracks failed attempts only; resets on success.
+    const rlKey = `verify-phone-confirm:${userId}`;
+    const rl = await checkRateLimit(rlKey, 5, 10 * 60 * 1000);
+    if (!rl.allowed) {
+      // Also clear the OTP so the attacker must start over (re-request).
+      await clearOtp(userId);
+      return NextResponse.json(
+        { error: "Too many failed OTP attempts. Please request a new code." },
+        {
+          status: 429,
+          headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) },
+        }
+      );
+    }
+
     // Validate OTP against the DB-backed store.
     const { valid, phone } = await verifyOtp(userId, submittedOtp);
 
@@ -74,14 +91,29 @@ export async function POST(request: Request) {
       );
     }
 
+    // OTP matched — clear the failed-attempt counter.
+    await resetRateLimit(rlKey);
+
     // Commit verification in a single transaction.
+    // Guard against concurrent double-credit: use updateMany with a phoneVerified=false
+    // predicate. Only the first concurrent request will match (count === 1); the second
+    // will see count === 0 and skip the wallet credit entirely.
+    let bonusCredited = false;
     try {
       await prisma.$transaction(async (tx) => {
-        // 1. Mark user as verified.
-        await tx.user.update({
-          where: { id: userId },
+        // 1. Atomically flip phoneVerified from false → true. If a concurrent request
+        //    already flipped it, this returns count=0 and we skip the credit.
+        const { count } = await tx.user.updateMany({
+          where: { id: userId, phoneVerified: false },
           data: { phoneVerified: true, phone },
         });
+
+        if (count === 0) {
+          // Already verified by a concurrent request — nothing more to do.
+          return;
+        }
+
+        bonusCredited = true;
 
         // 2. Look up wallet.
         const wallet = await tx.wallet.findUnique({
@@ -129,6 +161,11 @@ export async function POST(request: Request) {
 
     // Clear OTP only after successful commit.
     await clearOtp(userId);
+
+    if (!bonusCredited) {
+      // Concurrent request already completed verification — treat as idempotent success.
+      return NextResponse.json({ ok: true, phoneVerified: true, bonusCredited: 0, alreadyVerified: true });
+    }
 
     return NextResponse.json({ ok: true, phoneVerified: true, bonusCredited: 100 });
   } catch (error) {

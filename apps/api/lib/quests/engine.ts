@@ -169,16 +169,21 @@ export async function checkAndCompleteQuests(
 
     const now = new Date();
 
-    // Mark quest complete
-    await tx.dailyQuest.update({
-      where: { id: quest.id },
-      data: {
-        completed: true,
-        completedAt: now,
-      },
+    // Atomic race guard: only the first concurrent caller that flips
+    // completed=false→true wins the reward. updateMany returns count=0 when
+    // another concurrent transaction already completed this quest, preventing
+    // double-credit without relying on a separate findFirst check.
+    const raceResult = await tx.dailyQuest.updateMany({
+      where: { id: quest.id, completed: false },
+      data: { completed: true, completedAt: now },
     });
 
-    // Credit wallet
+    if (raceResult.count === 0) {
+      // Another concurrent run already credited — skip wallet credit.
+      continue;
+    }
+
+    // Credit wallet — only reached when we won the race.
     await tx.wallet.update({
       where: { id: wallet.id },
       data: { balance: { increment: def.rewardAmount } },

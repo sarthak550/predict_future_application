@@ -4,27 +4,31 @@
  * PATCH  /api/admin/event-clusters/:id  — update cluster fields
  * DELETE /api/admin/event-clusters/:id  — delete cluster
  *
- * Auth: session-based, ADMIN or MODERATOR role required.
+ * Auth: Bearer or session, ADMIN or MODERATOR role required.
  */
 
 import { NextResponse } from "next/server";
 
-import { getSession } from "@/lib/auth";
+import { getUserIdFromRequest } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
 /** Shared admin auth guard. Returns the actor or a NextResponse error. */
-async function requireAdmin() {
-  const session = await getSession();
-  if (!session?.user?.id) {
+async function requireAdmin(request: Request) {
+  const userId = await getUserIdFromRequest(request);
+  if (!userId) {
     return { actor: null, error: NextResponse.json({ error: "Authentication required." }, { status: 401 }) };
   }
 
   const actor = await prisma.user.findUnique({
-    where: { id: session.user.id },
-    select: { id: true, role: true },
+    where: { id: userId },
+    select: { id: true, role: true, isSuspended: true },
   });
 
-  if (!actor || (actor.role !== "ADMIN" && actor.role !== "MODERATOR")) {
+  if (!actor || actor.isSuspended) {
+    return { actor: null, error: NextResponse.json({ error: "Account cannot perform this action." }, { status: 403 }) };
+  }
+
+  if (actor.role !== "ADMIN" && actor.role !== "MODERATOR") {
     return { actor: null, error: NextResponse.json({ error: "Admin access required." }, { status: 403 }) };
   }
 
@@ -45,7 +49,7 @@ export async function PATCH(
   request: Request,
   { params }: { params: { id: string } }
 ) {
-  const { error } = await requireAdmin();
+  const { actor, error } = await requireAdmin(request);
   if (error) return error;
 
   const { id } = params;
@@ -88,6 +92,14 @@ export async function PATCH(
   }
 
   if (body.startsAt !== undefined) {
+    // Date fields drive flagship push timing — restricted to ADMIN to prevent
+    // MODERATORs from retroactively activating flagship event broadcasts.
+    if (actor!.role !== "ADMIN") {
+      return NextResponse.json(
+        { error: "Only admins can modify event cluster dates." },
+        { status: 403 }
+      );
+    }
     if (typeof body.startsAt !== "string" || isNaN(Date.parse(body.startsAt))) {
       return NextResponse.json({ error: "startsAt must be a valid ISO 8601 date string." }, { status: 400 });
     }
@@ -95,6 +107,12 @@ export async function PATCH(
   }
 
   if (body.endsAt !== undefined) {
+    if (actor!.role !== "ADMIN") {
+      return NextResponse.json(
+        { error: "Only admins can modify event cluster dates." },
+        { status: 403 }
+      );
+    }
     if (typeof body.endsAt !== "string" || isNaN(Date.parse(body.endsAt))) {
       return NextResponse.json({ error: "endsAt must be a valid ISO 8601 date string." }, { status: 400 });
     }
@@ -140,10 +158,10 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _request: Request,
+  request: Request,
   { params }: { params: { id: string } }
 ) {
-  const { error } = await requireAdmin();
+  const { error } = await requireAdmin(request);
   if (error) return error;
 
   const { id } = params;

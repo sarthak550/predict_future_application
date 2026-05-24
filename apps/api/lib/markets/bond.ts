@@ -17,14 +17,22 @@ async function lockBondCapPoints(
     description: string;
   }
 ) {
-  await tx.wallet.update({
-    where: { id: input.walletId },
+  // Guarded updateMany: only decrements if the wallet currently holds at least
+  // `amount` points. Returns count=0 under a concurrent race or insufficient
+  // balance, which the caller treats as a hard failure (same pattern as S38-T6).
+  const { count } = await tx.wallet.updateMany({
+    where: {
+      id: input.walletId,
+      balance: { gte: input.amount },
+    },
     data: {
-      balance: {
-        decrement: input.amount
-      }
-    }
+      balance: { decrement: input.amount },
+    },
   });
+
+  if (count === 0) {
+    throw new Error("Insufficient virtual points to add to the bond cap.");
+  }
 
   await tx.walletTransaction.create({
     data: {
@@ -77,10 +85,6 @@ export async function addHostBondCap(input: {
 
     if (!market.creator.wallet) {
       throw new Error("Wallet not found.");
-    }
-
-    if (market.creator.wallet.balance < amount) {
-      throw new Error("Insufficient virtual points to add to the bond cap.");
     }
 
     const nextBondCap = market.bondCap + amount;

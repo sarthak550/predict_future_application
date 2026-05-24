@@ -75,6 +75,18 @@ export type NewsQuery = {
   personalized?: boolean;
   /** When set, restrict feed to stories that have at least one expert opinion tagged to this MarketEventCluster. */
   expertOpinionClusterId?: string;
+  /** Direction filter — only stories with at least one matching opinion are returned. */
+  expertOpinionDirection?: "BULLISH" | "BEARISH" | "NEUTRAL";
+  /** True → only stories with at least one verified-analyst opinion. */
+  expertOpinionVerified?: boolean;
+  /** True → only stories with at least one RESOLVED_HIT / RESOLVED_MISS opinion. */
+  expertOpinionResolved?: boolean;
+  /** Substring match on opinion.instrument OR opinion.instrumentTicker (case-insensitive). */
+  expertOpinionInstrument?: string;
+  /** Restrict to opinions authored by this expertId. */
+  expertOpinionAnalyst?: string;
+  /** "ANALYST" → isSourceAttribution=false; "PUBLICATION" → isSourceAttribution=true. */
+  expertOpinionSourceType?: "ANALYST" | "PUBLICATION";
 };
 
 export type PublicMarketsQuery = {
@@ -406,6 +418,15 @@ export function createApiClient(options: ApiClientOptions) {
       );
     },
 
+    /** Locks the user's IMPLICATION vote (one-way). Returns updated tallies. */
+    lockExpertOpinionVote(opinionId: string) {
+      return request<ApiExpertOpinionTallies>(
+        `/api/finance/expert-opinions/${opinionId}/lock-vote`,
+        undefined,
+        { method: "POST", auth: true }
+      );
+    },
+
     // ─── Finance: Expert Sentiment Aggregate ──────────────────────────────
     getFinanceExpertSentiment() {
       return request<ApiFinanceExpertSentiment>("/api/finance/expert-sentiment");
@@ -459,6 +480,20 @@ export function createApiClient(options: ApiClientOptions) {
         `/api/finance/my-calls-digest`,
         undefined,
         { auth: true }
+      );
+    },
+
+    // ─── Finance: Today's Big Call spotlight (S35-T2, window-aware S37-T2) ──
+    getFinanceBigCall() {
+      return request<import("@predict-future/types").ApiFinanceBigCallResponse>(
+        `/api/finance/big-call`
+      );
+    },
+
+    /** Fetch a single ExpertOpinion's full detail by id. */
+    getFinanceOpinion(opinionId: string) {
+      return request<import("@predict-future/types").ApiFinanceOpinionDetail>(
+        `/api/finance/expert-opinions/${opinionId}`
       );
     },
 

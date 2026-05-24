@@ -21,10 +21,15 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "User not found." }, { status: 404 });
   }
 
-  const eligibility = evaluateTrustedHostEligibility({
+  const baseEligibility = evaluateTrustedHostEligibility({
     user,
     stats: user.stats
   });
+
+  const eligibility = {
+    ...baseEligibility,
+    isAdmin: user.role === "ADMIN",
+  };
 
   return NextResponse.json({ eligibility });
 }

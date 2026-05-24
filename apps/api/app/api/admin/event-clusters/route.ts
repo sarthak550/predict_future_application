@@ -4,36 +4,40 @@
  * GET  /api/admin/event-clusters  — list all clusters (desc by startsAt)
  * POST /api/admin/event-clusters  — create a new cluster
  *
- * Auth: session-based, ADMIN or MODERATOR role required.
+ * Auth: Bearer or session, ADMIN or MODERATOR role required.
  */
 
 import { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 
-import { getSession } from "@/lib/auth";
+import { getUserIdFromRequest } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
 /** Shared admin auth guard. Returns the actor or a NextResponse error. */
-async function requireAdmin() {
-  const session = await getSession();
-  if (!session?.user?.id) {
+async function requireAdmin(request: Request) {
+  const userId = await getUserIdFromRequest(request);
+  if (!userId) {
     return { actor: null, error: NextResponse.json({ error: "Authentication required." }, { status: 401 }) };
   }
 
   const actor = await prisma.user.findUnique({
-    where: { id: session.user.id },
-    select: { id: true, role: true },
+    where: { id: userId },
+    select: { id: true, role: true, isSuspended: true },
   });
 
-  if (!actor || (actor.role !== "ADMIN" && actor.role !== "MODERATOR")) {
+  if (!actor || actor.isSuspended) {
+    return { actor: null, error: NextResponse.json({ error: "Account cannot perform this action." }, { status: 403 }) };
+  }
+
+  if (actor.role !== "ADMIN" && actor.role !== "MODERATOR") {
     return { actor: null, error: NextResponse.json({ error: "Admin access required." }, { status: 403 }) };
   }
 
   return { actor, error: null };
 }
 
-export async function GET() {
-  const { error } = await requireAdmin();
+export async function GET(request: Request) {
+  const { error } = await requireAdmin(request);
   if (error) return error;
 
   try {
@@ -60,7 +64,7 @@ interface CreateBody {
 }
 
 export async function POST(request: Request) {
-  const { error } = await requireAdmin();
+  const { error } = await requireAdmin(request);
   if (error) return error;
 
   let body: CreateBody;

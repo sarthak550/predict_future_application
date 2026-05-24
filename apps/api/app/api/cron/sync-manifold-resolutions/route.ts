@@ -22,7 +22,7 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 function hasCronAccess(request: Request) {
   const secret = process.env.CRON_SECRET;
-  if (!secret) return true;
+  if (!secret) return false;
   const authHeader = request.headers.get("authorization");
   const cronHeader = request.headers.get("x-cron-secret");
   return authHeader === `Bearer ${secret}` || cronHeader === secret;
@@ -54,11 +54,22 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  // Cap at 200 per run and process least-recently-synced first so the backlog drains
+  // evenly. Skip markets whose externalLastSyncedAt was set within the last 6 hours.
+  // We deliberately do NOT use updatedAt here — updatedAt is bumped by every local trade,
+  // which would prevent active markets from ever re-syncing their Manifold resolution state.
+  const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000);
   const markets = await prisma.market.findMany({
     where: {
       originPlatform: "manifold",
       status: { in: [MarketStatus.PENDING_REVIEW, MarketStatus.OPEN] },
+      OR: [
+        { externalLastSyncedAt: null },
+        { externalLastSyncedAt: { lt: sixHoursAgo } },
+      ],
     },
+    orderBy: { externalLastSyncedAt: "asc" },
+    take: 200,
     select: { id: true, externalId: true },
   });
 
@@ -82,7 +93,9 @@ export async function POST(request: Request) {
       continue;
     }
 
-    // Always refresh crowd data + mirror into native counters ($1 = 10 pts)
+    // Always refresh crowd data + mirror into native counters ($1 = 10 pts).
+    // Stamp externalLastSyncedAt to now so this market exits the sync window for the next 6 hours,
+    // regardless of whether updatedAt was bumped by a local trade in the interim.
     const probability = detail.resolutionProbability ?? detail.probability ?? null;
     await prisma.market.update({
       where: { id: m.id },
@@ -92,6 +105,7 @@ export async function POST(request: Request) {
         externalTraderCount: detail.uniqueBettorCount ?? null,
         totalVolume: detail.volume != null ? Math.round(detail.volume * 10) : 0,
         totalParticipants: detail.uniqueBettorCount ?? 0,
+        externalLastSyncedAt: new Date(),
       },
     });
     crowdUpdated++;

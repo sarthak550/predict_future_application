@@ -49,7 +49,10 @@ async function createUniqueWalletTransaction(
     type: WalletTransactionType;
     amount: number;
     description: string;
+    /** FK to MarketPosition — used for binary-market settlement rows. */
     positionId?: string;
+    /** FK to MultiChoicePosition — used for multi-choice market settlement rows. */
+    multiChoicePositionId?: string;
     percentileRank?: number | null;
   }
 ) {
@@ -58,7 +61,11 @@ async function createUniqueWalletTransaction(
       walletId: input.walletId,
       marketId: input.marketId,
       type: input.type,
-      ...(input.positionId ? { positionId: input.positionId } : {})
+      ...(input.multiChoicePositionId
+        ? { multiChoicePositionId: input.multiChoicePositionId }
+        : input.positionId
+        ? { positionId: input.positionId }
+        : {})
     }
   });
 
@@ -377,6 +384,54 @@ export async function settleMarket(
       (market.outcome === "NO" && position.side === "YES")
   );
   const losingPool = losers.reduce((sum, position) => sum + position.amount, 0);
+
+  // Books must balance: if there are no winners but losers exist, the losing pool
+  // has no valid recipients to redistribute to. Silently destroying it would
+  // unbalance the ledger. Instead we treat the market as effectively cancelled
+  // for those participants and issue MARKET_REFUND for every loser. No host
+  // commission is owed since the losing pool never transferred to real winners.
+  if (winners.length === 0 && losers.length > 0) {
+    for (const loser of losers) {
+      if (!loser.user.wallet) continue;
+      await tx.wallet.update({
+        where: { id: loser.user.wallet.id },
+        data: { balance: { increment: loser.amount } }
+      });
+      await createUniqueWalletTransaction(tx, {
+        walletId: loser.user.wallet.id,
+        type: "MARKET_REFUND",
+        amount: loser.amount,
+        description: `Refund — no winners on "${market.title}"`,
+        marketId: market.id,
+        positionId: loser.id
+      });
+      await tx.marketPosition.update({
+        where: { id: loser.id },
+        data: { payoutAmount: loser.amount, settledAt: new Date() }
+      });
+    }
+
+    await releaseOrForfeitHostBond(tx, {
+      market,
+      releaseHostBond: Boolean(options?.releaseHostBond),
+      forfeitHostBond: false // No real loss — bond stays or is released, never forfeited
+    });
+
+    for (const userId of participants) {
+      await createNotification(tx, {
+        userId,
+        marketId: market.id,
+        type: "MARKET_RESOLVED",
+        title: "Market resolved — refunded",
+        body: `${market.title} resolved but had no opposing bettors. Your stake was refunded.`,
+        href: `/markets/${market.id}`
+      });
+      await refreshUserStats(tx, userId);
+    }
+
+    await refreshUserStats(tx, market.creatorId);
+    return;
+  }
   const grossPool = market.marketType === "NUMERIC" ? market.totalVolume : market.yesPool + market.noPool;
   const shouldPayHostReward =
     Boolean(options?.payHostReward) && isHostResolvedMode(market.resolutionMode);
@@ -420,13 +475,13 @@ export async function settleMarket(
     const distributed = winnerPayouts.reduce((sum, winner) => sum + winner.payout, 0);
     let remainder = Math.max(0, grossPool - poolDeductedHostReward - distributed);
 
-    for (const winner of winnerPayouts) {
-      if (!remainder) {
-        break;
-      }
-
-      winner.payout += 1;
+    // Distribute all remainder cents via cursor-modulo so none are silently dropped
+    // even when remainder > winnerPayouts.length (mirrors binary path at line 33-39).
+    let remainderCursor = 0;
+    while (remainder > 0 && winnerPayouts.length > 0) {
+      winnerPayouts[remainderCursor % winnerPayouts.length].payout += 1;
       remainder -= 1;
+      remainderCursor += 1;
     }
 
     const winnerIds = new Set(winnerPayouts.map((winner) => winner.positionId));
@@ -721,14 +776,13 @@ export async function settleMultiChoiceMarket(
         data: { balance: { increment: position.amount } }
       });
 
-      await tx.walletTransaction.create({
-        data: {
-          walletId: position.user.wallet.id,
-          type: "MARKET_REFUND",
-          amount: position.amount,
-          description: `Refund for cancelled multi-choice market "${market.title}"`,
-          marketId: market.id
-        }
+      await createUniqueWalletTransaction(tx, {
+        walletId: position.user.wallet.id,
+        type: "MARKET_REFUND",
+        amount: position.amount,
+        description: `Refund for cancelled multi-choice market "${market.title}"`,
+        marketId: market.id,
+        multiChoicePositionId: position.id,
       });
 
       await tx.multiChoicePosition.update({
@@ -826,17 +880,14 @@ export async function settleMultiChoiceMarket(
     });
 
     const isWinnerEntry = winningPositions.some((p) => p.id === positionId);
-    await tx.walletTransaction.create({
-      data: {
-        walletId: position.user.wallet.id,
-        type: "MARKET_WIN",
-        amount: entry.payout,
-        description: `Payout for multi-choice market "${market.title}"`,
-        marketId: market.id,
-        ...(isWinnerEntry && multiChoicePercentileRank != null
-          ? { percentileRank: multiChoicePercentileRank }
-          : {})
-      }
+    await createUniqueWalletTransaction(tx, {
+      walletId: position.user.wallet.id,
+      type: "MARKET_WIN",
+      amount: entry.payout,
+      description: `Payout for multi-choice market "${market.title}"`,
+      marketId: market.id,
+      multiChoicePositionId: positionId,
+      percentileRank: isWinnerEntry && multiChoicePercentileRank != null ? multiChoicePercentileRank : null,
     });
 
     await tx.multiChoicePosition.update({

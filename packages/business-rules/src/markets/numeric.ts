@@ -98,14 +98,22 @@ export function calculateNumericWinnerPayouts(input: {
   let cursor = 0;
   while (slotIndex < input.winnersCount && cursor < ranked.length) {
     const error = ranked[cursor].absoluteError;
-    const tied = ranked.filter((position) => position.absoluteError === error);
+    // All positions sharing this error bucket, sorted by createdAt asc (already guaranteed by ranked sort).
+    const allTied = ranked.filter((position) => position.absoluteError === error);
     const remainingSlots = input.winnersCount - slotIndex;
-    const slotPercentages = input.payoutDistribution.slice(slotIndex, slotIndex + remainingSlots);
-    const tiedPercentages = slotPercentages.slice(0, Math.max(1, Math.min(tied.length, remainingSlots)));
-    const combinedPercentage = tiedPercentages.reduce((sum, percentage) => sum + percentage, 0);
-    const perWinnerPayout = Math.floor((distributablePool * combinedPercentage) / 100 / tied.length);
 
-    for (const position of tied) {
+    // Cap admitted winners to the slots still available — prevents overflow when
+    // e.g. 10 positions tie for slot 1 with winnersCount=3 (would have admitted 10).
+    // For SPLIT the first `remainingSlots` tied positions share the combined payout
+    // percentage for those slots equally.
+    const admitted = allTied.slice(0, remainingSlots);
+
+    const slotPercentages = input.payoutDistribution.slice(slotIndex, slotIndex + remainingSlots);
+    const tiedPercentages = slotPercentages.slice(0, admitted.length);
+    const combinedPercentage = tiedPercentages.reduce((sum, percentage) => sum + percentage, 0);
+    const perWinnerPayout = Math.floor((distributablePool * combinedPercentage) / 100 / admitted.length);
+
+    for (const position of admitted) {
       winners.push({
         positionId: position.id,
         userId: position.userId,
@@ -116,7 +124,7 @@ export function calculateNumericWinnerPayouts(input: {
     }
 
     slotIndex += tiedPercentages.length;
-    cursor += tied.length;
+    cursor += allTied.length; // Advance past ALL tied positions (unadmitted ones are skipped)
   }
 
   return winners;

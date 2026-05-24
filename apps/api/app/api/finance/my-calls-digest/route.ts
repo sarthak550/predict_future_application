@@ -14,12 +14,18 @@ export type DigestOpinion = {
   instrumentTicker: string | null;
   direction: string;
   quote: string;
-  resolutionStatus: "RESOLVED_HIT" | "RESOLVED_MISS";
-  resolvedAt: string;
+  /** PENDING for pending opinions, RESOLVED_HIT/RESOLVED_MISS for resolved. */
+  resolutionStatus: "PENDING" | "RESOLVED_HIT" | "RESOLVED_MISS";
+  /** ISO string for resolved; null for pending. */
+  resolvedAt: string | null;
+  /** ISO string when the analyst made the call. */
+  publishedAt: string;
+  /** ISO string when the user locked their vote. */
+  votedAt: string;
   /** The user's raw implication choice, normalised to v3 bucket label */
   userChoice: string;
   /** True when the user agreed (AGREE/STRONGLY_AGREE) and it was a HIT,
-   *  or disagreed (DISAGREE/STRONGLY_DISAGREE) and it was a MISS. Null for NEUTRAL. */
+   *  or disagreed (DISAGREE/STRONGLY_DISAGREE) and it was a MISS. Null for NEUTRAL or PENDING. */
   userWasCorrect: boolean | null;
   /** True = AGREE/STRONGLY_AGREE bucket; false = DISAGREE/STRONGLY_DISAGREE; null = NEUTRAL */
   userAgreed: boolean | null;
@@ -36,6 +42,8 @@ export type MyCallsDigestResponse = {
   pending: number;
   totalVoted: number;
   resolvedOpinions: DigestOpinion[];
+  /** S38: pending opinion details so the My Calls screen can filter to pending. */
+  pendingOpinions: DigestOpinion[];
 };
 
 function choiceToAgreed(choice: string): boolean | null {
@@ -72,11 +80,12 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Authentication required." }, { status: 401 });
   }
 
-  // Fetch all IMPLICATION votes for this user, including opinion + expert + story
+  // Fetch all locked IMPLICATION votes for this user (drafts don't count toward the digest)
   const votes = await prisma.expertOpinionVote.findMany({
     where: {
       userId,
       pollType: "IMPLICATION",
+      lockedAt: { not: null },
     },
     include: {
       opinion: {
@@ -104,19 +113,45 @@ export async function GET(request: Request) {
   let neutrals = 0;
   let pending = 0;
   const resolvedOpinions: DigestOpinion[] = [];
+  const pendingOpinions: DigestOpinion[] = [];
 
   for (const vote of votes) {
     const op = vote.opinion;
     const isResolved =
       op.resolutionStatus === "RESOLVED_HIT" || op.resolutionStatus === "RESOLVED_MISS";
 
+    const agreed = choiceToAgreed(vote.choice);
+    const baseRow: Omit<DigestOpinion, "resolutionStatus" | "resolvedAt" | "userWasCorrect"> = {
+      opinionId: op.id,
+      expertId: op.expert.id,
+      expertName: op.expert.name,
+      expertOrganization: op.expert.organization,
+      expertVerified: op.expert.verified,
+      expertAvatarUrl: op.expert.avatarUrl ?? null,
+      instrument: op.instrument ?? null,
+      instrumentTicker: op.instrumentTicker ?? null,
+      direction: op.direction,
+      quote: op.quote,
+      publishedAt: op.publishedAt.toISOString(),
+      votedAt: vote.lockedAt!.toISOString(),
+      userChoice: vote.choice,
+      userAgreed: agreed,
+      storyId: op.story?.id ?? null,
+      storyHeadline: op.story?.headline ?? null,
+    };
+
     if (!isResolved) {
       pending++;
+      pendingOpinions.push({
+        ...baseRow,
+        resolutionStatus: "PENDING",
+        resolvedAt: null,
+        userWasCorrect: null,
+      });
       continue;
     }
 
     const isHit = op.resolutionStatus === "RESOLVED_HIT";
-    const agreed = choiceToAgreed(vote.choice);
 
     let userWasCorrect: boolean | null = null;
     if (agreed === true) {
@@ -130,23 +165,10 @@ export async function GET(request: Request) {
     }
 
     resolvedOpinions.push({
-      opinionId: op.id,
-      expertId: op.expert.id,
-      expertName: op.expert.name,
-      expertOrganization: op.expert.organization,
-      expertVerified: op.expert.verified,
-      expertAvatarUrl: op.expert.avatarUrl ?? null,
-      instrument: op.instrument ?? null,
-      instrumentTicker: op.instrumentTicker ?? null,
-      direction: op.direction,
-      quote: op.quote,
+      ...baseRow,
       resolutionStatus: op.resolutionStatus as "RESOLVED_HIT" | "RESOLVED_MISS",
       resolvedAt: op.resolvedAt!.toISOString(),
-      userChoice: vote.choice,
       userWasCorrect,
-      userAgreed: agreed,
-      storyId: op.story?.id ?? null,
-      storyHeadline: op.story?.headline ?? null,
     });
   }
 
@@ -157,6 +179,7 @@ export async function GET(request: Request) {
     pending,
     totalVoted: votes.length,
     resolvedOpinions,
+    pendingOpinions,
   };
 
   const response = NextResponse.json(payload);

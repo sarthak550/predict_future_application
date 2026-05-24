@@ -9,7 +9,8 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const orgFilter = searchParams.get("org") ?? undefined;
 
-  // Fetch all experts with their opinions + retrospective votes so we can compute credibility
+  // Fetch all experts with their opinions — credibility is derived from
+  // admin-set resolutionStatus, no vote data required.
   const experts = await prisma.expert.findMany({
     where: orgFilter ? { organization: orgFilter } : undefined,
     select: {
@@ -24,10 +25,6 @@ export async function GET(request: Request) {
         select: {
           id: true,
           resolutionStatus: true,
-          votes: {
-            where: { pollType: "RETROSPECTIVE" },
-            select: { pollType: true, choice: true },
-          },
         },
       },
     },

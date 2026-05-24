@@ -42,10 +42,6 @@ export async function GET(
     orderBy: [{ publishedAt: "desc" }, { id: "desc" }],
     take: PAGE_SIZE + 1,
     include: {
-      votes: {
-        where: { pollType: "RETROSPECTIVE" },
-        select: { choice: true },
-      },
       story: { select: { id: true, headline: true } },
     },
   });
@@ -58,28 +54,20 @@ export async function GET(
     : null;
 
   return NextResponse.json({
-    items: items.map((o) => {
-      const hitCount = o.votes.filter((v) => v.choice === "HIT").length;
-      const missCount = o.votes.filter((v) => v.choice === "MISS").length;
-      return {
-        id: o.id,
-        quote: o.quote,
-        direction: o.direction,
-        publishedAt: o.publishedAt.toISOString(),
-        resolutionStatus: o.resolutionStatus,
-        resolvedAt: o.resolvedAt?.toISOString() ?? null,
-        resolutionNote: o.resolutionNote,
-        storyId: o.story?.id ?? null,
-        storyHeadline: o.story?.headline ?? null,
-        instrument: o.instrument ?? null,
-        instrumentTicker: o.instrumentTicker ?? null,
-        retrospectiveTallies: {
-          hit: hitCount,
-          miss: missCount,
-          total: o.votes.length,
-        },
-      };
-    }),
+    items: items.map((o) => ({
+      id: o.id,
+      quote: o.quote,
+      direction: o.direction,
+      publishedAt: o.publishedAt.toISOString(),
+      analystCallAt: o.analystCallAt?.toISOString() ?? null,
+      resolutionStatus: o.resolutionStatus,
+      resolvedAt: o.resolvedAt?.toISOString() ?? null,
+      resolutionNote: o.resolutionNote,
+      storyId: o.story?.id ?? null,
+      storyHeadline: o.story?.headline ?? null,
+      instrument: o.instrument ?? null,
+      instrumentTicker: o.instrumentTicker ?? null,
+    })),
     nextCursor,
   });
 }

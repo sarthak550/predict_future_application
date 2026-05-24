@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { getSession } from "@/lib/auth";
+import { getUserIdFromRequest } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -25,20 +25,22 @@ import { prisma } from "@/lib/prisma";
  * ─────────────────────────────────────────────────────────────────────────────
  */
 export async function POST(
-  _request: Request,
+  request: Request,
   { params }: { params: { userId: string } }
 ) {
-  // Auth: ADMIN only.
-  const session = await getSession();
-  if (!session?.user?.id) {
+  const requestUserId = await getUserIdFromRequest(request);
+  if (!requestUserId) {
     return NextResponse.json({ error: "Authentication required." }, { status: 401 });
   }
 
   const actor = await prisma.user.findUnique({
-    where: { id: session.user.id },
-    select: { role: true },
+    where: { id: requestUserId },
+    select: { id: true, role: true, isSuspended: true },
   });
-  if (!actor || actor.role !== "ADMIN") {
+  if (!actor || actor.isSuspended) {
+    return NextResponse.json({ error: "Account cannot perform this action." }, { status: 403 });
+  }
+  if (actor.role !== "ADMIN") {
     return NextResponse.json({ error: "Admin access required." }, { status: 403 });
   }
 
@@ -53,11 +55,51 @@ export async function POST(
       return NextResponse.json({ error: "User not found." }, { status: 404 });
     }
 
-    const updated = await prisma.user.update({
-      where: { id: params.userId },
-      data: { isVerifiedAnalyst: !target.isVerifiedAnalyst },
-      select: { id: true, username: true, isVerifiedAnalyst: true },
+    const nextVerified = !target.isVerifiedAnalyst;
+
+    // S42-T13(c): Idempotency — use updateMany with the current state in the
+    // WHERE clause so concurrent requests can't double-toggle. If count === 0,
+    // the state was already at the target; return a no-op 200.
+    const updated = await prisma.$transaction(async (tx) => {
+      const result = await tx.user.updateMany({
+        where: { id: params.userId, isVerifiedAnalyst: !nextVerified },
+        data: { isVerifiedAnalyst: nextVerified },
+      });
+
+      if (result.count === 0) {
+        // Already at the target state — skip AdminAction write and signal no-op.
+        return null;
+      }
+
+      const updatedUser = await tx.user.findUnique({
+        where: { id: params.userId },
+        select: { id: true, username: true, isVerifiedAnalyst: true },
+      });
+
+      // S42-T13(b): Use semantically correct enum values instead of ADJUST_BALANCE.
+      await tx.adminAction.create({
+        data: {
+          actorId: actor.id,
+          targetUserId: params.userId,
+          type: nextVerified ? "GRANT_VERIFIED_ANALYST" : "REVOKE_VERIFIED_ANALYST",
+          notes: nextVerified
+            ? `Granted Verified Analyst badge to @${target.username}.`
+            : `Revoked Verified Analyst badge from @${target.username}.`,
+          metadata: { isVerifiedAnalyst: nextVerified },
+        },
+      });
+
+      return updatedUser;
     });
+
+    if (updated === null) {
+      return NextResponse.json({
+        userId: target.id,
+        username: target.username,
+        isVerifiedAnalyst: target.isVerifiedAnalyst,
+        noOp: true,
+      });
+    }
 
     return NextResponse.json({
       userId: updated.id,
