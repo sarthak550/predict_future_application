@@ -116,6 +116,17 @@ async function main(): Promise<void> {
     const headline = row.headline ?? "";
     const wasInstrument = row.instrument ?? "";
 
+    // Skip if the quote explicitly names the row's current instrument — it's not a
+    // mis-tag; the analyst is talking about the index and a stock appears as
+    // supporting evidence. Only overwrite when the quote does NOT contain the
+    // current instrument label, which is the real "wrong tag" case.
+    const currentInstrumentLower = (row.instrument ?? "").toLowerCase();
+    if (currentInstrumentLower && row.quote.toLowerCase().includes(currentInstrumentLower)) {
+      skipped++;
+      console.log(`[backfill] id=${row.id} skipped — quote explicitly names current instrument "${row.instrument}"`);
+      continue;
+    }
+
     const resolved = checkTickerMap(quote, headline);
 
     // Only act if pass 1 (STOCK_MAP) produced a result. We check this by verifying
@@ -155,7 +166,7 @@ async function main(): Promise<void> {
   console.log(`  candidates loaded: ${candidates.length} (instrument in contaminated set)`);
   console.log(`  with stock keyword: ${totalScanned}`);
   console.log(`  corrected: ${corrected}`);
-  console.log(`  skipped (pass 1 miss — left unchanged): ${unresolvedSkipped}`);
+  console.log(`  skipped (quote names current instrument OR pass 1 miss): ${unresolvedSkipped}`);
 
   if (DRY_RUN) {
     console.log("\n[backfill-mistag] DRY RUN — no rows were modified.");
