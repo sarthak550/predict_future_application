@@ -31,6 +31,14 @@ export type LiveScore = {
   broadcast?: string;
   homeTeam: TeamDetail;
   awayTeam: TeamDetail;
+  leaderboard?: Array<{
+    position: number;
+    name: string;
+    abbreviation: string;
+    logo: string;
+    team: string;
+    teamColour?: string;
+  }>;
 };
 
 type CacheEntry = {
@@ -237,19 +245,18 @@ async function fetchF1Scores(): Promise<LiveScore[]> {
       status = "post";
     }
 
-    // Create score entries — pair up as P1 vs P2, P3 vs P4, etc. for display
+    // One card per session with leaderboard; back-compat homeTeam/awayTeam shim P1/P2
     const scores: LiveScore[] = [];
     const topDrivers = sorted.slice(0, 10);
 
-    // Create a single "card" per pair of drivers for the scoreboard UI
-    for (let i = 0; i < topDrivers.length; i += 2) {
-      const d1pos = topDrivers[i];
-      const d2pos = topDrivers[i + 1];
-      const d1 = driverMap.get(d1pos.driver_number);
-      const d2 = d2pos ? driverMap.get(d2pos.driver_number) : null;
+    if (topDrivers.length > 0) {
+      const p1 = topDrivers[0];
+      const p2 = topDrivers[1] ?? null;
+      const d1 = driverMap.get(p1.driver_number);
+      const d2 = p2 ? driverMap.get(p2.driver_number) : null;
 
       scores.push({
-        id: `f1-${session.session_key}-${i}`,
+        id: `f1-${session.session_key}`,
         sport: "F1",
         league: "F1",
         status,
@@ -257,17 +264,32 @@ async function fetchF1Scores(): Promise<LiveScore[]> {
         shortDetail: session.session_name,
         startTime: session.date_start,
         homeTeam: {
-          name: d1?.full_name ?? `Driver #${d1pos.driver_number}`,
-          abbreviation: d1?.name_acronym ?? String(d1pos.driver_number),
+          name: d1?.full_name ?? `Driver #${p1.driver_number}`,
+          abbreviation: d1?.name_acronym ?? String(p1.driver_number),
           logo: d1?.headshot_url ?? "",
-          score: `P${d1pos.position}`,
+          score: `P${p1.position}`,
         },
         awayTeam: {
-          name: d2?.full_name ?? (d2pos ? `Driver #${d2pos.driver_number}` : ""),
+          name: d2?.full_name ?? "",
           abbreviation: d2?.name_acronym ?? "",
           logo: d2?.headshot_url ?? "",
-          score: d2pos ? `P${d2pos.position}` : "",
+          score: p2 ? `P${p2.position}` : "",
         },
+        leaderboard: topDrivers.map((dp) => {
+          const d = driverMap.get(dp.driver_number);
+          const rawColour = d?.team_colour ?? undefined;
+          const teamColour = rawColour
+            ? rawColour.startsWith("#") ? rawColour : `#${rawColour}`
+            : undefined;
+          return {
+            position: dp.position,
+            name: d?.full_name ?? `Driver #${dp.driver_number}`,
+            abbreviation: d?.name_acronym ?? String(dp.driver_number),
+            logo: d?.headshot_url ?? "",
+            team: d?.team_name ?? "",
+            teamColour,
+          };
+        }),
       });
     }
 

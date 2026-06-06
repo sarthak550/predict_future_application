@@ -293,6 +293,10 @@ export default function SportsScreen() {
 // ---- Score Card ----
 
 function ScoreCard({ score, onPress }: { score: ApiLiveScore; onPress: () => void }) {
+  if (score.leaderboard && score.leaderboard.length > 0) {
+    return <RaceCard score={score} onPress={onPress} />;
+  }
+
   const isLive = score.status === "in";
   const isCricket = score.sport === "Cricket";
 
@@ -324,6 +328,100 @@ function ScoreCard({ score, onPress }: { score: ApiLiveScore; onPress: () => voi
           <Text style={styles.venueText} numberOfLines={1}>{score.venue}</Text>
         </View>
       ) : null}
+    </Pressable>
+  );
+}
+
+// ---- Race Card (F1) ----
+
+function normaliseTeamColour(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  return raw.startsWith("#") ? raw : `#${raw}`;
+}
+
+function RaceCard({ score, onPress }: { score: ApiLiveScore; onPress: () => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const isLive = score.status === "in";
+  const lb = score.leaderboard ?? [];
+  const podium = lb.slice(0, 3);
+  const rest = lb.slice(3);
+
+  return (
+    <Pressable style={[styles.scoreCard, isLive && styles.scoreCardLive]} onPress={onPress}>
+      {/* Header row */}
+      <View style={styles.scoreCardHeader}>
+        <View style={styles.scoreLeagueRow}>
+          <Feather name="zap" size={10} color="rgba(255,255,255,0.4)" />
+          <Text style={styles.scoreLeague}>F1</Text>
+        </View>
+        <View style={styles.scoreStatusBadge}>
+          {isLive && <View style={styles.scoreStatusDot} />}
+          <Text style={[styles.scoreStatusText, { color: STATUS_COLORS[score.status] ?? colors.textMuted }]}>
+            {isLive ? "LIVE" : score.status === "post" ? "FINAL" : formatMatchTime(score.startTime)}
+          </Text>
+        </View>
+      </View>
+
+      {/* Session name */}
+      <Text style={raceStyles.sessionName} numberOfLines={1}>{score.statusDetail}</Text>
+
+      {/* Podium rows P1-P3 */}
+      {podium.map((driver, idx) => {
+        const colour = normaliseTeamColour(driver.teamColour);
+        const isP1 = idx === 0;
+        return (
+          <View key={driver.position} style={raceStyles.driverRow}>
+            <View style={[raceStyles.positionBadge, isP1 && raceStyles.p1Badge]}>
+              <Text style={[raceStyles.positionText, isP1 && raceStyles.p1PositionText]}>
+                P{driver.position}
+              </Text>
+            </View>
+            {colour ? (
+              <View style={[raceStyles.teamColourBar, { backgroundColor: colour }]} />
+            ) : (
+              <View style={[raceStyles.teamColourBar, raceStyles.teamColourBarFallback]} />
+            )}
+            {driver.logo ? (
+              <Image source={{ uri: driver.logo }} style={raceStyles.driverAvatar} />
+            ) : (
+              <View style={raceStyles.driverAvatarPlaceholder}>
+                <Text style={raceStyles.driverAvatarInitial}>{driver.abbreviation.charAt(0)}</Text>
+              </View>
+            )}
+            <View style={raceStyles.driverInfo}>
+              <Text style={[raceStyles.driverName, isP1 && raceStyles.p1Name]} numberOfLines={1}>
+                {driver.name}
+              </Text>
+              <Text style={raceStyles.teamName} numberOfLines={1}>{driver.team}</Text>
+            </View>
+          </View>
+        );
+      })}
+
+      {/* Expanded rows P4-P10 */}
+      {expanded && rest.map((driver) => (
+        <View key={driver.position} style={raceStyles.driverRowCompact}>
+          <Text style={raceStyles.positionBadgeCompact}>P{driver.position}</Text>
+          <Text style={raceStyles.driverNameCompact} numberOfLines={1}>{driver.name}</Text>
+          <Text style={raceStyles.teamNameCompact} numberOfLines={1}>{driver.team}</Text>
+        </View>
+      ))}
+
+      {/* Expand / collapse toggle */}
+      {rest.length > 0 && (
+        <Pressable
+          style={raceStyles.expandRow}
+          onPress={(e) => {
+            e.stopPropagation();
+            setExpanded((v) => !v);
+          }}
+          hitSlop={8}
+        >
+          <Text style={raceStyles.expandText}>
+            {expanded ? "Show less" : `+ ${rest.length} more drivers`}
+          </Text>
+        </Pressable>
+      )}
     </Pressable>
   );
 }
@@ -1946,5 +2044,129 @@ const fs = StyleSheet.create({
   lineupPos: {
     fontSize: 10, fontWeight: "700", color: "rgba(255,255,255,0.35)",
     width: 36, textAlign: "right", textTransform: "uppercase",
+  },
+});
+
+// ---- Race Card styles ----
+
+const raceStyles = StyleSheet.create({
+  sessionName: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "rgba(255,255,255,0.45)",
+    marginBottom: spacing.sm,
+  },
+  driverRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    paddingVertical: 6,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "rgba(255,255,255,0.05)",
+  },
+  positionBadge: {
+    width: 28,
+    height: 20,
+    borderRadius: radius.sm,
+    backgroundColor: "rgba(255,255,255,0.08)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  p1Badge: {
+    backgroundColor: "rgba(250,204,21,0.18)",
+  },
+  positionText: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: "rgba(255,255,255,0.6)",
+    letterSpacing: 0.3,
+    fontVariant: ["tabular-nums"],
+  },
+  p1PositionText: {
+    color: "#facc15",
+  },
+  teamColourBar: {
+    width: 4,
+    height: 28,
+    borderRadius: 2,
+  },
+  teamColourBarFallback: {
+    backgroundColor: "rgba(255,255,255,0.12)",
+  },
+  driverAvatar: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.08)",
+  },
+  driverAvatarPlaceholder: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.08)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  driverAvatarInitial: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "rgba(255,255,255,0.5)",
+  },
+  driverInfo: {
+    flex: 1,
+    gap: 1,
+  },
+  driverName: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#e2e8f0",
+  },
+  p1Name: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#FFF",
+  },
+  teamName: {
+    fontSize: 10,
+    color: "rgba(255,255,255,0.4)",
+  },
+  driverRowCompact: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    paddingVertical: 4,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "rgba(255,255,255,0.04)",
+  },
+  positionBadgeCompact: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: "rgba(255,255,255,0.4)",
+    width: 28,
+    textAlign: "center",
+    fontVariant: ["tabular-nums"],
+  },
+  driverNameCompact: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "rgba(255,255,255,0.7)",
+    flex: 1,
+  },
+  teamNameCompact: {
+    fontSize: 10,
+    color: "rgba(255,255,255,0.3)",
+    maxWidth: 100,
+    textAlign: "right",
+  },
+  expandRow: {
+    alignItems: "center",
+    paddingVertical: spacing.sm,
+    marginTop: 2,
+  },
+  expandText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: colors.accent,
+    letterSpacing: 0.3,
   },
 });

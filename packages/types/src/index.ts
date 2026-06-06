@@ -414,6 +414,14 @@ export type ApiLiveScore = {
   broadcast?: string;
   homeTeam: ApiTeamDetail;
   awayTeam: ApiTeamDetail;
+  leaderboard?: Array<{
+    position: number;
+    name: string;
+    abbreviation: string;
+    logo: string;
+    team: string;
+    teamColour?: string;
+  }>;
 };
 
 // ---- Cricket match detail types ----
