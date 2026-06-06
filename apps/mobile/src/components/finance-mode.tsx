@@ -13,6 +13,7 @@ import {
   Share,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 
@@ -21,6 +22,7 @@ import type {
   ApiFinanceBigCallOpinion,
   ApiFinanceExpertSentiment,
   ApiFinanceMarketsResponse,
+  ApiInstrumentCatalogItem,
   ApiMarketSummary,
   ApiMyCallsDigest,
   ApiNewsFeedItem,
@@ -1650,6 +1652,28 @@ export function FinanceMode({
     });
   }, []);
 
+  // S44-T3: Fetch instrument catalog once on mount. Error → fall back to
+  // INSTRUMENT_FALLBACK so the picker remains usable without the API.
+  useEffect(() => {
+    let cancelled = false;
+    mobileApi.getFinanceInstruments()
+      .then(({ items }) => {
+        if (cancelled) return;
+        setInstrumentCatalog(items.length > 0 ? items : INSTRUMENT_FALLBACK);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        console.warn("[finance-mode] instrument catalog fetch failed — using fallback:", err);
+        setInstrumentCatalog(INSTRUMENT_FALLBACK);
+      })
+      .finally(() => {
+        if (!cancelled) setInstrumentCatalogLoading(false);
+      });
+    return () => { cancelled = true; };
+    // INSTRUMENT_FALLBACK is a component-level const, stable across renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const setShowScope = useCallback((next: ShowScope) => {
     setShowScopeState(next);
     void AsyncStorage.setItem("finance.showScope", next);
@@ -1673,6 +1697,19 @@ export function FinanceMode({
   const [directionPickerOpen, setDirectionPickerOpen] = useState(false);
   const [instrumentPickerOpen, setInstrumentPickerOpen] = useState(false);
   const [analystPickerOpen, setAnalystPickerOpen] = useState(false);
+
+  // S44-T3: Instrument catalog — fetched once on mount; drives searchable picker.
+  // Falls back to 5 hardcoded options when the fetch fails or returns empty.
+  const INSTRUMENT_FALLBACK: ApiInstrumentCatalogItem[] = [
+    { label: "Nifty 50",   ticker: "^NSEI",    count: 0, isPopular: true },
+    { label: "Bank Nifty", ticker: "^NSEBANK",  count: 0, isPopular: true },
+    { label: "Sensex",     ticker: "^BSESN",   count: 0, isPopular: true },
+    { label: "Gold",       ticker: "GC=F",     count: 0, isPopular: true },
+    { label: "Crude Oil",  ticker: "CL=F",     count: 0, isPopular: true },
+  ];
+  const [instrumentCatalog, setInstrumentCatalog] = useState<ApiInstrumentCatalogItem[]>([]);
+  const [instrumentCatalogLoading, setInstrumentCatalogLoading] = useState(true);
+  const [instrumentSearch, setInstrumentSearch] = useState("");
 
   // Expert leaderboard count for conditional "Top Experts" link
   const [leaderboardCount, setLeaderboardCount] = useState(0);
@@ -2829,30 +2866,104 @@ export function FinanceMode({
       })}
     </PulseSheet>
 
-    {/* S38: Instrument picker (action sheet) */}
+    {/* S44-T3: Instrument picker — dynamic catalog with search (replaces hardcoded 5-option list) */}
     <PulseSheet
       visible={instrumentPickerOpen}
-      onClose={() => setInstrumentPickerOpen(false)}
+      onClose={() => {
+        setInstrumentPickerOpen(false);
+        setInstrumentSearch("");
+      }}
       title="Filter by instrument"
     >
-      {["NIFTY 50", "BANK NIFTY", "SENSEX", "USD/INR", "Gold"].map((label) => {
-        const active = activeInstrumentFilter === label;
-        return (
-          <Pressable
-            key={label}
-            onPress={() => {
-              setActiveInstrumentFilter(active ? null : label);
-              setInstrumentPickerOpen(false);
+      {instrumentCatalogLoading ? (
+        <View style={{ paddingVertical: spacing.lg, alignItems: "center" }}>
+          <ActivityIndicator size="small" color={colors.accent} />
+        </View>
+      ) : (
+        <>
+          {/* Search input */}
+          <TextInput
+            value={instrumentSearch}
+            onChangeText={setInstrumentSearch}
+            placeholder="Search instruments..."
+            placeholderTextColor="#94a3b8"
+            autoCapitalize="none"
+            autoCorrect={false}
+            style={{
+              fontSize: 15,
+              fontWeight: "500",
+              color: "#0f172a",
+              paddingHorizontal: spacing.md,
+              paddingVertical: 12,
+              borderBottomWidth: 1,
+              borderBottomColor: "#e2e8f0",
+              marginBottom: 4,
             }}
-            style={[controlsStyles.sheetRow, active && controlsStyles.sheetRowActive]}
-          >
-            <Text style={[controlsStyles.sheetRowText, active && controlsStyles.sheetRowTextActive]}>
-              {label}
-            </Text>
-            {active ? <Text style={controlsStyles.sheetRowCheck}>✓</Text> : null}
-          </Pressable>
-        );
-      })}
+          />
+          {/* Instrument list */}
+          {(() => {
+            const query = instrumentSearch.trim().toLowerCase();
+            const displayItems = query.length === 0
+              ? instrumentCatalog.filter((item) => item.isPopular)
+              : instrumentCatalog.filter((item) =>
+                  item.label.toLowerCase().includes(query)
+                );
+
+            if (displayItems.length === 0) {
+              return (
+                <View style={{ paddingVertical: spacing.lg, paddingHorizontal: spacing.md, alignItems: "center" }}>
+                  <Text style={{ fontSize: 14, color: "#94a3b8", textAlign: "center" }}>
+                    No instruments match — try a broader term.
+                  </Text>
+                </View>
+              );
+            }
+
+            return (
+              <>
+                {query.length === 0 && (
+                  <Text style={{
+                    fontSize: 11,
+                    fontWeight: "700",
+                    color: "#94a3b8",
+                    letterSpacing: 0.5,
+                    textTransform: "uppercase",
+                    paddingHorizontal: spacing.md,
+                    paddingTop: 8,
+                    paddingBottom: 4,
+                  }}>
+                    Popular
+                  </Text>
+                )}
+                {displayItems.map((item) => {
+                  const active = activeInstrumentFilter === item.label;
+                  return (
+                    <Pressable
+                      key={item.label}
+                      onPress={() => {
+                        setActiveInstrumentFilter(active ? null : item.label);
+                        setInstrumentPickerOpen(false);
+                        setInstrumentSearch("");
+                      }}
+                      style={[controlsStyles.sheetRow, active && controlsStyles.sheetRowActive]}
+                    >
+                      <Text style={[controlsStyles.sheetRowText, active && controlsStyles.sheetRowTextActive]}>
+                        {item.label}
+                      </Text>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                        {item.count > 0 && (
+                          <Text style={{ fontSize: 12, color: "#94a3b8" }}>{item.count}</Text>
+                        )}
+                        {active ? <Text style={controlsStyles.sheetRowCheck}>✓</Text> : null}
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </>
+            );
+          })()}
+        </>
+      )}
     </PulseSheet>
 
     {/* S38: Analyst picker (action sheet, from followed list) */}

@@ -1373,3 +1373,22 @@ export type ApiFinancePersonalStats = {
   /** Number of resolved opinions the user voted on. */
   financeResolvedVotes: number;
 };
+
+// ─── Finance: Instrument Catalog (S44-T1) ────────────────────────────────────
+
+/**
+ * One entry in the instrument catalog returned by GET /api/finance/instruments.
+ * The catalog is built from all non-suppressed ExpertOpinion rows, collapsed
+ * through the NORMALIZATION_MAP so variants (e.g. "Nifty 50 Index") merge into
+ * their canonical form ("Nifty 50").
+ */
+export type ApiInstrumentCatalogItem = {
+  /** Canonical display label, e.g. "Nifty 50", "USD/INR", "Silver". */
+  label: string;
+  /** Yahoo Finance ticker for the canonical instrument, e.g. "^NSEI", "INR=X". */
+  ticker: string;
+  /** Total number of non-suppressed opinions tagged to this instrument (after normalization). */
+  count: number;
+  /** True for the top-10 instruments by opinion count; false for the rest. */
+  isPopular: boolean;
+};

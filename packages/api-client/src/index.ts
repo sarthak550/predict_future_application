@@ -10,6 +10,7 @@ import type {
   ApiFlagshipEvent,
   ApiFinanceExpertSentiment,
   ApiFinanceMarketsResponse,
+  ApiInstrumentCatalogItem,
   ApiFollowerEntry,
   ApiFollowStatus,
   ApiFootballMatchDetail,
@@ -430,6 +431,12 @@ export function createApiClient(options: ApiClientOptions) {
     // ─── Finance: Expert Sentiment Aggregate ──────────────────────────────
     getFinanceExpertSentiment() {
       return request<ApiFinanceExpertSentiment>("/api/finance/expert-sentiment");
+    },
+
+    // ─── Finance: Instrument Catalog (S44-T1) ─────────────────────────────
+    /** Fetch the full instrument catalog sorted by opinion count. No auth required. */
+    getFinanceInstruments() {
+      return request<{ items: ApiInstrumentCatalogItem[] }>("/api/finance/instruments");
     },
 
     // ─── Finance: Markets Feed ─────────────────────────────────────────────
