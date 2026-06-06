@@ -2,8 +2,8 @@
 
 > Human-readable view of `.claude/sprint-board.json`. Auto-maintained by the CEO/CTO/QA agents — do not edit by hand.
 
-**Current sprint:** 42
-**Status:** Sprints 38–42 COMPLETE (security/correctness hardening, 54 tickets). Sprints 12, 25–34 COMPLETE.
+**Current sprint:** 43
+**Status:** Sprint 43 IN PROGRESS (opinion quality layer). Sprints 38–42 COMPLETE (security/correctness hardening, 54 tickets). Sprints 12, 25–34 COMPLETE.
 
 ---
 
@@ -559,3 +559,16 @@
 ---
 
 > ⚠ **Pipeline lesson:** During S42 several parallel CTO bundles wrote to centralized files (`schema.prisma`, `sprint-board.json`, `SPRINT.md`) concurrently. The harness has no merge layer — last writer wins. Recovery: `prisma db pull` for schema, manual reconstruction for the board (see backup `.claude/sprint-board.json.pre-reconstruction-backup`). Future sprints: serialize edits to any centralized file. Tracked in agent memory at `feedback_serialize_schema_writes.md`.
+
+---
+
+## Sprint 43
+
+**Theme:** Expert Opinions quality — structural instrument commitment + deterministic validator + instrument-null fix + index-contamination resolver
+**Status:** IN PROGRESS
+
+| ID | Pri | Status | Title |
+|---|---|---|---|
+| S43-T1 | CRIT | done | Opinion quality: structured instrument commitment in AI prompt + deterministic validator backstop |
+| S43-T2 | HIGH | done | Instrument extraction: fix NULL persistence bug + extend TICKER_MAP with sectoral keywords |
+| S43-T3 | CRIT | ❌ failed | checkTickerMap: two-pass stock-first resolution to fix index contamination from article headlines |
