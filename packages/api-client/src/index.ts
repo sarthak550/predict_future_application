@@ -281,8 +281,8 @@ export function createApiClient(options: ApiClientOptions) {
      * Public endpoint — no auth required.
      * sessionKey is the OpenF1 session_key (numeric), extracted from the match id "f1-{N}".
      */
-    getF1SessionDetail(sessionKey: number) {
-      return request<ApiF1SessionDetail>(`/api/sports/f1/session/${sessionKey}`);
+    getF1SessionDetail(sessionKey: number, init?: RequestOptions) {
+      return request<ApiF1SessionDetail>(`/api/sports/f1/session/${sessionKey}`, undefined, init);
     },
     getLeaderboard(query?: { category?: AppMarketCategory; timeWindow?: ApiLeaderboardTimeWindow }) {
       return request<ApiLeaderboardResponse>("/api/leaderboard", query, { auth: true });

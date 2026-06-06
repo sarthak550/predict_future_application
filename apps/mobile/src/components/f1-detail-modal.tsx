@@ -11,13 +11,14 @@
  */
 
 import { Feather } from "@expo/vector-icons";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
   Image,
   Modal,
   Pressable,
+  RefreshControl,
   StyleSheet,
   Text,
   View,
@@ -228,38 +229,68 @@ export function F1DetailModal({ match, onClose }: Props) {
   const [detail, setDetail] = useState<ApiF1SessionDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const cancelledRef = useRef(false);
 
   const sessionKey = parseInt(match.id.replace("f1-", ""), 10);
 
-  const fetchDetail = () => {
+  /**
+   * loadDetail — fetches session detail with:
+   *   - 8-second AbortController timeout per attempt
+   *   - one automatic retry on timeout (AbortError); other errors surface immediately
+   *   - clearTimeout in all code paths (no memory leak)
+   */
+  const loadDetail = useCallback(async () => {
     cancelledRef.current = false;
     setLoading(true);
     setError(false);
 
-    mobileApi
-      .getF1SessionDetail(sessionKey)
-      .then((data) => {
+    let attempt = 0;
+    while (attempt < 2) {
+      attempt++;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8000);
+      try {
+        const data = await mobileApi.getF1SessionDetail(sessionKey, { signal: controller.signal });
+        clearTimeout(timer);
         if (!cancelledRef.current) {
           setDetail(data);
           setLoading(false);
         }
-      })
-      .catch(() => {
-        if (!cancelledRef.current) {
-          setError(true);
-          setLoading(false);
+        return;
+      } catch (err) {
+        clearTimeout(timer);
+        if (cancelledRef.current) return;
+        const isAbort = (err as Error)?.name === "AbortError";
+        if (attempt < 2 && isAbort) {
+          // Timed out on first attempt — wait 1s then retry once.
+          await new Promise((r) => setTimeout(r, 1000));
+          continue;
         }
-      });
-  };
+        // Second timeout or non-timeout error — surface to the user.
+        setError(true);
+        setLoading(false);
+        return;
+      }
+    }
+  }, [sessionKey]);
 
   useEffect(() => {
-    fetchDetail();
+    loadDetail();
     return () => {
       cancelledRef.current = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionKey]);
+  }, [loadDetail]);
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    setDetail(null);
+    try {
+      await loadDetail();
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   const statusConfig = detail
     ? STATUS_CONFIG[detail.session.status] ?? STATUS_CONFIG.finished
@@ -290,7 +321,7 @@ export function F1DetailModal({ match, onClose }: Props) {
             <View style={styles.centered}>
               <Feather name="alert-circle" size={32} color={colors.textMuted} />
               <Text style={styles.errorText}>Detailed timing unavailable</Text>
-              <Pressable style={styles.retryBtn} onPress={fetchDetail}>
+              <Pressable style={styles.retryBtn} onPress={loadDetail}>
                 <Text style={styles.retryText}>Retry</Text>
               </Pressable>
             </View>
@@ -339,18 +370,39 @@ export function F1DetailModal({ match, onClose }: Props) {
                     No driver data available for this session.
                   </Text>
                 </View>
-              ) : (
-                <FlatList
-                  data={detail.drivers}
-                  keyExtractor={(d) => String(d.driverNumber)}
-                  renderItem={({ item }) => (
-                    <DriverRow driver={item} sessionType={detail.session.type} />
-                  )}
-                  contentContainerStyle={{ paddingBottom: 40 }}
-                  showsVerticalScrollIndicator={false}
-                  ItemSeparatorComponent={() => <View style={styles.separator} />}
-                />
-              )}
+              ) : (() => {
+                const allTimingNull =
+                  detail.drivers.length > 0 &&
+                  detail.drivers.every(
+                    (d) => d.fastestLap == null && d.lastLap == null
+                  );
+                return (
+                  <>
+                    {allTimingNull && (
+                      <Text style={styles.timingMissingBanner}>
+                        Timing data is loading from OpenF1 — pull to refresh
+                      </Text>
+                    )}
+                    <FlatList
+                      data={detail.drivers}
+                      keyExtractor={(d) => String(d.driverNumber)}
+                      renderItem={({ item }) => (
+                        <DriverRow driver={item} sessionType={detail.session.type} />
+                      )}
+                      contentContainerStyle={{ paddingBottom: 40 }}
+                      showsVerticalScrollIndicator={false}
+                      ItemSeparatorComponent={() => <View style={styles.separator} />}
+                      refreshControl={
+                        <RefreshControl
+                          refreshing={isRefreshing}
+                          onRefresh={handleRefresh}
+                          tintColor={colors.accent}
+                        />
+                      }
+                    />
+                  </>
+                );
+              })()}
             </>
           )}
         </View>
@@ -490,6 +542,13 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     fontSize: 13,
     textAlign: "center",
+  },
+  timingMissingBanner: {
+    textAlign: "center",
+    color: colors.textMuted,
+    fontSize: 13,
+    marginVertical: 12,
+    paddingHorizontal: 16,
   },
 });
 

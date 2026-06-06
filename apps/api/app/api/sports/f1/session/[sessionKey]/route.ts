@@ -37,10 +37,19 @@ export async function GET(
       );
     }
 
+    // Downgrade cache duration when all drivers lack timing data (poisoned empty
+    // response from OpenF1). A 15-second max-age lets CDNs revalidate quickly
+    // rather than serving stale null-timing data for 5 minutes.
+    const allTimingNull = detail.drivers.every(
+      (d) => d.fastestLap == null && d.lastLap == null
+    );
+    const cacheHeader = allTimingNull
+      ? "public, max-age=15, s-maxage=15, stale-while-revalidate=5"
+      : "public, max-age=300, s-maxage=300, stale-while-revalidate=60";
+
     return NextResponse.json(detail, {
       headers: {
-        // 5-minute CDN cache; stale-while-revalidate allows async refresh.
-        "Cache-Control": "public, max-age=300, s-maxage=300, stale-while-revalidate=60",
+        "Cache-Control": cacheHeader,
       },
     });
   } catch (err) {

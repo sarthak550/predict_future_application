@@ -182,9 +182,28 @@ export async function fetchF1SessionDetail(sessionKey: number): Promise<F1Sessio
 
   const rawDrivers = driversResult.status === "fulfilled" ? driversResult.value : [];
   const rawPositions = positionsResult.status === "fulfilled" ? positionsResult.value : [];
-  const rawLaps = lapsResult.status === "fulfilled" ? lapsResult.value : [];
   const rawIntervals = intervalsResult.status === "fulfilled" ? intervalsResult.value : [];
   const rawStints = stintsResult.status === "fulfilled" ? stintsResult.value : [];
+
+  // Retry laps once if the first attempt returned an empty array or all-null durations.
+  // This handles the common OpenF1 flake where /v1/laps returns an empty result on
+  // the first call but succeeds seconds later. We do NOT retry on rejection (transient
+  // network error) — the console.warn above already handles that path.
+  let rawLaps = lapsResult.status === "fulfilled" ? lapsResult.value : [];
+  if (
+    lapsResult.status === "fulfilled" &&
+    (rawLaps.length === 0 || rawLaps.every((l) => l.lap_duration === null))
+  ) {
+    await new Promise((r) => setTimeout(r, 1000));
+    try {
+      const retryLaps = await openF1Fetch<OpenF1Lap>(`/laps?session_key=${sessionKey}`);
+      const adopted = retryLaps.some((l) => l.lap_duration !== null);
+      console.log(`[f1] laps retry — adopted=${adopted}`);
+      if (adopted) rawLaps = retryLaps;
+    } catch {
+      // Retry failed — continue with original (empty/null) result.
+    }
+  }
 
   // ---- Build lookup maps ----
 
