@@ -2,8 +2,8 @@
 
 > Human-readable view of `.claude/sprint-board.json`. Auto-maintained by the CEO/CTO/QA agents — do not edit by hand.
 
-**Current sprint:** 45
-**Status:** Sprint 45 IN PROGRESS (Sports F1 rendering bug — 2 tickets pending). Sprint 44 COMPLETE (Finance instrument filter overhaul). Sprint 43 COMPLETE. Sprints 38–42 COMPLETE (security/correctness hardening, 54 tickets). Sprints 12, 25–34 COMPLETE.
+**Current sprint:** 46
+**Status:** Sprint 46 COMPLETE (Sports poll trust fix — all 3 tickets passed QA). Sprint 45 COMPLETE (F1 race card). Sprint 44 COMPLETE (Finance instrument filter overhaul). Sprint 43 COMPLETE. Sprints 38–42 COMPLETE (security/correctness hardening, 54 tickets). Sprints 12, 25–34 COMPLETE.
 
 ---
 
@@ -598,3 +598,16 @@
 |---|---|---|---|
 | S45-T1 | CRIT | ✅ done | Backend: Collapse F1 multi-card output into one session entry with leaderboard field |
 | S45-T2 | CRIT | ✅ done | Mobile UI: F1 race card with podium renderer — detect leaderboard field and show standings |
+
+---
+
+## Sprint 46
+
+**Theme:** Sports poll trust fix — stop generating stale sports polls, cancel existing ones with refunds
+**Status:** IN PROGRESS
+
+| ID | Pri | Status | Title |
+|---|---|---|---|
+| S46-T1 | CRIT | ✅ | Prevention: exclude SPORTS from auto-poll generation + story freshness gate |
+| S46-T2 | CRIT | ✅ | Cleanup: cancel + refund existing stale sports polls via one-time script |
+| S46-T3 | HIGH | ✅ | Belt-and-suspenders: strengthen AI prompt SPORTS rejection example |
