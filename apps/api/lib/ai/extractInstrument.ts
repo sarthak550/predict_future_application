@@ -126,13 +126,13 @@ const TICKER_MAP: Record<string, InstrumentResult> = {
   "reliance": { instrument: "Reliance Industries", ticker: "RELIANCE.NS" },
   "infosys": { instrument: "Infosys", ticker: "INFY.NS" },
   "wipro": { instrument: "Wipro", ticker: "WIPRO.NS" },
-  // L&T: "l&t" covers most cases; " lt " (space-padded) catches "buy LT at 4200" in mid-sentence
-  // but misses sentence-final "bullish on L&T" or "bullish on LT". Added unpadded "lt" variant
-  // to catch end-of-sentence and beginning-of-sentence occurrences. Note: "lt" could theoretically
-  // collide with abbreviations, but in Indian finance context this is an acceptable trade-off.
+  // L&T: 3 variants for full sentence coverage.
+  // "lt " (no leading space) was removed — it collides fatally with common substrings like
+  // "result ", "default ", "fault " etc., silently tagging unrelated opinions as L&T.
+  // The 3 remaining keys cover: canonical ampersand form, mid-sentence bare acronym,
+  // and sentence-final / "buy LT" usage.
   "l&t": { instrument: "L&T", ticker: "LT.NS" },
   " lt ": { instrument: "L&T", ticker: "LT.NS" },
-  "lt ": { instrument: "L&T", ticker: "LT.NS" },
   " lt": { instrument: "L&T", ticker: "LT.NS" },
   "itc": { instrument: "ITC", ticker: "ITC.NS" },
   // SBI: "sbin" is the NSE ticker substring; " sbi " (space-padded) catches mid-sentence
