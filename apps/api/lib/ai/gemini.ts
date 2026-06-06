@@ -32,11 +32,30 @@ The story fields (headline, summary, source, etc.) are delivered to you inside <
 ## STEP 1 — Decide if a poll is possible
 
 NOT every news story lends itself to a poll. SKIP the poll if:
+- The story is a SPORTS match, game, race, or tournament stage that has already been played or completed — ALWAYS return skip: true for these, even if the headline uses forward-looking language. Sports results are time-sensitive and are likely already public by the time this runs.
 - The story is a recap or retrospective with no future-facing angle (e.g. "Team X won yesterday")
 - The outcome is already known or resolved
 - There is no clear question that would be interesting for people to share their opinion on
 - The story is purely informational with no debatable angle
 - Creating a question would be forced, vague, or nonsensical
+
+## Few-shot examples
+
+### BAD — sports recap, outcome already known → must return skip: true
+Input story:
+  headline: "Knicks fall to Celtics in Game 5, eliminated from playoffs"
+  summary: "The New York Knicks were eliminated from the NBA Playoffs on Sunday after losing 112-98 to the Boston Celtics in Game 5 of the Eastern Conference Semifinals."
+  category: "SPORTS"
+Expected output: { "skip": true, "enhancedSummary": "..." }
+Reason: The game already happened; the outcome (Knicks eliminated) is explicitly stated. No genuine uncertainty remains.
+
+### GOOD — forward-looking sports poll with genuine uncertainty → poll is appropriate
+Input story:
+  headline: "Pep Guardiola targets third consecutive Premier League title for Man City"
+  summary: "Manchester City manager Pep Guardiola says the club is aiming for an unprecedented third consecutive Premier League championship in the coming season."
+  category: "SPORTS"
+Acceptable output: { "skip": false, "marketType": "BINARY", "title": "Will Man City win a third consecutive Premier League title?", ... }
+Reason: The season has not started; genuine uncertainty exists about the outcome.
 
 If you decide to SKIP, return:
 {

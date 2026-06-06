@@ -3,8 +3,10 @@ import { NextResponse } from "next/server";
 
 import { generatePollWithAI } from "@/lib/ai/gemini";
 import { getUserIdFromRequest } from "@/lib/auth";
+import { EXCLUDE_AUTO_POLL_CATEGORIES, MAX_STORY_AGE_FOR_POLL_MS } from "@/lib/news/rss-ingestion-service";
 import { prisma } from "@/lib/prisma";
 import { slugify } from "@/lib/utils";
+import type { MarketCategory } from "@prisma/client";
 
 /**
  * POST /api/admin/news/backfill-predictions
@@ -54,10 +56,24 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Authentication required." }, { status: 401 });
     }
 
+    // ?includeAll=true bypasses the category exclusion and freshness filter.
+    // Use this for deliberate admin backfills where the operator has verified
+    // the stories are appropriate. Without this flag, the same filters applied
+    // in generatePollsInBackground (rss-ingestion-service.ts) are enforced.
+    const includeAll = new URL(request.url).searchParams.get("includeAll") === "true";
+    const cutoff = new Date(Date.now() - MAX_STORY_AGE_FOR_POLL_MS);
+    const additionalFilters = includeAll
+      ? {}
+      : {
+          category: { notIn: Array.from(EXCLUDE_AUTO_POLL_CATEGORIES) as MarketCategory[] },
+          publishedAt: { gte: cutoff },
+        };
+
     const stories = await prisma.story.findMany({
       where: {
         status: { in: ["PUBLISHED", "APPROVED"] },
         market: null,
+        ...additionalFilters,
       },
       select: {
         id: true,
@@ -71,6 +87,10 @@ export async function POST(request: Request) {
       orderBy: { publishedAt: "desc" },
       take: 20,
     });
+
+    console.info(
+      `[backfill] includeAll=${includeAll} — excluded categories=${includeAll ? "none" : [...EXCLUDE_AUTO_POLL_CATEGORIES].join(",")}, cutoff=${includeAll ? "none" : cutoff.toISOString()}`
+    );
 
     if (stories.length === 0) {
       return NextResponse.json({ filled: 0, message: "All stories have polls." });

@@ -223,22 +223,42 @@ async function getStaffActorId(actorId?: string) {
 
 const MAX_AI_POLLS_PER_BATCH = 8;
 
+// Categories excluded from automatic AI poll generation.
+// SPORTS excluded because match/game outcomes are often public by the time
+// RSS feeds arrive, making auto-generated polls misleading and eroding trust.
+export const EXCLUDE_AUTO_POLL_CATEGORIES = new Set<string>(["SPORTS"]);
+
+// Maximum story age for auto-poll generation. Polls on stale news lose relevance
+// fast; 48 hours gives a safety margin for RSS feed lag across all categories.
+export const MAX_STORY_AGE_FOR_POLL_MS = 48 * 60 * 60 * 1000;
+
 /**
  * Generates AI polls for recently-ingested stories that don't have a market yet.
  * Runs in the background after stories are already saved to the DB.
+ *
+ * Filters applied:
+ * - Excludes categories in EXCLUDE_AUTO_POLL_CATEGORIES (currently SPORTS)
+ * - Excludes stories older than MAX_STORY_AGE_FOR_POLL_MS (48 hours)
  */
 async function generatePollsInBackground(items: NormalizedNewsItem[], actorId: string) {
   // Find stories that were just inserted and have no market
   const sourceUrls = items.map((i) => i.source_url);
+  const cutoff = new Date(Date.now() - MAX_STORY_AGE_FOR_POLL_MS);
   const stories = await prisma.story.findMany({
     where: {
       sourceUrl: { in: sourceUrls },
       market: null,
+      category: { notIn: Array.from(EXCLUDE_AUTO_POLL_CATEGORIES) as MarketCategory[] },
+      publishedAt: { gte: cutoff },
     },
     select: { id: true, headline: true, summary: true, category: true, sourceName: true, sourceUrl: true, publishedAt: true },
     orderBy: { publishedAt: "desc" },
     take: MAX_AI_POLLS_PER_BATCH,
   });
+
+  console.info(
+    `[news:ai-polls] filtering: excluded categories=${[...EXCLUDE_AUTO_POLL_CATEGORIES].join(",")}, cutoff=${cutoff.toISOString()}`
+  );
 
   if (stories.length === 0) {
     console.info("[news:ai-polls] no stories need polls");

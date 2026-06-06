@@ -3,6 +3,14 @@
  * from apps/api directory.
  *
  * Finds stories without markets, calls AI to generate polls or enhanced summaries.
+ *
+ * NOTE: This script intentionally ignores the EXCLUDE_AUTO_POLL_CATEGORIES and
+ * MAX_STORY_AGE_FOR_POLL_MS filters used in production ingestion
+ * (see apps/api/lib/news/rss-ingestion-service.ts). Operators running this script
+ * are expected to verify story freshness and category appropriateness themselves.
+ * To backfill with filters applied, use the admin route:
+ *   POST /api/admin/news/backfill-predictions          (filters applied)
+ *   POST /api/admin/news/backfill-predictions?includeAll=true  (no filters)
  */
 import { randomUUID } from "crypto";
 
