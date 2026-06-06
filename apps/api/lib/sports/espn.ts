@@ -128,7 +128,13 @@ async function fetchLeagueScores(leagueConfig: typeof ESPN_LEAGUES[number]): Pro
       };
 
       return {
-        id: event.id,
+        // Prefix with league key so ESPN events that appear in multiple feeds
+        // (e.g. ATP and WTA both surfacing the same Wimbledon mixed-doubles
+        // event id "415-2026") don't collide on the React `key` prop in the
+        // sports tab. Without this, the mobile FlatList raises "Encountered
+        // two children with the same key" and may render a stale/duplicated
+        // card.
+        id: `${leagueConfig.league}-${event.id}`,
         sport: leagueConfig.sport,
         league: leagueConfig.league,
         status: statusState as LiveScore["status"],
