@@ -8,6 +8,7 @@ import type {
   ApiExpertOpinionTallies,
   ApiExpertProfile,
   ApiFlagshipEvent,
+  ApiF1SessionDetail,
   ApiFinanceExpertSentiment,
   ApiFinanceMarketsResponse,
   ApiInstrumentCatalogItem,
@@ -274,6 +275,14 @@ export function createApiClient(options: ApiClientOptions) {
     },
     getFootballMatchDetail(matchId: string, leaguePath: string) {
       return request<ApiFootballMatchDetail>(`/api/sports/match/${matchId}`, { league: leaguePath });
+    },
+    /**
+     * Fetch full F1 session detail: leaderboard, lap times, gaps, tire stints.
+     * Public endpoint — no auth required.
+     * sessionKey is the OpenF1 session_key (numeric), extracted from the match id "f1-{N}".
+     */
+    getF1SessionDetail(sessionKey: number) {
+      return request<ApiF1SessionDetail>(`/api/sports/f1/session/${sessionKey}`);
     },
     getLeaderboard(query?: { category?: AppMarketCategory; timeWindow?: ApiLeaderboardTimeWindow }) {
       return request<ApiLeaderboardResponse>("/api/leaderboard", query, { auth: true });

@@ -1400,3 +1400,52 @@ export type ApiInstrumentCatalogItem = {
   /** True for the top-10 instruments by opinion count; false for the rest. */
   isPopular: boolean;
 };
+
+// ─── F1 Session Detail (S47-T1) ──────────────────────────────────────────────
+
+export type ApiF1TireCompound = "HARD" | "MEDIUM" | "SOFT" | "INTERMEDIATE" | "WET";
+
+export type ApiF1Driver = {
+  driverNumber: number;
+  position: number;
+  name: string;
+  abbreviation: string;
+  /** URL to the driver headshot image from OpenF1. May be absent for some drivers. */
+  headshot?: string;
+  team: string;
+  /** Hex colour string with # prefix, e.g. "#E8002D". Defaults to "#888888" if OpenF1 omits it. */
+  teamColour: string;
+  lastLap?: {
+    duration: number;
+    lapNumber: number;
+    isPitOut: boolean;
+  };
+  fastestLap?: {
+    duration: number;
+    lapNumber: number;
+  };
+  /** True on exactly one driver per session — the driver with the session-wide minimum lap_duration. */
+  fastestLapOverall: boolean;
+  /** Seconds gap to P1. Populated only for Race / Sprint sessions. */
+  gapToLeader?: number;
+  /** Seconds gap to the driver immediately ahead. Populated only for Race / Sprint sessions. */
+  intervalAhead?: number;
+  tireCompound?: ApiF1TireCompound;
+};
+
+export type ApiF1SessionDetail = {
+  session: {
+    key: number;
+    /** Human-readable name, e.g. "Race", "Qualifying", "Practice 1". */
+    name: string;
+    /** One of: "Race" | "Qualifying" | "Practice" | "Sprint". */
+    type: string;
+    circuit: string;
+    country: string;
+    dateStart: string;
+    dateEnd: string;
+    /** "upcoming" = before dateStart; "live" = within session window; "finished" = after dateEnd + 2h grace. */
+    status: "upcoming" | "live" | "finished";
+  };
+  drivers: ApiF1Driver[];
+};

@@ -19,6 +19,7 @@ import type { ApiLiveScore, ApiCricketMatchDetail, ApiFootballMatchDetail, ApiMa
 import { formatRelativeTime } from "@predict-future/utils";
 import { colors, radius, spacing } from "@predict-future/ui-tokens";
 
+import { F1DetailModal } from "@/components/f1-detail-modal";
 import { NewsFeedCard } from "@/components/news-feed-card";
 import { mobileApi } from "@/lib/api";
 
@@ -543,6 +544,13 @@ function MatchDetailModal({ match, relatedNews, onClose }: {
   }, [match?.id, match?.sport, match?.league]);
 
   if (!match) return null;
+
+  // F1 sessions use a dedicated full-leaderboard modal with lap times, gaps, and tire data.
+  // This guard runs before any other rendering branch so the generic two-team scoreboard
+  // is never shown for F1.
+  if (match.sport === "F1") {
+    return <F1DetailModal match={match} onClose={onClose} />;
+  }
 
   const isLive = match.status === "in";
   const isCricket = match.sport === "Cricket";
