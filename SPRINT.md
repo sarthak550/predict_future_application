@@ -585,3 +585,4 @@
 | S44-T1 | HIGH | ✅ done | Backend: instrument-catalog API + normalization map |
 | S44-T2 | HIGH | ✅ done | Backend: extend TICKER_MAP with silver, currencies, global indices, and commodity gaps |
 | S44-T3 | HIGH | ✅ done | Mobile UI: searchable instrument picker replacing hardcoded 5-option list |
+| S44-T4 | CRIT | pending | Hotfix: instrument filter leaks non-matching opinions + canonical-vs-stored label mismatch |
