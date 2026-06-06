@@ -2,8 +2,8 @@
 
 > Human-readable view of `.claude/sprint-board.json`. Auto-maintained by the CEO/CTO/QA agents — do not edit by hand.
 
-**Current sprint:** 44
-**Status:** Sprint 44 COMPLETE (Finance instrument filter overhaul — all 3 tickets passed QA). Sprint 43 IN PROGRESS. Sprints 38–42 COMPLETE (security/correctness hardening, 54 tickets). Sprints 12, 25–34 COMPLETE.
+**Current sprint:** 45
+**Status:** Sprint 45 IN PROGRESS (Sports F1 rendering bug — 2 tickets pending). Sprint 44 COMPLETE (Finance instrument filter overhaul). Sprint 43 COMPLETE. Sprints 38–42 COMPLETE (security/correctness hardening, 54 tickets). Sprints 12, 25–34 COMPLETE.
 
 ---
 
@@ -585,4 +585,16 @@
 | S44-T1 | HIGH | ✅ done | Backend: instrument-catalog API + normalization map |
 | S44-T2 | HIGH | ✅ done | Backend: extend TICKER_MAP with silver, currencies, global indices, and commodity gaps |
 | S44-T3 | HIGH | ✅ done | Mobile UI: searchable instrument picker replacing hardcoded 5-option list |
-| S44-T4 | CRIT | pending | Hotfix: instrument filter leaks non-matching opinions + canonical-vs-stored label mismatch |
+| S44-T4 | CRIT | done | Hotfix: instrument filter leaks non-matching opinions + canonical-vs-stored label mismatch |
+
+---
+
+## Sprint 45
+
+**Theme:** Sports F1 rendering bug — collapse driver pairs into a single race card with podium UI
+**Status:** IN PROGRESS
+
+| ID | Pri | Status | Title |
+|---|---|---|---|
+| S45-T1 | CRIT | ✅ done | Backend: Collapse F1 multi-card output into one session entry with leaderboard field |
+| S45-T2 | CRIT | ✅ done | Mobile UI: F1 race card with podium renderer — detect leaderboard field and show standings |
