@@ -45,6 +45,14 @@ const TICKER_REMAP: Record<string, string> = {
   // Sectors / themes
   "^CPSE": "CPSEETF.NS",
   "AUTOFIN.NS": "^CNXAUTO",
+  // Sectoral indices not present on Yahoo Finance — routed to verified proxies.
+  // ^CNXCAPITAL (Nifty Capital Goods) is not available on Yahoo; ^CNXINFRA (Nifty Infrastructure)
+  // is the closest verified index covering capital goods companies (L&T, Siemens, ABB, etc.).
+  "^CNXCAPITAL": "^CNXINFRA",
+  // NIFTYCONDUR.NS (Nifty Consumer Durables) is not available on Yahoo; ^CNXSC (Nifty Small Cap)
+  // is not ideal. Using ^CNXFMCG as closest broad consumer proxy pending a direct Yahoo ticker.
+  // Revisit if Yahoo adds a Consumer Durables index symbol.
+  "NIFTYCONDUR.NS": "^CNXFMCG",
 };
 
 /**
@@ -76,6 +84,29 @@ const TICKER_MAP: Record<string, InstrumentResult> = {
   // Commodities
   "gold": { instrument: "Gold", ticker: "GC=F" },
   "crude": { instrument: "Crude Oil", ticker: "CL=F" },
+  // Sectors — ordered before broad stock keywords to prefer sectoral instrument on thematic calls.
+  // ^CNXCAPITAL and NIFTYCONDUR.NS are not available on Yahoo Finance; TICKER_REMAP routes them
+  // to verified proxy tickers (^CNXINFRA and ^CNXFMCG respectively).
+  "capital goods": { instrument: "Nifty Capital Goods", ticker: "^CNXCAPITAL" },
+  "consumer durables": { instrument: "Nifty Consumer Durables", ticker: "NIFTYCONDUR.NS" },
+  "private banks": { instrument: "Bank Nifty", ticker: "^NSEBANK" },
+  "private bank": { instrument: "Bank Nifty", ticker: "^NSEBANK" },
+  "psu banks": { instrument: "Nifty PSU Bank", ticker: "^CNXPSUBANK" },
+  "psu bank": { instrument: "Nifty PSU Bank", ticker: "^CNXPSUBANK" },
+  "public sector bank": { instrument: "Nifty PSU Bank", ticker: "^CNXPSUBANK" },
+  "fmcg": { instrument: "Nifty FMCG", ticker: "^CNXFMCG" },
+  "metals": { instrument: "Nifty Metal", ticker: "^CNXMETAL" },
+  "metal sector": { instrument: "Nifty Metal", ticker: "^CNXMETAL" },
+  "auto sector": { instrument: "Nifty Auto", ticker: "^CNXAUTO" },
+  "auto stocks": { instrument: "Nifty Auto", ticker: "^CNXAUTO" },
+  "it sector": { instrument: "Nifty IT", ticker: "^CNXIT" },
+  "tech sector": { instrument: "Nifty IT", ticker: "^CNXIT" },
+  "pharma sector": { instrument: "Nifty Pharma", ticker: "^CNXPHARMA" },
+  "pharma stocks": { instrument: "Nifty Pharma", ticker: "^CNXPHARMA" },
+  "realty": { instrument: "Nifty Realty", ticker: "^CNXREALTY" },
+  "real estate": { instrument: "Nifty Realty", ticker: "^CNXREALTY" },
+  "infrastructure": { instrument: "Nifty Infra", ticker: "^CNXINFRA" },
+  "energy sector": { instrument: "Nifty Energy", ticker: "^CNXENERGY" },
   // Indian stocks — more specific names first to avoid partial collisions
   "hdfc bank": { instrument: "HDFC Bank", ticker: "HDFCBANK.NS" },
   "bajaj finance": { instrument: "Bajaj Finance", ticker: "BAJFINANCE.NS" },
@@ -95,11 +126,21 @@ const TICKER_MAP: Record<string, InstrumentResult> = {
   "reliance": { instrument: "Reliance Industries", ticker: "RELIANCE.NS" },
   "infosys": { instrument: "Infosys", ticker: "INFY.NS" },
   "wipro": { instrument: "Wipro", ticker: "WIPRO.NS" },
+  // L&T: "l&t" covers most cases; " lt " (space-padded) catches "buy LT at 4200" in mid-sentence
+  // but misses sentence-final "bullish on L&T" or "bullish on LT". Added unpadded "lt" variant
+  // to catch end-of-sentence and beginning-of-sentence occurrences. Note: "lt" could theoretically
+  // collide with abbreviations, but in Indian finance context this is an acceptable trade-off.
   "l&t": { instrument: "L&T", ticker: "LT.NS" },
   " lt ": { instrument: "L&T", ticker: "LT.NS" },
+  "lt ": { instrument: "L&T", ticker: "LT.NS" },
+  " lt": { instrument: "L&T", ticker: "LT.NS" },
   "itc": { instrument: "ITC", ticker: "ITC.NS" },
+  // SBI: "sbin" is the NSE ticker substring; " sbi " (space-padded) catches mid-sentence
+  // but misses "bullish on SBI" (sentence-end). Added "sbi" unpadded as fallback.
   "sbin": { instrument: "SBI", ticker: "SBIN.NS" },
   " sbi ": { instrument: "SBI", ticker: "SBIN.NS" },
+  "sbi ": { instrument: "SBI", ticker: "SBIN.NS" },
+  " sbi": { instrument: "SBI", ticker: "SBIN.NS" },
   "tcs": { instrument: "TCS", ticker: "TCS.NS" },
 };
 
@@ -108,6 +149,12 @@ const TICKER_MAP: Record<string, InstrumentResult> = {
  * Returns the first match found (keys are ordered longest/most-specific first where relevant).
  */
 function checkTickerMap(combinedText: string): InstrumentResult | null {
+  if (combinedText.length < 10) {
+    console.info(
+      `[extractInstrument] checkTickerMap called with suspiciously short text: '${combinedText}'`
+    );
+  }
+
   const lower = combinedText.toLowerCase();
 
   for (const [key, result] of Object.entries(TICKER_MAP)) {
@@ -286,7 +333,19 @@ export async function extractInstrumentFromQuote(
   quote: string,
   headline: string
 ): Promise<InstrumentResult | null> {
-  const combinedText = `${headline} ${quote}`;
+  const safeQuote = quote ?? "";
+  const safeHeadline = headline ?? "";
+
+  console.info(
+    `[extractInstrument] entry — quote_len=${safeQuote.length} headline_len=${safeHeadline.length}`
+  );
+
+  if (safeQuote.length === 0 && safeHeadline.length === 0) {
+    console.info("[extractInstrument] Skipped — blank inputs");
+    return null;
+  }
+
+  const combinedText = `${safeHeadline} ${safeQuote}`;
 
   // Fast path: check hardcoded map first
   const mapResult = checkTickerMap(combinedText);
@@ -301,7 +360,7 @@ export async function extractInstrumentFromQuote(
     return null;
   }
 
-  const aiResult = await callGroqForInstrument(groqKey, quote, headline);
+  const aiResult = await callGroqForInstrument(groqKey, safeQuote, safeHeadline);
   if (!aiResult) return null;
   return { ...aiResult, ticker: normalizeYahooTicker(aiResult.ticker) };
 }

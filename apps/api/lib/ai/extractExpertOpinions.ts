@@ -73,6 +73,16 @@ export type RawExpertOpinion = {
   analystCallAt?: string | null;
   /** Optional: model-provided reason for rejection, logged but never persisted. */
   rejectionReason?: string | null;
+  /**
+   * Structured instrument type committed by the AI before assigning a direction.
+   * "NONE" means the AI could not identify a specific tradeable instrument — validator rejects these.
+   */
+  instrumentType?: "INDEX" | "STOCK" | "SECTOR" | "COMMODITY" | "CURRENCY" | "NONE";
+  /**
+   * Human-readable instrument label committed by the AI (e.g. "Nifty 50", "Banking Sector", "Gold").
+   * Populated alongside instrumentType; absent when instrumentType is missing or NONE.
+   */
+  instrumentLabel?: string;
 };
 
 /**
@@ -128,6 +138,7 @@ Set "isSourceAttribution": true.
 Do NOT use Mode 2 if a specific individual's name (first + last name) is explicitly mentioned — use Mode 1 instead.
 
 REJECTION CRITERIA (applies to both modes):
+- No specific tradeable instrument (instrumentType must NOT be NONE — if you cannot name one, REJECT)
 - CEO/CFO talking about own company strategy
 - Regulator/government policy statements
 - Purely descriptive market recap (no forward call or conviction)
@@ -165,7 +176,10 @@ ANALYST CALL DATE (analystCallAt) — when the analyst actually made the call:
 - DO NOT guess. A null is much safer than a wrong date.
 
 OUTPUT FORMAT (JSON array):
-[{"expertName": "Name or blank", "expertOrganization": "Firm or Independent or Publication", "paraphrasedQuote": "substantive 2-3 sentence summary", "direction": "BULLISH|BEARISH|NEUTRAL", "confidence": 0.0-1.0, "isSourceAttribution": false or true, "analystCallAt": "YYYY-MM-DD" or null, "rejectionReason": null}]
+[{"expertName": "Name or blank", "expertOrganization": "Firm or Independent or Publication", "paraphrasedQuote": "substantive 2-3 sentence summary", "direction": "BULLISH|BEARISH|NEUTRAL", "confidence": 0.0-1.0, "isSourceAttribution": false or true, "analystCallAt": "YYYY-MM-DD" or null, "rejectionReason": null, "instrumentType": "INDEX|STOCK|SECTOR|COMMODITY|CURRENCY|NONE", "instrumentLabel": "Nifty 50|HDFC Bank|Banking Sector|Gold|INR|etc."}]
+
+instrumentType: classify the primary instrument as INDEX (Nifty 50, Bank Nifty, Sensex), STOCK (individual equity), SECTOR (capital goods sector, pharma sector, etc.), COMMODITY (gold, crude oil, etc.), CURRENCY (INR, USD, etc.), or NONE if no specific tradeable instrument exists. If instrumentType is NONE, output an empty array [] for this opinion — do not include it.
+instrumentLabel: a concise human-readable name for the instrument (e.g. "Nifty 50", "HDFC Bank", "Banking Sector", "Gold", "INR/USD"). Required when instrumentType is not NONE.
 
 Return [] if no qualifying calls found. Do not invent quotes.
 
@@ -190,7 +204,19 @@ BAD EXAMPLE (must reject entirely):
 
 BAD EXAMPLE (must reject):
 "Sensex closed 200 points lower today as IT stocks weighed on the index."
-→ [] (descriptive news recap, no forward call)`;
+→ [] (descriptive news recap, no forward call)
+
+BAD EXAMPLE (must reject — opinion piece about retail investor behaviour, no tradeable instrument):
+Samir Arora of Helios Capital: "SIPs are not the villain behind the rupee's weakness. The structural flows from retail investors have actually provided a cushion during bouts of FII selling."
+→ [] (commentary on retail investor behaviour and rupee macro; no specific instrument targeted — instrumentType=NONE)
+
+BAD EXAMPLE (must reject — mood observation without levels or instrument):
+Pabitro Mukherjee of Bajaj Broking: "Investor sentiment remains cautious due to ongoing geopolitical tensions in the Middle East. Markets may remain volatile in the near term."
+→ [] (general sentiment observation, no specific tradeable instrument, no price target or level — instrumentType=NONE)
+
+BAD EXAMPLE (must reject — macroeconomic policy view, no specific tradeable instrument):
+"An RBI rate cut will support economic growth and boost consumption demand across sectors."
+→ [] (macroeconomic policy view; does not specify a tradeable instrument with a directional call — instrumentType=NONE)`;
 
 /**
  * Sentinel substrings that indicate the model may have been injected into.
@@ -242,6 +268,31 @@ function validateRawOpinions(raw: unknown): RawExpertOpinion[] {
     const isSourceAttribution = typeof obj.isSourceAttribution === "boolean" ? obj.isSourceAttribution : false;
     const rejectionReason =
       typeof obj.rejectionReason === "string" ? obj.rejectionReason : null;
+
+    // Structured instrument commitment from AI — MUST be present and not NONE.
+    // This is the primary false-positive gate: macro commentary that names no instrument
+    // should have returned instrumentType="NONE" per the prompt, and is rejected here.
+    const VALID_INSTRUMENT_TYPES = ["INDEX", "STOCK", "SECTOR", "COMMODITY", "CURRENCY"] as const;
+    type ValidInstrumentType = (typeof VALID_INSTRUMENT_TYPES)[number];
+    const instrumentTypeRaw =
+      typeof obj.instrumentType === "string" ? (obj.instrumentType.toUpperCase() as string) : "";
+    const instrumentLabel =
+      typeof obj.instrumentLabel === "string" ? obj.instrumentLabel.trim() : undefined;
+    const expertId = expertName || expertOrganization;
+    const quotePreview = paraphrasedQuote.slice(0, 80);
+
+    if (
+      !instrumentTypeRaw ||
+      instrumentTypeRaw === "NONE" ||
+      !VALID_INSTRUMENT_TYPES.includes(instrumentTypeRaw as ValidInstrumentType)
+    ) {
+      console.info(
+        `[Finance AI] Rejected — instrumentType=NONE: ${expertId} — ${quotePreview}`
+      );
+      continue;
+    }
+    const instrumentType = instrumentTypeRaw as ValidInstrumentType;
+
     // analystCallAt: only accept ISO-parseable strings. Reject futures and very old dates as obvious hallucinations.
     let analystCallAt: string | null = null;
     if (typeof obj.analystCallAt === "string" && obj.analystCallAt.length > 0) {
@@ -256,15 +307,39 @@ function validateRawOpinions(raw: unknown): RawExpertOpinion[] {
     // Named experts without a firm get "Independent" as org; pure source attributions must have org
     const effectiveOrg = expertName && !expertOrganization ? "Independent" : expertOrganization;
     if (!effectiveOrg) continue;
-    if (!paraphrasedQuote || paraphrasedQuote.length < 20) continue;
-    if (!["BULLISH", "BEARISH", "NEUTRAL"].includes(directionRaw)) continue;
 
-    // Confidence floor: reject any opinion below 0.75
-    if (confidence < 0.75) {
+    // Quote length floor: 80 chars minimum to catch single-sentence vague extractions
+    if (!paraphrasedQuote || paraphrasedQuote.length < 80) {
       console.info(
-        `[Finance AI] Rejected opinion for "${expertName || expertOrganization}" — confidence ${confidence.toFixed(2)} below floor 0.75`
+        `[Finance AI] Rejected — quote too short (<80 chars): ${expertId} — ${quotePreview}`
       );
       continue;
+    }
+    if (!["BULLISH", "BEARISH", "NEUTRAL"].includes(directionRaw)) continue;
+
+    // Confidence floor: reject any opinion below 0.82
+    if (confidence < 0.82) {
+      console.info(
+        `[Finance AI] Rejected — confidence ${confidence.toFixed(2)} below floor 0.82: ${expertId} — ${quotePreview}`
+      );
+      continue;
+    }
+
+    // Numeric anchor gate: non-SECTOR calls must contain a number (2+ digits) AND at least one
+    // unit token (₹, Rs., Rs , %, points, target, support, resistance) to filter out purely
+    // narrative calls that have no concrete price reference. SECTOR calls are exempt because
+    // "bullish on capital goods sector" is a valid gradable thematic call.
+    if (instrumentType !== "SECTOR") {
+      const hasNumericAnchor = /\d{2,}/.test(paraphrasedQuote);
+      const unitTokens = ["₹", "rs.", "rs ", "%", "points", "target", "support", "resistance"];
+      const lowerQuote = paraphrasedQuote.toLowerCase();
+      const hasUnitToken = unitTokens.some((token) => lowerQuote.includes(token));
+      if (!hasNumericAnchor || !hasUnitToken) {
+        console.info(
+          `[Finance AI] Rejected — no numeric anchor: ${expertId} — ${quotePreview}`
+        );
+        continue;
+      }
     }
 
     // Injection sentinel check: if any string field contains leaked delimiter text,
@@ -286,6 +361,8 @@ function validateRawOpinions(raw: unknown): RawExpertOpinion[] {
       isSourceAttribution,
       analystCallAt,
       rejectionReason,
+      instrumentType,
+      instrumentLabel: instrumentLabel || undefined,
     });
   }
 
