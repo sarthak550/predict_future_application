@@ -145,7 +145,24 @@ const INDEX_SECTOR_COMMODITY_MAP: Record<string, InstrumentResult> = {
   "sensex": { instrument: "Sensex", ticker: "^BSESN" },
   "midcap": { instrument: "Nifty Midcap 50", ticker: "^NSEMDCP50" },
   "nifty": { instrument: "Nifty 50", ticker: "^NSEI" },
-  // Commodities
+  // Global indices — ordered most-specific first (verified on Yahoo Finance 2026-06-06)
+  "s&p 500": { instrument: "S&P 500", ticker: "^GSPC" },
+  "s&p500": { instrument: "S&P 500", ticker: "^GSPC" },
+  "sp 500": { instrument: "S&P 500", ticker: "^GSPC" },
+  "dow jones": { instrument: "Dow Jones", ticker: "^DJI" },
+  "dow": { instrument: "Dow Jones", ticker: "^DJI" },
+  "nasdaq": { instrument: "Nasdaq", ticker: "^IXIC" },
+  // Currencies — longer/more-specific keys first (verified on Yahoo Finance 2026-06-06)
+  "usd/inr": { instrument: "USD/INR", ticker: "INR=X" },
+  "usdinr": { instrument: "USD/INR", ticker: "INR=X" },
+  "dollar inr": { instrument: "USD/INR", ticker: "INR=X" },
+  "indian rupee": { instrument: "USD/INR", ticker: "INR=X" },
+  "usd inr": { instrument: "USD/INR", ticker: "INR=X" },
+  "rupee": { instrument: "USD/INR", ticker: "INR=X" },
+  // Commodities (verified on Yahoo Finance 2026-06-06)
+  "natural gas": { instrument: "Natural Gas", ticker: "NG=F" },
+  "silver": { instrument: "Silver", ticker: "SI=F" },
+  "copper": { instrument: "Copper", ticker: "HG=F" },
   "gold": { instrument: "Gold", ticker: "GC=F" },
   "crude": { instrument: "Crude Oil", ticker: "CL=F" },
   // Sectoral indices — ordered most-specific first to avoid partial-key collisions.
