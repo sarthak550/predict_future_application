@@ -65,15 +65,79 @@ export function normalizeYahooTicker(ticker: string): string {
 }
 
 /**
- * Hardcoded map of common Indian financial instrument keywords to their
- * human-readable name and Yahoo Finance ticker symbol.
+ * STOCK_MAP: individual equity keyword → InstrumentResult.
  *
- * Keys are lowercase and matched via case-insensitive substring search against
- * the combined quote + headline text. Longer/more-specific keys take priority
- * by being listed first where there could be ambiguity.
+ * Keys are lowercase; matched via case-insensitive substring search against
+ * the QUOTE ONLY (pass 1 of checkTickerMap). More-specific names are listed
+ * first to avoid partial-match collisions (e.g. "kotak mahindra" before "kotak").
+ *
+ * IMPORTANT: When adding new stocks, add them HERE — not to INDEX_SECTOR_COMMODITY_MAP.
+ * Future additions should follow longest-key-first ordering within each stock cluster.
  */
-const TICKER_MAP: Record<string, InstrumentResult> = {
-  // Indices — checked before individual stocks to prefer broader instrument
+const STOCK_MAP: Record<string, InstrumentResult> = {
+  // Banks — ordered most-specific first
+  "hdfc bank": { instrument: "HDFC Bank", ticker: "HDFCBANK.NS" },
+  "bajaj finance": { instrument: "Bajaj Finance", ticker: "BAJFINANCE.NS" },
+  "icici bank": { instrument: "ICICI Bank", ticker: "ICICIBANK.NS" },
+  "axis bank": { instrument: "Axis Bank", ticker: "AXISBANK.NS" },
+  "kotak mahindra": { instrument: "Kotak Mahindra Bank", ticker: "KOTAKBANK.NS" },
+  "kotak bank": { instrument: "Kotak Mahindra Bank", ticker: "KOTAKBANK.NS" },
+  "kotak": { instrument: "Kotak Mahindra Bank", ticker: "KOTAKBANK.NS" },
+  // Auto
+  "tata motors": { instrument: "Tata Motors", ticker: "TATAMOTORS.NS" },
+  // Steel / Metals
+  "tata steel": { instrument: "Tata Steel", ticker: "TATASTEEL.NS" },
+  "tatasteel": { instrument: "Tata Steel", ticker: "TATASTEEL.NS" },
+  // Telecom
+  "bharti airtel": { instrument: "Bharti Airtel", ticker: "BHARTIARTL.NS" },
+  // Consumer
+  "asian paints": { instrument: "Asian Paints", ticker: "ASIANPAINT.NS" },
+  "maruti suzuki": { instrument: "Maruti Suzuki", ticker: "MARUTI.NS" },
+  "maruti": { instrument: "Maruti Suzuki", ticker: "MARUTI.NS" },
+  // Energy / Conglomerate
+  "reliance industries": { instrument: "Reliance Industries", ticker: "RELIANCE.NS" },
+  "reliance": { instrument: "Reliance Industries", ticker: "RELIANCE.NS" },
+  // IT
+  "infosys": { instrument: "Infosys", ticker: "INFY.NS" },
+  "wipro": { instrument: "Wipro", ticker: "WIPRO.NS" },
+  // Infrastructure / Engineering — L&T: 3 variants for full sentence coverage.
+  // "lt " (no leading space) was removed — it collides fatally with common substrings like
+  // "result ", "default ", "fault " etc., silently tagging unrelated opinions as L&T.
+  // The 3 remaining keys cover: canonical ampersand form, mid-sentence bare acronym,
+  // and sentence-final / "buy LT" usage.
+  "l&t": { instrument: "L&T", ticker: "LT.NS" },
+  " lt ": { instrument: "L&T", ticker: "LT.NS" },
+  " lt": { instrument: "L&T", ticker: "LT.NS" },
+  // FMCG / Consumer staples
+  "itc": { instrument: "ITC", ticker: "ITC.NS" },
+  // State banks — SBI: "sbin" is the NSE ticker substring; " sbi " (space-padded) catches
+  // mid-sentence but misses "bullish on SBI" (sentence-end). Added trailing/leading variants.
+  "sbin": { instrument: "SBI", ticker: "SBIN.NS" },
+  " sbi ": { instrument: "SBI", ticker: "SBIN.NS" },
+  "sbi ": { instrument: "SBI", ticker: "SBIN.NS" },
+  " sbi": { instrument: "SBI", ticker: "SBIN.NS" },
+  // IT services
+  "tcs": { instrument: "TCS", ticker: "TCS.NS" },
+};
+
+/**
+ * INDEX_SECTOR_COMMODITY_MAP: indices, commodities, and sectoral keyword → InstrumentResult.
+ *
+ * Keys are lowercase; matched via case-insensitive substring search against
+ * QUOTE + HEADLINE combined (pass 2 of checkTickerMap, only reached when pass 1 misses).
+ * This means index/sector resolution can legitimately use the article headline — which is
+ * the correct data source for thematic calls like "Nifty 50 outlook" or "FMCG sector rally".
+ *
+ * DESIGN NOTE: Stock names that appear in the headline of an index-focused article
+ * (e.g. "Nifty 50 hits 25000, Reliance to lead") will NOT incorrectly resolve to the
+ * stock because STOCK_MAP (pass 1) matches only against the quote. Pass 2 matches
+ * "nifty 50" in the quote, correctly returning the index.
+ *
+ * IMPORTANT: When adding indices, commodities, or sector themes, add them HERE.
+ * Future additions should follow longest-key-first ordering within each category.
+ */
+const INDEX_SECTOR_COMMODITY_MAP: Record<string, InstrumentResult> = {
+  // Broad indices — ordered most-specific first to prevent "nifty" matching before "nifty 50"
   "nifty 50": { instrument: "Nifty 50", ticker: "^NSEI" },
   "nifty50": { instrument: "Nifty 50", ticker: "^NSEI" },
   "bank nifty": { instrument: "Bank Nifty", ticker: "^NSEBANK" },
@@ -84,7 +148,7 @@ const TICKER_MAP: Record<string, InstrumentResult> = {
   // Commodities
   "gold": { instrument: "Gold", ticker: "GC=F" },
   "crude": { instrument: "Crude Oil", ticker: "CL=F" },
-  // Sectors — ordered before broad stock keywords to prefer sectoral instrument on thematic calls.
+  // Sectoral indices — ordered most-specific first to avoid partial-key collisions.
   // ^CNXCAPITAL and NIFTYCONDUR.NS are not available on Yahoo Finance; TICKER_REMAP routes them
   // to verified proxy tickers (^CNXINFRA and ^CNXFMCG respectively).
   "capital goods": { instrument: "Nifty Capital Goods", ticker: "^CNXCAPITAL" },
@@ -107,58 +171,52 @@ const TICKER_MAP: Record<string, InstrumentResult> = {
   "real estate": { instrument: "Nifty Realty", ticker: "^CNXREALTY" },
   "infrastructure": { instrument: "Nifty Infra", ticker: "^CNXINFRA" },
   "energy sector": { instrument: "Nifty Energy", ticker: "^CNXENERGY" },
-  // Indian stocks — more specific names first to avoid partial collisions
-  "hdfc bank": { instrument: "HDFC Bank", ticker: "HDFCBANK.NS" },
-  "bajaj finance": { instrument: "Bajaj Finance", ticker: "BAJFINANCE.NS" },
-  "icici bank": { instrument: "ICICI Bank", ticker: "ICICIBANK.NS" },
-  "axis bank": { instrument: "Axis Bank", ticker: "AXISBANK.NS" },
-  "kotak mahindra": { instrument: "Kotak Mahindra Bank", ticker: "KOTAKBANK.NS" },
-  "kotak bank": { instrument: "Kotak Mahindra Bank", ticker: "KOTAKBANK.NS" },
-  "kotak": { instrument: "Kotak Mahindra Bank", ticker: "KOTAKBANK.NS" },
-  "tata motors": { instrument: "Tata Motors", ticker: "TATAMOTORS.NS" },
-  "tata steel": { instrument: "Tata Steel", ticker: "TATASTEEL.NS" },
-  "tatasteel": { instrument: "Tata Steel", ticker: "TATASTEEL.NS" },
-  "bharti airtel": { instrument: "Bharti Airtel", ticker: "BHARTIARTL.NS" },
-  "asian paints": { instrument: "Asian Paints", ticker: "ASIANPAINT.NS" },
-  "maruti suzuki": { instrument: "Maruti Suzuki", ticker: "MARUTI.NS" },
-  "maruti": { instrument: "Maruti Suzuki", ticker: "MARUTI.NS" },
-  "reliance industries": { instrument: "Reliance Industries", ticker: "RELIANCE.NS" },
-  "reliance": { instrument: "Reliance Industries", ticker: "RELIANCE.NS" },
-  "infosys": { instrument: "Infosys", ticker: "INFY.NS" },
-  "wipro": { instrument: "Wipro", ticker: "WIPRO.NS" },
-  // L&T: 3 variants for full sentence coverage.
-  // "lt " (no leading space) was removed — it collides fatally with common substrings like
-  // "result ", "default ", "fault " etc., silently tagging unrelated opinions as L&T.
-  // The 3 remaining keys cover: canonical ampersand form, mid-sentence bare acronym,
-  // and sentence-final / "buy LT" usage.
-  "l&t": { instrument: "L&T", ticker: "LT.NS" },
-  " lt ": { instrument: "L&T", ticker: "LT.NS" },
-  " lt": { instrument: "L&T", ticker: "LT.NS" },
-  "itc": { instrument: "ITC", ticker: "ITC.NS" },
-  // SBI: "sbin" is the NSE ticker substring; " sbi " (space-padded) catches mid-sentence
-  // but misses "bullish on SBI" (sentence-end). Added "sbi" unpadded as fallback.
-  "sbin": { instrument: "SBI", ticker: "SBIN.NS" },
-  " sbi ": { instrument: "SBI", ticker: "SBIN.NS" },
-  "sbi ": { instrument: "SBI", ticker: "SBIN.NS" },
-  " sbi": { instrument: "SBI", ticker: "SBIN.NS" },
-  "tcs": { instrument: "TCS", ticker: "TCS.NS" },
 };
 
 /**
- * Checks the hardcoded ticker map against the combined text.
- * Returns the first match found (keys are ordered longest/most-specific first where relevant).
+ * Two-pass keyword resolver. Stocks win unconditionally on the quote alone (pass 1);
+ * indices, sectors, and commodities use quote + headline (pass 2) and only fire when
+ * pass 1 misses.
+ *
+ * Why two passes?
+ * ETMarkets article headlines frequently contain "Sensex" or "Nifty 50" as context
+ * ("10 Sensex stocks with 25-40% upside") while the paraphrasedQuote unambiguously
+ * names an individual stock (TCS, HDFC Bank, SBI). A single-pass combined-text search
+ * always resolves to the index because TICKER_MAP was index-first. The two-pass
+ * approach eliminates this contamination: if the quote names a stock, the stock wins
+ * regardless of the headline. Indices and sectors win only when no stock is found in
+ * the quote itself.
+ *
+ * Trade-off: a quote like "Nifty 50 poised for breakout, Reliance to lead" resolves to
+ * Reliance via pass 1 (Reliance appears in the quote). This is acceptable — the analyst
+ * is making a specific Reliance call. If the intent was an index call, the quote should
+ * not name the stock. Specificity beats contamination.
+ *
+ * @param quote     The analyst's paraphrased quote (primary source — stock matching only).
+ * @param headline  The article headline (used in pass 2 for index/sector/commodity context).
  */
-function checkTickerMap(combinedText: string): InstrumentResult | null {
-  if (combinedText.length < 10) {
+export function checkTickerMap(quote: string, headline: string): InstrumentResult | null {
+  const quoteLower = quote.toLowerCase();
+  const combinedLower = `${headline} ${quote}`.toLowerCase();
+
+  if (quoteLower.length + headline.length < 10) {
     console.info(
-      `[extractInstrument] checkTickerMap called with suspiciously short text: '${combinedText}'`
+      `[extractInstrument] checkTickerMap called with suspiciously short inputs: quote='${quote}' headline='${headline}'`
     );
   }
 
-  const lower = combinedText.toLowerCase();
+  // Pass 1: match STOCK_MAP against the quote only.
+  // A stock named in the quote wins regardless of what the headline says.
+  for (const [key, result] of Object.entries(STOCK_MAP)) {
+    if (quoteLower.includes(key)) {
+      return result;
+    }
+  }
 
-  for (const [key, result] of Object.entries(TICKER_MAP)) {
-    if (lower.includes(key)) {
+  // Pass 2: match INDEX_SECTOR_COMMODITY_MAP against quote + headline combined.
+  // Reached only when the quote does not name a specific stock.
+  for (const [key, result] of Object.entries(INDEX_SECTOR_COMMODITY_MAP)) {
+    if (combinedLower.includes(key)) {
       return result;
     }
   }
@@ -345,10 +403,8 @@ export async function extractInstrumentFromQuote(
     return null;
   }
 
-  const combinedText = `${safeHeadline} ${safeQuote}`;
-
-  // Fast path: check hardcoded map first
-  const mapResult = checkTickerMap(combinedText);
+  // Fast path: two-pass keyword map (stocks-first, then indices/sectors/commodities)
+  const mapResult = checkTickerMap(safeQuote, safeHeadline);
   if (mapResult) {
     return { ...mapResult, ticker: normalizeYahooTicker(mapResult.ticker) };
   }
