@@ -1,6 +1,7 @@
 import { Prisma, type MarketCategory, type MarketStatus, type StoryStatus } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import { NORMALIZATION_MAP } from "@/lib/finance/instrumentCatalog";
 import { approvedStoryStatuses } from "@/lib/validations/news";
 
 const visibleNewsStatuses: StoryStatus[] = [...new Set<StoryStatus>([...approvedStoryStatuses, "PUBLISHED"])];
@@ -162,6 +163,28 @@ type OpinionFilterInput = {
 };
 
 /**
+ * Returns the canonical label itself plus every raw NORMALIZATION_MAP key that
+ * collapses to that canonical. Used by the instrument filter to match all stored
+ * variants when the picker sends a canonical label.
+ *
+ * Examples (from current NORMALIZATION_MAP):
+ *   getInstrumentVariants("SBI")   → ["SBI", "State Bank of India"]
+ *   getInstrumentVariants("Gold")  → ["Gold", "Gold Futures"]
+ *   getInstrumentVariants("L&T")   → ["L&T", "Larsen & Toubro"]
+ *   getInstrumentVariants("Nifty 50") → ["Nifty 50", "Nifty 50 Index"]
+ *   getInstrumentVariants("Reliance Industries") → ["Reliance Industries"]  // no map entry
+ */
+export function getInstrumentVariants(canonical: string): string[] {
+  const variants: string[] = [canonical];
+  for (const [raw, mapped] of Object.entries(NORMALIZATION_MAP)) {
+    if (mapped === canonical) {
+      variants.push(raw);
+    }
+  }
+  return variants;
+}
+
+/**
  * Builds the Story.where filter for opinion-level constraints. When any opinion
  * filter is set, requires at least one matching opinion via `some`. When nothing
  * is set, honors the simpler requireExpertOpinions toggle.
@@ -183,10 +206,11 @@ function buildOpinionWhere(input: OpinionFilterInput & { requireExpertOpinions?:
     hasAnyOpinionFilter = true;
   }
   if (input.expertOpinionInstrument) {
-    opinionWhere.OR = [
-      { instrument: { contains: input.expertOpinionInstrument, mode: "insensitive" } },
-      { instrumentTicker: { contains: input.expertOpinionInstrument, mode: "insensitive" } },
-    ];
+    const variants = getInstrumentVariants(input.expertOpinionInstrument);
+    opinionWhere.OR = variants.flatMap((v) => [
+      { instrument: { contains: v, mode: "insensitive" } },
+      { instrumentTicker: { contains: v, mode: "insensitive" } },
+    ]);
     hasAnyOpinionFilter = true;
   }
   if (input.expertOpinionAnalyst) {

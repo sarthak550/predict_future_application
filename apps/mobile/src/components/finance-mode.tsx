@@ -2422,13 +2422,17 @@ export function FinanceMode({
 
           // S35-T1: Apply instrument filter from ticker chip tap
           if (activeInstrumentFilter !== null) {
-            filteredGroups = filteredGroups.filter((g) =>
-              g.opinions.some(
-                (op) =>
-                  op.instrument?.toLowerCase().includes(activeInstrumentFilter.toLowerCase()) ||
-                  op.instrumentTicker?.toLowerCase().includes(activeInstrumentFilter.toLowerCase())
-              )
-            );
+            const needle = activeInstrumentFilter.toLowerCase();
+            filteredGroups = filteredGroups
+              .map((g) => ({
+                ...g,
+                opinions: g.opinions.filter(
+                  (op) =>
+                    op.instrument?.toLowerCase().includes(needle) ||
+                    op.instrumentTicker?.toLowerCase().includes(needle)
+                ),
+              }))
+              .filter((g) => g.opinions.length > 0);
           }
 
           // S28-T3: Apply direction/verified filter at the individual opinion level
