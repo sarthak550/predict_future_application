@@ -175,7 +175,7 @@ function DriverRow({
         )}
 
         {/* Best lap / Q Time */}
-        {showBestLap && driver.fastestLap && !bestSameAsLast && (
+        {!isQualifying && showBestLap && driver.fastestLap && !bestSameAsLast && (
           <View style={dr.statRow}>
             <Text style={dr.statLabel}>{bestLapLabel}</Text>
             <Text style={[dr.stat, driver.fastestLapOverall && dr.statFastest]}>
