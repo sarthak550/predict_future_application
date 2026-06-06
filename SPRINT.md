@@ -2,8 +2,8 @@
 
 > Human-readable view of `.claude/sprint-board.json`. Auto-maintained by the CEO/CTO/QA agents — do not edit by hand.
 
-**Current sprint:** 43
-**Status:** Sprint 43 IN PROGRESS (opinion quality layer). Sprints 38–42 COMPLETE (security/correctness hardening, 54 tickets). Sprints 12, 25–34 COMPLETE.
+**Current sprint:** 44
+**Status:** Sprint 44 COMPLETE (Finance instrument filter overhaul — all 3 tickets passed QA). Sprint 43 IN PROGRESS. Sprints 38–42 COMPLETE (security/correctness hardening, 54 tickets). Sprints 12, 25–34 COMPLETE.
 
 ---
 
@@ -572,3 +572,16 @@
 | S43-T1 | CRIT | done | Opinion quality: structured instrument commitment in AI prompt + deterministic validator backstop |
 | S43-T2 | HIGH | done | Instrument extraction: fix NULL persistence bug + extend TICKER_MAP with sectoral keywords |
 | S43-T3 | CRIT | ❌ failed | checkTickerMap: two-pass stock-first resolution to fix index contamination from article headlines |
+
+---
+
+## Sprint 44
+
+**Theme:** Finance instrument filter overhaul — dynamic catalog, normalization, and searchable picker
+**Status:** IN PROGRESS
+
+| ID | Pri | Status | Title |
+|---|---|---|---|
+| S44-T1 | HIGH | ✅ done | Backend: instrument-catalog API + normalization map |
+| S44-T2 | HIGH | ✅ done | Backend: extend TICKER_MAP with silver, currencies, global indices, and commodity gaps |
+| S44-T3 | HIGH | ✅ done | Mobile UI: searchable instrument picker replacing hardcoded 5-option list |
