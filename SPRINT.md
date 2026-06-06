@@ -2,8 +2,8 @@
 
 > Human-readable view of `.claude/sprint-board.json`. Auto-maintained by the CEO/CTO/QA agents — do not edit by hand.
 
-**Current sprint:** 46
-**Status:** Sprint 46 COMPLETE (Sports poll trust fix — all 3 tickets passed QA). Sprint 45 COMPLETE (F1 race card). Sprint 44 COMPLETE (Finance instrument filter overhaul). Sprint 43 COMPLETE. Sprints 38–42 COMPLETE (security/correctness hardening, 54 tickets). Sprints 12, 25–34 COMPLETE.
+**Current sprint:** 47
+**Status:** Sprint 47 IN PROGRESS (F1 detail modal — full driver grid with lap times, gaps, tire data). Sprint 46 COMPLETE (Sports poll trust fix — all 3 tickets passed QA). Sprint 45 COMPLETE (F1 race card). Sprint 44 COMPLETE (Finance instrument filter overhaul). Sprint 43 COMPLETE. Sprints 38–42 COMPLETE (security/correctness hardening, 54 tickets). Sprints 12, 25–34 COMPLETE.
 
 ---
 
@@ -608,6 +608,19 @@
 
 | ID | Pri | Status | Title |
 |---|---|---|---|
-| S46-T1 | CRIT | ✅ | Prevention: exclude SPORTS from auto-poll generation + story freshness gate |
-| S46-T2 | CRIT | ✅ | Cleanup: cancel + refund existing stale sports polls via one-time script |
-| S46-T3 | HIGH | ✅ | Belt-and-suspenders: strengthen AI prompt SPORTS rejection example |
+| S46-T1 | CRIT | ✅ done | Prevention: exclude SPORTS from auto-poll generation + story freshness gate |
+| S46-T2 | CRIT | ✅ done | Cleanup: cancel + refund existing stale sports polls via one-time script |
+| S46-T3 | HIGH | ✅ done | Belt-and-suspenders: strengthen AI prompt SPORTS rejection example |
+
+---
+
+## Sprint 47
+
+**Theme:** F1 detail modal — full driver grid with lap times, gap-to-leader, tire compounds, and session-type stat gating
+**Status:** IN PROGRESS
+
+| ID | Pri | Status | Title |
+|---|---|---|---|
+| S47-T1 | CRIT | ✅ done | Backend: F1 session-detail endpoint with lap times, gaps, and tire data |
+| S47-T2 | CRIT | ❌ failed | Mobile UI: F1 detail modal — full driver grid with lap times, gaps, tire badges |
+| S47-T3 | HIGH | ❌ failed | Polish: tire compound colour palette + fastest-lap FL badge + session-type stat gating |
