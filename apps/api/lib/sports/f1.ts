@@ -313,6 +313,28 @@ export async function fetchF1SessionDetail(sessionKey: number): Promise<F1Sessio
     drivers.push(driver);
   }
 
+  // For non-race sessions (Qualifying, Practice, Sprint Qualifying, etc.),
+  // OpenF1's /v1/position endpoint is unreliable: after each session segment
+  // ends, drivers park in the pit box and OpenF1 records position 99
+  // (unclassified) for all of them. This makes the positional data useless
+  // for Qualifying/Practice. The correct ranking signal is fastest lap time.
+  //
+  // For Race/Sprint sessions, /v1/position is accurate and is kept as-is.
+  if (!isRaceSession) {
+    // Sort drivers by fastest lap ascending; drivers without a fastest lap
+    // (DNS, did not set a timed lap) sort to the end using Infinity.
+    const sorted = [...drivers].sort((a, b) => {
+      const aDur = a.fastestLap?.duration ?? Infinity;
+      const bDur = b.fastestLap?.duration ?? Infinity;
+      return aDur - bDur;
+    });
+    // Re-assign sequential positions 1..N so downstream consumers get clean
+    // ordinal ranks instead of all-99s from the position endpoint.
+    sorted.forEach((driver, idx) => {
+      driver.position = idx + 1;
+    });
+  }
+
   // Sort by position ascending; drivers without a position entry go last.
   drivers.sort((a, b) => a.position - b.position);
 
