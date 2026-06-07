@@ -433,27 +433,6 @@
 
 ---
 
-## Sprint 42
-
-| ID | Pri | Status | Title |
-|---|---|---|---|
-| S42-T0 | CRIT | ✅ done | Redis provisioning — Upstash client singleton + smoke endpoints |
-| S42-T1 | CRIT | ✅ done | Multi-choice payout P2003 fix |
-| S42-T2 | HIGH | ✅ done | notifiedAt stamp on both admin resolve routes |
-| S42-T3 | HIGH | ✅ done | ExpertOpinion unique index alignment |
-| S42-T4 | HIGH | qa-review | H1 — Prompt injection hardening: wrap untrusted content in 3 remaining AI call sites |
-| S42-T6 | HIGH | ✅ done | Manifold sync externalLastSyncedAt |
-| S42-T7 | HIGH | qa-review | Migrate rate-limit.ts from in-memory Map to Redis INCR+EXPIRE |
-| S42-T8 | HIGH | ✅ done | Tip cap + referral race |
-| S42-T9 | HIGH | ✅ done | Fix reasoning upvote counter drift (atomic increment/decrement) |
-| S42-T10 | HIGH | qa-review | H8 — Extract shared callGeminiAI helper; env-pin model in remaining 2 AI files |
-| S42-T11 | HIGH | ✅ done | Auto-resolve sweep take: limit + Expo push Redis-backed token bucket |
-| S42-T12 | MED | qa-review | Web auth JWT TTL + verify-phone double-credit + rate-limit ordering + host-bond race |
-| S42-T13 | HIGH | ✅ done | verify expert route hardening: Zod schema, idempotency, enum values, updateMany guard |
-| S42-T14 | MED | ✅ done | Misc medium fixes: 429 sentinel, GET alias CSRF, BigCallTap FKs, expert upsert verified=false, experts pagination |
-
----
-
 ## Sprint 38
 
 **Theme:** CRITICAL security findings from deep audit — production-blocking
@@ -571,7 +550,7 @@
 |---|---|---|---|
 | S43-T1 | CRIT | done | Opinion quality: structured instrument commitment in AI prompt + deterministic validator backstop |
 | S43-T2 | HIGH | done | Instrument extraction: fix NULL persistence bug + extend TICKER_MAP with sectoral keywords |
-| S43-T3 | CRIT | failed | checkTickerMap: two-pass stock-first resolution to fix index contamination from article headlines |
+| S43-T3 | CRIT | ✅ done | checkTickerMap: two-pass stock-first resolution to fix index contamination from article headlines |
 
 ---
 

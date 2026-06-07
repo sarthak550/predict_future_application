@@ -1,9 +1,12 @@
 ---
 name: cto-assignment-brief-sprint49-polish
-description: Sprint 49 amendment (T8 + T9) — scrollable BigCallCard header and Finance tab routing from TopAnalystsSheet. Direct polish of QA-cleared Sprint 49 work.
+description: Sprint 49 amendment (T8 + T9) — scrollable BigCallCard header and Finance tab routing from TopAnalystsSheet. SUPERSEDED in S50.
 metadata:
   type: project
+  superseded_by: cto_assignment_brief_sprint50.md
 ---
+
+> **⚠️ SUPERSEDED (2026-06-07):** Both T8 (BigCallCard moved into Feed's FlatList ListHeaderComponent) and T9 (TopAnalystsSheet "See full leaderboard →" repointed to Finance tab) were reversed within the same day. Sprint 50 removed the Feed BigCallCard entirely, deleted TopAnalystsSheet, and re-anchored the analyst surface to Finance tab. Read this brief as historical context only.
 
 Sprint 49 Polish issued 2026-06-07. Slotted as Sprint 49 amendment (T8 + T9), not Sprint 50 opener.
 

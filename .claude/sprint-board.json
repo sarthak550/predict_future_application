@@ -1503,7 +1503,7 @@
       "description": "Decision points (require user input before SQL):\n1. **Vote backfill** — Every existing ExpertOpinionVote has lockedAt=null. With strict mode, nothing counts. Pick:\n   (a) Auto-lock ALL pre-existing votes (`UPDATE ExpertOpinionVote SET lockedAt = createdAt WHERE lockedAt IS NULL`).\n   (b) Auto-lock only votes on opinions that have ALREADY resolved (so users get credit for past resolutions).\n   (c) Leave drafts — users have to re-engage and lock fresh votes.\n2. **Resolution-note backfill** — Every manually-resolved opinion has resolutionNote=null. Pick:\n   (a) Leave blank (Why HIT/MISS banner just won't render).\n   (b) Seed generic note 'Resolved before reason capture was required.'\n   (c) Run auto-resolver against them so AI fills notes.\n\nAcceptance: SQL applied to dev DB; row counts logged; documented in sprint board completion notes. Production replay path noted in T2.",
       "priority": "critical",
       "status": "done",
-      "qaVerdict": null,
+      "qaVerdict": "pass",
       "failureNotes": "T1a: 10 votes backfilled (lockedAt = createdAt). T1b: 1 resolved opinion with null note backfilled with a deterministic explanation note (AI re-grade overkill for N=1 instrument-less sector call).",
       "createdAt": "2026-05-23"
     },
@@ -1514,7 +1514,7 @@
       "description": "`prisma migrate status` shows 4 migrations 'not yet applied' on dev DB:\n  20260516000002_add_position_reasoning\n  20260516000003_add_analyst_tier\n  20260521000001_add_opinion_headline\n  20260523000001_add_vote_locked_at\n\nDev was unblocked via `prisma db push` (schema in DB but migration log stale). `migrate deploy` will FAIL on Vercel/prod with the LeaderboardSnapshot conflict.\n\nAcceptance:\n1. For each pre-existing migration, verify its DDL is already in the prod DB schema (psql introspection).\n2. Run `npx prisma migrate resolve --applied <migration_name>` for ones already in place.\n3. `npx prisma migrate deploy` runs clean.\n4. CI re-enabled if it was bypassed.\n5. Future workflow note added: never use `prisma db push` on dev — always `prisma migrate dev`.",
       "priority": "critical",
       "status": "done",
-      "qaVerdict": null,
+      "qaVerdict": "pass",
       "failureNotes": "Dev migration history reconciled — 5 migrations marked applied via `prisma migrate resolve`. For prod deploy: run `npx prisma migrate resolve --applied <name>` for each of the same 5 migrations against prod DB, in order: 20260516000001_add_leaderboard_snapshot, 20260516000002_add_position_reasoning, 20260516000003_add_analyst_tier, 20260521000001_add_opinion_headline, 20260523000001_add_vote_locked_at. Then `prisma migrate deploy` will be a no-op (clean).",
       "createdAt": "2026-05-23"
     },
@@ -1525,7 +1525,7 @@
       "description": "When ExpertOpinion has resolved, the Poll A buttons go grey (opacity 0.55) with no explanation. Users don't know why they can't vote.\n\nFile: `apps/mobile/src/app/finance/opinion/[id].tsx`\n\nAcceptance:\n1. When `opinion.resolutionStatus !== 'PENDING'`, render a banner ABOVE the Poll A section: \"🔒 Voting closed on {resolvedAt formatted}\". Subdued color (slate/gray).\n2. The Cast/Voted-pill section is hidden entirely on resolved opinions (currently it already is via the `opinion.resolutionStatus === 'PENDING'` gate — verify).\n3. Banner copy adapts: if user had a locked vote, show \"Voting closed on May 21 · You voted AGREE\". If user voted but didn't lock in time, show \"Voting closed on May 21 · Your draft vote didn't count\".\n4. Style matches existing resolution banners on opinion screen.",
       "priority": "critical",
       "status": "done",
-      "qaVerdict": null,
+      "qaVerdict": "pass",
       "failureNotes": null,
       "createdAt": "2026-05-23"
     },
@@ -1536,7 +1536,7 @@
       "description": "When admin resolves an opinion, all IMPLICATION voters get a push notification — including users who only drafted a vote and never locked. With strict mode, their vote didn't count, so pushing them a 'your call resolved' notification is misleading.\n\nFile: `apps/api/app/api/admin/expert-opinions/[id]/resolve/route.ts` line ~194\n\nAcceptance:\n1. Change `pollAVoters` query to filter `lockedAt: { not: null }`.\n2. Confirm count matches `tallies.implication.total` for a sample opinion.\n3. Same fix in `apps/api/app/api/cron/auto-resolve-opinions/route.ts` if it emits notifications (check).",
       "priority": "critical",
       "status": "done",
-      "qaVerdict": null,
+      "qaVerdict": "pass",
       "failureNotes": null,
       "createdAt": "2026-05-23"
     },
@@ -1547,7 +1547,7 @@
       "description": "Currently the opinion detail screen is the only surface with a vote-cast CTA. Users voting on a bucket from the feed/post cards are stuck in draft state — their vote doesn't count and they have no obvious lock path.\n\nFiles:\n  apps/mobile/src/components/expert-opinion-post-card.tsx (PollA component, ~line 296)\n  apps/mobile/src/components/news-feed-card.tsx (PollA component, ~line 105)\n\nAcceptance:\n1. After user selects a bucket in either PollA, show a 'Cast my vote' CTA below the slider/buckets. Same softer wording as opinion detail screen.\n2. After cast: swap to '✓ Voted {bucket} · {date}' pill. Buckets become read-only.\n3. Pre-cast: helper text \"Only cast votes count toward your accuracy.\"\n4. Reuse `mobileApi.lockExpertOpinionVote` and existing tallies-update flow.\n5. Consider extracting a shared `<VoteCastSection>` component since opinion-detail / post-card / news-feed all need this — but only if the extraction is genuinely shared (don't force it).",
       "priority": "high",
       "status": "done",
-      "qaVerdict": null,
+      "qaVerdict": "pass",
       "failureNotes": null,
       "createdAt": "2026-05-23"
     },
@@ -1558,7 +1558,7 @@
       "description": "Even though the vote/lock endpoints reject post-resolution writes, the tallies query trusts that the data conforms. Adding an explicit `lockedAt < resolvedAt` filter when the opinion is resolved makes the contract defensive against any future race / manual DB edit / un-resolve flow.\n\nFile: `apps/api/lib/finance/tallies.ts`\n\nAcceptance:\n1. Add opinion's `resolvedAt` to the query alongside votes.\n2. If opinion is resolved, only count votes where `lockedAt < resolvedAt` toward bucket counts / total.\n3. Add a unit test scenario (or just a manual SQL check) confirming a hypothetical post-resolution lock is excluded.",
       "priority": "high",
       "status": "done",
-      "qaVerdict": null,
+      "qaVerdict": "pass",
       "failureNotes": null,
       "createdAt": "2026-05-23"
     },
@@ -1569,7 +1569,7 @@
       "description": "Three small navigation gaps surfaced during the broader 'every icon should link properly' audit.\n\nAcceptance:\n1. **Cluster chip** (`apps/mobile/src/app/finance/opinion/[id].tsx:~245`) becomes a Pressable that navigates back to /finance with `selectedClusterFilter` pre-set to the cluster id. Needs deep-link param support in finance-mode.tsx.\n2. **Big-call hero expert** (`apps/mobile/src/components/finance-mode.tsx` BigCallHeroCard ~line 1280-1340) — the expert name/avatar area becomes Pressable, pushes /expert/{expertId}.\n3. **Voted pill** on opinion detail screen — currently reads 'Voted May 23'. Change to 'Voted {BUCKET_LABEL} · May 23' (e.g. 'Voted AGREE · May 23').",
       "priority": "high",
       "status": "done",
-      "qaVerdict": null,
+      "qaVerdict": "pass",
       "failureNotes": null,
       "createdAt": "2026-05-23"
     },
@@ -1580,7 +1580,7 @@
       "description": "`apps/api/app/api/finance/big-call/route.ts` lines 84-88, 143-150, 197-201 count ALL IMPLICATION votes (locked + draft) for the heat / cluster-heat / pollAVolume scoring inputs. Inconsistent with strict mode.\n\nAcceptance:\n1. All three `prisma.expertOpinionVote.groupBy / findMany` calls in big-call route add `lockedAt: { not: null }` to where clause.\n2. Verify scoring still surfaces an opinion (small-data envs may have zero locked votes — should fall back to freshness × tier and not break).",
       "priority": "high",
       "status": "done",
-      "qaVerdict": null,
+      "qaVerdict": "pass",
       "failureNotes": null,
       "createdAt": "2026-05-23"
     },
@@ -1591,7 +1591,7 @@
       "description": "expert-opinion-post-card has a labeled 'Why HIT' / 'Why MISS' banner above the resolution note. news-feed-card's ResolutionStrip (line ~479) shows the note but without the labeled header — inconsistent.\n\nAcceptance: ResolutionStrip renders the same labeled banner styling as post-card when `opinion.resolutionNote` is present.",
       "priority": "medium",
       "status": "done",
-      "qaVerdict": null,
+      "qaVerdict": "pass",
       "failureNotes": null,
       "createdAt": "2026-05-23"
     },
@@ -1602,7 +1602,7 @@
       "description": "Today: tap a bucket → draft → tap 'Cast my vote' → locked. Users may think bucket tap = vote and be confused. Three product options to pick from:\n  (a) Keep two-tap (current). Friction is intentional.\n  (b) One-tap-commits: bucket tap = cast vote immediately. Simpler, no draft state. Tradeoff: no 'are you sure'.\n  (c) Bucket-as-CTA: first tap selects ('Tap again to vote'), second tap on same bucket commits.\n\nAcceptance: user picks; implementation matches. If (b) chosen, the entire draft-state UI in opinion detail / post-card / news-feed-card collapses.",
       "priority": "medium",
       "status": "done",
-      "qaVerdict": null,
+      "qaVerdict": "pass",
       "failureNotes": null,
       "createdAt": "2026-05-23"
     },
@@ -1624,7 +1624,7 @@
       "description": "Pre-existing 4 TS errors in apps/web that have been red across multiple typechecks. Not caused by recent work but blocking `turbo typecheck` from going green.\n  - lib/markets/create.ts(218,9): string | undefined → string\n  - lib/stats.ts(107/116/228): MarketType 'MULTIPLE_CHOICE' incompatible with 'BINARY' | 'NUMERIC'\n\nAcceptance: `npm run typecheck` exits 0 across the monorepo.",
       "priority": "low",
       "status": "done",
-      "qaVerdict": null,
+      "qaVerdict": "pass",
       "failureNotes": null,
       "createdAt": "2026-05-23"
     },
@@ -1646,7 +1646,7 @@
       "description": "Problem: the time-window header (Weekend wrap / Closing wrap / Live now / etc.) is purely cosmetic — the same chronological opinion dump shows below it regardless of window. User complaint: \"it's just a name but we still have all opinions.\"\n\nSolution (MVP slice): new SynthesisCard above the opinion feed that the server curates per market window — 3 opinions tailored to the user's intent at that hour. Modeled after Bloomberg \"Big Take\" and FT \"Editor's picks\" patterns.\n\nBackend: new GET /api/finance/synthesis returns { window, title, subtitle, emoji, opinions[3] }. Four variant logic:\n  - live          → top 3 PENDING by 24h locked-vote velocity (\"Hot debates right now\")\n  - closing-wrap  → today's RESOLVED_HIT, newest first (\"Called it today\")\n  - after-hours / pre-market → 3 latest verified-analyst PENDING (\"Overnight from the desks\")\n  - weekend / holiday → top 3 locked-vote opinions of last 7 days (\"Top of the week\")\n\nMobile: new SynthesisCard component (apps/mobile/src/components/synthesis-card.tsx) renders 3 compact opinion rows with headline, expert, direction badge, instrument, vote count, and resolution badge when applicable. Each row is tappable → /finance/opinion/[id]. Replaces the cosmetic header position (the time-window header is now a label for the FULL opinion list below: \"All <window> calls\").\n\nAcceptance:\n1. curl /api/finance/synthesis returns the correct variant for the current IST window.\n2. Tapping any opinion in the card opens the opinion detail screen.\n3. Card gracefully hides if synthesis fails or returns 0 opinions (rest of feed still renders).\n4. Monorepo typecheck clean.\n5. Visually distinct from the regular opinion list — editorial framing.\n\nDeferred to S37-T2+: For You tab, Verified tab, Resolved tab, orthogonal chip filters (direction/horizon/instrument).",
       "priority": "high",
       "status": "done",
-      "qaVerdict": null,
+      "qaVerdict": "pass",
       "failureNotes": "SHIPPED then REVERTED in same sprint. Synthesis card competed with the Big Call hero — created two editorial spotlights on a crowded screen. Replaced by S37-T2 (window-aware Big Call) and S37-T3 (lens-switcher) which use existing real estate instead of adding a new card. API endpoint /api/finance/synthesis is still live but unused — safe to delete in a future cleanup.",
       "createdAt": "2026-05-23"
     },
@@ -1657,7 +1657,7 @@
       "description": "Replaces the synthesis-card approach. The existing Big Call Hero is the strongest editorial position on the Finance screen; making IT adapt per window is better than adding a competing card.\n\nBackend: /api/finance/big-call now branches on IST market window:\n  - Live (default): existing algorithm (pending 7d + 24h-HIT spotlight gated ≥20 votes)\n  - Closing wrap: ANY HIT today qualifies (no vote threshold) — \"Today's Vindicated Call\"\n  - After-hours / Pre-market: pending pool restricted to verified analysts only\n  - Weekend / Holiday: existing 7d pool, scoring favors locked-vote volume → \"Call of the Week\"\nResponse adds `window` + `windowLabel`.\n\nMobile: above the BigCallHeroCard, render a small all-caps label using `windowLabel` (\"CALL OF THE WEEK\" on weekends, \"TODAY'S BIG CALL\" during live, etc.). Bloomberg \"The Big Take\" pattern.\n\nAcceptance verified live: GET /api/finance/big-call now returns window=weekend, windowLabel=\"Call of the Week\".",
       "priority": "high",
       "status": "done",
-      "qaVerdict": null,
+      "qaVerdict": "pass",
       "failureNotes": null,
       "createdAt": "2026-05-23"
     },
@@ -1668,7 +1668,7 @@
       "description": "Solves the original \"Weekend wrap is just a name\" complaint. A horizontal pill row above the main opinion list lets users reshape what they see; default is window-aware (Weekend → Top this week, Closing wrap → Resolved, Live/After hours → Latest). Persisted in AsyncStorage as `finance.lens`.\n\nLens behaviors:\n  - latest: sort groups by articlePublishedAt desc (default).\n  - top-week: filter to last 7d, sort by group opinion-count desc (proxy for engagement until\n    server provides locked-vote counts in the news feed payload).\n  - verified: keep only opinions where expert.verified=true (group-level filter + opinion-level prune).\n  - resolved: keep only RESOLVED_HIT/MISS opinions, sort by latest resolvedAt desc.\n\nExisting direction/cluster/analyst/instrument filters compound on top of the lens (orthogonal axes).\n\nKnown limitation: top-week's ranking is by opinion count, not locked-vote count, because the feed payload doesn't include per-opinion locked-vote totals. Follow-up ticket should add a `lockedVotes` field to ApiExpertOpinionItem and have the server include it; client can then sort by true engagement.",
       "priority": "high",
       "status": "done",
-      "qaVerdict": null,
+      "qaVerdict": "pass",
       "failureNotes": null,
       "createdAt": "2026-05-23"
     },
@@ -1679,7 +1679,7 @@
       "description": "The Pulse Tape was a horizontal-scroll row with ticker chips + macro countdown + Big Call shortcut + kebab. Macro countdown is redundant with the Flagship Events carousel further down. Big Call shortcut is redundant with the Big Call hero directly below. Compressed to: 3 static ticker chips (NIFTY 50 / BANK NIFTY / USD-INR) + the kebab calendar entry. No more horizontal scroll, less visual noise.\n\nComponent signature unchanged — props for flagshipEvents, bigCallOpinion, etc. preserved but unused (marked as `void` reads to satisfy TS). Reduces blast radius if we want to add a secondary row later.",
       "priority": "medium",
       "status": "done",
-      "qaVerdict": null,
+      "qaVerdict": "pass",
       "failureNotes": null,
       "createdAt": "2026-05-23"
     },
@@ -2942,8 +2942,8 @@
       "title": "PulseRibbon: card-ify collapsed state + preview line of first 2 pills",
       "description": "User feedback: collapsed Today's Pulse currently looks like a section divider (10px kicker label + chevron, no chrome). Fix in apps/mobile/src/components/finance-mode.tsx PulseRibbon function (~line 685). (1) Wrap the wrapper View in card chrome — rounded background, padding, matching TopAnalystsCard's cardStyles for visual consistency. (2) Collapsed state shows TWO rows inside the card: top row 'Today's Pulse' (icon optional) + chevron ▼; second row preview text showing the first 2 pill labels joined by ' · ' (e.g., 'Budget in 7d · Policy calendar') in muted color, ~12px. (3) Expanded state: same card chrome, header row (no preview line), pills ScrollView inside the card. Card chrome must match TopAnalystsCard visually (rounded corners, padding, background) so the cards stack as a coherent set, not a divider between cards.",
       "priority": "high",
-      "status": "pending",
-      "qaVerdict": null,
+      "status": "done",
+      "qaVerdict": "pass",
       "failureNotes": null,
       "createdAt": "2026-06-07"
     },
@@ -2953,8 +2953,8 @@
       "title": "WeekToggleCard: add visible ▲ collapse chevron to expanded state header",
       "description": "User feedback (and prior QA followup): expanded WeekToggleCard has no visible affordance to collapse back to compact strip — CTO's improvised 'tap active pill to close' is undiscoverable. Fix in apps/mobile/src/components/finance-mode.tsx WeekToggleCard function (~line 789). Add a small ▲ chevron in the top-right of the expanded card header row (alongside or above the Your Week / Market Sentiment toggle pills). Tappable, calls the existing toggleExpanded(). Visible only when expanded === true. Optional cleanup: REMOVE the active-pill-as-close handlers at lines ~920 and ~942 since the chevron is now the canonical collapse path — otherwise users might double-collapse by mistake. CTO's call on whether to keep both paths or just the chevron.",
       "priority": "medium",
-      "status": "pending",
-      "qaVerdict": null,
+      "status": "done",
+      "qaVerdict": "pass",
       "failureNotes": null,
       "createdAt": "2026-06-07"
     },

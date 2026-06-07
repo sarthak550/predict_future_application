@@ -3,7 +3,6 @@ import { useRouter } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  Animated,
   Modal,
   NativeScrollEvent,
   NativeSyntheticEvent,
@@ -36,7 +35,6 @@ import { formatRelativeTime, freshnessColor } from "@predict-future/utils";
 import { ApiClientError } from "@predict-future/api-client";
 
 import { ExpertOpinionCard } from "@/components/expert-opinion-card";
-import { TopAnalystsCard } from "@/components/top-analysts-card";
 import { CombinedAnalystCard } from "@/components/combined-analyst-card";
 import { mobileApi } from "@/lib/api";
 import { getExpertInitials, getExpertInitialsColor } from "@/utils/expertAvatar";
@@ -850,10 +848,9 @@ function PulseSheet({
   );
 }
 
-// pulseStyles: kept for PulseSheet (events bottom sheet, still used)
 const pulseStyles = StyleSheet.create({
-  // S51-T4: card chrome matching TopAnalystsCard so PulseRibbon reads as a
-  // discrete card, not a section divider. Values copied from cardStyles.card.
+  // S51-T4: card chrome matching CombinedAnalystCard so PulseRibbon reads as a
+  // discrete card, not a section divider. Values copied from that card's chrome.
   // S52-T3: marginTop tightened from sm to xs for uniform 8px inter-card gap.
   card: {
     marginHorizontal: spacing.lg,
@@ -1386,73 +1383,6 @@ const digestStyles = StyleSheet.create({
   },
 });
 
-// ─── S35-T2: Today's Big Call Hero Card ───────────────────────────────────────
-
-// S38: Compressed Big Call hero — single tappable strip instead of the full card.
-// Reasoning: with sort options "Latest" / "Top week" in the chip strip, the user
-// can already surface top calls in the list. The strip preserves the editorial
-// signal (window-aware label + analyst name on top) at 1/3 the screen real estate.
-function BigCallHeroCard({
-  opinion,
-  windowLabel,
-  onOpenDetail,
-}: {
-  opinion: ApiFinanceBigCallOpinion;
-  windowLabel: string;
-  onOpenDetail: () => void;
-}) {
-  const dirConfig = {
-    BULLISH: { label: "BULLISH", color: "#16a34a", bg: "#dcfce7" },
-    BEARISH: { label: "BEARISH", color: "#dc2626", bg: "#fee2e2" },
-    NEUTRAL: { label: "NEUTRAL", color: "#6b7280", bg: "#f3f4f6" },
-  }[opinion.direction];
-
-  const avatarBg = getExpertInitialsColor(opinion.expertName || opinion.expertOrganization);
-  const initials = getExpertInitials(opinion.expertName, opinion.expertOrganization);
-  const verdictLabel = opinion.isPostResolution ? "CALLED IT ✓" : dirConfig.label;
-  const verdictColor = opinion.isPostResolution ? "#6366f1" : dirConfig.color;
-  const verdictBg = opinion.isPostResolution ? "#ede9fe" : dirConfig.bg;
-
-  return (
-    <Pressable style={heroStyles.strip} onPress={onOpenDetail}>
-      {/* Label row */}
-      <View style={heroStyles.stripLabelRow}>
-        <Text style={heroStyles.stripLabel}>🔥 {windowLabel.toUpperCase()}</Text>
-        <Text style={heroStyles.stripVoteHint}>Vote →</Text>
-      </View>
-
-      {/* Content row */}
-      <View style={heroStyles.stripContent}>
-        <View style={[heroStyles.stripAvatar, { backgroundColor: avatarBg }]}>
-          <Text style={heroStyles.stripAvatarText}>{initials}</Text>
-        </View>
-        <View style={{ flex: 1 }}>
-          <View style={heroStyles.stripNameRow}>
-            <Text style={heroStyles.stripExpertName} numberOfLines={1}>
-              {opinion.expertName || opinion.expertOrganization}
-            </Text>
-            <Text style={[heroStyles.stripCalledAt, { color: freshnessColor(opinion.publishedAt) }]}>
-              · {formatRelativeTime(opinion.publishedAt)}
-            </Text>
-          </View>
-          <View style={heroStyles.stripVerdictRow}>
-            <View style={[heroStyles.stripVerdictPill, { backgroundColor: verdictBg }]}>
-              <Text style={[heroStyles.stripVerdictText, { color: verdictColor }]}>
-                {verdictLabel}
-              </Text>
-            </View>
-            {opinion.instrument && (
-              <Text style={heroStyles.stripInstrument} numberOfLines={1}>
-                on {opinion.instrument}
-              </Text>
-            )}
-          </View>
-        </View>
-      </View>
-    </Pressable>
-  );
-}
-
 // S38 — new filter UX: Show tabs + Sort dropdown + active-filter chip strip.
 const controlsStyles = StyleSheet.create({
   headerRow: {
@@ -1585,211 +1515,6 @@ const lensStyles = StyleSheet.create({
   pillTextActive: { color: "#fff" },
 });
 
-const heroStyles = StyleSheet.create({
-  // S38: Bold dark strip — claims the visual primacy of the screen.
-  // Pulse pills above are now light/secondary; this is THE editorial pick.
-  strip: {
-    marginHorizontal: spacing.lg,
-    marginVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm + 2,
-    borderRadius: radius.md,
-    backgroundColor: "#0f172a", // dark slate
-    borderWidth: 1,
-    borderColor: "#1e293b",
-  },
-  stripLabelRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 8,
-  },
-  stripLabel: {
-    fontSize: 10,
-    fontWeight: "800" as const,
-    letterSpacing: 1.2,
-    color: "#a5b4fc", // light indigo on dark
-  },
-  stripVoteHint: {
-    fontSize: 12,
-    fontWeight: "800" as const,
-    color: "#fff",
-    backgroundColor: "#4338ca",
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 999,
-  },
-  stripContent: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  stripAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
-  stripAvatarText: {
-    fontSize: 14,
-    fontWeight: "800" as const,
-    color: "#fff",
-    letterSpacing: 0.4,
-  },
-  stripExpertName: {
-    fontSize: 15,
-    fontWeight: "700" as const,
-    color: "#fff",
-    flexShrink: 1,
-  },
-  stripNameRow: {
-    flexDirection: "row",
-    alignItems: "baseline",
-    gap: 4,
-  },
-  stripCalledAt: {
-    fontSize: 11,
-    fontWeight: "600" as const,
-    // Note: foreground color is overridden inline by freshnessColor() — but
-    // since the strip bg is dark, we boost saturation by adding a slight
-    // dark-bg-friendly tint when fresh.
-  },
-  stripVerdictRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginTop: 2,
-    flexWrap: "wrap",
-  },
-  stripVerdictPill: {
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 6,
-  },
-  stripVerdictText: {
-    fontSize: 10,
-    fontWeight: "800" as const,
-    letterSpacing: 0.4,
-  },
-  stripInstrument: {
-    fontSize: 12,
-    fontWeight: "600" as const,
-    color: "#cbd5e1", // lighter slate on dark
-    flexShrink: 1,
-  },
-
-  // ── Legacy big-card styles below — retained so any in-flight share-view
-  // or screenshot code that still references them doesn't break. The big
-  // card itself is no longer rendered.
-  windowLabel: {
-    marginHorizontal: spacing.lg,
-    marginTop: spacing.sm,
-    marginBottom: 4,
-    fontSize: 10,
-    fontWeight: "800" as const,
-    letterSpacing: 1.2,
-    color: "#6366f1",
-  },
-  card: {
-    marginHorizontal: spacing.lg,
-    marginBottom: spacing.md,
-    borderRadius: radius.md,
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    overflow: "hidden",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  inner: {
-    padding: spacing.md,
-  },
-  header: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 12,
-    marginBottom: 10,
-  },
-  avatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
-  avatarText: {
-    fontSize: 16,
-    fontWeight: "800",
-    color: "#fff",
-    letterSpacing: 0.5,
-  },
-  headerMeta: { flex: 1, gap: 2 },
-  expertName: { fontSize: 14, fontWeight: "700", color: "#111827" },
-  expertOrg: { fontSize: 12, color: "#6b7280" },
-  badgeRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 3, flexWrap: "wrap" },
-  verdictBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 6,
-    borderWidth: 1,
-  },
-  verdictBadgeText: { fontSize: 13, fontWeight: "800", letterSpacing: 0.3 },
-  instrumentLabel: {
-    fontSize: 12,
-    fontWeight: "700" as const,
-    color: "#374151",
-    flexShrink: 1,
-  },
-  accuracy: { fontSize: 12, color: "#6b7280" },
-  headline: {
-    fontSize: 18,
-    fontWeight: "800",
-    color: "#111827",
-    lineHeight: 24,
-    letterSpacing: -0.3,
-    marginBottom: 4,
-  },
-  calledAt: {
-    fontSize: 11,
-    color: "#6b7280",
-    fontWeight: "600" as const,
-    marginBottom: 12,
-  },
-  voteBtn: {
-    backgroundColor: "#4f46e5",
-    borderRadius: 8,
-    paddingVertical: 12,
-    alignItems: "center",
-    marginBottom: 10,
-  },
-  voteBtnText: {
-    fontSize: 14,
-    fontWeight: "800",
-    color: "#fff",
-    letterSpacing: 0.5,
-  },
-  shareRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  shareBtn: {
-    paddingVertical: 6,
-    paddingHorizontal: 14,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-  },
-  shareBtnText: { fontSize: 13, fontWeight: "600", color: "#374151" },
-  readerStats: { fontSize: 12, color: "#9ca3af" },
-});
-
 // ─── S35-T3: Personal Accuracy Chip ──────────────────────────────────────────
 
 function PersonalAccuracyChip({
@@ -1890,8 +1615,6 @@ export function FinanceMode({
   // S35-T2: Today's Big Call spotlight opinion (window-aware after S37)
   const [bigCallOpinion, setBigCallOpinion] = useState<ApiFinanceBigCallOpinion | null>(null);
   const [bigCallWindowLabel, setBigCallWindowLabel] = useState<string>("Today's Big Call");
-  // Ref to big call hero card for scroll-to from expert chip tap
-  const bigCallY = useRef<number>(0);
 
   // S50-T3: Top analysts this week — fetched independently so a failure here
   // never blocks the main Finance load (markets/news/sentiment/etc.).
@@ -1903,8 +1626,6 @@ export function FinanceMode({
   const [topWeeklyExperts, setTopWeeklyExperts] = useState<ApiTopExpertEntry[]>([]);
   const [topWeeklyLoading, setTopWeeklyLoading] = useState(true);
   const [topWeeklyRefetchEpoch, setTopWeeklyRefetchEpoch] = useState(0);
-  // Highlight ring animation for Big Call hero (300ms ring on expert chip tap)
-  const bigCallHighlight = useRef(new Animated.Value(0)).current;
 
   // S35-T1: Active instrument filter — toggled by tapping ticker chips
   const [activeInstrumentFilter, setActiveInstrumentFilter] = useState<string | null>(null);
@@ -2353,17 +2074,6 @@ export function FinanceMode({
     setActiveInstrumentFilter((prev) => (prev === label ? null : label));
   }, []);
 
-  // S35-T2: Scroll to Big Call hero + trigger 300ms highlight ring
-  const handleScrollToBigCall = useCallback(() => {
-    scrollViewRef.current?.scrollTo({ y: bigCallY.current, animated: true });
-    setTimeout(() => {
-      Animated.sequence([
-        Animated.timing(bigCallHighlight, { toValue: 1, duration: 150, useNativeDriver: false }),
-        Animated.timing(bigCallHighlight, { toValue: 0, duration: 150, useNativeDriver: false }),
-      ]).start();
-    }, 300);
-  }, [bigCallHighlight]);
-
   useEffect(() => {
     void load();
     void checkLeaderboard();
@@ -2512,35 +2222,20 @@ export function FinanceMode({
         />
       }
     >
-      {/* S52 experiment — CombinedAnalystCard merges Call of the Week + Top Analysts
-          into one visual unit. To revert, restore the BigCallHeroCard + TopAnalystsCard
-          mounts below this block (both definitions are still intact and ready to use):
-            {bigCallOpinion && (
-              <View onLayout={(e) => { bigCallY.current = e.nativeEvent.layout.y; }}>
-                <BigCallHeroCard opinion={bigCallOpinion} windowLabel={bigCallWindowLabel}
-                  onOpenDetail={() => router.push(`/finance/opinion/${bigCallOpinion.id}` as ...)} />
-              </View>
-            )}
-            <TopAnalystsCard entries={topWeeklyExperts} loading={topWeeklyLoading}
-              onLeaderboardPress={() => router.push("/expert-leaderboard" as ...)}
-              onAnalystPress={(expertId) => router.push(`/expert/${expertId}` as ...)} />
-      */}
-      <View onLayout={(e) => { bigCallY.current = e.nativeEvent.layout.y; }}>
-        <CombinedAnalystCard
-          opinion={bigCallOpinion}
-          windowLabel={bigCallWindowLabel}
-          onOpenOpinionDetail={() => {
-            if (bigCallOpinion) {
-              router.push(`/finance/opinion/${bigCallOpinion.id}` as Parameters<typeof router.push>[0]);
-            }
-          }}
-          entries={topWeeklyExperts}
-          topLoading={topWeeklyLoading}
-          onAnalystPress={(expertId) =>
-            router.push(`/expert/${expertId}` as Parameters<typeof router.push>[0])
+      <CombinedAnalystCard
+        opinion={bigCallOpinion}
+        windowLabel={bigCallWindowLabel}
+        onOpenOpinionDetail={() => {
+          if (bigCallOpinion) {
+            router.push(`/finance/opinion/${bigCallOpinion.id}` as Parameters<typeof router.push>[0]);
           }
-        />
-      </View>
+        }}
+        entries={topWeeklyExperts}
+        topLoading={topWeeklyLoading}
+        onAnalystPress={(expertId) =>
+          router.push(`/expert/${expertId}` as Parameters<typeof router.push>[0])
+        }
+      />
 
       {/* PulseRibbon — context (next event countdown, policy calendar). Now
           rendered AFTER the hero with lighter visual treatment so the editorial

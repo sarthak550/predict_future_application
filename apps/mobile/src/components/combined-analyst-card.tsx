@@ -1,18 +1,12 @@
 /**
- * CombinedAnalystCard — S52 experiment
+ * CombinedAnalystCard
  *
- * Merges "Call of the Week" (BigCallHeroCard) and "Top Analysts" (TopAnalystsCard)
- * into a single card chrome with a divider between the two sections.
- *
- * Design intent: both panels share one card border so the editorial pick and the
- * weekly leaderboard read as a unified "This Week" unit.
- *
- * Revert path: in finance-mode.tsx, remove <CombinedAnalystCard /> and restore
- * the two original mounts (BigCallHeroCard + TopAnalystsCard). Both original
- * component definitions are untouched and ready to use.
+ * Single-card surface combining "Call of the Week" (top: dark hero strip with the
+ * editorial pick) and "Top Analysts This Week" (bottom: ranked rows) inside one
+ * card chrome with a divider between the two sections.
  *
  * Edge-case rules:
- * - opinion === null  → top section hidden entirely; card renders only the bottom.
+ * - opinion === null → top section hidden entirely; card renders only the bottom.
  * - entries empty + not loading → empty-state copy ("Not enough resolved calls...").
  * - Divider only renders when BOTH opinion is non-null AND bottom section exists.
  */
@@ -97,7 +91,7 @@ function AnalystRow({
  * Renders a single card with:
  *   - Top: "This Week's Big Call" dark hero strip (tappable → opinion detail)
  *   - Divider (only when top section is visible)
- *   - Bottom: ranked top-3 analysts + "See all →" footer
+ *   - Bottom: ranked top-3 analysts (rows tappable → expert profile)
  *
  * If `opinion` is null, only the bottom section is rendered inside the card.
  */
@@ -241,7 +235,6 @@ export function CombinedAnalystCard({
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  // Card chrome matches TopAnalystsCard.cardStyles.card exactly
   card: {
     marginHorizontal: spacing.lg,
     marginTop: spacing.xs,
@@ -415,20 +408,5 @@ const styles = StyleSheet.create({
     height: 12,
     borderRadius: 6,
     backgroundColor: colors.border,
-  },
-  leaderboardLink: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 4,
-    paddingVertical: spacing.xs,
-  },
-  leaderboardLinkPressed: {
-    opacity: 0.6,
-  },
-  leaderboardLinkText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: colors.accent,
   },
 });

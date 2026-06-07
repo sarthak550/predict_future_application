@@ -23,6 +23,11 @@ export async function GET() {
     const market = await prisma.market.findFirst({
       where: {
         isBigCallDate: { gte: dayStartUtc, lt: dayEndUtc },
+        // Public endpoint: only surface markets that have made it past moderation
+        // and aren't dead-ended. DRAFT/PENDING_REVIEW can leak unpublished content;
+        // REJECTED/CANCELLED/HOST_TIMEOUT are killed markets that shouldn't
+        // re-appear via the Big Call slot.
+        status: { notIn: ["DRAFT", "PENDING_REVIEW", "REJECTED", "CANCELLED", "HOST_TIMEOUT"] },
       },
       select: {
         id: true,

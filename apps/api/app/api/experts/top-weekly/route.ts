@@ -33,10 +33,14 @@ export async function GET(): Promise<NextResponse<ApiTopExpertEntry[]>> {
   // Aggregate resolved opinions per expert within the 7-day window.
   // We use a raw groupBy via Prisma's groupBy to avoid loading every opinion
   // row into the Node process — the composite index covers this query exactly.
+  //
+  // suppressedAt: null — admin-suppressed opinions must not contribute to
+  // public credibility rankings, otherwise moderation has no effect on Top 3.
   const rows = await prisma.expertOpinion.groupBy({
     by: ["expertId", "resolutionStatus"],
     where: {
       isSourceAttribution: false,
+      suppressedAt: null,
       resolutionStatus: {
         in: ["RESOLVED_HIT", "RESOLVED_MISS"],
       },

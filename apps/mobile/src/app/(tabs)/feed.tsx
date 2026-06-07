@@ -473,9 +473,9 @@ export default function FeedScreen() {
             {personalizationMode === "for_you" && followCount === 0 && (
               <Pressable
                 style={styles.followNudgeRow}
-                onPress={() => router.push("/(tabs)/leaderboard")}
+                onPress={() => router.push("/expert-leaderboard")}
                 accessibilityRole="button"
-                accessibilityLabel="Browse Leaderboard to find analysts to follow"
+                accessibilityLabel="Browse the expert leaderboard to find analysts to follow"
               >
                 <Text style={styles.followNudgeText}>
                   Follow analysts to personalize your feed

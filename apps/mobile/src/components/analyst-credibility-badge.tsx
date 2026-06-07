@@ -3,16 +3,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import type { AppAnalystTier } from "@predict-future/types";
 import { colors } from "@predict-future/ui-tokens";
 
-import { mobileApi } from "@/lib/api";
-
 import { AnalystTierBadge } from "./analyst-tier-badge";
-
-/** Identifies the surface from which the badge was tapped — sent with analytics. */
-export type AnalystBadgeSurface =
-  | "feed_card"
-  | "opinion_card"
-  | "leaderboard"
-  | "profile";
 
 export type AnalystCredibilityBadgeProps = {
   name: string;
@@ -34,17 +25,11 @@ export type AnalystCredibilityBadgeProps = {
    * Layout variant.
    * - "default": name on row 1, tier chip + accuracy on row 2 (stacked).
    * - "inline": all elements on a single row — `Name · TierChip · 87%`.
-   *   Use for tight single-line contexts (BigCallCard footer, leaderboard rows).
+   *   Use for tight single-line contexts (leaderboard rows, attribution strips).
    */
   layout?: "default" | "inline";
   /** When provided, wraps the badge in a Pressable tap target. */
   onPress?: () => void;
-  /**
-   * When provided alongside onPress, fires `analysts_badge_tapped` with this
-   * surface value so analytics can attribute where taps originate.
-   * Omit when onPress is absent (non-tappable badge).
-   */
-  analyticsSource?: AnalystBadgeSurface;
 };
 
 const SIZE_CONFIG = {
@@ -156,27 +141,15 @@ function AnalystCredibilityBadgeInner({
 /**
  * Public export — wraps the inner badge in a Pressable when onPress is
  * provided, falling back to a plain View when it is not.
- *
- * When analyticsSource is provided, fires `analysts_badge_tapped` with the
- * surface value before invoking the caller's onPress. Fire-and-forget — never
- * blocks the caller's handler.
  */
 export function AnalystCredibilityBadge({
   onPress,
-  analyticsSource,
   ...rest
 }: AnalystCredibilityBadgeProps): JSX.Element {
   if (onPress) {
-    const handlePress = () => {
-      if (analyticsSource) {
-        void mobileApi.track("analysts_badge_tapped", { surface: analyticsSource }).catch(() => {});
-      }
-      onPress();
-    };
-
     return (
       <Pressable
-        onPress={handlePress}
+        onPress={onPress}
         accessibilityRole="button"
         style={({ pressed }) => [{ opacity: pressed ? 0.7 : 1 }]}
       >

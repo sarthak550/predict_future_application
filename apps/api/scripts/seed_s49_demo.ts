@@ -25,6 +25,16 @@ const TOP_3 = [
 ];
 
 async function main() {
+  // Refuse to run against production. This script writes fake demo opinions
+  // and flips a market's isBigCallDate flag — both of which would be very bad
+  // to do against a live DB. Override is intentional and explicit.
+  if (process.env.NODE_ENV === "production" && process.env.ALLOW_DEMO_SEED_IN_PROD !== "yes-i-am-sure") {
+    throw new Error(
+      "Refusing to run seed_s49_demo.ts with NODE_ENV=production. " +
+      "Set ALLOW_DEMO_SEED_IN_PROD=yes-i-am-sure if you really mean it."
+    );
+  }
+
   console.log("Sprint 49 demo seed starting...\n");
 
   // 1. Mark a Big Call market for today

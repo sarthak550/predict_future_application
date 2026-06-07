@@ -1,9 +1,12 @@
 ---
 name: cto-assignment-brief-sprint49
-description: Sprint 49 tickets — "Analyst Scorecard brand visible everywhere" — BigCallCard Top 3 footer + bottom sheet, AnalystCredibilityBadge sweep across all analyst-name surfaces, supporting endpoint, empty states, and analytics instrumentation
+description: Sprint 49 tickets — "Analyst Scorecard brand visible everywhere" — BigCallCard Top 3 footer + bottom sheet, AnalystCredibilityBadge sweep across all analyst-name surfaces, supporting endpoint, empty states, and analytics instrumentation. SUPERSEDED in S50.
 metadata:
   type: project
+  superseded_by: cto_assignment_brief_sprint50.md
 ---
+
+> **⚠️ SUPERSEDED (2026-06-07):** This brief documents the original Sprint 49 plan to anchor the Top 3 Analyst surface to the **Feed** BigCallCard. That plan was reversed during smoke-test of Sprint 49 because Feed's BigCallCard has no category invariant (it can show any market), while the Top 3 are India-finance-only analysts — pairing them was semantically incoherent. **What actually ships in the product** is described in `cto_assignment_brief_sprint50.md`: the Top 3 lives on Finance tab under `BigCallHeroCard` / `CombinedAnalystCard`. The badge sweep (T3), the `/api/experts/top-weekly` endpoint (T1), and the `AnalystCredibilityBadge` component (T2) ARE all still in the product — only the Feed surfaces (T4 footer + T5 sheet + S49-polish T8/T9) were reverted. Read this brief as historical context only.
 
 Sprint 49 issued 2026-06-07. Theme: Make the Analyst Scorecard brand visible everywhere a user looks, without disrupting Feed-first IA.
 
