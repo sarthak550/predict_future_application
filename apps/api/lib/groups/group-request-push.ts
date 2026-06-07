@@ -140,6 +140,89 @@ export async function notifyOwnersAndAdminsOfNewRequest({
 }
 
 /**
+ * S59-T3: Notify all members of a group that a new market has been created.
+ *
+ * Fan-out rules:
+ *   - Returns immediately if the group is not found.
+ *   - Returns immediately if group.visibility === "INVITE_ONLY" — private groups
+ *     do not broadcast market creation to avoid push storms on small invite-only groups.
+ *   - Excludes the market creator from the recipient list.
+ *   - Pref-gate: members with level=NONE are suppressed; ALL and MENTIONS_ONLY receive the push.
+ *   - Fire-and-forget at call site; never blocks the market creation HTTP response.
+ *
+ * @param groupId      - The group the market was created in.
+ * @param marketId     - The new market's id (for deep link).
+ * @param marketTitle  - Human-readable title for the push body.
+ * @param creatorId    - The market creator's userId (excluded from fan-out).
+ */
+export async function notifyGroupMembersOfNewMarket({
+  groupId,
+  marketId,
+  marketTitle,
+  creatorId,
+}: {
+  groupId: string;
+  marketId: string;
+  marketTitle: string;
+  creatorId: string;
+}): Promise<void> {
+  // Fetch the group — need name and visibility to gate and build the message.
+  const group = await prisma.group.findUnique({
+    where: { id: groupId },
+    select: {
+      name: true,
+      visibility: true,
+      memberships: {
+        where: {
+          bannedAt: null,
+          userId: { not: creatorId }, // Exclude the creator.
+        },
+        select: {
+          userId: true,
+          user: { select: { expoPushToken: true } },
+        },
+      },
+    },
+  });
+
+  if (!group) return;
+
+  // INVITE_ONLY groups do not broadcast new-market pushes.
+  // Their membership is small and curated; a push storm here is inappropriate.
+  if (group.visibility === "INVITE_ONLY") return;
+
+  const memberUserIds = group.memberships.map((m) => m.userId);
+  if (memberUserIds.length === 0) return;
+
+  // Pref-gate: fetch suppressed (NONE) prefs for all member userIds in this group.
+  const suppressedRows = await prisma.groupNotificationPreference.findMany({
+    where: {
+      groupId,
+      userId: { in: memberUserIds },
+      level: GroupNotifLevel.NONE,
+    },
+    select: { userId: true },
+  });
+  const suppressedUserIds = new Set(suppressedRows.map((r) => r.userId));
+
+  const tokens = group.memberships
+    .filter((m) => !suppressedUserIds.has(m.userId))
+    .map((m) => m.user.expoPushToken)
+    .filter((t): t is string => typeof t === "string" && t.length > 0);
+
+  if (tokens.length === 0) return;
+
+  const messages = tokens.map((to) => ({
+    to,
+    title: `New market in ${group.name}`,
+    body: marketTitle,
+    data: { href: `/market/${marketId}`, marketId, groupId },
+  }));
+
+  await sendPushMessages(messages);
+}
+
+/**
  * Notify the requester that their join request has been approved or rejected.
  *
  * Fired from POST .../approve or POST .../reject after the decision is persisted.

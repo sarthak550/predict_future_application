@@ -110,6 +110,13 @@ function CompactGroupCard({ group }: GroupCardProps) {
         </View>
       ) : null}
 
+      {/* S59-T5: Featured star badge — top-left */}
+      {group.isFeatured ? (
+        <View style={styles.cardFeaturedBadge}>
+          <Text style={styles.cardFeaturedText}>Featured</Text>
+        </View>
+      ) : null}
+
       {/* Text content — bottom */}
       <View style={styles.cardTextBlock}>
         <Text style={styles.cardName} numberOfLines={2}>
@@ -207,6 +214,21 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontSize: 10,
     fontWeight: "600",
+  },
+  // S59-T5: Featured badge — top-left corner of rail card
+  cardFeaturedBadge: {
+    position: "absolute",
+    top: 6,
+    left: 6,
+    backgroundColor: "#FEF9C3",
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 10,
+  },
+  cardFeaturedText: {
+    color: "#854D0E",
+    fontSize: 9,
+    fontWeight: "700",
   },
   cardTextBlock: {
     position: "absolute",

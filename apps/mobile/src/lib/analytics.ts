@@ -112,11 +112,16 @@ export type GroupRequestEventName =
   | "group_request_submitted"
   | "group_request_cancelled"
   | "group_request_approved"
-  | "group_request_rejected";
+  | "group_request_rejected"
+  // S59-T4: bulk actions
+  | "group_request_bulk_approved"
+  | "group_request_bulk_rejected";
 
 export type GroupRequestEventProps = {
   groupId: string;
-  requestId: string;
+  requestId?: string;
+  /** For bulk events: number of requests processed. */
+  count?: string;
   surface?: "group_profile" | "discover_card";
 };
 

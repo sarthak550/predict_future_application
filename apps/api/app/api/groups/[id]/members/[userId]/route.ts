@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 
 import { getUserIdFromRequest } from "@/lib/auth";
+import {
+  GroupModerationActionType,
+  logModerationAction,
+} from "@/lib/groups/group-moderation-audit";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -65,6 +69,14 @@ export async function DELETE(
   await prisma.groupMembership.delete({
     where: { groupId_userId: { groupId: params.id, userId: params.userId } }
   });
+
+  // S59-T1: audit log — fire-and-forget.
+  void logModerationAction({
+    groupId: params.id,
+    actorId: callerId,
+    targetUserId: params.userId,
+    actionType: GroupModerationActionType.MEMBER_REMOVED,
+  }).catch(console.error);
 
   return new NextResponse(null, { status: 204 });
 }

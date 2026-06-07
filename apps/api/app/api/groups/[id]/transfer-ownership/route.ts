@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { getUserIdFromRequest } from "@/lib/auth";
+import {
+  GroupModerationActionType,
+  logModerationAction,
+} from "@/lib/groups/group-moderation-audit";
 import { GroupServiceError, transferOwnership } from "@/lib/groups/service";
 
 const transferOwnershipSchema = z.object({
@@ -55,6 +59,17 @@ export async function POST(
 
   try {
     await transferOwnership({ groupId: params.id, callerId, newOwnerId });
+
+    // S59-T1: audit log — fire-and-forget outside the transaction.
+    // transferOwnership is already atomic; the audit row is advisory.
+    void logModerationAction({
+      groupId: params.id,
+      actorId: callerId,
+      targetUserId: newOwnerId,
+      actionType: GroupModerationActionType.OWNERSHIP_TRANSFERRED,
+      metadata: { previousOwnerId: callerId },
+    }).catch(console.error);
+
     return NextResponse.json({ transferred: true, newOwnerId }, { status: 200 });
   } catch (err) {
     if (err instanceof GroupServiceError) {

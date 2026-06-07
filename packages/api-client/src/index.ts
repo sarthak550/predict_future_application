@@ -58,6 +58,7 @@ import type {
   ApiGroupNotifPref,
   ApiGroupCoverImageToken,
   ApiGroupCoverImageUpdate,
+  ApiUserNotificationDefaults,
   GroupNotifLevel,
 } from "@predict-future/types";
 
@@ -575,6 +576,79 @@ export function createApiClient(options: ApiClientOptions) {
         { method: "PATCH", body: JSON.stringify(body), auth: true }
       );
     },
+
+    // ── S59-T2: User-level notification defaults ──────────────────────────────
+
+    /**
+     * Get the calling user's global default group notification level.
+     * Server-authoritative; replaces AsyncStorage "@groups_notif_default" key from S58.
+     */
+    getUserNotificationDefaults() {
+      return request<ApiUserNotificationDefaults>(
+        "/api/users/me/notification-defaults",
+        undefined,
+        { auth: true }
+      );
+    },
+
+    /**
+     * Update the calling user's global default group notification level.
+     * Returns the saved value.
+     */
+    updateUserNotificationDefaults(body: { defaultGroupNotificationLevel: GroupNotifLevel }) {
+      return request<ApiUserNotificationDefaults>(
+        "/api/users/me/notification-defaults",
+        undefined,
+        { method: "PATCH", body: JSON.stringify(body), auth: true }
+      );
+    },
+
+    // ── S59-T4: Bulk approve/reject join requests ─────────────────────────────
+
+    /**
+     * Bulk-approve up to 50 pending join requests in one call.
+     * Per-row try/catch — single bad ID doesn't poison the batch.
+     */
+    bulkApproveGroupJoinRequests(
+      groupId: string,
+      body: { requestIds: string[] }
+    ) {
+      return request<{ results: Array<{ requestId: string; success: boolean; error?: string }> }>(
+        `/api/groups/${groupId}/join-requests/bulk-approve`,
+        undefined,
+        { method: "POST", body: JSON.stringify(body), auth: true }
+      );
+    },
+
+    /**
+     * Bulk-reject up to 50 pending join requests in one call.
+     * Per-row try/catch — single bad ID doesn't poison the batch.
+     */
+    bulkRejectGroupJoinRequests(
+      groupId: string,
+      body: { requestIds: string[]; note?: string }
+    ) {
+      return request<{ results: Array<{ requestId: string; success: boolean; error?: string }> }>(
+        `/api/groups/${groupId}/join-requests/bulk-reject`,
+        undefined,
+        { method: "POST", body: JSON.stringify(body), auth: true }
+      );
+    },
+
+    // ── S59-T5: Featured group admin route ────────────────────────────────────
+
+    /**
+     * Set or clear the isFeatured flag on a group.
+     * Requires platform ADMIN or MODERATOR role.
+     */
+    featureGroup(groupId: string, body: { featured: boolean }) {
+      return request<{ isFeatured: boolean }>(
+        `/api/admin/groups/${groupId}/feature`,
+        undefined,
+        { method: "POST", body: JSON.stringify(body), auth: true }
+      );
+    },
+
     signIn(body: { email: string; password: string }) {
       return request<{ user: { id: string; username: string }; token: string }>(
         "/api/auth/mobile/login",

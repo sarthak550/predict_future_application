@@ -37,3 +37,4 @@
 - [project_sprint56.md](project_sprint56.md) — S56 REQUEST_TO_JOIN: GroupJoinRequest model, 6 new API routes, approval inbox screen, my-requests screen, push helpers, analytics — all 9 tickets COMPLETE
 - [project_sprint57.md](project_sprint57.md) — S57 Member self-service: leave/transfer/archive routes, GroupServiceError, isArchived guard on detail route, mobile kebab + transfer picker — all 5 tickets COMPLETE
 - [project_sprint58.md](project_sprint58.md) — S58: GroupNotifLevel enum+model, pref-gated push helpers, 3 API routes, mobile notif rows, @vercel/blob cover upload, expo-image-picker, edit screen — all 8 tickets COMPLETE
+- [project_sprint59.md](project_sprint59.md) — S59: GroupModerationAction audit table, server notif defaults, group market push, bulk approve/reject, featured flag — all 6 tickets qa-review

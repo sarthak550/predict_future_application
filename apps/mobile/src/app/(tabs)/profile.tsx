@@ -416,15 +416,44 @@ export default function ProfileScreen() {
     }
   }, [data]);
 
-  // ── S58: Load group notification default from AsyncStorage ──
+  // ── S59-T2: Server-authoritative group notification default ──
+  // On first data load: sync server value to local state.
+  // Migration path: if server is ALL (schema default) AND AsyncStorage has a non-ALL
+  // value, PATCH the server with the stored value and delete the AsyncStorage key.
+  const notifMigrated = useRef(false);
   useEffect(() => {
-    AsyncStorage.getItem(GROUPS_NOTIF_KEY).then((stored) => {
-      if (stored === "ALL" || stored === "MENTIONS_ONLY" || stored === "NONE") {
-        setGroupNotifDefaultState(stored);
-      }
-    }).catch(() => { /* ignore */ });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (notifMigrated.current) return;
+    const serverLevel = (data?.user as { defaultGroupNotificationLevel?: GroupNotifLevel } | undefined)
+      ?.defaultGroupNotificationLevel;
+    if (!serverLevel) return;
+
+    notifMigrated.current = true;
+    // Sync local state to whatever the server says.
+    setGroupNotifDefaultState(serverLevel);
+
+    // Migration: if server is ALL (default), check if AsyncStorage has a richer value.
+    if (serverLevel === "ALL") {
+      AsyncStorage.getItem(GROUPS_NOTIF_KEY).then(async (stored) => {
+        if (stored === "MENTIONS_ONLY" || stored === "NONE") {
+          try {
+            await mobileApi.updateUserNotificationDefaults({
+              defaultGroupNotificationLevel: stored as GroupNotifLevel,
+            });
+            setGroupNotifDefaultState(stored as GroupNotifLevel);
+          } catch {
+            // Migration failure is non-fatal — server value stays ALL.
+          } finally {
+            // Delete the AsyncStorage key regardless of whether PATCH succeeded.
+            // One-way migration; we never write back to AsyncStorage after this.
+            await AsyncStorage.removeItem(GROUPS_NOTIF_KEY).catch(() => { /* ignore */ });
+          }
+        } else if (stored !== null) {
+          // Key exists but matches server or is stale — clean up.
+          await AsyncStorage.removeItem(GROUPS_NOTIF_KEY).catch(() => { /* ignore */ });
+        }
+      }).catch(() => { /* ignore AsyncStorage errors */ });
+    }
+  }, [data]);
 
   // ── Check if phone verify card should show ──
   useEffect(() => {
@@ -800,14 +829,16 @@ export default function ProfileScreen() {
           }}
         />
 
-        {/* ── S58: Group notifications default ── */}
+        {/* ── S59-T2: Group notifications default — now server-authoritative ── */}
         <GroupNotifDefaultCard
           current={groupNotifDefault}
           onChange={async (level) => {
             const previous = groupNotifDefault;
             setGroupNotifDefaultState(level);
             try {
-              await AsyncStorage.setItem(GROUPS_NOTIF_KEY, level);
+              await mobileApi.updateUserNotificationDefaults({
+                defaultGroupNotificationLevel: level,
+              });
             } catch {
               setGroupNotifDefaultState(previous);
               Alert.alert("Could not save", "Failed to save group notification preference.");

@@ -70,9 +70,17 @@ export function CommunitiesList({ groups, limit = 5 }: Props) {
               <Text style={styles.avatarText}>{g.name.charAt(0).toUpperCase()}</Text>
             </View>
             <View style={styles.content}>
-              <Text style={styles.name} numberOfLines={1}>
-                {g.name}
-              </Text>
+              <View style={styles.nameRow}>
+                <Text style={styles.name} numberOfLines={1}>
+                  {g.name}
+                </Text>
+                {/* S59-T5: Featured badge */}
+                {g.isFeatured ? (
+                  <View style={styles.featuredBadge}>
+                    <Text style={styles.featuredBadgeText}>Featured</Text>
+                  </View>
+                ) : null}
+              </View>
               <Text style={styles.meta} numberOfLines={1}>
                 {meta}
               </Text>
@@ -123,10 +131,30 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
   },
+  nameRow: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: 6,
+    flexWrap: "nowrap" as const,
+  },
   name: {
     fontSize: 14,
     fontWeight: "600" as const,
     color: colors.text,
+    flexShrink: 1,
+  },
+  // S59-T5: "Featured" editorial pill
+  featuredBadge: {
+    paddingVertical: 2,
+    paddingHorizontal: 6,
+    borderRadius: 999,
+    backgroundColor: "#FEF9C3",
+    flexShrink: 0,
+  },
+  featuredBadgeText: {
+    fontSize: 10,
+    fontWeight: "700" as const,
+    color: "#854D0E",
   },
   meta: {
     fontSize: 11,

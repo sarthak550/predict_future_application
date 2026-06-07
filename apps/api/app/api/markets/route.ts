@@ -2,6 +2,7 @@ import { MarketCategory, MarketStatus } from "@prisma/client";
 import { NextResponse } from "next/server";
 
 import { getUserIdFromRequest } from "@/lib/auth";
+import { notifyGroupMembersOfNewMarket } from "@/lib/groups/group-request-push";
 import { createPredictionMarket } from "@/lib/markets/create";
 import { computeMarketRankScore, rankMarkets } from "@/lib/markets/ranking";
 import { prisma } from "@/lib/prisma";
@@ -238,6 +239,17 @@ export async function POST(request: Request) {
       flagshipEventAt,
       flagshipEventType,
     });
+
+    // S59-T3: Fan-out push to group members when market is created inside a non-INVITE_ONLY group.
+    // The INVITE_ONLY guard lives inside the helper — this call site only checks groupId is set.
+    if (market.groupId) {
+      void notifyGroupMembersOfNewMarket({
+        groupId: market.groupId,
+        marketId: market.id,
+        marketTitle: market.title,
+        creatorId: market.creatorId,
+      }).catch((err: unknown) => console.error("[market-create] group push error:", err));
+    }
 
     return NextResponse.json({ market: { id: market.id, status: market.status } }, { status: 201 });
   } catch (error) {

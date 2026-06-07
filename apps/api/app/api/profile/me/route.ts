@@ -218,6 +218,8 @@ export async function GET(request: Request) {
       isVerifiedAnalyst: user.isVerifiedAnalyst,
       analystTier: user.analystTier,
       phoneVerified: user.phoneVerified,
+      // S59-T2: server-authoritative notification default (migrated from AsyncStorage).
+      defaultGroupNotificationLevel: user.defaultGroupNotificationLevel,
       stats: user.stats ? {
         totalPredictions: user.stats.totalPredictions,
         totalNetPoints: user.stats.totalNetPoints,

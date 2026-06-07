@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 
 import { getUserIdFromRequest } from "@/lib/auth";
+import {
+  GroupModerationActionType,
+  logModerationAction,
+} from "@/lib/groups/group-moderation-audit";
 import { GroupServiceError, leaveGroup } from "@/lib/groups/service";
 
 /**
@@ -29,6 +33,15 @@ export async function POST(
 
   try {
     await leaveGroup({ groupId: params.id, userId: callerId });
+
+    // S59-T1: audit log — actor === target (self-action). Fire-and-forget.
+    void logModerationAction({
+      groupId: params.id,
+      actorId: callerId,
+      targetUserId: callerId,
+      actionType: GroupModerationActionType.MEMBER_LEFT,
+    }).catch(console.error);
+
     return NextResponse.json({ left: true }, { status: 200 });
   } catch (err) {
     if (err instanceof GroupServiceError) {

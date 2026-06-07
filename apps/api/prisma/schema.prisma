@@ -53,8 +53,14 @@ model User {
   groupMemberships           GroupMembership[]
   groupJoinRequests          GroupJoinRequest[]    @relation("JoinRequests")
   decidedJoinRequests        GroupJoinRequest[]    @relation("JoinRequestDecider")
+  /// S59: User-level default notification level for all group memberships. Migrated from AsyncStorage in T2.
+  defaultGroupNotificationLevel GroupNotifLevel @default(ALL)
   /// S58: per-group notification preferences set by this user.
   groupNotificationPreferences GroupNotificationPreference[]
+  /// S59: moderation actions taken by this user.
+  moderationActionsAsActor   GroupModerationAction[] @relation("ModerationActor")
+  /// S59: moderation actions targeting this user.
+  moderationActionsAsTarget  GroupModerationAction[] @relation("ModerationTarget")
   leaderboardSnapshots       LeaderboardSnapshot[]
   approvedMarkets            Market[]              @relation("ApprovedMarkets")
   createdMarkets             Market[]              @relation("CreatedMarkets")
@@ -350,6 +356,8 @@ model Group {
   memberCap     Int                  @default(10000)
   /// Cover image URL. Set by admin/seed in S54; upload UI is S58.
   coverImageUrl String?
+  /// S59: Editorial curation flag. Featured groups appear first in the discover rail.
+  isFeatured    Boolean              @default(false)
   createdAt     DateTime             @default(now())
   updatedAt     DateTime             @updatedAt
   owner         User                 @relation("OwnedGroups", fields: [ownerId], references: [id], onDelete: Cascade)
@@ -359,9 +367,12 @@ model Group {
   joinRequests  GroupJoinRequest[]
   /// S58: per-member notification preferences for this group.
   notificationPreferences GroupNotificationPreference[]
+  /// S59: moderation audit trail.
+  moderationActions GroupModerationAction[]
 
   @@index([ownerId, createdAt])
   @@index([visibility, createdAt])
+  @@index([isFeatured, createdAt])
 }
 
 /// S56: A user's request to join a REQUEST_TO_JOIN group.
@@ -1241,6 +1252,7 @@ enum AdminActionType {
   ADJUST_BALANCE
   FEATURE_MARKET
   FEATURE_STORY
+  FEATURE_GROUP
   CURATE_FEED
   GRANT_VERIFIED_ANALYST
   REVOKE_VERIFIED_ANALYST
@@ -1254,6 +1266,37 @@ enum UserDisplayMode {
   USERNAME
   /// Show anonymised pseudonym (AnonymousAnalyst_XXXXXX) on all public surfaces.
   ANONYMOUS
+}
+
+/// S59: Immutable audit log entry for a group moderation action.
+/// Written fire-and-forget after each mutating group management operation.
+model GroupModerationAction {
+  id           String                    @id @default(cuid())
+  groupId      String
+  actorId      String
+  targetUserId String?
+  actionType   GroupModerationActionType
+  metadata     Json?
+  createdAt    DateTime                  @default(now())
+
+  group      Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  actor      User  @relation("ModerationActor", fields: [actorId], references: [id], onDelete: Cascade)
+  targetUser User? @relation("ModerationTarget", fields: [targetUserId], references: [id])
+
+  @@index([groupId, createdAt])
+  @@index([actorId])
+}
+
+/// S59: Discriminated union of all group-scoped moderation actions recorded in the audit log.
+enum GroupModerationActionType {
+  MEMBER_BANNED
+  MEMBER_UNBANNED
+  MEMBER_REMOVED
+  MEMBER_LEFT
+  OWNERSHIP_TRANSFERRED
+  GROUP_ARCHIVED
+  JOIN_REQUEST_APPROVED
+  JOIN_REQUEST_REJECTED
 }
 
 /// S58: Notification level for group-scoped push notifications.

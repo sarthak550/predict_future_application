@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 
 import { getUserIdFromRequest } from "@/lib/auth";
+import {
+  GroupModerationActionType,
+  logModerationAction,
+} from "@/lib/groups/group-moderation-audit";
 import { GroupServiceError, archiveGroup } from "@/lib/groups/service";
 
 /**
@@ -31,6 +35,14 @@ export async function POST(
 
   try {
     await archiveGroup({ groupId: params.id, callerId });
+
+    // S59-T1: audit log — fire-and-forget. targetUserId null (group-level action).
+    void logModerationAction({
+      groupId: params.id,
+      actorId: callerId,
+      actionType: GroupModerationActionType.GROUP_ARCHIVED,
+    }).catch(console.error);
+
     return NextResponse.json({ archived: true }, { status: 200 });
   } catch (err) {
     if (err instanceof GroupServiceError) {

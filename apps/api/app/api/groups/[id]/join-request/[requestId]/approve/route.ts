@@ -2,6 +2,10 @@ import { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 
 import { getUserIdFromRequest } from "@/lib/auth";
+import {
+  GroupModerationActionType,
+  logModerationAction,
+} from "@/lib/groups/group-moderation-audit";
 import { notifyRequesterOfDecision } from "@/lib/groups/group-request-push";
 import { prisma } from "@/lib/prisma";
 
@@ -131,6 +135,14 @@ export async function POST(
     }
     throw err;
   }
+
+  // S59-T1: audit log — fire-and-forget outside the transaction.
+  void logModerationAction({
+    groupId: params.id,
+    actorId: callerId,
+    targetUserId: joinRequest.userId,
+    actionType: GroupModerationActionType.JOIN_REQUEST_APPROVED,
+  }).catch(console.error);
 
   // Fire push notification to the requester — fire-and-forget.
   void notifyRequesterOfDecision({

@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 
 import { getUserIdFromRequest } from "@/lib/auth";
+import {
+  GroupModerationActionType,
+  logModerationAction,
+} from "@/lib/groups/group-moderation-audit";
 import { notifyRequesterOfDecision } from "@/lib/groups/group-request-push";
 import { prisma } from "@/lib/prisma";
 
@@ -99,6 +103,15 @@ export async function POST(
       decisionNote: note ?? null
     }
   });
+
+  // S59-T1: audit log — fire-and-forget.
+  void logModerationAction({
+    groupId: params.id,
+    actorId: callerId,
+    targetUserId: joinRequest.userId,
+    actionType: GroupModerationActionType.JOIN_REQUEST_REJECTED,
+    metadata: note ? { note } : undefined,
+  }).catch(console.error);
 
   // Fire push to requester — fire-and-forget.
   void notifyRequesterOfDecision({

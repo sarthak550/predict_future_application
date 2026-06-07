@@ -452,6 +452,8 @@ export type ApiDiscoverGroup = {
   recentMarketCount: number;
   /** S56: Visibility tier — mobile browse card uses this to render "Join" vs "Request to Join" CTA. */
   visibility: AppGroupVisibility;
+  /** S59-T5: Editorial curation flag. Featured groups appear first in the discover rail. */
+  isFeatured: boolean;
 };
 
 export type ApiDiscoverGroupsResponse = {
@@ -861,6 +863,13 @@ export type ApiUserProfile = {
   financeAccuracy?: number | null;
   financeTotalVotes?: number;
   financeResolvedVotes?: number;
+  /** S59-T2: server-authoritative global default for group push notifications. Present on /api/profile/me. */
+  defaultGroupNotificationLevel?: GroupNotifLevel;
+};
+
+/** S59-T2: Response shape for GET/PATCH /api/users/me/notification-defaults. */
+export type ApiUserNotificationDefaults = {
+  defaultGroupNotificationLevel: GroupNotifLevel;
 };
 
 // ── Phone verification (S25-T6) ───────────────────────────────────────────────

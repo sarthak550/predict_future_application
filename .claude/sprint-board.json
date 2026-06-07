@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "currentSprint": 58,
+  "currentSprint": 59,
   "tickets": [
     {
       "id": "S7-T1",
@@ -3482,6 +3482,74 @@
       "sprint": 58,
       "title": "API client + types: export new endpoints and types",
       "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint58.md for full acceptance criteria.",
+      "priority": "medium",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S59-T0",
+      "sprint": 59,
+      "title": "Schema: GroupModerationAction model + User.defaultGroupNotificationLevel + Group.isFeatured (single migration)",
+      "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint59.md for full acceptance criteria.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S59-T1",
+      "sprint": 59,
+      "title": "Audit write helper + backfill across 8 routes (ban/unban/remove/leave/transfer/archive/approve/reject)",
+      "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint59.md for full acceptance criteria.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S59-T2",
+      "sprint": 59,
+      "title": "User notif default — PATCH /api/users/me/notification-defaults + mobile AsyncStorage→server one-way migration",
+      "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint59.md for full acceptance criteria.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": [
+        "apps/api/app/api/users/me/notification-defaults/route.ts line 18: Object.values(GroupNotifLevel) throws TypeError at module-load time on the running dev server — server holds stale bundle that does not export GroupNotifLevel. GET /api/users/me/notification-defaults returns HTTP 500. CTO must stop next dev, run npx prisma generate, restart next dev. Code itself is correct; only the missing server restart blocks this endpoint."
+      ],
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S59-T3",
+      "sprint": 59,
+      "title": "Group market created push fan-out (third helper in group-request-push.ts) + call site in markets create route",
+      "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint59.md for full acceptance criteria.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S59-T4",
+      "sprint": 59,
+      "title": "Bulk approve/reject endpoints (cap 50, per-row try/catch) + mobile multi-select inbox",
+      "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint59.md for full acceptance criteria.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S59-T5",
+      "sprint": 59,
+      "title": "Featured flag: admin route + discover sort (isFeatured first) + mobile star badge",
+      "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint59.md for full acceptance criteria.",
       "priority": "medium",
       "status": "done",
       "qaVerdict": "pass",

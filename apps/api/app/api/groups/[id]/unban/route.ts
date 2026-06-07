@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 
 import { getUserIdFromRequest } from "@/lib/auth";
+import {
+  GroupModerationActionType,
+  logModerationAction,
+} from "@/lib/groups/group-moderation-audit";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -70,6 +74,14 @@ export async function POST(
     where: { groupId_userId: { groupId: params.id, userId } },
     data: { bannedAt: null, banReason: null }
   });
+
+  // S59-T1: audit log — fire-and-forget.
+  void logModerationAction({
+    groupId: params.id,
+    actorId: callerId,
+    targetUserId: userId,
+    actionType: GroupModerationActionType.MEMBER_UNBANNED,
+  }).catch(console.error);
 
   return NextResponse.json({ banned: false }, { status: 200 });
 }
