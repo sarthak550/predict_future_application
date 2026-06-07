@@ -4,19 +4,22 @@ import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 
-import { formatPoints, formatRelativeTime } from "@predict-future/utils";
 import { colors, radius, shadows, spacing } from "@predict-future/ui-tokens";
+import { formatRelativeTime } from "@predict-future/utils";
 
 import { useApiQuery } from "@/hooks/useApiQuery";
 import { mobileApi } from "@/lib/api";
 import { useSession } from "@/providers/session-provider";
+import type { AppMarketCategory } from "@predict-future/types";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -25,13 +28,15 @@ type GroupMember = {
   userId: string;
   role: string;
   joinedAt: string;
-  user: { username: string; reputationScore: number };
+  bannedAt?: string | null;
+  user: { username: string; avatarUrl?: string | null };
 };
 
 type GroupMarket = {
   id: string;
   title: string;
   status: string;
+  category?: string;
   totalVolume?: number;
   totalParticipants?: number;
   closeAt?: string;
@@ -40,21 +45,44 @@ type GroupMarket = {
 
 type GroupData = {
   id: string;
+  slug: string;
   name: string;
   description?: string | null;
   ownerId: string;
+  visibility: "INVITE_ONLY" | "OPEN";
+  category?: AppMarketCategory | null;
+  memberCap?: number;
+  coverImageUrl?: string | null;
   inviteCode?: string;
   owner?: { username: string };
   memberships?: GroupMember[];
   markets?: GroupMarket[];
 };
 
-// ── Status buckets ────────────────────────────────────────────────────
+// ── Category colours ─────────────────────────────────────────────────
 
-const LIVE_STATUSES = new Set(["OPEN"]);
-const AWAITING_STATUSES = new Set(["CLOSED", "AWAITING_RESOLUTION"]);
-const SETTLED_STATUSES = new Set(["RESOLVED", "CANCELLED", "HOST_TIMEOUT", "RESOLVING"]);
-const LAUNCHABLE_STATUSES = new Set(["DRAFT", "PENDING_REVIEW"]);
+const CATEGORY_COLORS: Record<string, string> = {
+  FINANCE: "#1D4ED8",
+  SPORTS: "#15803D",
+  BUSINESS: "#7C3AED",
+  TECH: "#0891B2",
+  ENTERTAINMENT: "#DB2777",
+  WEATHER: "#D97706",
+  GENERAL: "#4B5563",
+  PRODUCT: "#9333EA",
+  COMPANY: "#059669"
+};
+
+function categoryColor(cat?: string | null): string {
+  return CATEGORY_COLORS[cat ?? ""] ?? "#4B5563";
+}
+
+function categoryLabel(cat?: string | null): string {
+  if (!cat) return "";
+  return cat.charAt(0) + cat.slice(1).toLowerCase();
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────
 
 function normalizeParam(value: string | string[] | undefined): string | null {
   if (Array.isArray(value)) return value[0] ?? null;
@@ -74,30 +102,33 @@ export default function GroupDetailScreen() {
 
   const { data, status, error, refetch } = useApiQuery(fetcher, [groupId], {
     enabled: Boolean(groupId),
-    errorFallback: "Unable to load group.",
+    errorFallback: "Unable to load group."
   });
 
-  const group = data ? (data as { group: GroupData }).group : null;
+  const group = data
+    ? ((data as { group: GroupData }).group ?? null)
+    : null;
 
   return (
     <>
       <Stack.Screen
         options={{
           headerShown: true,
-          title: group?.name ?? "Group",
+          title: group?.name ?? "Group"
         }}
       />
-      <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
+      <View style={styles.screen}>
         {!groupId ? (
-          <Text style={styles.errorText}>Missing group id.</Text>
+          <View style={styles.centerState}>
+            <Text style={styles.errorText}>Missing group id.</Text>
+          </View>
         ) : status === "loading" || status === "idle" ? (
           <View style={styles.centerState}>
             <ActivityIndicator color={colors.accent} size="large" />
           </View>
         ) : status === "error" ? (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Could not load group</Text>
-            <Text style={styles.muted}>{error}</Text>
+          <View style={styles.centerState}>
+            <Text style={styles.errorText}>{error}</Text>
             <Pressable onPress={refetch} style={styles.retryBtn}>
               <Text style={styles.retryLabel}>Retry</Text>
             </Pressable>
@@ -105,10 +136,125 @@ export default function GroupDetailScreen() {
         ) : group ? (
           <GroupBody group={group} groupId={groupId} onRefresh={refetch} />
         ) : (
-          <Text style={styles.errorText}>Group not found.</Text>
+          <View style={styles.centerState}>
+            <Text style={styles.errorText}>Group not found.</Text>
+          </View>
         )}
-      </ScrollView>
+      </View>
     </>
+  );
+}
+
+// ── Cover Banner ─────────────────────────────────────────────────────
+
+function CoverBanner({
+  coverImageUrl,
+  category
+}: {
+  coverImageUrl?: string | null;
+  category?: string | null;
+}) {
+  if (coverImageUrl) {
+    return (
+      <Image
+        source={{ uri: coverImageUrl }}
+        style={styles.coverImage}
+        resizeMode="cover"
+      />
+    );
+  }
+  return (
+    <View
+      style={[styles.coverGradient, { backgroundColor: categoryColor(category) }]}
+    >
+      <Ionicons name="people" size={40} color="rgba(255,255,255,0.5)" />
+    </View>
+  );
+}
+
+// ── Join CTA ─────────────────────────────────────────────────────────
+
+type MemberStatus = "owner" | "admin" | "member" | "banned" | "none";
+
+function resolveMemberStatus(
+  group: GroupData,
+  userId?: string | null
+): MemberStatus {
+  if (!userId) return "none";
+  const membership = group.memberships?.find((m) => m.userId === userId);
+  if (!membership) return "none";
+  if (membership.bannedAt) return "banned";
+  if (membership.role === "OWNER") return "owner";
+  if (membership.role === "ADMIN") return "admin";
+  return "member";
+}
+
+function JoinCTA({
+  group,
+  memberStatus,
+  onJoin,
+  onLeave,
+  joining
+}: {
+  group: GroupData;
+  memberStatus: MemberStatus;
+  onJoin: () => void;
+  onLeave: () => void;
+  joining: boolean;
+}) {
+  const router = useRouter();
+
+  if (memberStatus === "owner" || memberStatus === "admin") {
+    return null; // Role chip shown in header; no CTA bar needed.
+  }
+
+  if (memberStatus === "member") {
+    return null; // "Member" chip in header; no CTA bar.
+  }
+
+  if (memberStatus === "banned") {
+    return (
+      <View style={styles.ctaBar}>
+        <View style={[styles.ctaBtn, styles.ctaBtnDisabled]}>
+          <Text style={styles.ctaBtnTextMuted}>Can't join</Text>
+        </View>
+      </View>
+    );
+  }
+
+  // Not a member.
+  if (group.visibility === "OPEN") {
+    return (
+      <View style={styles.ctaBar}>
+        <Pressable
+          style={[styles.ctaBtn, joining && styles.ctaBtnDisabled]}
+          onPress={onJoin}
+          disabled={joining}
+        >
+          {joining ? (
+            <ActivityIndicator color={colors.surface} size="small" />
+          ) : (
+            <Text style={styles.ctaBtnText}>Join Group</Text>
+          )}
+        </Pressable>
+      </View>
+    );
+  }
+
+  // INVITE_ONLY
+  return (
+    <View style={styles.ctaBar}>
+      <View style={[styles.ctaBtn, styles.ctaBtnDisabled]}>
+        <Ionicons name="lock-closed" size={14} color={colors.textMuted} style={{ marginRight: 6 }} />
+        <Text style={styles.ctaBtnTextMuted}>Invite only</Text>
+      </View>
+      <Pressable
+        style={styles.ctaBtnGhost}
+        onPress={() => router.push("/(tabs)/groups")}
+      >
+        <Text style={styles.ctaBtnGhostText}>Enter invite code</Text>
+      </Pressable>
+    </View>
   );
 }
 
@@ -117,7 +263,7 @@ export default function GroupDetailScreen() {
 function GroupBody({
   group,
   groupId,
-  onRefresh,
+  onRefresh
 }: {
   group: GroupData;
   groupId: string;
@@ -125,37 +271,47 @@ function GroupBody({
 }) {
   const router = useRouter();
   const { session } = useSession();
-  const [launching, setLaunching] = useState(false);
+  const userId = session?.userId ?? null;
 
-  const isOwner = session?.userId != null && session.userId === group.ownerId;
-  const markets = group.markets ?? [];
+  const [joining, setJoining] = useState(false);
+  const [descExpanded, setDescExpanded] = useState(false);
+
+  const memberStatus = resolveMemberStatus(group, userId);
+  const isAdminOrOwner = memberStatus === "owner" || memberStatus === "admin";
   const memberships = group.memberships ?? [];
+  const memberCount = memberships.filter((m) => !m.bannedAt).length;
+  const markets = (group.markets ?? [])
+    .slice()
+    .sort((a, b) => (a.closeAt && b.closeAt ? 0 : 0))
+    .slice(0, 10);
 
-  const liveMarkets = markets.filter((m) => LIVE_STATUSES.has(m.status));
-  const awaitingMarkets = markets.filter((m) => AWAITING_STATUSES.has(m.status));
-  const settledMarkets = markets.filter((m) => SETTLED_STATUSES.has(m.status));
-  const launchableCount = markets.filter((m) => LAUNCHABLE_STATUSES.has(m.status)).length;
-
-  const canLaunch = isOwner && launchableCount > 0;
-
-  async function handleLaunch() {
-    if (launching) return;
-    setLaunching(true);
+  async function handleJoin() {
+    setJoining(true);
     try {
-      const result = await mobileApi.launchGroup(groupId);
-      Alert.alert(
-        "Matchday started!",
-        `${result.launched} ${result.launched === 1 ? "market" : "markets"} are now live.`,
-        [{ text: "OK", onPress: onRefresh }]
-      );
+      await mobileApi.joinOpenGroup(groupId);
+      onRefresh();
     } catch (err: unknown) {
       Alert.alert(
-        "Launch failed",
-        err instanceof Error ? err.message : "Something went wrong. Please try again."
+        "Could not join",
+        err instanceof Error ? err.message : "Something went wrong."
       );
     } finally {
-      setLaunching(false);
+      setJoining(false);
     }
+  }
+
+  function handleLeave() {
+    Alert.alert("Leave group?", "You can rejoin later.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Leave",
+        style: "destructive",
+        onPress: () => {
+          // TODO S56: implement leave group endpoint
+          Alert.alert("Not implemented", "Leave group is coming soon.");
+        }
+      }
+    ]);
   }
 
   async function handleCopyInviteCode() {
@@ -169,277 +325,402 @@ function GroupBody({
   }
 
   return (
-    <View style={styles.container}>
-      {/* Header card */}
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>{group.name}</Text>
-        {group.description ? (
-          <Text style={styles.subtitle}>{group.description}</Text>
-        ) : null}
+    <View style={styles.bodyContainer}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Cover */}
+        <CoverBanner
+          coverImageUrl={group.coverImageUrl}
+          category={group.category}
+        />
 
-        <View style={styles.metaRow}>
+        {/* Header info */}
+        <View style={styles.headerCard}>
+          <View style={styles.headerTopRow}>
+            <Text style={styles.groupName}>{group.name}</Text>
+            {/* Admin / owner action menu */}
+            {isAdminOrOwner ? (
+              <Pressable
+                style={styles.kebabBtn}
+                onPress={() =>
+                  Alert.alert("Group Actions", "", [
+                    {
+                      text: "Manage Members",
+                      onPress: () => router.push(`/group/${groupId}/members`)
+                    },
+                    {
+                      text: "Edit Group",
+                      onPress: () =>
+                        Alert.alert("Coming soon", "Group settings are in Sprint 56.")
+                    },
+                    { text: "Cancel", style: "cancel" }
+                  ])
+                }
+              >
+                <Ionicons name="ellipsis-vertical" size={20} color={colors.textMuted} />
+              </Pressable>
+            ) : null}
+          </View>
+
+          <View style={styles.pillRow}>
+            {/* Category pill */}
+            {group.category ? (
+              <View
+                style={[
+                  styles.pill,
+                  { backgroundColor: categoryColor(group.category) + "20" }
+                ]}
+              >
+                <Text
+                  style={[styles.pillText, { color: categoryColor(group.category) }]}
+                >
+                  {categoryLabel(group.category)}
+                </Text>
+              </View>
+            ) : null}
+
+            {/* Visibility pill */}
+            <View
+              style={[
+                styles.pill,
+                group.visibility === "OPEN" ? styles.pillOpen : styles.pillInviteOnly
+              ]}
+            >
+              <Text
+                style={[
+                  styles.pillText,
+                  group.visibility === "OPEN"
+                    ? styles.pillTextOpen
+                    : styles.pillTextInviteOnly
+                ]}
+              >
+                {group.visibility === "OPEN" ? "Open" : "Invite only"}
+              </Text>
+            </View>
+
+            {/* Role chip */}
+            {memberStatus === "owner" ? (
+              <View style={[styles.pill, styles.pillOwner]}>
+                <Text style={[styles.pillText, styles.pillTextOwner]}>Owner</Text>
+              </View>
+            ) : memberStatus === "admin" ? (
+              <View style={[styles.pill, styles.pillAdmin]}>
+                <Text style={[styles.pillText, styles.pillTextAdmin]}>Admin</Text>
+              </View>
+            ) : memberStatus === "member" ? (
+              <View style={[styles.pill, styles.pillMember]}>
+                <Ionicons name="checkmark" size={11} color="#15803D" />
+                <Text style={[styles.pillText, styles.pillTextMember]}>Member</Text>
+              </View>
+            ) : null}
+          </View>
+
+          {/* Stats row */}
+          <View style={styles.statsRow}>
+            <View style={styles.statItem}>
+              <Ionicons name="people-outline" size={14} color={colors.textMuted} />
+              <Text style={styles.statText}>{memberCount} members</Text>
+            </View>
+            <Text style={styles.statSep}>·</Text>
+            <View style={styles.statItem}>
+              <Ionicons name="bar-chart-outline" size={14} color={colors.textMuted} />
+              <Text style={styles.statText}>{markets.length} markets</Text>
+            </View>
+          </View>
+
+          {/* Owner info */}
           {group.owner?.username ? (
-            <View style={styles.metaItem}>
-              <Text style={styles.metaLabel}>Host</Text>
-              <Text style={styles.metaValue}>@{group.owner.username}</Text>
-            </View>
+            <Text style={styles.ownerText}>
+              Hosted by @{group.owner.username}
+            </Text>
           ) : null}
-          <View style={styles.metaItem}>
-            <Text style={styles.metaLabel}>Members</Text>
-            <Text style={styles.metaValue}>{memberships.length}</Text>
-          </View>
-          <View style={styles.metaItem}>
-            <Text style={styles.metaLabel}>Markets</Text>
-            <Text style={styles.metaValue}>{markets.length}</Text>
-          </View>
+
+          {/* Invite code (owner/admin only) */}
+          {isAdminOrOwner && group.inviteCode ? (
+            <Pressable style={styles.inviteRow} onPress={handleCopyInviteCode}>
+              <View style={styles.inviteCodeBox}>
+                <Text style={styles.inviteLabel}>Invite Code</Text>
+                <Text style={styles.inviteCode}>{group.inviteCode}</Text>
+              </View>
+              <View style={styles.copyBtn}>
+                <Text style={styles.copyBtnText}>Copy</Text>
+              </View>
+            </Pressable>
+          ) : null}
         </View>
 
-        {group.inviteCode ? (
-          <Pressable style={styles.inviteRow} onPress={handleCopyInviteCode}>
-            <View style={styles.inviteCodeBox}>
-              <Text style={styles.inviteLabel}>Invite Code</Text>
-              <Text style={styles.inviteCode}>{group.inviteCode}</Text>
-            </View>
-            <View style={styles.copyBtn}>
-              <Text style={styles.copyBtnText}>Copy</Text>
-            </View>
-          </Pressable>
+        {/* Description (collapsible after 3 lines) */}
+        {group.description ? (
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>About</Text>
+            <Text
+              style={styles.descriptionText}
+              numberOfLines={descExpanded ? undefined : 3}
+            >
+              {group.description}
+            </Text>
+            <Pressable
+              onPress={() => setDescExpanded((prev) => !prev)}
+              style={styles.expandBtn}
+            >
+              <Text style={styles.expandBtnText}>
+                {descExpanded ? "Show less" : "Show more"}
+              </Text>
+            </Pressable>
+          </View>
         ) : null}
-      </View>
 
-      {/* Start Matchday button — owner only, when launchable markets exist */}
-      {canLaunch ? (
-        <Pressable
-          style={[styles.launchBtn, launching && styles.btnDisabled]}
-          onPress={handleLaunch}
-          disabled={launching}
-        >
-          {launching ? (
-            <ActivityIndicator color="#fff" />
+        {/* Recent Markets */}
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>Recent Markets</Text>
+          {markets.length === 0 ? (
+            <Text style={styles.emptyText}>No markets yet.</Text>
           ) : (
-            <>
-              <Text style={styles.launchBtnText}>Start Matchday</Text>
-              <Text style={styles.launchBtnSub}>
-                Launch {launchableCount} pending {launchableCount === 1 ? "market" : "markets"}
-              </Text>
-            </>
-          )}
-        </Pressable>
-      ) : null}
-
-      {/* Live markets */}
-      <MarketSection
-        title="Live"
-        accent="#16A34A"
-        markets={liveMarkets}
-        renderItem={(m) => (
-          <Pressable
-            key={m.id}
-            style={styles.marketRow}
-            onPress={() => router.push(`/market/${m.id}`)}
-          >
-            <View style={styles.marketRowContent}>
-              <Text style={styles.marketTitle} numberOfLines={2}>{m.title}</Text>
-              <View style={styles.marketMeta}>
-                {m.totalParticipants != null ? (
-                  <Text style={styles.marketMetaText}>{m.totalParticipants} players</Text>
-                ) : null}
-                {m.closeAt ? (
-                  <Text style={styles.marketMetaText}>Closes {formatRelativeTime(m.closeAt)}</Text>
-                ) : null}
-                {m.totalVolume != null ? (
-                  <Text style={styles.marketMetaText}>{formatPoints(m.totalVolume)} pts</Text>
-                ) : null}
-              </View>
-            </View>
-            <View style={[styles.statusDot, { backgroundColor: "#16A34A" }]} />
-          </Pressable>
-        )}
-      />
-
-      {/* Awaiting Resolution markets */}
-      <MarketSection
-        title="Awaiting Resolution"
-        accent="#D97706"
-        markets={awaitingMarkets}
-        renderItem={(m) => (
-          <Pressable
-            key={m.id}
-            style={styles.marketRow}
-            onPress={() => router.push(`/market/${m.id}`)}
-          >
-            <View style={styles.marketRowContent}>
-              <Text style={styles.marketTitle} numberOfLines={2}>{m.title}</Text>
-              <View style={styles.awaitingBadge}>
-                <Text style={styles.awaitingBadgeText}>Needs resolution</Text>
-              </View>
-            </View>
-            <Text style={styles.chevron}>›</Text>
-          </Pressable>
-        )}
-      />
-
-      {/* Settled markets */}
-      <MarketSection
-        title="Settled"
-        accent={colors.textMuted}
-        markets={settledMarkets}
-        renderItem={(m) => (
-          <View key={m.id} style={styles.marketRow}>
-            <View style={styles.marketRowContent}>
-              <Text style={[styles.marketTitle, styles.marketTitleMuted]} numberOfLines={2}>
-                {m.title}
-              </Text>
-            </View>
-            <StatusBadge status={m.status} />
-          </View>
-        )}
-      />
-
-      {/* Members */}
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Members</Text>
-        {memberships.length === 0 ? (
-          <Text style={styles.noneYet}>No members yet.</Text>
-        ) : (
-          memberships.map((membership) => (
-            <View key={membership.id} style={styles.memberRow}>
-              <View style={styles.memberLeft}>
-                <Text style={styles.memberUsername}>@{membership.user.username}</Text>
-                {membership.role !== "MEMBER" ? (
-                  <View style={styles.rolePill}>
-                    <Text style={styles.rolePillText}>{membership.role}</Text>
+            markets.map((m, i) => (
+              <Pressable
+                key={m.id}
+                style={[styles.marketRow, i > 0 && styles.marketRowBorder]}
+                onPress={() => router.push(`/market/${m.id}`)}
+              >
+                <View style={styles.marketRowLeft}>
+                  <Text style={styles.marketTitle} numberOfLines={2}>
+                    {m.title}
+                  </Text>
+                  <View style={styles.marketMeta}>
+                    {m.category ? (
+                      <Text style={styles.marketCategory}>
+                        {categoryLabel(m.category)}
+                      </Text>
+                    ) : null}
+                    <MarketStatusBadge status={m.status} />
+                    {m.totalParticipants != null ? (
+                      <Text style={styles.marketMetaText}>
+                        {m.totalParticipants} players
+                      </Text>
+                    ) : null}
                   </View>
-                ) : null}
-              </View>
-              <Text style={styles.memberRep}>
-                {formatPoints(membership.user.reputationScore)} rep
-              </Text>
-            </View>
-          ))
-        )}
-      </View>
-    </View>
-  );
-}
-
-// ── Helpers ────────────────────────────────────────────────────────────
-
-function MarketSection({
-  title,
-  accent,
-  markets,
-  renderItem,
-}: {
-  title: string;
-  accent: string;
-  markets: GroupMarket[];
-  renderItem: (m: GroupMarket) => React.ReactNode;
-}) {
-  return (
-    <View style={styles.card}>
-      <View style={styles.sectionHeader}>
-        <View style={[styles.sectionAccentBar, { backgroundColor: accent }]} />
-        <Text style={styles.sectionTitle}>{title}</Text>
-        <View style={styles.sectionCountBadge}>
-          <Text style={styles.sectionCountText}>{markets.length}</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+              </Pressable>
+            ))
+          )}
         </View>
-      </View>
-      {markets.length === 0 ? (
-        <Text style={styles.noneYet}>None yet.</Text>
-      ) : (
-        markets.map(renderItem)
-      )}
+
+        {/* Member preview */}
+        <View style={styles.card}>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={styles.sectionTitle}>Members</Text>
+            {memberships.length > 5 ? (
+              <Pressable onPress={() => router.push(`/group/${groupId}/members`)}>
+                <Text style={styles.seeAllText}>
+                  See all {memberCount}
+                </Text>
+              </Pressable>
+            ) : null}
+          </View>
+          {memberships.filter((m) => !m.bannedAt).slice(0, 5).length === 0 ? (
+            <Text style={styles.emptyText}>No members yet.</Text>
+          ) : (
+            memberships
+              .filter((m) => !m.bannedAt)
+              .slice(0, 5)
+              .map((m) => (
+                <View key={m.id} style={styles.memberPreviewRow}>
+                  <View style={styles.avatarPlaceholder}>
+                    <Text style={styles.avatarLetter}>
+                      {m.user.username.charAt(0).toUpperCase()}
+                    </Text>
+                  </View>
+                  <Text style={styles.memberUsername}>@{m.user.username}</Text>
+                  {m.role !== "MEMBER" ? (
+                    <View style={styles.rolePill}>
+                      <Text style={styles.rolePillText}>{m.role}</Text>
+                    </View>
+                  ) : null}
+                </View>
+              ))
+          )}
+          {isAdminOrOwner ? (
+            <Pressable
+              style={styles.manageBtn}
+              onPress={() => router.push(`/group/${groupId}/members`)}
+            >
+              <Ionicons
+                name="settings-outline"
+                size={14}
+                color={colors.accent}
+                style={{ marginRight: 4 }}
+              />
+              <Text style={styles.manageBtnText}>Manage Members</Text>
+            </Pressable>
+          ) : null}
+        </View>
+
+        {/* Spacer so content clears the sticky CTA bar */}
+        <View style={{ height: 100 }} />
+      </ScrollView>
+
+      {/* Sticky Join CTA */}
+      <JoinCTA
+        group={group}
+        memberStatus={memberStatus}
+        onJoin={handleJoin}
+        onLeave={handleLeave}
+        joining={joining}
+      />
     </View>
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const config = STATUS_BADGE_CONFIG[status] ?? { label: status, bg: "#F3F4F6", text: "#6B7280" };
-  return (
-    <View style={[styles.badge, { backgroundColor: config.bg }]}>
-      <Text style={[styles.badgeText, { color: config.text }]}>{config.label}</Text>
-    </View>
-  );
-}
+// ── Market Status Badge ───────────────────────────────────────────────
 
-const STATUS_BADGE_CONFIG: Record<string, { label: string; bg: string; text: string }> = {
-  RESOLVED: { label: "Resolved", bg: "#DCFCE7", text: "#15803D" },
-  RESOLVING: { label: "Resolving", bg: "#DBEAFE", text: "#1D4ED8" },
+const STATUS_BADGE: Record<string, { label: string; bg: string; text: string }> = {
+  OPEN: { label: "Live", bg: "#DCFCE7", text: "#15803D" },
+  RESOLVED: { label: "Resolved", bg: "#F3F4F6", text: "#6B7280" },
+  CLOSED: { label: "Closed", bg: "#FEF3C7", text: "#92400E" },
+  AWAITING_RESOLUTION: { label: "Awaiting", bg: "#DBEAFE", text: "#1D4ED8" },
   CANCELLED: { label: "Cancelled", bg: "#F3F4F6", text: "#6B7280" },
-  HOST_TIMEOUT: { label: "Timed Out", bg: "#FEF3C7", text: "#92400E" },
+  DRAFT: { label: "Draft", bg: "#F3F4F6", text: "#9CA3AF" }
 };
+
+function MarketStatusBadge({ status }: { status: string }) {
+  const cfg = STATUS_BADGE[status] ?? { label: status, bg: "#F3F4F6", text: "#6B7280" };
+  return (
+    <View style={[styles.statusBadge, { backgroundColor: cfg.bg }]}>
+      <Text style={[styles.statusBadgeText, { color: cfg.text }]}>{cfg.label}</Text>
+    </View>
+  );
+}
 
 // ── Styles ─────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: colors.background
+  },
+  bodyContainer: {
+    flex: 1
+  },
+  scroll: {
+    flex: 1
   },
   content: {
-    padding: spacing.lg,
-    paddingBottom: 100,
-  },
-  container: {
-    gap: spacing.lg,
+    paddingBottom: 16
   },
   centerState: {
-    paddingTop: 100,
+    flex: 1,
     alignItems: "center",
+    justifyContent: "center",
+    padding: spacing.xl,
+    gap: spacing.md
   },
   errorText: {
     color: colors.danger,
     fontSize: 14,
+    textAlign: "center"
   },
 
-  // Cards
-  card: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    padding: spacing.xl,
-    ...shadows.card,
+  // Cover
+  coverImage: {
+    width: "100%",
+    height: 180
   },
-  cardTitle: {
-    fontSize: 22,
-    fontWeight: "700",
-    color: colors.text,
-    lineHeight: 28,
-  },
-  subtitle: {
-    marginTop: spacing.sm,
-    fontSize: 15,
-    lineHeight: 22,
-    color: colors.textMuted,
-  },
-
-  // Meta row in header card
-  metaRow: {
-    marginTop: spacing.xl,
-    flexDirection: "row",
-    gap: spacing.xl,
-  },
-  metaItem: {
+  coverGradient: {
+    width: "100%",
+    height: 180,
     alignItems: "center",
-    minWidth: 60,
+    justifyContent: "center"
   },
-  metaLabel: {
-    fontSize: 11,
-    fontWeight: "600",
-    color: colors.textMuted,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
+
+  // Header card
+  headerCard: {
+    backgroundColor: colors.surface,
+    padding: spacing.xl,
+    marginBottom: spacing.sm,
+    ...shadows.card
   },
-  metaValue: {
-    marginTop: 3,
-    fontSize: 15,
-    fontWeight: "700",
+  headerTopRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    marginBottom: spacing.sm
+  },
+  groupName: {
+    fontSize: 24,
+    fontWeight: "800",
     color: colors.text,
+    flex: 1,
+    lineHeight: 30
+  },
+  kebabBtn: {
+    padding: 4,
+    marginLeft: spacing.sm
+  },
+
+  // Pills
+  pillRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.xs,
+    marginBottom: spacing.md
+  },
+  pill: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 100,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3
+  },
+  pillText: {
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.3
+  },
+  pillOpen: { backgroundColor: "#DCFCE7" },
+  pillTextOpen: { color: "#15803D" },
+  pillInviteOnly: { backgroundColor: "#F3F4F6" },
+  pillTextInviteOnly: { color: "#6B7280" },
+  pillOwner: { backgroundColor: "#EEF2FF" },
+  pillTextOwner: { color: "#4F46E5" },
+  pillAdmin: { backgroundColor: "#FEF3C7" },
+  pillTextAdmin: { color: "#92400E" },
+  pillMember: { backgroundColor: "#DCFCE7" },
+  pillTextMember: { color: "#15803D" },
+
+  // Stats
+  statsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    marginBottom: spacing.sm
+  },
+  statItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4
+  },
+  statText: {
+    fontSize: 13,
+    color: colors.textMuted
+  },
+  statSep: {
+    fontSize: 13,
+    color: colors.border
+  },
+  ownerText: {
+    fontSize: 13,
+    color: colors.textMuted,
+    marginBottom: spacing.sm
   },
 
   // Invite code
   inviteRow: {
-    marginTop: spacing.lg,
+    marginTop: spacing.md,
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.md,
@@ -447,220 +728,235 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     backgroundColor: "#EEF2FF",
     borderWidth: 1,
-    borderColor: "#C7D2FE",
+    borderColor: "#C7D2FE"
   },
-  inviteCodeBox: {
-    flex: 1,
-  },
+  inviteCodeBox: { flex: 1 },
   inviteLabel: {
-    fontSize: 11,
-    fontWeight: "600",
+    fontSize: 10,
+    fontWeight: "700",
     color: "#6366F1",
     textTransform: "uppercase",
-    letterSpacing: 0.5,
+    letterSpacing: 0.5
   },
   inviteCode: {
     marginTop: 2,
     fontSize: 18,
     fontWeight: "800",
     color: "#4F46E5",
-    letterSpacing: 2,
+    letterSpacing: 2
   },
   copyBtn: {
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     borderRadius: radius.md,
-    backgroundColor: "#4F46E5",
+    backgroundColor: "#4F46E5"
   },
   copyBtnText: {
     fontSize: 13,
     fontWeight: "700",
-    color: "#fff",
+    color: "#fff"
   },
 
-  // Launch button
-  launchBtn: {
-    paddingVertical: spacing.xl,
-    paddingHorizontal: spacing.xl,
-    borderRadius: radius.lg,
-    backgroundColor: "#16A34A",
-    alignItems: "center",
-    gap: spacing.xs,
-    ...shadows.card,
-  },
-  launchBtnText: {
-    fontSize: 18,
-    fontWeight: "800",
-    color: "#fff",
-    letterSpacing: 0.3,
-  },
-  launchBtnSub: {
-    fontSize: 13,
-    fontWeight: "500",
-    color: "rgba(255,255,255,0.8)",
-  },
-  btnDisabled: {
-    opacity: 0.5,
-  },
-
-  // Section headers
-  sectionHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm,
-    marginBottom: spacing.md,
-  },
-  sectionAccentBar: {
-    width: 3,
-    height: 16,
-    borderRadius: 2,
+  // Generic card
+  card: {
+    backgroundColor: colors.surface,
+    padding: spacing.xl,
+    marginBottom: spacing.sm,
+    ...shadows.card
   },
   sectionTitle: {
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: "700",
     color: colors.text,
-    flex: 1,
+    marginBottom: spacing.md
   },
-  sectionCountBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 10,
-    backgroundColor: "#F1F5F9",
+  sectionHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: spacing.md
   },
-  sectionCountText: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: colors.textMuted,
+  seeAllText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: colors.accent
   },
-  noneYet: {
+  emptyText: {
     fontSize: 14,
     color: colors.textMuted,
-    fontStyle: "italic",
+    fontStyle: "italic"
   },
 
-  // Market rows
+  // Description
+  descriptionText: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: colors.textMuted
+  },
+  expandBtn: {
+    marginTop: spacing.sm
+  },
+  expandBtnText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: colors.accent
+  },
+
+  // Markets
   marketRow: {
     flexDirection: "row",
     alignItems: "center",
     paddingVertical: spacing.md,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
-    gap: spacing.sm,
+    gap: spacing.sm
   },
-  marketRowContent: {
+  marketRowBorder: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border
+  },
+  marketRowLeft: {
     flex: 1,
-    gap: 4,
+    gap: 4
   },
   marketTitle: {
     fontSize: 14,
     fontWeight: "600",
     color: colors.text,
-    lineHeight: 20,
-  },
-  marketTitleMuted: {
-    color: colors.textMuted,
+    lineHeight: 20
   },
   marketMeta: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: spacing.sm,
+    alignItems: "center",
+    gap: spacing.xs
+  },
+  marketCategory: {
+    fontSize: 11,
+    color: colors.textMuted
   },
   marketMetaText: {
-    fontSize: 12,
-    color: colors.textMuted,
-  },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  awaitingBadge: {
-    alignSelf: "flex-start",
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: radius.sm,
-    backgroundColor: "#FEF3C7",
-  },
-  awaitingBadgeText: {
     fontSize: 11,
-    fontWeight: "700",
-    color: "#92400E",
+    color: colors.textMuted
   },
-  chevron: {
-    fontSize: 20,
-    color: colors.textMuted,
-    lineHeight: 22,
+  statusBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4
+  },
+  statusBadgeText: {
+    fontSize: 10,
+    fontWeight: "700"
   },
 
-  // Status badge
-  badge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: radius.sm,
-  },
-  badgeText: {
-    fontSize: 11,
-    fontWeight: "700",
-    letterSpacing: 0.3,
-  },
-
-  // Members
-  memberRow: {
+  // Members preview
+  memberPreviewRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
     paddingVertical: spacing.sm,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
-  },
-  memberLeft: {
-    flexDirection: "row",
-    alignItems: "center",
     gap: spacing.sm,
-    flex: 1,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border
+  },
+  avatarPlaceholder: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: colors.accent + "20",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  avatarLetter: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: colors.accent
   },
   memberUsername: {
     fontSize: 14,
     fontWeight: "600",
     color: colors.text,
+    flex: 1
   },
   rolePill: {
     paddingHorizontal: 7,
     paddingVertical: 2,
     borderRadius: radius.sm,
-    backgroundColor: "#EEF2FF",
+    backgroundColor: "#EEF2FF"
   },
   rolePillText: {
     fontSize: 10,
     fontWeight: "700",
     color: "#4F46E5",
     letterSpacing: 0.3,
-    textTransform: "uppercase",
+    textTransform: "uppercase"
   },
-  memberRep: {
-    fontSize: 13,
+  manageBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border
+  },
+  manageBtnText: {
+    fontSize: 14,
     fontWeight: "600",
-    color: colors.textMuted,
+    color: colors.accent
+  },
+
+  // Sticky CTA bar
+  ctaBar: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    padding: spacing.xl,
+    paddingBottom: 32,
+    backgroundColor: colors.surface,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+    gap: spacing.sm,
+    ...shadows.card
+  },
+  ctaBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 14,
+    borderRadius: radius.md,
+    backgroundColor: colors.accent
+  },
+  ctaBtnDisabled: {
+    backgroundColor: colors.border
+  },
+  ctaBtnText: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: colors.surface
+  },
+  ctaBtnTextMuted: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: colors.textMuted
+  },
+  ctaBtnGhost: {
+    alignItems: "center",
+    paddingVertical: 10
+  },
+  ctaBtnGhostText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: colors.accent
   },
 
   // Retry
   retryBtn: {
-    marginTop: spacing.lg,
-    alignSelf: "flex-start",
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
     borderRadius: radius.md,
-    backgroundColor: colors.accent,
+    backgroundColor: colors.accent
   },
   retryLabel: {
     fontSize: 14,
     fontWeight: "700",
-    color: colors.surface,
-  },
-  muted: {
-    marginTop: spacing.sm,
-    fontSize: 14,
-    color: colors.textMuted,
-    lineHeight: 20,
-  },
+    color: colors.surface
+  }
 });

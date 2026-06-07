@@ -1,14 +1,13 @@
 import { NextResponse } from "next/server";
 
-import { getSession, getUserIdFromRequest } from "@/lib/auth";
+import { getUserIdFromRequest } from "@/lib/auth";
 import { createGroup, getUserGroups } from "@/lib/groups/service";
 import { prisma } from "@/lib/prisma";
 import { createGroupSchema } from "@/lib/validations/group";
 
 export async function POST(request: Request) {
   try {
-    const { searchParams } = new URL(request.url);
-  const userId = await getUserIdFromRequest(request);
+    const userId = await getUserIdFromRequest(request);
     if (!userId) {
       return NextResponse.json({ error: "Authentication required." }, { status: 401 });
     }
@@ -29,7 +28,10 @@ export async function POST(request: Request) {
     const createdGroup = await createGroup({
       ownerId: actor.id,
       name: payload.name,
-      description: payload.description || null
+      description: payload.description || null,
+      visibility: payload.visibility,
+      category: payload.category ?? null,
+      coverImageUrl: payload.coverImageUrl ?? null
     });
     const groups = await getUserGroups(actor.id);
     const group = groups.find((item) => item.id === createdGroup.id);

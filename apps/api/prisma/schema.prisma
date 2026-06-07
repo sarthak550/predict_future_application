@@ -331,20 +331,29 @@ model CuratedFeedItem {
 }
 
 model Group {
-  id          String            @id @default(cuid())
-  slug        String            @unique
-  name        String
-  description String?
-  ownerId     String
-  inviteCode  String            @unique
-  isArchived  Boolean           @default(false)
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
-  owner       User              @relation("OwnedGroups", fields: [ownerId], references: [id], onDelete: Cascade)
-  memberships GroupMembership[]
-  markets     Market[]
+  id            String          @id @default(cuid())
+  slug          String          @unique
+  name          String
+  description   String?
+  ownerId       String
+  inviteCode    String          @unique
+  isArchived    Boolean         @default(false)
+  /// S54: open discovery visibility model. Existing groups default to INVITE_ONLY.
+  visibility    GroupVisibility @default(INVITE_ONLY)
+  /// Optional category tag for filtering in the discover feed.
+  category      MarketCategory?
+  /// Maximum members allowed. Default 10,000. Enforced on OPEN join path.
+  memberCap     Int             @default(10000)
+  /// Cover image URL. Set by admin/seed in S54; upload UI is S56.
+  coverImageUrl String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  owner         User            @relation("OwnedGroups", fields: [ownerId], references: [id], onDelete: Cascade)
+  memberships   GroupMembership[]
+  markets       Market[]
 
   @@index([ownerId, createdAt])
+  @@index([visibility, createdAt])
 }
 
 model GroupMembership {
@@ -354,6 +363,11 @@ model GroupMembership {
   role      GroupRole @default(MEMBER)
   joinedAt  DateTime  @default(now())
   createdAt DateTime  @default(now())
+  /// S54 ban tombstone: bannedAt != null means this user is banned from this group.
+  /// A tombstone row may exist even if the user was never a full member (preemptive ban).
+  /// TODO S56: migrate ban tombstones to a dedicated GroupBan table with full audit trail.
+  bannedAt  DateTime?
+  banReason String?
   group     Group     @relation(fields: [groupId], references: [id], onDelete: Cascade)
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -1052,6 +1066,12 @@ enum GroupRole {
   OWNER
   ADMIN
   MEMBER
+}
+
+/// S54: Two-tier visibility model. REQUEST_TO_JOIN ships in S55.
+enum GroupVisibility {
+  INVITE_ONLY
+  OPEN
 }
 
 enum MarketStatus {

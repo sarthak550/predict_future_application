@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "currentSprint": 53,
+  "currentSprint": 54,
   "tickets": [
     {
       "id": "S7-T1",
@@ -3063,6 +3063,94 @@
       "title": "Inline character-count hints on title (>=12) and description (>=24)",
       "description": "Create tab immediate-fix from post-S52 code audit. Self-contained mobile-only fix; details in CTO brief.",
       "priority": "low",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S54-T1",
+      "sprint": 54,
+      "title": "Schema: GroupVisibility enum + category/memberCap/coverImageUrl + GroupMembership.bannedAt/banReason + (visibility, createdAt) index",
+      "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint54.md for full acceptance criteria.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S54-T2",
+      "sprint": 54,
+      "title": "Moderation routes: DELETE /groups/:id/members/:userId, POST /groups/:id/ban, /unban (uses bannedAt tombstone)",
+      "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint54.md for full acceptance criteria.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S54-T3",
+      "sprint": 54,
+      "title": "GET /api/groups/discover (public, OPEN-only) + POST /api/groups/:id/join (open join with ban+full guards) + replace leaky getDiscoverGroups stub",
+      "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint54.md for full acceptance criteria.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S54-T4",
+      "sprint": 54,
+      "title": "Update createGroup service + create route: visibility (default OPEN), category, coverImageUrl",
+      "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint54.md for full acceptance criteria.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S54-T5",
+      "sprint": 54,
+      "title": "Group profile screen (mobile): cover + join CTA state machine + description + recent markets + member preview + admin actions menu",
+      "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint54.md for full acceptance criteria.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S54-T6",
+      "sprint": 54,
+      "title": "Un-hide Groups tab + rewrite groups.tsx as Browse (category chips + sort + cards w/ inline Join) above My Groups",
+      "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint54.md for full acceptance criteria.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S54-T7",
+      "sprint": 54,
+      "title": "Member management screen (mobile): paginated list + kebab remove/ban for owner/admin, read-only for members",
+      "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint54.md for full acceptance criteria.",
+      "priority": "medium",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S54-T8",
+      "sprint": 54,
+      "title": "Group create flow (mobile): visibility picker (Open default) + optional category picker",
+      "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint54.md for full acceptance criteria.",
+      "priority": "medium",
       "status": "done",
       "qaVerdict": "pass",
       "failureNotes": null,

@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 
-import { GroupRole, type Prisma } from "@prisma/client";
+import { GroupRole, GroupVisibility, MarketCategory, type Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { slugify } from "@/lib/utils";
@@ -19,6 +19,10 @@ export async function createGroup(input: {
   ownerId: string;
   name: string;
   description?: string | null;
+  /** S54: defaults to OPEN so new groups appear in the discover feed. */
+  visibility?: GroupVisibility;
+  category?: MarketCategory | null;
+  coverImageUrl?: string | null;
 }) {
   return prisma.$transaction(async (tx) => createGroupTx(tx, input));
 }
@@ -29,6 +33,9 @@ export async function createGroupTx(
     ownerId: string;
     name: string;
     description?: string | null;
+    visibility?: GroupVisibility;
+    category?: MarketCategory | null;
+    coverImageUrl?: string | null;
   }
 ) {
   const group = await tx.group.create({
@@ -37,7 +44,11 @@ export async function createGroupTx(
       description: input.description || null,
       slug: buildGroupSlug(input.name),
       inviteCode: buildInviteCode(),
-      ownerId: input.ownerId
+      ownerId: input.ownerId,
+      // S54: new groups default to OPEN (visible in discover feed).
+      visibility: input.visibility ?? GroupVisibility.OPEN,
+      category: input.category ?? null,
+      coverImageUrl: input.coverImageUrl ?? null
     }
   });
 
@@ -75,6 +86,12 @@ export async function joinGroupByInviteCode(input: {
         }
       }
     });
+
+    // Ban check: tombstone rows (bannedAt != null) block all join paths including invite code.
+    // This prevents banned users from bypassing moderation with an old invite link.
+    if (existingMembership?.bannedAt != null) {
+      throw new Error("You have been removed from this group.");
+    }
 
     if (existingMembership) {
       return group;
@@ -131,13 +148,21 @@ export async function joinGroupById(input: {
 }
 
 /**
- * Returns groups the given user is NOT already a member of, ordered by
- * most-recently-created first, capped at `limit` results.
+ * @deprecated S54: getDiscoverGroups previously returned all non-archived groups
+ * regardless of visibility — a privacy leak (INVITE_ONLY groups were exposed).
+ * The discover feed is now handled entirely by GET /api/groups/discover which
+ * filters to visibility = OPEN only. This function is kept as a stub so
+ * compile-time imports don't break, but it is not called from any route.
+ *
+ * TODO: remove this function in S56 cleanup.
  */
 export async function getDiscoverGroups(userId: string, limit = 20) {
+  // S54: redirected to /api/groups/discover which correctly filters by visibility.
+  // This stub is unreferenced by route handlers after S54 — safe to delete in S56.
   const groups = await prisma.group.findMany({
     where: {
       isArchived: false,
+      visibility: "OPEN",
       memberships: {
         none: {
           userId
@@ -151,7 +176,7 @@ export async function getDiscoverGroups(userId: string, limit = 20) {
     include: {
       _count: {
         select: {
-          memberships: true,
+          memberships: { where: { bannedAt: null } },
           markets: true
         }
       }
@@ -165,7 +190,6 @@ export async function getDiscoverGroups(userId: string, limit = 20) {
     description: group.description,
     memberCount: group._count.memberships,
     marketCount: group._count.markets
-    // Note: inviteCode is intentionally omitted — users must enter it manually
   }));
 }
 

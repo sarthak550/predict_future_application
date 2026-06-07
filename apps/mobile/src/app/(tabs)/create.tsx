@@ -815,6 +815,9 @@ function StepAudience({
   const [newGroupDesc, setNewGroupDesc] = useState("");
   const [inviteCode, setInviteCode] = useState("");
   const [loading, setLoading] = useState(false);
+  // S54: new group defaults to OPEN (appears in discover feed)
+  const [newGroupVisibility, setNewGroupVisibility] = useState<"OPEN" | "INVITE_ONLY">("OPEN");
+  const [newGroupCategory, setNewGroupCategory] = useState<AppMarketCategory | null>(null);
 
   const selectedGroup = groups.find((g) => g.id === groupId);
 
@@ -826,15 +829,26 @@ function StepAudience({
     setLoading(true);
     try {
       const result = await mobileApi.createGroup(
-        { name: newGroupName, description: newGroupDesc || undefined },
+        {
+          name: newGroupName,
+          description: newGroupDesc || undefined,
+          visibility: newGroupVisibility,
+          category: newGroupCategory ?? undefined
+        },
         { userId }
       );
       setGroupId(result.group.id);
       setActionSheet(null);
       setNewGroupName("");
       setNewGroupDesc("");
+      setNewGroupVisibility("OPEN");
+      setNewGroupCategory(null);
       void refetchGroups();
-      Alert.alert("Group Created!", `Share invite code: ${result.group.inviteCode}`);
+      if (newGroupVisibility === "INVITE_ONLY") {
+        Alert.alert("Group Created!", `Share invite code: ${result.group.inviteCode}`);
+      } else {
+        Alert.alert("Group Created!", "Your group is now discoverable by anyone.");
+      }
     } catch (err) {
       Alert.alert("Error", err instanceof Error ? err.message : "Failed.");
     } finally {
@@ -1046,6 +1060,95 @@ function StepAudience({
                 onChangeText={setNewGroupDesc}
                 maxLength={200}
               />
+
+              {/* S54: Visibility picker */}
+              <Text style={styles.grpFieldLabel}>Visibility</Text>
+              <View style={styles.grpToggleRow}>
+                <Pressable
+                  style={[
+                    styles.grpToggleBtn,
+                    newGroupVisibility === "OPEN" && styles.grpToggleBtnActive
+                  ]}
+                  onPress={() => setNewGroupVisibility("OPEN")}
+                >
+                  <Ionicons
+                    name="globe-outline"
+                    size={14}
+                    color={newGroupVisibility === "OPEN" ? "#FFFFFF" : colors.accent}
+                  />
+                  <Text
+                    style={[
+                      styles.grpToggleBtnText,
+                      newGroupVisibility === "OPEN" && styles.grpToggleBtnTextActive
+                    ]}
+                  >
+                    Open
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={[
+                    styles.grpToggleBtn,
+                    newGroupVisibility === "INVITE_ONLY" && styles.grpToggleBtnActive
+                  ]}
+                  onPress={() => setNewGroupVisibility("INVITE_ONLY")}
+                >
+                  <Ionicons
+                    name="lock-closed-outline"
+                    size={14}
+                    color={newGroupVisibility === "INVITE_ONLY" ? "#FFFFFF" : colors.accent}
+                  />
+                  <Text
+                    style={[
+                      styles.grpToggleBtnText,
+                      newGroupVisibility === "INVITE_ONLY" && styles.grpToggleBtnTextActive
+                    ]}
+                  >
+                    Invite only
+                  </Text>
+                </Pressable>
+              </View>
+              <Text style={styles.grpFieldHint}>
+                {newGroupVisibility === "OPEN"
+                  ? "Open groups appear in search and anyone can join."
+                  : "Invite-only groups are hidden — share the code with people you want in."}
+              </Text>
+
+              {/* S54: Category picker */}
+              <Text style={styles.grpFieldLabel}>Category (optional)</Text>
+              <View style={styles.grpCategoryRow}>
+                {(
+                  [
+                    null,
+                    "FINANCE",
+                    "SPORTS",
+                    "BUSINESS",
+                    "TECH",
+                    "ENTERTAINMENT",
+                    "GENERAL"
+                  ] as (AppMarketCategory | null)[]
+                ).map((cat) => (
+                  <Pressable
+                    key={cat ?? "NONE"}
+                    style={[
+                      styles.grpCategoryChip,
+                      newGroupCategory === cat && styles.grpCategoryChipActive
+                    ]}
+                    onPress={() => setNewGroupCategory(cat)}
+                  >
+                    <Text
+                      style={[
+                        styles.grpCategoryChipText,
+                        newGroupCategory === cat && styles.grpCategoryChipTextActive
+                      ]}
+                    >
+                      {cat === null
+                        ? "None"
+                        : cat.charAt(0) + cat.slice(1).toLowerCase()}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+
               <Pressable
                 style={[styles.grpSheetBtn, loading && styles.btnDisabled]}
                 onPress={handleCreateGroup}
@@ -2236,6 +2339,76 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   grpSheetBtnText: { color: "#FFFFFF", fontWeight: "700", fontSize: 15 },
+
+  // S54 group create — visibility + category pickers
+  grpFieldLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: colors.textMuted,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginTop: spacing.md,
+    marginBottom: spacing.xs
+  },
+  grpFieldHint: {
+    fontSize: 12,
+    color: colors.textMuted,
+    lineHeight: 17,
+    marginTop: spacing.xs,
+    marginBottom: spacing.sm
+  },
+  grpToggleRow: {
+    flexDirection: "row",
+    gap: spacing.sm
+  },
+  grpToggleBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.xs,
+    paddingVertical: 10,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    borderColor: colors.accent,
+    backgroundColor: colors.surface
+  },
+  grpToggleBtnActive: {
+    backgroundColor: colors.accent
+  },
+  grpToggleBtnText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: colors.accent
+  },
+  grpToggleBtnTextActive: {
+    color: "#FFFFFF"
+  },
+  grpCategoryRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.xs
+  },
+  grpCategoryChip: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface
+  },
+  grpCategoryChipActive: {
+    borderColor: colors.accent,
+    backgroundColor: colors.accent + "15"
+  },
+  grpCategoryChipText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: colors.textMuted
+  },
+  grpCategoryChipTextActive: {
+    color: colors.accent
+  },
 
   // Timeline summary
   timelineSummary: {

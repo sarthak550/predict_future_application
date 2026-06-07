@@ -2,8 +2,8 @@
 
 > Human-readable view of `.claude/sprint-board.json`. Auto-maintained by the CEO/CTO/QA agents — do not edit by hand.
 
-**Current sprint:** 53
-**Status:** Sprint 53 QA COMPLETE (6/6) — Create-tab fix bundle: draft persistence + schema version, strict resolveAt validation, dead StepResolution/ResolutionMode dropped, eligibility gate inlined on PUBLIC option (top HostEligibilityCard removed), duplicate MC options blocked, inline char-count hints. ~215 dead lines removed. Pending user device smoke-test. Sprint 52 QA COMPLETE (4/4) — CombinedAnalystCard merge + See-all removal + tighter inter-card gap + Pulse pills redesign with question/crowd-%/urgency-tint. Sprint 51 COMPLETE (5/5). Sprint 50 COMPLETE (6/6 — Top 3 Analysts moved from Feed to Finance). Sprint 49 COMPLETE (9/9). Legal review on SEBI Research Analyst public naming still required before production deploy. Sprint 48 COMPLETE (F1 timing reliability — retry, cache downgrade, empty-state, client timeout). Sprint 47 COMPLETE (F1 detail modal — full driver grid with lap times, gaps, tire data). Sprint 46 COMPLETE (Sports poll trust fix — all 3 tickets passed QA). Sprint 45 COMPLETE (F1 race card). Sprint 44 COMPLETE (Finance instrument filter overhaul). Sprint 43 COMPLETE. Sprints 38–42 COMPLETE (security/correctness hardening, 54 tickets). Sprints 12, 25–34 COMPLETE.
+**Current sprint:** 54
+**Status:** Sprint 54 QA COMPLETE (8/8) — Open Groups foundation: GroupVisibility enum + INVITE_ONLY/OPEN tiers, owner moderation routes (remove/ban/unban) with ban check on invite-code path, public discover route (OPEN-only), open-join route with ban+memberCap guards, Groups tab un-hidden with Browse + My Groups layout, full group profile + member management screens, visibility/category pickers in create flow. Pending dev-server restart + device smoke-test. Sprints 55–56 queued (request-to-join, discovery polish). Sprint 53 QA COMPLETE (6/6) — Create-tab fix bundle: draft persistence + schema version, strict resolveAt validation, dead StepResolution/ResolutionMode dropped, eligibility gate inlined on PUBLIC option (top HostEligibilityCard removed), duplicate MC options blocked, inline char-count hints. ~215 dead lines removed. Sprint 52 QA COMPLETE (4/4) — CombinedAnalystCard merge + See-all removal + tighter inter-card gap + Pulse pills redesign with question/crowd-%/urgency-tint. Sprint 51 COMPLETE (5/5). Sprint 50 COMPLETE (6/6 — Top 3 Analysts moved from Feed to Finance). Sprint 49 COMPLETE (9/9). Legal review on SEBI Research Analyst public naming still required before production deploy. Sprint 48 COMPLETE (F1 timing reliability — retry, cache downgrade, empty-state, client timeout). Sprint 47 COMPLETE (F1 detail modal — full driver grid with lap times, gaps, tire data). Sprint 46 COMPLETE (Sports poll trust fix — all 3 tickets passed QA). Sprint 45 COMPLETE (F1 race card). Sprint 44 COMPLETE (Finance instrument filter overhaul). Sprint 43 COMPLETE. Sprints 38–42 COMPLETE (security/correctness hardening, 54 tickets). Sprints 12, 25–34 COMPLETE.
 
 ---
 
@@ -706,3 +706,27 @@
 | S53-T4 | HIGH | ✅ done | Eligibility gate inline on PUBLIC option card; drop redundant top HostEligibilityCard |
 | S53-T5 | MED | ✅ done | Block duplicate MULTIPLE_CHOICE options in client validation |
 | S53-T6 | LOW | ✅ done | Inline character-count hints on title (>=12) and description (>=24) |
+
+---
+
+## Sprint 54
+
+**Theme:** Open Groups (Pillar B community structure) — 2-tier visibility (INVITE_ONLY + OPEN), discovery surface, owner moderation. Closes WS3 (viral loop), WS6 (Groups hidden), WS8 (engagement loops thin).
+**Status:** IN PROGRESS
+**Brief:** `.claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint54.md`
+
+| ID | Pri | Status | Title |
+|---|---|---|---|
+| S54-T1 | CRIT | ✅ done | Schema: GroupVisibility enum + category/memberCap/coverImageUrl + GroupMembership.bannedAt/banReason |
+| S54-T2 | CRIT | ✅ done | Moderation routes: remove-member + ban + unban (bannedAt tombstone) |
+| S54-T3 | CRIT | ✅ done | Discover route (OPEN-only paginated) + open-join route + replace leaky getDiscoverGroups stub |
+| S54-T4 | HIGH | ✅ done | createGroup updated: visibility (Open default) + category + coverImageUrl |
+| S54-T5 | HIGH | ✅ done | Group profile screen (cover + join-CTA state machine + description + recent markets + admin actions) |
+| S54-T6 | HIGH | ✅ done | Un-hide Groups tab + Browse + My Groups two-section layout |
+| S54-T7 | MED | ✅ done | Member management screen with kebab remove/ban for owner/admin |
+| S54-T8 | MED | ✅ done | Group create flow: visibility picker + category picker |
+
+**Sprint-level constraint:** T2 (moderation routes) MUST ship in the same release as T6 (un-hidden Groups tab). First discoverable group will attract abuse within 24 hours.
+
+**S55 queued:** REQUEST_TO_JOIN third visibility tier + approval inbox + push on approve/deny.
+**S56 queued:** Cover image upload, category landing pages, search by name, featured groups, per-group notification preferences (required before fan-out is safe at scale), GroupModerationAction audit table.

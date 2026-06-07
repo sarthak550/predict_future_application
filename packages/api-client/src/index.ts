@@ -15,8 +15,12 @@ import type {
   ApiFollowerEntry,
   ApiFollowStatus,
   ApiFootballMatchDetail,
+  ApiDiscoverGroupsResponse,
   ApiGroupDetail,
+  ApiGroupMember,
   ApiGroupSummary,
+  AppGroupVisibility,
+  AppMarketCategory as _AppMarketCategory,
   ApiHostEligibility,
   ApiHostStats,
   ApiLeaderboardResponse,
@@ -311,7 +315,16 @@ export function createApiClient(options: ApiClientOptions) {
         { auth: true }
       );
     },
-    createGroup(body: { name: string; description?: string }, query?: { userId?: string }) {
+    createGroup(
+      body: {
+        name: string;
+        description?: string;
+        visibility?: AppGroupVisibility;
+        category?: _AppMarketCategory | null;
+        coverImageUrl?: string | null;
+      },
+      query?: { userId?: string }
+    ) {
       return request<{ group: ApiGroupSummary }>(
         "/api/groups/create",
         query,
@@ -328,6 +341,49 @@ export function createApiClient(options: ApiClientOptions) {
       return request<{ group: ApiGroupSummary }>(
         "/api/groups/join",
         query,
+        { method: "POST", body: JSON.stringify(body), auth: true }
+      );
+    },
+    joinOpenGroup(groupId: string) {
+      return request<{ group: { id: string; name: string; slug: string } }>(
+        `/api/groups/${groupId}/join`,
+        undefined,
+        { method: "POST", auth: true }
+      );
+    },
+    discoverGroups(query?: {
+      category?: _AppMarketCategory;
+      sort?: "members" | "recent" | "new";
+      cursor?: string;
+      limit?: number;
+    }) {
+      return request<ApiDiscoverGroupsResponse>("/api/groups/discover", query);
+    },
+    getGroupMembers(groupId: string, query?: { cursor?: string; limit?: number }) {
+      return request<{ members: ApiGroupMember[]; nextCursor: string | null }>(
+        `/api/groups/${groupId}/members`,
+        query,
+        { auth: true }
+      );
+    },
+    removeGroupMember(groupId: string, userId: string) {
+      return request<void>(
+        `/api/groups/${groupId}/members/${userId}`,
+        undefined,
+        { method: "DELETE", auth: true }
+      );
+    },
+    banGroupMember(groupId: string, body: { userId: string; reason?: string }) {
+      return request<{ banned: boolean }>(
+        `/api/groups/${groupId}/ban`,
+        undefined,
+        { method: "POST", body: JSON.stringify(body), auth: true }
+      );
+    },
+    unbanGroupMember(groupId: string, body: { userId: string }) {
+      return request<{ banned: boolean }>(
+        `/api/groups/${groupId}/unban`,
+        undefined,
         { method: "POST", body: JSON.stringify(body), auth: true }
       );
     },

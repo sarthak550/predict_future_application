@@ -377,16 +377,78 @@ export type ApiHostStats = {
   } | null;
 };
 
+export type AppGroupVisibility = "INVITE_ONLY" | "OPEN";
+export type AppGroupRole = "OWNER" | "ADMIN" | "MEMBER";
+
 export type ApiGroupSummary = {
   id: string;
   name: string;
   slug?: string;
   inviteCode?: string;
   description?: string | null;
+  role?: AppGroupRole;
+  memberCount?: number;
+  marketCount?: number;
+  visibility?: AppGroupVisibility;
+  category?: AppMarketCategory | null;
+  coverImageUrl?: string | null;
+};
+
+export type ApiDiscoverGroup = {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  category: AppMarketCategory | null;
+  memberCount: number;
+  coverImageUrl: string | null;
+  ownerUsername: string;
+  recentMarketCount: number;
+};
+
+export type ApiDiscoverGroupsResponse = {
+  groups: ApiDiscoverGroup[];
+  nextCursor: string | null;
+};
+
+export type ApiGroupMember = {
+  id: string;
+  userId: string;
+  role: AppGroupRole;
+  joinedAt: string;
+  bannedAt: string | null;
+  user: {
+    id: string;
+    username: string;
+    avatarUrl?: string | null;
+  };
 };
 
 export type ApiGroupDetail = {
-  group: Record<string, unknown>;
+  group: {
+    id: string;
+    slug: string;
+    name: string;
+    description: string | null;
+    ownerId: string;
+    visibility: AppGroupVisibility;
+    category: AppMarketCategory | null;
+    memberCap: number;
+    coverImageUrl: string | null;
+    inviteCode?: string;
+    owner?: { username: string };
+    memberships?: ApiGroupMember[];
+    markets?: Array<{
+      id: string;
+      title: string;
+      status: string;
+      category: AppMarketCategory;
+      totalVolume?: number;
+      totalParticipants?: number;
+      closeAt?: string;
+      creator?: { username: string };
+    }>;
+  };
 };
 
 // --- Sports types ---

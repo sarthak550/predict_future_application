@@ -1,8 +1,9 @@
 import { useFocusEffect, useRouter } from "expo-router";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  FlatList,
   Pressable,
   RefreshControl,
   SafeAreaView,
@@ -15,19 +16,57 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 
 import { colors, radius, shadows, spacing } from "@predict-future/ui-tokens";
+import type { ApiDiscoverGroup, ApiGroupSummary, AppMarketCategory } from "@predict-future/types";
 
 import { mobileApi } from "@/lib/api";
 import { useSession } from "@/providers/session-provider";
 
-// ── Types ────────────────────────────────────────────────────────────
+// ── Category filter config ─────────────────────────────────────────────
 
-type MyGroup = {
-  id: string;
-  name: string;
-  description?: string | null;
-  memberCount?: number;
-  marketCount?: number;
+type CategoryOption = { label: string; value: AppMarketCategory | "ALL" };
+
+const CATEGORY_OPTIONS: CategoryOption[] = [
+  { label: "All", value: "ALL" },
+  { label: "Finance", value: "FINANCE" },
+  { label: "Sports", value: "SPORTS" },
+  { label: "Business", value: "BUSINESS" },
+  { label: "Tech", value: "TECH" },
+  { label: "Entertainment", value: "ENTERTAINMENT" },
+  { label: "General", value: "GENERAL" }
+];
+
+type SortOption = "members" | "recent" | "new";
+
+const SORT_OPTIONS: { label: string; value: SortOption }[] = [
+  { label: "Members", value: "members" },
+  { label: "Recent", value: "recent" },
+  { label: "New", value: "new" }
+];
+
+const CATEGORY_COLORS: Record<string, string> = {
+  FINANCE: "#1D4ED8",
+  SPORTS: "#15803D",
+  BUSINESS: "#7C3AED",
+  TECH: "#0891B2",
+  ENTERTAINMENT: "#DB2777",
+  WEATHER: "#D97706",
+  GENERAL: "#4B5563",
+  PRODUCT: "#9333EA",
+  COMPANY: "#059669"
 };
+
+function categoryColor(cat?: string | null): string {
+  return CATEGORY_COLORS[cat ?? ""] ?? "#4B5563";
+}
+
+function categoryLabel(cat?: string | null): string {
+  if (!cat) return "";
+  return cat.charAt(0) + cat.slice(1).toLowerCase();
+}
+
+// ── Types ─────────────────────────────────────────────────────────────
+
+type MyGroup = ApiGroupSummary & { memberCount?: number; marketCount?: number };
 
 // ── Screen ────────────────────────────────────────────────────────────
 
@@ -35,43 +74,130 @@ export default function GroupsScreen() {
   const { session, status: sessionStatus } = useSession();
   const router = useRouter();
 
+  // Browse state
+  const [browseGroups, setBrowseGroups] = useState<ApiDiscoverGroup[]>([]);
+  const [browseLoading, setBrowseLoading] = useState(false);
+  const [browseLoadingMore, setBrowseLoadingMore] = useState(false);
+  const [browseCursor, setBrowseCursor] = useState<string | null>(null);
+  const [browseCategory, setBrowseCategory] = useState<AppMarketCategory | "ALL">("ALL");
+  const [browseSort, setBrowseSort] = useState<SortOption>("members");
+  const [browseError, setBrowseError] = useState<string | null>(null);
+
+  // My groups state
   const [myGroups, setMyGroups] = useState<MyGroup[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [myGroupsLoading, setMyGroupsLoading] = useState(false);
 
   // Join by code state
   const [codeInput, setCodeInput] = useState("");
   const [joiningByCode, setJoiningByCode] = useState(false);
 
-  const loadData = useCallback(
-    async (isRefresh = false) => {
-      if (!session) return;
-      if (isRefresh) {
-        setRefreshing(true);
-      } else {
-        setLoading(true);
+  // General refresh
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Track which group ids the user just joined (for optimistic UI)
+  const [joinedIds, setJoinedIds] = useState<Set<string>>(new Set());
+
+  // ── Data loaders ───────────────────────────────────────────────────
+
+  const loadBrowse = useCallback(
+    async (reset = false) => {
+      if (reset) {
+        setBrowseLoading(true);
+        setBrowseCursor(null);
       }
-      setError(null);
+      setBrowseError(null);
       try {
-        const myRes = await mobileApi.getMyGroups();
-        setMyGroups(myRes.groups ?? []);
+        const res = await mobileApi.discoverGroups({
+          ...(browseCategory !== "ALL" ? { category: browseCategory } : {}),
+          sort: browseSort,
+          limit: 20
+        });
+        if (reset) {
+          setBrowseGroups(res.groups);
+        } else {
+          setBrowseGroups((prev) => [...prev, ...res.groups]);
+        }
+        setBrowseCursor(res.nextCursor);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load groups.");
+        setBrowseError(
+          err instanceof Error ? err.message : "Failed to load groups."
+        );
       } finally {
-        setLoading(false);
-        setRefreshing(false);
+        setBrowseLoading(false);
+        setBrowseLoadingMore(false);
       }
     },
-    [session]
+    [browseCategory, browseSort]
   );
 
-  // Reload when tab gains focus
+  const loadMyGroups = useCallback(async () => {
+    if (!session) return;
+    setMyGroupsLoading(true);
+    try {
+      const res = await mobileApi.getMyGroups();
+      setMyGroups(res.groups ?? []);
+    } catch {
+      // Silent — my groups is secondary UI
+    } finally {
+      setMyGroupsLoading(false);
+    }
+  }, [session]);
+
+  // Reload browse whenever filter/sort changes
+  useEffect(() => {
+    void loadBrowse(true);
+  }, [loadBrowse]);
+
+  // Reload my groups when tab gains focus
   useFocusEffect(
     useCallback(() => {
-      void loadData(false);
-    }, [loadData])
+      void loadMyGroups();
+    }, [loadMyGroups])
   );
+
+  async function handleRefresh() {
+    setRefreshing(true);
+    await Promise.all([loadBrowse(true), loadMyGroups()]);
+    setRefreshing(false);
+  }
+
+  async function handleLoadMore() {
+    if (!browseCursor || browseLoadingMore) return;
+    setBrowseLoadingMore(true);
+    try {
+      const res = await mobileApi.discoverGroups({
+        ...(browseCategory !== "ALL" ? { category: browseCategory } : {}),
+        sort: browseSort,
+        cursor: browseCursor,
+        limit: 20
+      });
+      setBrowseGroups((prev) => [...prev, ...res.groups]);
+      setBrowseCursor(res.nextCursor);
+    } catch {
+      // Silently fail load-more
+    } finally {
+      setBrowseLoadingMore(false);
+    }
+  }
+
+  // ── Join handlers ──────────────────────────────────────────────────
+
+  async function handleJoinOpen(group: ApiDiscoverGroup) {
+    if (!session) {
+      router.push("/(auth)/sign-in");
+      return;
+    }
+    try {
+      await mobileApi.joinOpenGroup(group.id);
+      setJoinedIds((prev) => new Set([...prev, group.id]));
+      void loadMyGroups();
+    } catch (err: unknown) {
+      Alert.alert(
+        "Could not join",
+        err instanceof Error ? err.message : "Something went wrong."
+      );
+    }
+  }
 
   async function handleJoinByCode() {
     const code = codeInput.trim().toUpperCase();
@@ -83,7 +209,7 @@ export default function GroupsScreen() {
     try {
       const res = await mobileApi.joinGroup({ inviteCode: code });
       setCodeInput("");
-      await loadData(true);
+      void loadMyGroups();
       router.push(`/group/${res.group.id}`);
     } catch (err) {
       Alert.alert(
@@ -95,6 +221,8 @@ export default function GroupsScreen() {
     }
   }
 
+  // ── Auth gate ──────────────────────────────────────────────────────
+
   if (sessionStatus === "loading") {
     return (
       <SafeAreaView style={styles.screen}>
@@ -105,13 +233,7 @@ export default function GroupsScreen() {
     );
   }
 
-  if (!session) {
-    return (
-      <SafeAreaView style={styles.screen}>
-        <UnauthenticatedState onSignIn={() => router.push("/(auth)/sign-in")} />
-      </SafeAreaView>
-    );
-  }
+  // ── Render ─────────────────────────────────────────────────────────
 
   return (
     <SafeAreaView style={styles.screen}>
@@ -121,13 +243,13 @@ export default function GroupsScreen() {
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
-            onRefresh={() => loadData(true)}
+            onRefresh={handleRefresh}
             tintColor={colors.accent}
           />
         }
         showsVerticalScrollIndicator={false}
       >
-        {/* Header */}
+        {/* Screen header */}
         <View style={styles.headerRow}>
           <Text style={styles.screenTitle}>Groups</Text>
           <Pressable
@@ -139,57 +261,272 @@ export default function GroupsScreen() {
           </Pressable>
         </View>
 
-        {/* Join by invite code */}
-        <JoinByCodeSection
-          value={codeInput}
-          onChange={setCodeInput}
-          onJoin={handleJoinByCode}
-          loading={joiningByCode}
-        />
+        {/* ── Browse Section ──────────────────────────────────────── */}
+        <View style={styles.sectionBlock}>
+          <Text style={styles.sectionTitle}>Browse Groups</Text>
 
-        {/* Error state */}
-        {error ? (
-          <View style={styles.errorCard}>
-            <Text style={styles.errorText}>{error}</Text>
-            <Pressable onPress={() => loadData(false)} style={styles.retryBtn}>
-              <Text style={styles.retryLabel}>Retry</Text>
-            </Pressable>
+          {/* Category filter chips */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.filterScroll}
+            contentContainerStyle={styles.filterScrollContent}
+          >
+            {CATEGORY_OPTIONS.map((opt) => (
+              <Pressable
+                key={opt.value}
+                style={[
+                  styles.filterChip,
+                  browseCategory === opt.value && styles.filterChipActive
+                ]}
+                onPress={() => setBrowseCategory(opt.value)}
+              >
+                <Text
+                  style={[
+                    styles.filterChipText,
+                    browseCategory === opt.value && styles.filterChipTextActive
+                  ]}
+                >
+                  {opt.label}
+                </Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+
+          {/* Sort selector */}
+          <View style={styles.sortRow}>
+            {SORT_OPTIONS.map((opt) => (
+              <Pressable
+                key={opt.value}
+                style={[
+                  styles.sortBtn,
+                  browseSort === opt.value && styles.sortBtnActive
+                ]}
+                onPress={() => setBrowseSort(opt.value)}
+              >
+                <Text
+                  style={[
+                    styles.sortBtnText,
+                    browseSort === opt.value && styles.sortBtnTextActive
+                  ]}
+                >
+                  {opt.label}
+                </Text>
+              </Pressable>
+            ))}
           </View>
-        ) : null}
 
-        {/* Loading state (initial load only) */}
-        {loading ? (
-          <View style={styles.centerState}>
-            <ActivityIndicator color={colors.accent} size="large" />
+          {/* Browse list */}
+          {browseLoading ? (
+            <View style={styles.loaderBox}>
+              <ActivityIndicator color={colors.accent} />
+            </View>
+          ) : browseError ? (
+            <View style={styles.errorCard}>
+              <Text style={styles.errorText}>{browseError}</Text>
+              <Pressable onPress={() => loadBrowse(true)} style={styles.retryBtn}>
+                <Text style={styles.retryLabel}>Retry</Text>
+              </Pressable>
+            </View>
+          ) : browseGroups.length === 0 ? (
+            <View style={styles.emptyCard}>
+              <Ionicons name="people-circle-outline" size={32} color={colors.textMuted} />
+              <Text style={styles.emptyTitle}>
+                No groups in{" "}
+                {browseCategory === "ALL" ? "any category" : categoryLabel(browseCategory)} yet
+              </Text>
+              <Text style={styles.emptySubtitle}>
+                Create one!
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.groupList}>
+              {browseGroups.map((group) => (
+                <DiscoverGroupCard
+                  key={group.id}
+                  group={group}
+                  isJoined={joinedIds.has(group.id)}
+                  isLoggedIn={Boolean(session)}
+                  onJoin={() => handleJoinOpen(group)}
+                  onNavigate={() => router.push(`/group/${group.id}`)}
+                />
+              ))}
+              {browseCursor ? (
+                <Pressable
+                  style={styles.loadMoreBtn}
+                  onPress={handleLoadMore}
+                  disabled={browseLoadingMore}
+                >
+                  {browseLoadingMore ? (
+                    <ActivityIndicator color={colors.accent} size="small" />
+                  ) : (
+                    <Text style={styles.loadMoreText}>Load more</Text>
+                  )}
+                </Pressable>
+              ) : null}
+            </View>
+          )}
+        </View>
+
+        {/* ── My Groups Section ───────────────────────────────────── */}
+        {session ? (
+          <View style={styles.sectionBlock}>
+            <Text style={styles.sectionTitle}>My Groups</Text>
+
+            {/* Join by invite code */}
+            <JoinByCodeSection
+              value={codeInput}
+              onChange={setCodeInput}
+              onJoin={handleJoinByCode}
+              loading={joiningByCode}
+            />
+
+            {myGroupsLoading ? (
+              <View style={styles.loaderBox}>
+                <ActivityIndicator color={colors.accent} size="small" />
+              </View>
+            ) : myGroups.length === 0 ? (
+              <View style={styles.emptyCard}>
+                <Ionicons name="people-circle-outline" size={28} color={colors.textMuted} />
+                <Text style={styles.emptyTitle}>Not in any groups yet</Text>
+                <Text style={styles.emptySubtitle}>
+                  Join an open group above or enter an invite code.
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.listCard}>
+                {myGroups.map((group, index) => (
+                  <Pressable
+                    key={group.id}
+                    style={[styles.groupRow, index > 0 && styles.groupRowBorder]}
+                    onPress={() => router.push(`/group/${group.id}`)}
+                  >
+                    <View style={styles.groupRowLeft}>
+                      <Text style={styles.groupName} numberOfLines={1}>
+                        {group.name}
+                      </Text>
+                      <View style={styles.groupMeta}>
+                        {group.category ? (
+                          <Text style={[styles.groupMetaText, { color: categoryColor(group.category) }]}>
+                            {categoryLabel(group.category)}
+                          </Text>
+                        ) : null}
+                        {group.category ? <Text style={styles.groupMetaSep}>·</Text> : null}
+                        <Text style={styles.groupMetaText}>
+                          {group.memberCount ?? 0} members
+                        </Text>
+                        <Text style={styles.groupMetaSep}>·</Text>
+                        <Text style={styles.groupMetaText}>
+                          {group.marketCount ?? 0} markets
+                        </Text>
+                      </View>
+                    </View>
+                    <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+                  </Pressable>
+                ))}
+              </View>
+            )}
           </View>
         ) : (
-          <>
-            {/* My Groups */}
-            <MyGroupsSection
-              groups={myGroups}
-              onNavigate={(id) => router.push(`/group/${id}`)}
-            />
-          </>
+          <View style={styles.sectionBlock}>
+            <UnauthenticatedState onSignIn={() => router.push("/(auth)/sign-in")} />
+          </View>
         )}
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-// ── Unauthenticated State ─────────────────────────────────────────────
+// ── Discover Group Card ───────────────────────────────────────────────
 
-function UnauthenticatedState({ onSignIn }: { onSignIn: () => void }) {
+function DiscoverGroupCard({
+  group,
+  isJoined,
+  isLoggedIn,
+  onJoin,
+  onNavigate
+}: {
+  group: ApiDiscoverGroup;
+  isJoined: boolean;
+  isLoggedIn: boolean;
+  onJoin: () => void;
+  onNavigate: () => void;
+}) {
+  const [joining, setJoining] = useState(false);
+
+  async function handleJoin() {
+    setJoining(true);
+    try {
+      await onJoin();
+    } finally {
+      setJoining(false);
+    }
+  }
+
   return (
-    <View style={styles.centerState}>
-      <Ionicons name="people-outline" size={48} color={colors.textMuted} />
-      <Text style={styles.unauthTitle}>Sign in to join groups</Text>
-      <Text style={styles.unauthSubtitle}>
-        Groups let you predict with friends and compete on private leaderboards.
-      </Text>
-      <Pressable style={styles.signInBtn} onPress={onSignIn}>
-        <Text style={styles.signInBtnText}>Sign In</Text>
-      </Pressable>
-    </View>
+    <Pressable style={styles.discoverCard} onPress={onNavigate}>
+      {/* Cover thumb */}
+      <View
+        style={[styles.discoverThumb, { backgroundColor: categoryColor(group.category) }]}
+      >
+        <Text style={styles.discoverThumbLetter}>
+          {group.name.charAt(0).toUpperCase()}
+        </Text>
+      </View>
+
+      {/* Info */}
+      <View style={styles.discoverInfo}>
+        <Text style={styles.discoverName} numberOfLines={1}>
+          {group.name}
+        </Text>
+        <View style={styles.discoverMeta}>
+          {group.category ? (
+            <Text
+              style={[
+                styles.discoverCategory,
+                { color: categoryColor(group.category) }
+              ]}
+            >
+              {categoryLabel(group.category)}
+            </Text>
+          ) : null}
+          <Text style={styles.discoverMetaText}>{group.memberCount} members</Text>
+          {group.recentMarketCount > 0 ? (
+            <Text style={styles.discoverMetaText}>
+              {group.recentMarketCount} active markets
+            </Text>
+          ) : null}
+        </View>
+        {group.description ? (
+          <Text style={styles.discoverDesc} numberOfLines={1}>
+            {group.description}
+          </Text>
+        ) : null}
+      </View>
+
+      {/* Join button */}
+      {isJoined ? (
+        <View style={[styles.joinBtn, styles.joinBtnJoined]}>
+          <Ionicons name="checkmark" size={13} color="#15803D" />
+          <Text style={styles.joinBtnJoinedText}>Joined</Text>
+        </View>
+      ) : (
+        <Pressable
+          style={[styles.joinBtn, joining && styles.joinBtnDisabled]}
+          onPress={(e) => {
+            e.stopPropagation?.();
+            void handleJoin();
+          }}
+          disabled={joining}
+        >
+          {joining ? (
+            <ActivityIndicator color={colors.accent} size="small" />
+          ) : (
+            <Text style={styles.joinBtnText}>Join</Text>
+          )}
+        </Pressable>
+      )}
+    </Pressable>
   );
 }
 
@@ -199,7 +536,7 @@ function JoinByCodeSection({
   value,
   onChange,
   onJoin,
-  loading,
+  loading
 }: {
   value: string;
   onChange: (text: string) => void;
@@ -238,64 +575,19 @@ function JoinByCodeSection({
   );
 }
 
-// ── My Groups Section ─────────────────────────────────────────────────
+// ── Unauthenticated State ─────────────────────────────────────────────
 
-function MyGroupsSection({
-  groups,
-  onNavigate,
-}: {
-  groups: MyGroup[];
-  onNavigate: (id: string) => void;
-}) {
+function UnauthenticatedState({ onSignIn }: { onSignIn: () => void }) {
   return (
-    <View style={styles.section}>
-      <View style={styles.sectionHeaderRow}>
-        <Text style={styles.sectionTitle}>My Groups</Text>
-        {groups.length > 0 && (
-          <View style={styles.countBadge}>
-            <Text style={styles.countBadgeText}>{groups.length}</Text>
-          </View>
-        )}
-      </View>
-
-      {groups.length === 0 ? (
-        <View style={styles.emptyCard}>
-          <Ionicons name="people-circle-outline" size={32} color={colors.textMuted} />
-          <Text style={styles.emptyTitle}>No groups yet</Text>
-          <Text style={styles.emptySubtitle}>
-            Create a group or join one below using an invite code.
-          </Text>
-        </View>
-      ) : (
-        <View style={styles.listCard}>
-          {groups.map((group, index) => (
-            <Pressable
-              key={group.id}
-              style={[
-                styles.groupRow,
-                index > 0 && styles.groupRowBorder,
-              ]}
-              onPress={() => onNavigate(group.id)}
-            >
-              <View style={styles.groupRowLeft}>
-                <Text style={styles.groupName} numberOfLines={1}>
-                  {group.name}
-                </Text>
-                <View style={styles.groupMeta}>
-                  <Text style={styles.groupMetaText}>
-                    {group.memberCount ?? 0} members
-                  </Text>
-                  <Text style={styles.groupMetaSep}>·</Text>
-                  <Text style={styles.groupMetaText}>
-                    {group.marketCount ?? 0} markets
-                  </Text>
-                </View>
-              </View>
-              <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
-            </Pressable>
-          ))}
-        </View>
-      )}
+    <View style={styles.emptyCard}>
+      <Ionicons name="people-outline" size={40} color={colors.textMuted} />
+      <Text style={styles.emptyTitle}>Sign in to join groups</Text>
+      <Text style={styles.emptySubtitle}>
+        Groups let you predict with friends and compete on private leaderboards.
+      </Text>
+      <Pressable style={styles.signInBtn} onPress={onSignIn}>
+        <Text style={styles.signInBtnText}>Sign In</Text>
+      </Pressable>
     </View>
   );
 }
@@ -305,21 +597,19 @@ function MyGroupsSection({
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: colors.background
   },
-  scroll: {
-    flex: 1,
-  },
+  scroll: { flex: 1 },
   content: {
     padding: spacing.lg,
-    paddingBottom: 100,
+    paddingBottom: 100
   },
   centerState: {
     flex: 1,
     paddingTop: 80,
     alignItems: "center",
     justifyContent: "center",
-    gap: spacing.md,
+    gap: spacing.md
   },
 
   // Header
@@ -327,13 +617,13 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: spacing.lg,
+    marginBottom: spacing.lg
   },
   screenTitle: {
     fontSize: 28,
     fontWeight: "800",
     color: colors.text,
-    letterSpacing: -0.5,
+    letterSpacing: -0.5
   },
   createBtn: {
     flexDirection: "row",
@@ -342,21 +632,221 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     borderRadius: radius.md,
-    backgroundColor: colors.accent,
+    backgroundColor: colors.accent
   },
   createBtnText: {
     fontSize: 13,
     fontWeight: "700",
-    color: colors.surface,
+    color: colors.surface
   },
 
-  // Join by code card
+  // Section block
+  sectionBlock: {
+    marginBottom: spacing.xl
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: colors.text,
+    marginBottom: spacing.md
+  },
+
+  // Category filter
+  filterScroll: {
+    marginBottom: spacing.md
+  },
+  filterScrollContent: {
+    gap: spacing.sm,
+    paddingRight: spacing.md
+  },
+  filterChip: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    backgroundColor: colors.surface
+  },
+  filterChipActive: {
+    borderColor: colors.accent,
+    backgroundColor: colors.accent + "15"
+  },
+  filterChipText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: colors.textMuted
+  },
+  filterChipTextActive: {
+    color: colors.accent
+  },
+
+  // Sort
+  sortRow: {
+    flexDirection: "row",
+    gap: spacing.xs,
+    marginBottom: spacing.md
+  },
+  sortBtn: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    borderRadius: radius.sm,
+    backgroundColor: "#F1F5F9"
+  },
+  sortBtnActive: {
+    backgroundColor: colors.accent
+  },
+  sortBtnText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: colors.textMuted
+  },
+  sortBtnTextActive: {
+    color: colors.surface
+  },
+
+  // Browse group list
+  groupList: {
+    gap: spacing.sm
+  },
+
+  // Discover card
+  discoverCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    ...shadows.card
+  },
+  discoverThumb: {
+    width: 44,
+    height: 44,
+    borderRadius: radius.md,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  discoverThumbLetter: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "rgba(255,255,255,0.9)"
+  },
+  discoverInfo: {
+    flex: 1,
+    gap: 3
+  },
+  discoverName: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: colors.text
+  },
+  discoverMeta: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.xs,
+    alignItems: "center"
+  },
+  discoverCategory: {
+    fontSize: 11,
+    fontWeight: "700"
+  },
+  discoverMetaText: {
+    fontSize: 11,
+    color: colors.textMuted
+  },
+  discoverDesc: {
+    fontSize: 12,
+    color: colors.textMuted,
+    lineHeight: 16
+  },
+  joinBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    borderColor: colors.accent
+  },
+  joinBtnJoined: {
+    borderColor: "#15803D",
+    backgroundColor: "#DCFCE7"
+  },
+  joinBtnText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: colors.accent
+  },
+  joinBtnJoinedText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#15803D"
+  },
+  joinBtnDisabled: {
+    opacity: 0.5
+  },
+
+  // Load more
+  loadMoreBtn: {
+    alignItems: "center",
+    paddingVertical: spacing.md
+  },
+  loadMoreText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: colors.accent
+  },
+
+  // My groups list
+  listCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    overflow: "hidden",
+    ...shadows.card
+  },
+  groupRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.lg,
+    gap: spacing.sm
+  },
+  groupRowBorder: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border
+  },
+  groupRowLeft: {
+    flex: 1,
+    gap: 3
+  },
+  groupName: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: colors.text
+  },
+  groupMeta: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    marginTop: 2
+  },
+  groupMetaText: {
+    fontSize: 12,
+    color: colors.textMuted
+  },
+  groupMetaSep: {
+    fontSize: 12,
+    color: colors.border
+  },
+
+  // Join by code
   joinCodeCard: {
     backgroundColor: colors.surface,
     borderRadius: radius.lg,
     padding: spacing.xl,
-    marginBottom: spacing.lg,
-    ...shadows.card,
+    marginBottom: spacing.md,
+    ...shadows.card
   },
   sectionLabel: {
     fontSize: 12,
@@ -364,11 +854,11 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     textTransform: "uppercase",
     letterSpacing: 0.8,
-    marginBottom: spacing.sm,
+    marginBottom: spacing.sm
   },
   joinCodeRow: {
     flexDirection: "row",
-    gap: spacing.sm,
+    gap: spacing.sm
   },
   joinCodeInput: {
     flex: 1,
@@ -381,7 +871,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "700",
     color: colors.text,
-    letterSpacing: 1,
+    letterSpacing: 1
   },
   joinCodeBtn: {
     width: 72,
@@ -389,120 +879,45 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     backgroundColor: colors.accent,
     alignItems: "center",
-    justifyContent: "center",
+    justifyContent: "center"
   },
   joinCodeBtnText: {
     fontSize: 14,
     fontWeight: "700",
-    color: colors.surface,
+    color: colors.surface
   },
 
-  // Section
-  section: {
-    marginBottom: spacing.xl,
-  },
-  sectionHeaderRow: {
-    flexDirection: "row",
+  // Loader
+  loaderBox: {
     alignItems: "center",
-    gap: spacing.sm,
-    marginBottom: spacing.md,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: colors.text,
-    flex: 1,
-  },
-  countBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 10,
-    backgroundColor: "#EEF2FF",
-  },
-  countBadgeText: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: colors.accent,
+    paddingVertical: spacing.xl
   },
 
-  // List card
-  listCard: {
-    backgroundColor: colors.surface,
+  // Error card
+  errorCard: {
+    backgroundColor: "#FEF2F2",
     borderRadius: radius.lg,
-    overflow: "hidden",
-    ...shadows.card,
+    padding: spacing.xl,
+    borderWidth: 1,
+    borderColor: "#FECACA"
   },
-
-  // Group row (My Groups)
-  groupRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.lg,
-    gap: spacing.sm,
+  errorText: {
+    fontSize: 14,
+    color: "#DC2626",
+    lineHeight: 20
   },
-  groupRowBorder: {
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
-  },
-  groupRowLeft: {
-    flex: 1,
-    gap: 3,
-  },
-  groupName: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: colors.text,
-  },
-  groupDescription: {
-    fontSize: 13,
-    color: colors.textMuted,
-    lineHeight: 18,
-    marginTop: 2,
-  },
-  groupMeta: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xs,
-    marginTop: 3,
-  },
-  groupMetaText: {
-    fontSize: 12,
-    color: colors.textMuted,
-  },
-  groupMetaSep: {
-    fontSize: 12,
-    color: colors.border,
-  },
-
-  // Discover row
-  discoverRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.lg,
-    gap: spacing.md,
-  },
-  discoverRowLeft: {
-    flex: 1,
-    gap: 3,
-  },
-
-  // Join button (discover)
-  joinBtn: {
-    paddingHorizontal: spacing.md,
+  retryBtn: {
+    marginTop: spacing.md,
+    alignSelf: "flex-start",
+    paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
     borderRadius: radius.md,
-    borderWidth: 1.5,
-    borderColor: colors.accent,
-    minWidth: 58,
-    alignItems: "center",
-    justifyContent: "center",
+    backgroundColor: colors.accent
   },
-  joinBtnText: {
+  retryLabel: {
     fontSize: 13,
     fontWeight: "700",
-    color: colors.accent,
+    color: colors.surface
   },
 
   // Empty state card
@@ -512,78 +927,38 @@ const styles = StyleSheet.create({
     padding: spacing.xl,
     alignItems: "center",
     gap: spacing.sm,
-    ...shadows.card,
+    ...shadows.card
   },
   emptyTitle: {
     fontSize: 16,
     fontWeight: "700",
     color: colors.text,
-    marginTop: spacing.xs,
+    textAlign: "center",
+    marginTop: spacing.xs
   },
   emptySubtitle: {
     fontSize: 14,
     color: colors.textMuted,
     textAlign: "center",
-    lineHeight: 20,
-  },
-
-  // Error card
-  errorCard: {
-    backgroundColor: "#FEF2F2",
-    borderRadius: radius.lg,
-    padding: spacing.xl,
-    marginBottom: spacing.lg,
-    borderWidth: 1,
-    borderColor: "#FECACA",
-  },
-  errorText: {
-    fontSize: 14,
-    color: "#DC2626",
-    lineHeight: 20,
-  },
-  retryBtn: {
-    marginTop: spacing.md,
-    alignSelf: "flex-start",
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.md,
-    backgroundColor: colors.accent,
-  },
-  retryLabel: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: colors.surface,
-  },
-
-  // Disabled state
-  btnDisabled: {
-    opacity: 0.5,
+    lineHeight: 20
   },
 
   // Unauthenticated
-  unauthTitle: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: colors.text,
-    textAlign: "center",
-  },
-  unauthSubtitle: {
-    fontSize: 14,
-    color: colors.textMuted,
-    textAlign: "center",
-    lineHeight: 20,
-    paddingHorizontal: spacing.xl,
-  },
   signInBtn: {
     marginTop: spacing.sm,
     paddingHorizontal: spacing.xl,
     paddingVertical: spacing.md,
     borderRadius: radius.md,
-    backgroundColor: colors.accent,
+    backgroundColor: colors.accent
   },
   signInBtnText: {
     fontSize: 15,
     fontWeight: "700",
-    color: colors.surface,
+    color: colors.surface
   },
+
+  // Misc
+  btnDisabled: {
+    opacity: 0.5
+  }
 });

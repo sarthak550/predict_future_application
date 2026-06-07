@@ -95,10 +95,18 @@ export default function TabsLayout() {
             tabBarBadge: profileBadge,
           }}
         />
+        <Tabs.Screen
+          name="groups"
+          options={{
+            title: "Groups",
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="people-outline" size={size} color={color} />
+            )
+          }}
+        />
         <Tabs.Screen name="sports" options={{ href: null }} />
         <Tabs.Screen name="leaderboard" options={{ href: null }} />
         <Tabs.Screen name="notifications" options={{ href: null }} />
-        <Tabs.Screen name="groups" options={{ href: null }} />
       </Tabs>
     </>
   );

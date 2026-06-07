@@ -33,3 +33,4 @@
 - [project_sprint49.md](project_sprint49.md) — S49 Bundle A: ApiTopExpertEntry type, GET /api/experts/top-weekly (query-time groupBy + new index), AnalystCredibilityBadge mobile component
 - [project_sprint50.md](project_sprint50.md) — S50: BigCallCard removed from Feed, TopAnalystsSheet deleted, new TopAnalystsCard in Finance tab below BigCallHeroCard — semantic correction of S49
 - [project_sprint51.md](project_sprint51.md) — S51 Finance density: TopAnalystsCard compact (~120px), PulseRibbon collapsible default-collapsed (~44px), WeekToggleCard compact strip default (~50px)
+- [project_sprint54.md](project_sprint54.md) — S54 Open Groups: GroupVisibility enum, discover route, ban tombstone, group profile, tab un-hide, member management, create form pickers — all 8 tickets COMPLETE
