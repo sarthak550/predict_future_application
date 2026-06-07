@@ -1401,6 +1401,27 @@ export type ApiInstrumentCatalogItem = {
   isPopular: boolean;
 };
 
+// ─── Expert Top Weekly (S49-T1) ──────────────────────────────────────────────
+
+/**
+ * One entry in the top-weekly experts ranking returned by
+ * GET /api/experts/top-weekly.
+ *
+ * Ranked descending by hitRate over a rolling 7-day window.
+ * Only experts with totalResolved >= 3 qualify.
+ * isSourceAttribution=true opinions are excluded (named analysts only).
+ */
+export type ApiTopExpertEntry = {
+  rank: number;
+  expertId: string;
+  expertName: string;
+  organization: string;
+  /** Hit rate as a fraction 0.0–1.0, e.g. 0.87 = 87%. */
+  hitRate: number;
+  resolvedCount: number;
+  hitCount: number;
+};
+
 // ─── F1 Session Detail (S47-T1) ──────────────────────────────────────────────
 
 export type ApiF1TireCompound = "HARD" | "MEDIUM" | "SOFT" | "INTERMEDIATE" | "WET";

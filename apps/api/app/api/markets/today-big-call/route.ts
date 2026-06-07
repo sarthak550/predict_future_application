@@ -10,6 +10,8 @@ import { getIstDateString } from "@/lib/quests/engine";
  * No auth required — public endpoint.
  * Cache-Control: public, max-age=60 (1-minute cache for CDN/client).
  */
+// NOTE (S50): Feed tab no longer calls this endpoint. Retained for future editorial
+// surfaces and push cron. Do not deprecate without CEO sign-off.
 export async function GET() {
   const dateStr = getIstDateString();
   const [yyyy, mm, dd] = dateStr.split("-").map(Number) as [number, number, number];

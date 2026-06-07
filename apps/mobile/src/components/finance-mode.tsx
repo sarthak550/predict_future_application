@@ -26,6 +26,7 @@ import type {
   ApiMarketSummary,
   ApiMyCallsDigest,
   ApiNewsFeedItem,
+  ApiTopExpertEntry,
   ApiUserProfile,
   ApiVerifiedCall,
 } from "@predict-future/types";
@@ -35,6 +36,8 @@ import { formatRelativeTime, freshnessColor } from "@predict-future/utils";
 import { ApiClientError } from "@predict-future/api-client";
 
 import { ExpertOpinionCard } from "@/components/expert-opinion-card";
+import { TopAnalystsCard } from "@/components/top-analysts-card";
+import { CombinedAnalystCard } from "@/components/combined-analyst-card";
 import { mobileApi } from "@/lib/api";
 import { getExpertInitials, getExpertInitialsColor } from "@/utils/expertAvatar";
 import { AnalystTierBadge } from "@/components/analyst-tier-badge";
@@ -615,19 +618,40 @@ type PulsePill = {
   enabled: boolean;
 };
 
-// ─── Today's Pulse ribbon — RBI / Sentiment / Policy Calendar pills ─────────
-// Restored after user pushback that the previous "Live Pulse Tape" lost the
-// named entries to RBI policies + Union Budget + policy calendar.
+// ─── Today's Pulse ribbon — Next Event + Policy Calendar stacked pills ───────
+// S52: Redesigned from horizontal scroll of single-line pills to vertical
+// stacked 2-3 line pill cards that surface crowd consensus data already fetched.
 function PulseRibbon({
   flagshipEvents,
-  clustersCount,
+  clusters,
   onPress,
 }: {
   flagshipEvents: ApiFlagshipEvent[];
-  clustersCount: number;
+  clusters: { name: string }[];
   onPress: (kind: PulseKind) => void;
 }) {
+  const router = useRouter();
+
+  // S51-T2: Collapsed by default; state persisted per-device (no userId in scope).
+  const [collapsed, setCollapsed] = useState(true);
+
+  useEffect(() => {
+    void AsyncStorage.getItem("finance_section_collapsed_pulse").then((v) => {
+      // null = first launch → stay collapsed (default true)
+      // "true" → collapsed, "false" → expanded
+      if (v === "false") setCollapsed(false);
+    });
+  }, []);
+
+  const toggleCollapsed = useCallback(() => {
+    const next = !collapsed;
+    setCollapsed(next);
+    void AsyncStorage.setItem("finance_section_collapsed_pulse", String(next));
+  }, [collapsed]);
+
   const nextEvent = flagshipEvents[0];
+  const clustersCount = clusters.length;
+
   const cdLabel = nextEvent
     ? (() => {
         const ms = new Date(nextEvent.flagshipEventAt ?? Date.now()).getTime() - Date.now();
@@ -638,6 +662,11 @@ function PulseRibbon({
       })()
     : "";
 
+  // Visibility logic: Pill A needs a nextEvent, Pill B needs clustersCount > 0
+  const showEventPill = nextEvent != null;
+  const showCalendarPill = clustersCount > 0;
+
+  // Keep the pill label array for collapsed-state preview text (S51-T4 compat)
   const pills: PulsePill[] = [
     {
       kind: "events",
@@ -647,46 +676,145 @@ function PulseRibbon({
         ? `${nextEvent.flagshipEventType ?? "Event"} ${cdLabel}`
         : flagshipEvents.length > 0
           ? `${flagshipEvents.length} upcoming`
-          : "Create one",
+          : "",
       enabled: true,
     },
     {
       kind: "calendar",
       icon: "💼",
       label: "Policy calendar",
-      value: clustersCount > 0 ? `${clustersCount} this week` : "Quiet week",
+      value: clustersCount > 0 ? `${clustersCount} this week` : "",
       enabled: clustersCount > 0,
     },
   ];
 
-  const visiblePills = pills.filter((p) => p.value.length > 0);
+  const visiblePills = pills.filter((p) => showEventPill && p.kind === "events" || showCalendarPill && p.kind === "calendar");
   if (visiblePills.length === 0) return null;
 
+  // Collapsed-state preview: first 2 visible pill labels joined by ·
+  const previewText = visiblePills
+    .slice(0, 2)
+    .map((p) => p.label)
+    .join(" · ");
+
+  const a11yLabel = collapsed
+    ? `Today's Pulse: ${previewText}. Tap to expand.`
+    : "Today's Pulse, expanded. Tap to collapse.";
+
+  // Pill A urgency tint
+  const eventPillBg =
+    cdLabel === "today" ? "#fef2f2" :
+    cdLabel === "tomorrow" ? "#fffbeb" :
+    "#f8fafc";
+  const eventPillBorder =
+    cdLabel === "today" ? "#fecaca" :
+    cdLabel === "tomorrow" ? "#fde68a" :
+    "#e2e8f0";
+
+  // Pill B cluster preview: first 2 names + "N more"
+  const clusterPreview = (() => {
+    if (clustersCount === 0) return "";
+    const first2 = clusters.slice(0, 2).map((c) => c.name).join(" · ");
+    if (clustersCount <= 2) return first2;
+    return `${first2} · ${clustersCount - 2} more`;
+  })();
+
+  // Crowd consensus for Pill A
+  const crowdYesPercent = nextEvent?.crowdProbability?.["YES"] != null
+    ? Math.round((nextEvent.crowdProbability["YES"] as number) * 100)
+    : null;
+  const totalVotes =
+    ((nextEvent?.yesCount ?? 0) + (nextEvent?.noCount ?? 0)) ||
+    (nextEvent?.totalVotes ?? 0);
+
   return (
-    <View style={pulseStyles.wrapper}>
-      <Text style={pulseStyles.heading}>TODAY&apos;S PULSE</Text>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={pulseStyles.scroll}
+    <View style={pulseStyles.card}>
+      {/* S51-T4: Tappable header — wraps both the label row and the preview row
+          so the entire collapsed card is one big tap target. */}
+      <Pressable
+        onPress={toggleCollapsed}
+        style={pulseStyles.headingRow}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: !collapsed }}
+        accessibilityLabel={a11yLabel}
       >
-        {visiblePills.map((p) => (
-          <Pressable
-            key={p.kind}
-            onPress={() => onPress(p.kind)}
-            style={({ pressed }) => [
-              pulseStyles.pill,
-              !p.enabled && pulseStyles.pillMuted,
-              pressed && { transform: [{ scale: 0.97 }], opacity: 0.85 },
-            ]}
-          >
-            <Text style={pulseStyles.pillIcon}>{p.icon}</Text>
-            <Text style={pulseStyles.pillLabel}>{p.label}</Text>
-            <Text style={pulseStyles.pillValue} numberOfLines={1}>· {p.value}</Text>
-            <Text style={pulseStyles.pillChevron}>›</Text>
-          </Pressable>
-        ))}
-      </ScrollView>
+        {/* Row 1: label + chevron */}
+        <View style={pulseStyles.headingInner}>
+          <Text style={pulseStyles.heading}>Today&apos;s Pulse</Text>
+          <Text style={pulseStyles.collapseChevron}>{collapsed ? "▼" : "▲"}</Text>
+        </View>
+
+        {/* Row 2 (collapsed only): preview of first 2 pill labels */}
+        {collapsed && (
+          <Text style={pulseStyles.previewLine} numberOfLines={1}>
+            {previewText}
+          </Text>
+        )}
+      </Pressable>
+
+      {/* Pills only visible when expanded */}
+      {!collapsed && (
+        <View style={pulseStyles.pillStack}>
+          {/* Pill A — Next Event */}
+          {showEventPill && nextEvent && (
+            <Pressable
+              onPress={() =>
+                router.push(`/market/${nextEvent.id}` as Parameters<typeof router.push>[0])
+              }
+              style={({ pressed }) => [
+                pulseStyles.pill,
+                { backgroundColor: eventPillBg, borderColor: eventPillBorder },
+                pressed && { transform: [{ scale: 0.97 }], opacity: 0.85 },
+              ]}
+            >
+              {/* Top row: type label + countdown */}
+              <View style={pulseStyles.pillRowBetween}>
+                <Text style={pulseStyles.pillTypeLabel}>
+                  🔥 {nextEvent.flagshipEventType ?? "Event"}
+                </Text>
+                <Text style={pulseStyles.pillCountdown}>{cdLabel}</Text>
+              </View>
+              {/* Middle row: market question */}
+              <Text style={pulseStyles.pillTitle} numberOfLines={1}>
+                {nextEvent.title}
+              </Text>
+              {/* Bottom row: crowd consensus + chevron */}
+              <View style={pulseStyles.pillRowBetween}>
+                <Text style={pulseStyles.pillConsensus}>
+                  {crowdYesPercent != null
+                    ? `${crowdYesPercent}% YES · ${totalVotes.toLocaleString()} voted`
+                    : `${totalVotes.toLocaleString()} voted`}
+                </Text>
+                <Text style={pulseStyles.pillChevron}>›</Text>
+              </View>
+            </Pressable>
+          )}
+
+          {/* Pill B — Policy Calendar */}
+          {showCalendarPill && (
+            <Pressable
+              onPress={() => onPress("calendar")}
+              style={({ pressed }) => [
+                pulseStyles.pill,
+                pressed && { transform: [{ scale: 0.97 }], opacity: 0.85 },
+              ]}
+            >
+              {/* Top row: icon + label left, count + chevron right */}
+              <View style={pulseStyles.pillRowBetween}>
+                <Text style={pulseStyles.pillTypeLabel}>💼 Policy calendar</Text>
+                <View style={pulseStyles.pillCountRow}>
+                  <Text style={pulseStyles.pillCountdown}>{clustersCount} events</Text>
+                  <Text style={pulseStyles.pillChevron}>›</Text>
+                </View>
+              </View>
+              {/* Bottom row: cluster name preview */}
+              <Text style={pulseStyles.pillConsensus} numberOfLines={1}>
+                {clusterPreview}
+              </Text>
+            </Pressable>
+          )}
+        </View>
+      )}
     </View>
   );
 }
@@ -724,33 +852,96 @@ function PulseSheet({
 
 // pulseStyles: kept for PulseSheet (events bottom sheet, still used)
 const pulseStyles = StyleSheet.create({
-  // S38: Pulse pills are now LIGHT context chips, not bold dark cards.
-  // The bold treatment moved to the CALL OF THE WEEK strip (the editorial pick).
-  wrapper: { marginBottom: spacing.xs },
-  heading: {
-    fontSize: 10,
-    fontWeight: "800" as const,
-    letterSpacing: 1,
-    color: "#9ca3af",
-    paddingHorizontal: spacing.lg,
-    marginBottom: 4,
+  // S51-T4: card chrome matching TopAnalystsCard so PulseRibbon reads as a
+  // discrete card, not a section divider. Values copied from cardStyles.card.
+  // S52-T3: marginTop tightened from sm to xs for uniform 8px inter-card gap.
+  card: {
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.xs,
+    marginBottom: spacing.xs,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    overflow: "hidden",
   },
-  scroll: { paddingHorizontal: spacing.lg, gap: 8 },
-  pill: {
-    // S38: Rectangle card with chevron, not full pill. Signals "tap to open"
-    // rather than "tap to toggle" (which is what filter chips do).
+  // S51-T4: headingRow is the Pressable that wraps both the label+chevron row
+  // and the preview line. paddingHorizontal/paddingVertical give it comfortable
+  // tap-target height (~70px collapsed when preview line is visible).
+  headingRow: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  // Inner row: label left, chevron right — flex row inside headingRow.
+  headingInner: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
+    justifyContent: "space-between",
+  },
+  heading: {
+    fontSize: 13,
+    fontWeight: "500" as const,
+    color: colors.text,
+    letterSpacing: 0,
+  },
+  collapseChevron: {
+    fontSize: 12,
+    color: colors.textMuted,
+  },
+  // Preview line shown only in collapsed state below the label row.
+  previewLine: {
+    fontSize: 12,
+    color: colors.textMuted,
+    marginTop: 4,
+  },
+  // S52: Vertical stack container replacing horizontal ScrollView
+  pillStack: {
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.sm,
+    gap: spacing.xs,
+  },
+  pill: {
+    // S52: Full-width stacked card pill with vertical layout
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 10,
     borderRadius: 10,
     backgroundColor: "#f8fafc",
     borderWidth: 1,
     borderColor: "#e2e8f0",
+    gap: 4,
   },
   pillMuted: { backgroundColor: "#f1f5f9", borderColor: "#e2e8f0" },
-  pillTop: { flexDirection: "row", alignItems: "center", gap: 4 },
+  pillRowBetween: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  pillCountRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+  },
+  pillTypeLabel: {
+    fontSize: 13,
+    fontWeight: "700" as const,
+    color: "#0f172a",
+  },
+  pillCountdown: {
+    fontSize: 12,
+    fontWeight: "500" as const,
+    color: "#64748b",
+  },
+  pillTitle: {
+    fontSize: 13,
+    color: "#334155",
+  },
+  pillConsensus: {
+    fontSize: 12,
+    color: "#64748b",
+    flexShrink: 1,
+  },
+  // Legacy style names kept for zero-diff safety on any remaining references
+  pillTop: { flexDirection: "row" as const, alignItems: "center" as const, gap: 4 },
   pillIcon: { fontSize: 13 },
   pillLabel: {
     fontSize: 10,
@@ -760,7 +951,7 @@ const pulseStyles = StyleSheet.create({
     textTransform: "uppercase" as const,
   },
   pillValue: { fontSize: 12, fontWeight: "700" as const, color: "#0f172a" },
-  pillChevron: { fontSize: 14, color: "#94a3b8", marginLeft: 2, fontWeight: "600" as const },
+  pillChevron: { fontSize: 16, color: "#94a3b8", fontWeight: "600" as const },
 
   // Bottom sheet (events / sentiment / calendar)
   sheetBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)" },
@@ -801,22 +992,67 @@ function WeekToggleCard({
     hasCalls ? "calls" : "sentiment"
   );
 
+  // S51-T3: Expand/collapse state — defaults to compact strip (false).
+  // Persisted per-device (no userId in scope); renders collapsed before AsyncStorage
+  // hydrates so first render is already in compact mode, no flash.
+  const [expanded, setExpanded] = useState(false);
+
   useEffect(() => {
     void AsyncStorage.getItem("finance.weekCardView").then((v) => {
       if (v === "calls" || v === "sentiment") setViewState(v);
     });
   }, []);
+
+  useEffect(() => {
+    void AsyncStorage.getItem("finance_section_expanded_yourweek").then((v) => {
+      if (v === "true") setExpanded(true);
+    });
+  }, []);
+
   const setView = useCallback((next: "calls" | "sentiment") => {
     setViewState(next);
     void AsyncStorage.setItem("finance.weekCardView", next);
   }, []);
 
+  const toggleExpanded = useCallback(() => {
+    const next = !expanded;
+    setExpanded(next);
+    void AsyncStorage.setItem("finance_section_expanded_yourweek", String(next));
+  }, [expanded]);
+
   // Hide entire card if both data sources are empty
   if (!hasCalls && !hasSentiment) return null;
 
+  // S51-T3: Compact strip — single line with hits/misses/pending counts.
+  if (!expanded) {
+    return (
+      <Pressable
+        style={digestStyles.compactStrip}
+        onPress={toggleExpanded}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: false }}
+        accessibilityLabel={`Your week: ${digest?.hits ?? 0} correct, ${digest?.misses ?? 0} wrong, ${digest?.pending ?? 0} pending. Tap to expand.`}
+      >
+        <Text style={digestStyles.compactStripText}>
+          {"Your week: "}
+          <Text style={{ color: "#16a34a", fontWeight: "700" }}>{digest?.hits ?? 0} right</Text>
+          {" · "}
+          <Text style={{ color: "#dc2626", fontWeight: "700" }}>{digest?.misses ?? 0} wrong</Text>
+          {" · "}
+          <Text style={{ color: "#6b7280" }}>{digest?.pending ?? 0} pending</Text>
+        </Text>
+        <Text style={digestStyles.compactStripChevron}>›</Text>
+      </Pressable>
+    );
+  }
+
+  // S51-T3/T5: Expanded full card — collapse via the explicit ▲ chevron in the
+  // toggle row. Active-pill-as-close removed: tapping an active pill now does
+  // nothing (expected no-op), and the chevron is the single, discoverable path
+  // back to compact strip.
   return (
     <View style={digestStyles.card}>
-      {/* Toggle pills */}
+      {/* Toggle pills row + ▲ collapse chevron (S51-T5) */}
       <View style={digestStyles.toggleRow}>
         <Pressable
           style={[digestStyles.toggleBtn, view === "calls" && digestStyles.toggleBtnActive]}
@@ -847,6 +1083,17 @@ function WeekToggleCard({
           >
             Market Sentiment
           </Text>
+        </Pressable>
+
+        {/* Explicit collapse affordance — the only way to collapse from expanded */}
+        <Pressable
+          onPress={toggleExpanded}
+          style={digestStyles.collapseBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Collapse Your Week to compact strip"
+          hitSlop={8}
+        >
+          <Text style={digestStyles.collapseBtnText}>▲</Text>
         </Pressable>
       </View>
 
@@ -1034,6 +1281,18 @@ const digestStyles = StyleSheet.create({
   toggleBtnActive: { backgroundColor: "#0f172a", borderColor: "#0f172a" },
   toggleText: { fontSize: 12, fontWeight: "700" as const, color: "#475569" },
   toggleTextActive: { color: "#fff" },
+  // S51-T5: explicit collapse button — sits at the right end of the toggle row
+  collapseBtn: {
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  collapseBtnText: {
+    fontSize: 14,
+    color: colors.textMuted,
+    lineHeight: 18,
+  },
   emptyText: {
     fontSize: 13,
     color: "#64748b",
@@ -1099,6 +1358,31 @@ const digestStyles = StyleSheet.create({
     fontSize: 11,
     color: "#9ca3af",
     marginTop: 4,
+  },
+  // S51-T3: compact strip layout — single-line summary, ~50px tall
+  compactStrip: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.xs,
+    marginBottom: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 12,
+    borderRadius: radius.md,
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+  },
+  compactStripText: {
+    fontSize: 13,
+    color: "#374151",
+    flex: 1,
+  },
+  compactStripChevron: {
+    fontSize: 18,
+    color: "#9ca3af",
+    lineHeight: 20,
   },
 });
 
@@ -1608,6 +1892,17 @@ export function FinanceMode({
   const [bigCallWindowLabel, setBigCallWindowLabel] = useState<string>("Today's Big Call");
   // Ref to big call hero card for scroll-to from expert chip tap
   const bigCallY = useRef<number>(0);
+
+  // S50-T3: Top analysts this week — fetched independently so a failure here
+  // never blocks the main Finance load (markets/news/sentiment/etc.).
+  // Finance Mode unmounts/remounts on tab switch (Expo Router tab screens are
+  // not kept alive), so this fetch fires on every Finance tab visit.
+  // The /api/experts/top-weekly endpoint has a 1-hour server cache (revalidate: 3600),
+  // so re-fetching on every tab visit is safe and keeps the data fresh.
+  // topWeeklyRefetchEpoch increments on pull-to-refresh to re-trigger the effect.
+  const [topWeeklyExperts, setTopWeeklyExperts] = useState<ApiTopExpertEntry[]>([]);
+  const [topWeeklyLoading, setTopWeeklyLoading] = useState(true);
+  const [topWeeklyRefetchEpoch, setTopWeeklyRefetchEpoch] = useState(0);
   // Highlight ring animation for Big Call hero (300ms ring on expert chip tap)
   const bigCallHighlight = useRef(new Animated.Value(0)).current;
 
@@ -2114,6 +2409,27 @@ export function FinanceMode({
     };
   }, [buildNewsFilterPayload]);
 
+  // S50-T3: Fetch top weekly experts independently — isolated from the main Promise.all
+  // so a failed or slow top-weekly call never affects market/news rendering.
+  // topWeeklyRefetchEpoch increments on pull-to-refresh so this effect re-fires.
+  useEffect(() => {
+    let cancelled = false;
+    setTopWeeklyLoading(true);
+    void mobileApi.getTopWeeklyExperts().then((entries) => {
+      if (!cancelled) {
+        setTopWeeklyExperts(entries.slice(0, 3));
+        setTopWeeklyLoading(false);
+      }
+    }).catch(() => {
+      if (!cancelled) {
+        setTopWeeklyExperts([]);
+        setTopWeeklyLoading(false);
+      }
+    });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [topWeeklyRefetchEpoch]);
+
   // S28-T1: Build expert name map from loaded financeNews
   useEffect(() => {
     const map: Record<string, { name: string; org: string }> = {};
@@ -2188,32 +2504,50 @@ export function FinanceMode({
           refreshing={refreshing}
           onRefresh={() => {
             setRefreshing(true);
+            // Also re-trigger the independent top-weekly fetch (S50-T3)
+            setTopWeeklyRefetchEpoch((e) => e + 1);
             void load(true);
           }}
           tintColor={colors.accent}
         />
       }
     >
-      {/* S38: REORDERED — CALL OF THE WEEK is now FIRST (most important / primary
-          editorial pick). PulseRibbon dropped below as secondary context. */}
-      {bigCallOpinion && (
-        <View onLayout={(e) => { bigCallY.current = e.nativeEvent.layout.y; }}>
-          <BigCallHeroCard
-            opinion={bigCallOpinion}
-            windowLabel={bigCallWindowLabel}
-            onOpenDetail={() =>
-              router.push(`/finance/opinion/${bigCallOpinion.id}` as Parameters<typeof router.push>[0])
+      {/* S52 experiment — CombinedAnalystCard merges Call of the Week + Top Analysts
+          into one visual unit. To revert, restore the BigCallHeroCard + TopAnalystsCard
+          mounts below this block (both definitions are still intact and ready to use):
+            {bigCallOpinion && (
+              <View onLayout={(e) => { bigCallY.current = e.nativeEvent.layout.y; }}>
+                <BigCallHeroCard opinion={bigCallOpinion} windowLabel={bigCallWindowLabel}
+                  onOpenDetail={() => router.push(`/finance/opinion/${bigCallOpinion.id}` as ...)} />
+              </View>
+            )}
+            <TopAnalystsCard entries={topWeeklyExperts} loading={topWeeklyLoading}
+              onLeaderboardPress={() => router.push("/expert-leaderboard" as ...)}
+              onAnalystPress={(expertId) => router.push(`/expert/${expertId}` as ...)} />
+      */}
+      <View onLayout={(e) => { bigCallY.current = e.nativeEvent.layout.y; }}>
+        <CombinedAnalystCard
+          opinion={bigCallOpinion}
+          windowLabel={bigCallWindowLabel}
+          onOpenOpinionDetail={() => {
+            if (bigCallOpinion) {
+              router.push(`/finance/opinion/${bigCallOpinion.id}` as Parameters<typeof router.push>[0]);
             }
-          />
-        </View>
-      )}
+          }}
+          entries={topWeeklyExperts}
+          topLoading={topWeeklyLoading}
+          onAnalystPress={(expertId) =>
+            router.push(`/expert/${expertId}` as Parameters<typeof router.push>[0])
+          }
+        />
+      </View>
 
       {/* PulseRibbon — context (next event countdown, policy calendar). Now
           rendered AFTER the hero with lighter visual treatment so the editorial
           pick claims primacy. */}
       <PulseRibbon
         flagshipEvents={flagshipEvents}
-        clustersCount={data?.eventClusters.length ?? 0}
+        clusters={data?.eventClusters ?? []}
         onPress={(kind) => setPulseOpen(kind)}
       />
 

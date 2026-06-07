@@ -16,12 +16,7 @@ import { colors, radius, spacing } from "@predict-future/ui-tokens";
 
 import { mobileApi } from "@/lib/api";
 import { getExpertInitials, getExpertInitialsColor } from "@/utils/expertAvatar";
-
-function credibilityColor(score: number): string {
-  if (score >= 0.6) return "#16a34a";
-  if (score >= 0.4) return "#d97706";
-  return "#dc2626";
-}
+import { AnalystCredibilityBadge } from "@/components/analyst-credibility-badge";
 
 function ExpertRow({ expert }: { expert: ApiExpertSearchResult }) {
   const router = useRouter();
@@ -40,17 +35,18 @@ function ExpertRow({ expert }: { expert: ApiExpertSearchResult }) {
       )}
 
       <View style={srStyles.nameBlock}>
-        <View style={srStyles.nameRow}>
-          <Text style={srStyles.expertName} numberOfLines={1}>{displayName}</Text>
-          {expert.verified && (
-            <View style={srStyles.verifiedBadge}>
-              <Text style={srStyles.verifiedText}>✓</Text>
-            </View>
-          )}
-        </View>
-        {expert.name && expert.organization ? (
-          <Text style={srStyles.orgName} numberOfLines={1}>{expert.organization}</Text>
-        ) : null}
+        <AnalystCredibilityBadge
+          name={displayName}
+          organization={expert.name && expert.organization ? expert.organization : undefined}
+          hitRate={
+            expert.credibilityScore !== null && !expert.provisional
+              ? expert.credibilityScore
+              : null
+          }
+          resolvedCount={expert.resolvedCount}
+          size="sm"
+          onPress={() => router.push(`/expert/${expert.id}`)}
+        />
         <Text style={srStyles.statsText}>
           {expert.totalOpinions} call{expert.totalOpinions !== 1 ? "s" : ""}
           {expert.resolvedCount > 0 ? ` · ${expert.resolvedCount} resolved` : ""}
@@ -60,15 +56,7 @@ function ExpertRow({ expert }: { expert: ApiExpertSearchResult }) {
         </Text>
       </View>
 
-      {expert.credibilityScore !== null && !expert.provisional ? (
-        <View style={[srStyles.credBadge, { backgroundColor: credibilityColor(expert.credibilityScore) + "20" }]}>
-          <Text style={[srStyles.credText, { color: credibilityColor(expert.credibilityScore) }]}>
-            {Math.round(expert.credibilityScore * 100)}%
-          </Text>
-        </View>
-      ) : (
-        <Text style={srStyles.chevron}>›</Text>
-      )}
+      <Text style={srStyles.chevron}>›</Text>
     </Pressable>
   );
 }

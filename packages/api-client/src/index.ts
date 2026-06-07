@@ -28,6 +28,7 @@ import type {
   ApiMarketDetail,
   ApiMarketSummary,
   ApiMyProfile,
+  ApiTopExpertEntry,
   ApiNewsFeedItem,
   ApiNotification,
   ApiPhoneVerifyConfirmResponse,
@@ -482,6 +483,15 @@ export function createApiClient(options: ApiClientOptions) {
         `/api/finance/experts/search`,
         { q }
       );
+    },
+
+    /**
+     * Top experts ranked by hit-rate over a rolling 7-day window.
+     * Only experts with >= 3 resolved calls qualify.
+     * Public endpoint — no auth required.
+     */
+    getTopWeeklyExperts() {
+      return request<ApiTopExpertEntry[]>("/api/experts/top-weekly");
     },
 
     getVerifiedCalls() {
@@ -977,6 +987,27 @@ export function createApiClient(options: ApiClientOptions) {
         `/api/admin/markets/${marketId}/mark-flagship`,
         undefined,
         { method: "POST", body: JSON.stringify(data), auth: true }
+      );
+    },
+
+    /**
+     * Fire-and-forget analytics event tracker.
+     *
+     * Posts a named event with an optional payload to the analytics endpoint.
+     * No auth required. Failures are swallowed — analytics must never block UX.
+     *
+     * Usage:
+     *   void mobileApi.track("analysts_footer_tapped").catch(() => {});
+     *   void mobileApi.track("analysts_badge_tapped", { surface: "feed_card" }).catch(() => {});
+     */
+    track(eventName: string, payload?: Record<string, unknown>) {
+      return request<{ ok: boolean }>(
+        "/api/analytics/events",
+        undefined,
+        {
+          method: "POST",
+          body: JSON.stringify({ event: eventName, payload: payload ?? {} }),
+        }
       );
     },
   };

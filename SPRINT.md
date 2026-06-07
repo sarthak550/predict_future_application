@@ -2,8 +2,8 @@
 
 > Human-readable view of `.claude/sprint-board.json`. Auto-maintained by the CEO/CTO/QA agents — do not edit by hand.
 
-**Current sprint:** 47
-**Status:** Sprint 47 IN PROGRESS (F1 detail modal — full driver grid with lap times, gaps, tire data). Sprint 46 COMPLETE (Sports poll trust fix — all 3 tickets passed QA). Sprint 45 COMPLETE (F1 race card). Sprint 44 COMPLETE (Finance instrument filter overhaul). Sprint 43 COMPLETE. Sprints 38–42 COMPLETE (security/correctness hardening, 54 tickets). Sprints 12, 25–34 COMPLETE.
+**Current sprint:** 52
+**Status:** Sprint 52 QA COMPLETE (4/4) — CombinedAnalystCard merge + See-all removal + tighter inter-card gap + Pulse pills redesign with question/crowd-%/urgency-tint. Pending user device smoke-test. Sprint 51 COMPLETE (5/5). Sprint 50 COMPLETE (6/6 — Top 3 Analysts moved from Feed to Finance). Sprint 49 COMPLETE (9/9). Legal review on SEBI Research Analyst public naming still required before production deploy. Sprint 48 COMPLETE (F1 timing reliability — retry, cache downgrade, empty-state, client timeout). Sprint 47 COMPLETE (F1 detail modal — full driver grid with lap times, gaps, tire data). Sprint 46 COMPLETE (Sports poll trust fix — all 3 tickets passed QA). Sprint 45 COMPLETE (F1 race card). Sprint 44 COMPLETE (Finance instrument filter overhaul). Sprint 43 COMPLETE. Sprints 38–42 COMPLETE (security/correctness hardening, 54 tickets). Sprints 12, 25–34 COMPLETE.
 
 ---
 
@@ -204,7 +204,7 @@
 
 | ID | Pri | Status | Title |
 |---|---|---|---|
-| S20-T1 | 🟡 | ✅ | Agreement-axis Poll A — replace magnitude with stance on analyst's view |
+| S20-T1 | HIGH | ✅ | Agreement-axis Poll A — replace magnitude with stance on analyst's view |
 
 ---
 
@@ -215,7 +215,7 @@
 
 | ID | Pri | Status | Title |
 |---|---|---|---|
-| S21-T1 | 🟡 | ✅ | Article body scraping pipeline — real AI extraction + seed cleanup |
+| S21-T1 | HIGH | ✅ | Article body scraping pipeline — real AI extraction + seed cleanup |
 
 ---
 
@@ -237,7 +237,7 @@
 
 | ID | Pri | Status | Title |
 |---|---|---|---|
-| S23-T1 | 🟡 | ✅ | DRAFT market visibility — hide unapproved from public, surface to creator only |
+| S23-T1 | HIGH | ✅ | DRAFT market visibility — hide unapproved from public, surface to creator only |
 
 ---
 
@@ -256,7 +256,7 @@
 | S24-T6 | HIGH | ✅ done | Referral rewards: per-user code, WhatsApp share template, credit on first prediction | referralCode + referredById on User; generateReferralCode helper; GET /api/users/me/referral-code; 250 pts REFERRAL_BONUS_REFEREE + REFERRAL_BONUS_REFERRER on first prediction; mobile Invite friends card with Share.share |
 | S24-T7 | MED | ✅ done | Monthly leagues: schema — LeagueTier enum, MonthlyLeagueEntry model, seed placement | LeagueTier enum (BRONZE/SILVER/GOLD/PLATINUM/DIAMOND), MonthlyLeagueEntry model, User.currentLeagueTier, seed all active users into BRONZE; GET /api/leagues/current |
 | S24-T8 | MED | ✅ done | Monthly leagues: month-end promotion/relegation processing + netPointsMonth accumulation | POST /api/admin/leagues/process-month-end; top-20%/bottom-20% tier logic; nextMonth entry creation; LEVEL_UP notifications; updateLeagueMonthPoints helper wired to MARKET_WIN and quest reward paths |
-| S24-T9 | MED | ✅ done | Monthly leagues: mobile UI — tier badge, standings screen, promotion/relegation banners | Tier badge in Profile stats strip; leagues.tsx with zone bar and tier standings list; one-time promotion/relegation banners; Leagues entry row in Profile tab |
+| S24-T9 | MED | ✅ done | Monthly leagues: mobile UI — tier badge, standings screen, promotion/relegation banners | Tier badge in Profile stats strip; leagues.tsx with tier standings list; one-time promotion/relegation banners; Leagues entry row in Profile tab |
 | S24-T10 | MED | ✅ done | Multi-choice markets: schema, creation API, stake flow, mobile UI | MULTIPLE_CHOICE MarketType; MarketOption + MultiChoicePosition models; creation validation (2-10 options); stake route; proportional payout on resolution; mobile create wizard Options step + options-list betting panel |
 | S24-T11 | MED | ✅ done | Seed markets from Manifold API for credibility bootstrapping | originPlatform + externalId fields on Market; one-shot import script pages Manifold API, filters to BINARY resolved markets in mapped categories, creates read-only archived markets with attribution badge on mobile MarketCard |
 
@@ -441,12 +441,12 @@
 | S42-T1 | CRIT | ✅ done | Multi-choice payout P2003 fix |
 | S42-T2 | HIGH | ✅ done | notifiedAt stamp on both admin resolve routes |
 | S42-T3 | HIGH | ✅ done | ExpertOpinion unique index alignment |
-| S42-T4 | HIGH | 🔍 qa-review | H1 — Prompt injection hardening: wrap untrusted content in 3 remaining AI call sites |
+| S42-T4 | HIGH | qa-review | H1 — Prompt injection hardening: wrap untrusted content in 3 remaining AI call sites |
 | S42-T6 | HIGH | ✅ done | Manifold sync externalLastSyncedAt |
-| S42-T7 | HIGH | 🔍 qa-review | Migrate rate-limit.ts from in-memory Map to Redis INCR+EXPIRE |
+| S42-T7 | HIGH | qa-review | Migrate rate-limit.ts from in-memory Map to Redis INCR+EXPIRE |
 | S42-T8 | HIGH | ✅ done | Tip cap + referral race |
 | S42-T9 | HIGH | ✅ done | Fix reasoning upvote counter drift (atomic increment/decrement) |
-| S42-T10 | HIGH | 🔍 qa-review | H8 — Extract shared callGeminiAI helper; env-pin model in remaining 2 AI files |
+| S42-T10 | HIGH | qa-review | H8 — Extract shared callGeminiAI helper; env-pin model in remaining 2 AI files |
 | S42-T11 | HIGH | ✅ done | Auto-resolve sweep take: limit + Expo push Redis-backed token bucket |
 | S42-T12 | MED | qa-review | Web auth JWT TTL + verify-phone double-credit + rate-limit ordering + host-bond race |
 | S42-T13 | HIGH | ✅ done | verify expert route hardening: Zod schema, idempotency, enum values, updateMany guard |
@@ -457,7 +457,7 @@
 ## Sprint 38
 
 **Theme:** CRITICAL security findings from deep audit — production-blocking
-**Status:** ✅ COMPLETE (13/13 done)
+**Status:** COMPLETE (13/13 done)
 
 | ID | Pri | Status | Title |
 |---|---|---|---|
@@ -480,7 +480,7 @@
 ## Sprint 39
 
 **Theme:** HIGH severity findings — access control, race conditions, AI hardening, cron idempotency
-**Status:** ✅ COMPLETE (12/12 done)
+**Status:** COMPLETE (12/12 done)
 
 | ID | Pri | Status | Title |
 |---|---|---|---|
@@ -502,7 +502,7 @@
 ## Sprint 40
 
 **Theme:** MEDIUM findings — admin auth standardization, JSON schemas, N+1 fixes, race conditions
-**Status:** ✅ COMPLETE (10/10 done)
+**Status:** COMPLETE (10/10 done)
 
 | ID | Pri | Status | Title |
 |---|---|---|---|
@@ -522,7 +522,7 @@
 ## Sprint 41
 
 **Theme:** LOW findings cleanup — dead code, schema polish, env safety, AI caps
-**Status:** ✅ COMPLETE (4/4 done)
+**Status:** COMPLETE (4/4 done)
 
 | ID | Pri | Status | Title |
 |---|---|---|---|
@@ -536,7 +536,7 @@
 ## Sprint 42
 
 **Theme:** HOTFIX — regressions from S38–S41 re-audit + complete-fix migration to Redis-backed state
-**Status:** ✅ COMPLETE (15/15 done)
+**Status:** COMPLETE (15/15 done)
 
 | ID | Pri | Status | Title |
 |---|---|---|---|
@@ -558,7 +558,7 @@
 
 ---
 
-> ⚠ **Pipeline lesson:** During S42 several parallel CTO bundles wrote to centralized files (`schema.prisma`, `sprint-board.json`, `SPRINT.md`) concurrently. The harness has no merge layer — last writer wins. Recovery: `prisma db pull` for schema, manual reconstruction for the board (see backup `.claude/sprint-board.json.pre-reconstruction-backup`). Future sprints: serialize edits to any centralized file. Tracked in agent memory at `feedback_serialize_schema_writes.md`.
+> Pipeline lesson: During S42 several parallel CTO bundles wrote to centralized files (`schema.prisma`, `sprint-board.json`, `SPRINT.md`) concurrently. The harness has no merge layer — last writer wins. Recovery: `prisma db pull` for schema, manual reconstruction for the board (see backup `.claude/sprint-board.json.pre-reconstruction-backup`). Future sprints: serialize edits to any centralized file. Tracked in agent memory at `feedback_serialize_schema_writes.md`.
 
 ---
 
@@ -571,7 +571,7 @@
 |---|---|---|---|
 | S43-T1 | CRIT | done | Opinion quality: structured instrument commitment in AI prompt + deterministic validator backstop |
 | S43-T2 | HIGH | done | Instrument extraction: fix NULL persistence bug + extend TICKER_MAP with sectoral keywords |
-| S43-T3 | CRIT | ❌ failed | checkTickerMap: two-pass stock-first resolution to fix index contamination from article headlines |
+| S43-T3 | CRIT | failed | checkTickerMap: two-pass stock-first resolution to fix index contamination from article headlines |
 
 ---
 
@@ -614,13 +614,100 @@
 
 ---
 
-## Sprint 47
+## Sprint 48
 
-**Theme:** F1 detail modal — full driver grid with lap times, gap-to-leader, tire compounds, and session-type stat gating
+**Theme:** F1 timing reliability — retry partial OpenF1 laps, downgrade cache on empty response, mobile empty-state + pull-to-refresh, client timeout
 **Status:** IN PROGRESS
 
 | ID | Pri | Status | Title |
 |---|---|---|---|
+| S48-T1 | CRIT | ✅ done | Backend: retry partial OpenF1 laps + downgrade cache on empty timing response |
+| S48-T2 | HIGH | ✅ done | Mobile: empty-state banner + pull-to-refresh when all F1 timing is null |
+| S48-T3 | MED | ✅ done | Mobile: 8-second AbortController timeout + one auto-retry on F1 session fetch |
+
+---
+
+## Sprint 47
+
+**Theme:** F1 detail modal — full driver grid with lap times, gap-to-leader, tire compounds, and session-type stat gating
+**Status:** COMPLETE
+
+| ID | Pri | Status | Title |
+|---|---|---|---|
 | S47-T1 | CRIT | ✅ done | Backend: F1 session-detail endpoint with lap times, gaps, and tire data |
-| S47-T2 | CRIT | ❌ failed | Mobile UI: F1 detail modal — full driver grid with lap times, gaps, tire badges |
-| S47-T3 | HIGH | ❌ failed | Polish: tire compound colour palette + fastest-lap FL badge + session-type stat gating |
+| S47-T2 | CRIT | failed | Mobile UI: F1 detail modal — full driver grid with lap times, gaps, tire badges |
+| S47-T3 | HIGH | failed | Polish: tire compound colour palette + fastest-lap FL badge + session-type stat gating |
+
+---
+
+## Sprint 49
+
+**Theme:** Analyst Scorecard brand visible everywhere — BigCallCard Top 3 footer + sheet + AnalystCredibilityBadge sweep across all analyst-name render sites
+**Status:** AMENDMENT — T8+T9 pending after live user smoke-test. T1-T7 done.
+**Brief:** `.claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint49.md`
+**Polish brief:** `.claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint49_polish.md`
+
+| ID | Pri | Status | Title |
+|---|---|---|---|
+| S49-T1 | CRIT | ✅ done | New API endpoint GET /api/experts/top-weekly |
+| S49-T2 | CRIT | ✅ done | AnalystCredibilityBadge shared mobile component (followup: tier on second row, not inline — may need variant for T4) |
+| S49-T3 | HIGH | ✅ done | Apply AnalystCredibilityBadge to all analyst-name render sites (sweep) |
+| S49-T4 | HIGH | ✅ done | BigCallCard footer row — #1 analyst this week |
+| S49-T5 | HIGH | ✅ done | Top 3 analysts bottom sheet with leaderboard link (routes to /expert-leaderboard) |
+| S49-T6 | MED | ✅ done | Empty states — no qualifying analysts, no Big Call today |
+| S49-T7 | MED | ✅ done | Analytics instrumentation — 6 events on analyst surfaces |
+| S49-T8 | HIGH | ✅ done | Move BigCallCard + promotional nudges into FlatList ListHeaderComponent (scrollable) |
+| S49-T9 | HIGH | ✅ done | TopAnalystsSheet footer link — route to Finance tab, label to "Browse analyst calls" |
+
+---
+
+## Sprint 50
+
+**Theme:** Strategic redirect — remove Feed BigCallCard (semantic mismatch with Top 3 Analysts), anchor Top 3 inline card under Finance tab's Call of the Week
+**Status:** IN PROGRESS
+**Brief:** `.claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint50.md`
+
+| ID | Pri | Status | Title |
+|---|---|---|---|
+| S50-T1 | CRIT | ✅ done | Feed: remove BigCallCard, TopAnalystsSheet mount, topExpert state, dead analytics |
+| S50-T2 | CRIT | ✅ done | New TopAnalystsCard — inline always-visible 3-row card |
+| S50-T3 | HIGH | ✅ done | Wire TopAnalystsCard into Finance tab under BigCallHeroCard |
+| S50-T4 | MED | ✅ done | Delete TopAnalystsSheet (unused after T1) |
+| S50-T5 | MED | ✅ done | Cleanup: remove 'bigcall_footer' analytics source string |
+| S50-T6 | MED | ✅ done | Annotate today-big-call route: retained for push cron |
+
+---
+
+## Sprint 51
+
+**Theme:** Finance tab density polish — compact TopAnalystsCard, collapsible Today's Pulse, Your Week as one-line strip. Reduce pre-feed scroll ~560px → ~310px.
+**Status:** IN PROGRESS
+**Brief:** `.claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint51.md`
+
+| ID | Pri | Status | Title |
+|---|---|---|---|
+| S51-T1 | CRIT | ✅ done | Compact TopAnalystsCard (~200px → ~120px) |
+| S51-T2 | HIGH | ✅ done | PulseRibbon (Today's Pulse) collapsible, default closed, AsyncStorage persisted |
+| S51-T3 | HIGH | ✅ done | WeekToggleCard (Your Week) — compact strip with tap-to-expand |
+| S51-T4 | HIGH | ✅ done | PulseRibbon: card-ify collapsed state + preview line of first 2 pills |
+| S51-T5 | MED | ✅ done | WeekToggleCard: add visible ▲ collapse chevron to expanded state header |
+
+**Lesson locked in brief:** Future CEO tickets attaching feature X to surface Y must explicitly state Y's data invariants and why X is coherent under them — this is what failed in S49.
+
+**Open questions for CTO (answer before T1/T3):** Compute accuracy at query time vs. add derived columns + cron? Is `@gorhom/bottom-sheet` installed? Confirm expert profile Expo Router path. Does `/api/finance/opinions` already return accuracy data? Does `mobileApi.track()` exist?
+
+**Legal flag (user action, not CTO):** Public named SEBI Research Analyst firm ranking triggers outside-counsel review from GTM lock. Build OK; ship gate is separate.
+
+---
+
+## Sprint 52
+
+**Theme:** Experimental — merge Call of the Week + Top Analysts into a single CombinedAnalystCard. Easy revert path (BigCallHeroCard + TopAnalystsCard files untouched).
+**Status:** COMPLETE (4/4 done)
+
+| ID | Pri | Status | Title |
+|---|---|---|---|
+| S52-T1 | HIGH | ✅ done | Merge Call of the Week + Top Analysts into single CombinedAnalystCard (experimental) |
+| S52-T2 | MED | ✅ done | Remove See all link from CombinedAnalystCard (Top 3 is enough) |
+| S52-T3 | LOW | ✅ done | Tighten inter-card vertical gap on Finance tab (12px → 8px uniform) |
+| S52-T4 | HIGH | ✅ done | Pulse pills redesign — 2-line vertical with question + crowd % + urgency tint |

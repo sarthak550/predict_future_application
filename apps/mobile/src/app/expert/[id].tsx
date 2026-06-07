@@ -16,12 +16,8 @@ import { colors, radius, spacing } from "@predict-future/ui-tokens";
 
 import { mobileApi } from "@/lib/api";
 import { getExpertInitials, getExpertInitialsColor } from "@/utils/expertAvatar";
+import { AnalystCredibilityBadge } from "@/components/analyst-credibility-badge";
 
-function credibilityColor(score: number): string {
-  if (score >= 0.6) return "#16a34a";
-  if (score >= 0.4) return "#d97706";
-  return "#dc2626";
-}
 
 const DIRECTION_LABEL: Record<string, string> = {
   BULLISH: "Bullish",
@@ -197,47 +193,20 @@ export default function ExpertProfileScreen() {
                 </View>
               )}
               <View style={expertProfileStyles.nameBlock}>
-                <View style={expertProfileStyles.nameRow}>
-                  <Text style={expertProfileStyles.expertName}>{displayName}</Text>
-                  {profile.verified && (
-                    <View style={expertProfileStyles.verifiedInlineBadge}>
-                      <Text style={expertProfileStyles.verifiedInlineText}>✓</Text>
-                    </View>
-                  )}
-                </View>
-                {profile.name && profile.organization ? (
-                  <Text style={expertProfileStyles.orgName}>{profile.organization}</Text>
-                ) : null}
-                <View style={expertProfileStyles.badgeRow}>
-                  {profile.verified && (
-                    <View style={expertProfileStyles.verifiedBadge}>
-                      <Text style={expertProfileStyles.verifiedText}>Verified</Text>
-                    </View>
-                  )}
-                  {profile.credibilityScore !== null ? (
-                    <View
-                      style={[
-                        expertProfileStyles.credBadge,
-                        { backgroundColor: credibilityColor(profile.credibilityScore) + "20" },
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          expertProfileStyles.credBadgeText,
-                          { color: credibilityColor(profile.credibilityScore) },
-                        ]}
-                      >
-                        {Math.round(profile.credibilityScore * 100)}% Hit Rate
-                      </Text>
-                    </View>
-                  ) : (
-                    <View style={expertProfileStyles.provisionalBadge}>
-                      <Text style={expertProfileStyles.provisionalText}>
-                        Provisional — fewer than 3 resolved calls
-                      </Text>
-                    </View>
-                  )}
-                </View>
+                <AnalystCredibilityBadge
+                  name={displayName}
+                  organization={profile.name && profile.organization ? profile.organization : undefined}
+                  hitRate={profile.credibilityScore}
+                  resolvedCount={profile.resolvedCount}
+                  size="md"
+                />
+                {profile.credibilityScore === null && (
+                  <View style={expertProfileStyles.provisionalBadge}>
+                    <Text style={expertProfileStyles.provisionalText}>
+                      Provisional — fewer than 3 resolved calls
+                    </Text>
+                  </View>
+                )}
               </View>
             </View>
 

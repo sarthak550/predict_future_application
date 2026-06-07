@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "currentSprint": 47,
+  "currentSprint": 52,
   "tickets": [
     {
       "id": "S7-T1",
@@ -2704,6 +2704,303 @@
       "qaVerdict": "pass",
       "failureNotes": null,
       "createdAt": "2026-06-06"
+    },
+    {
+      "id": "S48-T1",
+      "sprint": 48,
+      "title": "Backend: retry partial OpenF1 laps + downgrade cache on empty timing response",
+      "description": "Files: apps/api/lib/sports/f1.ts and apps/api/app/api/sports/f1/session/[sessionKey]/route.ts\n\nProblem: openF1Fetch has no timeout or retry. When OpenF1 flakes, the laps call returns either an empty array or records where every lap_duration is null — every driver ends up with fastestLap=null. The route then caches this poison response for 300s via Cache-Control: max-age=300.\n\nChange (a) — single retry on bad laps result (in fetchF1SessionDetail, apps/api/lib/sports/f1.ts):\nAfter the Promise.allSettled fan-out resolves, check the laps result:\n  - condition: laps result is fulfilled AND (lapsArray.length === 0 OR every lap has lap_duration == null)\n  - if condition is true: wait 1000 ms then fire ONE additional openF1Fetch('/v1/laps', { session_key }) call\n  - replace lapsArray with the retry result if it has at least one record with a non-null lap_duration; otherwise keep original\n  - DO NOT retry if laps result is rejected (treat as transient network error, fall through to null handling)\n  - DO NOT touch the position, car-data, or stint fetch calls — only the laps call is retried\n\nChange (b) — conditional cache header (in route.ts):\nAfter fetchF1SessionDetail resolves:\n  - define allTimingNull = data.drivers.every(d => d.fastestLap == null && d.lastLap == null)\n  - if allTimingNull: respond with Cache-Control: public, max-age=15, s-maxage=15, stale-while-revalidate=5\n  - otherwise: keep existing Cache-Control: public, max-age=300, s-maxage=300, stale-while-revalidate=60\n  - The error path (non-200 from fetchF1SessionDetail) already returns 500 — do not change that path\n\nWhat must NOT change:\n  - The race/qualifying position-override logic added in S47-T1 must be preserved exactly\n  - The allSettled fan-out pattern for the other sub-calls must be preserved\n  - Anonymous access (no auth check) must be preserved\n\nAcceptance criteria:\n  1. When OpenF1 returns empty laps on the first call, the handler makes exactly one retry after 1s and uses the retry data if it contains valid lap_duration values.\n  2. When all drivers have null fastestLap AND null lastLap in the final response, the Cache-Control header reads max-age=15 (not 300).\n  3. When at least one driver has a non-null fastestLap or lastLap, the Cache-Control header reads max-age=300.\n  4. No change to the non-race position override logic.\n  5. tsc --noEmit passes in apps/api.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-06"
+    },
+    {
+      "id": "S48-T2",
+      "sprint": 48,
+      "title": "Mobile: empty-state banner + pull-to-refresh when all F1 timing is null",
+      "description": "File: apps/mobile/src/components/f1-detail-modal.tsx\n\nProblem: When every driver has fastestLap=null and lastLap=null (the poisoned-cache scenario), the modal renders driver rows with blank timing columns and gives the user no feedback. It looks broken.\n\nChange:\nCompute a boolean at the top of the component (or inside render):\n  const allTimingNull = (detail?.drivers ?? []).length > 0 && detail.drivers.every(d => d.fastestLap == null && d.lastLap == null)\n\nRule 1 — PARTIAL data (some drivers have timing, some do not): render each row honestly. No empty state. A driver with null timing shows name + position with timing cells blank/em-dash. No banner needed.\n\nRule 2 — ALL null (allTimingNull === true):\n  - Render a centered, muted text row ABOVE the FlatList: 'Timing data is loading from OpenF1 — pull to refresh'\n  - Style: textAlign center, color theme muted/secondary, fontSize 13, marginVertical 12\n  - Driver rows still render (name, position, team colour bar) so the grid is not empty\n  - Wire pull-to-refresh on the FlatList: refreshing prop tied to a local isRefreshing state; onRefresh clears the cached detail in local state, sets loading=true, and re-calls the same fetch function used on mount\n\nRule 3 — loading state (detail is null / fetch in-flight): existing spinner behaviour, no change.\n\nPull-to-refresh wiring:\n  - Add local state: const [isRefreshing, setIsRefreshing] = useState(false)\n  - onRefresh: setIsRefreshing(true) -> clear detail state -> call fetchDetail() -> setIsRefreshing(false) in finally\n  - Pass refreshing={isRefreshing} onRefresh={onRefresh} to the FlatList\n  - This uses the same 8-second timeout introduced in S48-T3 (or the existing fetch if T3 is not yet merged)\n\nAcceptance criteria:\n  1. When detail.drivers.every(d => d.fastestLap == null && d.lastLap == null): the muted banner text appears above the driver list.\n  2. Pull-to-refresh re-fetches and the spinner is visible during the fetch.\n  3. When at least one driver has non-null timing: no banner, driver rows render with timing present.\n  4. The existing fastest-lap FL badge (S47-T3) still renders correctly when data is present.\n  5. No TypeScript errors (expo type-check passes).",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-06"
+    },
+    {
+      "id": "S48-T3",
+      "sprint": 48,
+      "title": "Mobile: 8-second AbortController timeout + one auto-retry on F1 session fetch",
+      "description": "File: apps/mobile/src/components/f1-detail-modal.tsx (or the client helper that calls /api/sports/f1/session/[sessionKey])\n\nProblem: The client fetch has no timeout. A hung OpenF1 request upstream means the modal spins indefinitely. The existing Retry button only appears after an explicit error, not after a silent hang.\n\nChange:\nLocate the fetch call inside the detail modal (likely a useEffect or a helper function on mount):\n  1. Wrap the fetch with an AbortController: const controller = new AbortController(); const timeoutId = setTimeout(() => controller.abort(), 8000)\n  2. Pass signal: controller.signal to the fetch options\n  3. In the catch block: if the error is an AbortError, treat it as a retryable failure (not a hard error)\n  4. On first timeout/failure: wait 1000 ms then retry ONCE with a fresh AbortController (same 8-second limit)\n  5. If the second attempt also fails: set error state so the existing Retry button is shown\n  6. Clear the timeout in a finally block to avoid memory leaks: clearTimeout(timeoutId)\n\nWhat must NOT change:\n  - The existing error state and Retry button UI — on double failure the user sees the same Retry button as before\n  - Pull-to-refresh introduced in S48-T2 should use this same wrapped fetch function\n\nAcceptance criteria:\n  1. If the endpoint does not respond within 8 seconds, the fetch is aborted and retried once automatically.\n  2. If both attempts exceed 8 seconds, the error state is set and the Retry button is visible.\n  3. A successful response within 8 seconds on the first attempt shows no timeout behaviour.\n  4. No memory leak: clearTimeout is called in all code paths.\n  5. No TypeScript errors (expo type-check passes).",
+      "priority": "medium",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-06"
+    },
+    {
+      "id": "S49-T1",
+      "sprint": 49,
+      "title": "New API endpoint GET /api/experts/top-weekly",
+      "description": "Returns top experts ranked by 7-day rolling accuracy with min 3 resolved calls threshold. Query ExpertOpinion rows where resolvedAt >= NOW() - 7 days AND resolutionStatus IN ['RESOLVED_HIT', 'RESOLVED_MISS'] AND isSourceAttribution = false (named analysts only). Group by expertId, compute hitRate = HITs / (HITs + MISSes), rank descending. Cache 1hr (revalidate: 3600). Returns at most 10 results. Empty array if fewer than 3 experts qualify (do not lower threshold). Add @@index([expertId, resolutionStatus, resolvedAt]) on ExpertOpinion if missing. Add ApiTopExpertEntry type to packages/types and export. File: apps/api/src/app/api/experts/top-weekly/route.ts. No auth required. Open question: compute at query time vs. add derived weeklyHitRate/weeklyResolvedCount columns + nightly cron. Full criteria in .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint49.md",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S49-T2",
+      "sprint": 49,
+      "title": "AnalystCredibilityBadge shared mobile component",
+      "description": "New component apps/mobile/src/components/analyst-credibility-badge.tsx. Inline attribution: Name (bold) · org · TierChip · 87% accuracy. Composes existing AnalystTierBadge. Props: name, organization?, tier?, hitRate? (0.0-1.0), resolvedCount? (suppress hitRate if < 3), size ('sm' 11px feed | 'md' 13px profile), onPress? (Pressable + accessibilityRole='button'). Render rules: always show name; tier badge if non-null and not ROOKIE; accuracy in colors.success only if hitRate non-null AND resolvedCount >= 3. Do NOT create a web version in this ticket — web is out of scope for S49. Full criteria in .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint49.md",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S49-T3",
+      "sprint": 49,
+      "title": "Apply AnalystCredibilityBadge to all analyst-name render sites (sweep)",
+      "description": "Sweep ticket — badge is incoherent unless universal. Apply T2 to 7 surfaces: (1) expert-opinion-card.tsx, (2) expert-opinion-post-card.tsx, (3) Finance tab opinion list, (4) expert search/results screen, (5) expert profile header (size 'md'), (6) leaderboard rows, (7) BigCallCard attribution (consumed by T4). API contract: surfaces 1-4 need hitRate and resolvedCount on the expert sub-object — check if /api/finance/opinions already returns this; if not, add a weeklyStats?: { hitRate, resolvedCount } field using same query as T1. Do NOT replace AnalystTierBadge standalone usages on profile surface (surface='profile') — only public/comment surfaces. Full criteria in .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint49.md",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S49-T4",
+      "sprint": 49,
+      "title": "BigCallCard footer row — #1 analyst this week",
+      "description": "Add horizontal divider + footer row at bottom of BigCallCard (in apps/mobile/src/app/(tabs)/feed.tsx, around lines 43-155), below the CTA button. Footer: label '#1 analyst this week:' (11px muted), then AnalystCredibilityBadge size='sm', then '›' chevron right-aligned. Data source: separate GET /api/experts/top-weekly fetch on Feed mount — do NOT couple to Big Call market fetch (independent failures). Skeleton placeholder while loading (no layout jump). Tapping footer opens Top 3 sheet (T5) — separate touch target, must not propagate to card's onPress. If top-weekly returns empty array, render T6 empty state — do not hide the footer. Full criteria in .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint49.md",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S49-T5",
+      "sprint": 49,
+      "title": "Top 3 analysts bottom sheet with leaderboard link",
+      "description": "New component apps/mobile/src/components/top-analysts-sheet.tsx. Triggered by BigCallCard footer tap (T4). Title: 'Top Analysts This Week'. Subtitle: 'Ranked by accuracy — last 7 days'. Up to 3 rows: rank number, AnalystCredibilityBadge size='md', resolvedCount text (e.g. '6 calls'). Each row tappable to expert profile (verify exact Expo Router path — likely apps/mobile/src/app/expert/[id].tsx). Footer link: 'See full leaderboard →' routes to the leaderboard screen (currently hidden tab — verify route). Dismissible by swipe-down or backdrop tap. If only 1 or 2 qualify, render 1 or 2 rows (do not pad). Check if @gorhom/bottom-sheet is installed in apps/mobile/package.json; if not use Modal with slide-up animation. Uses ApiTopExpertEntry type from T1. Full criteria in .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint49.md",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S49-T6",
+      "sprint": 49,
+      "title": "Empty states — no qualifying analysts, no Big Call today",
+      "description": "Two empty states: (A) No qualifying analysts: footer renders with '#1 analyst this week: Not enough resolved calls yet.' — muted gray, no chevron, NOT tappable. Sheet (if opened) shows 'No analysts have 3+ resolved calls this week. Check back soon.' (B) No Big Call market: BigCallCard receives null bigCall → entire card (and therefore footer) does not render. Verify the null guard exists in Feed render logic; add it if missing. The Top Analyst footer is intentionally tied to BigCallCard — no free-floating analyst widget. Must not be cut from sprint — shipping without these means broken footer in week 1 when resolved call volume is low. Full criteria in .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint49.md",
+      "priority": "medium",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S49-T7",
+      "sprint": 49,
+      "title": "Analytics instrumentation — 6 events on analyst surfaces",
+      "description": "Fire 6 events using mobileApi.track pattern (matching trackBigCallOpened naming): (1) analysts_footer_viewed on footer mount with data loaded, (2) analysts_footer_tapped before sheet opens, (3) analysts_sheet_opened on sheet present, (4) analysts_sheet_row_tapped with { rank, expertId }, (5) analysts_leaderboard_link_tapped, (6) analysts_badge_tapped with { surface: 'feed_card'|'opinion_card'|'leaderboard'|'profile'|'bigcall_footer' }. No duplicate fires on re-render. If mobileApi.track does not exist, add lightweight fire-and-forget wrapper POSTing to /api/analytics/events (no auth). Safe to cut to Sprint 50 if velocity tightens — instrumentation does not block user-visible delivery. Full criteria in .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint49.md",
+      "priority": "medium",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S49-T8",
+      "sprint": 49,
+      "title": "Move BigCallCard + promotional nudges into FlatList ListHeaderComponent",
+      "description": "BigCallCard (feed.tsx lines 719-725), tier upgrade nudge (lines 698-716), and follow nudge (lines 734-746) are pinned siblings above the FlatList. They do not scroll — news is obstructed by stuck promotional real estate. Fix: extract all three into FlatList ListHeaderComponent prop so they scroll off naturally. TopAnalystsSheet Modal (lines 727-731) stays in the outer View body — it is a Modal overlay and must NOT move into the header (would unmount on scroll). Category filter bar (lines 680-692) stays sticky. PlatformTrustBanner (line 695) stays above FlatList. Acceptance: (1) scrolling down hides BigCallCard naturally, (2) scrolling to top reveals it, (3) pull-to-refresh still works, (4) category bar remains fully sticky, (5) tier nudge dismiss still works, (6) follow nudge routes to /(tabs)/leaderboard, (7) TopAnalystsSheet still slides up on footer tap, (8) when bigCallMarket is null header renders cleanly, (9) snapToInterval snap on first feed card unaffected — device smoke-test required. Full criteria in .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint49_polish.md",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S49-T9",
+      "sprint": 49,
+      "title": "TopAnalystsSheet footer link — route to Finance tab, update label",
+      "description": "top-analysts-sheet.tsx line 141: change router.push destination from '/expert-leaderboard' to '/(tabs)/finance'. Lines 193-194: update label from 'See full leaderboard →' to 'Browse analyst calls →'. Line 192 accessibilityLabel: update to 'Browse analyst calls'. DO NOT rename analytics event analysts_leaderboard_link_tapped (line 139) — renaming invalidates historical data. Deliberate CEO decision. Acceptance: (1) tapping link routes to /(tabs)/finance, (2) sheet closes before navigation (verify onClose fires before router.push), (3) analytics event analysts_leaderboard_link_tapped still fires, (4) TypeScript compiles, (5) accessibility label updated. Full criteria in .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint49_polish.md",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S50-T1",
+      "sprint": 50,
+      "title": "Feed: remove BigCallCard, TopAnalystsSheet mount, topExpert state, bigCallMarket fetch, dead analytics",
+      "description": "Remove BigCallCard rendering from ListHeaderComponent in apps/mobile/src/app/(tabs)/feed.tsx. Remove topExpert state, bigCallMarket state, both fetch useEffects, BigCallCard component definition (if not referenced elsewhere), TopAnalystsSheet mount, related imports. Strip dead analytics callsites: analysts_footer_viewed, analysts_footer_tapped. KEEP: tier nudge, follow nudge, PlatformTrustBanner, category bar — they were unrelated to BigCall. Reason for the unwind: S49 placed analyst credibility on Feed BigCallCard but BigCallCard has no category invariant (can show sports/tech/anything), so pairing Indian sell-side analyst Top 3 was semantically incoherent. User caught this during smoke-test. Full criteria in .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint50.md",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S50-T2",
+      "sprint": 50,
+      "title": "New TopAnalystsCard — inline always-visible 3-row card for Finance tab",
+      "description": "New component apps/mobile/src/components/top-analysts-card.tsx. Always-visible inline card with 3 rows: rank + AnalystCredibilityBadge (size 'sm', layout='inline') + resolved-count text. Header label '🎯 TOP ANALYSTS · This week'. Footer link 'See full leaderboard →'. Loading skeleton when data is in-flight. Empty state when API returns []: 'Not enough resolved calls yet — check back soon.' Prop-driven — NO own fetch (parent passes entries + loading state). Fire analytics event analysts_leaderboard_card_tapped on footer link tap. onLeaderboardPress and onAnalystPress are props. Full criteria in .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint50.md",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S50-T3",
+      "sprint": 50,
+      "title": "Wire TopAnalystsCard into Finance tab under BigCallHeroCard",
+      "description": "Mount <TopAnalystsCard /> in apps/mobile/src/components/finance-mode.tsx directly below BigCallHeroCard (around line 1111). Add independent useEffect fetch of /api/experts/top-weekly — do NOT bundle into the existing Promise.all in load(). onLeaderboardPress routes to /expert-leaderboard. onAnalystPress routes to /expert/[id]. Verify bigCallY scroll-to ref still works after insertion (~120px new content shifts scroll position). Full criteria in .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint50.md",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S50-T4",
+      "sprint": 50,
+      "title": "Delete TopAnalystsSheet (unused after T1)",
+      "description": "Delete apps/mobile/src/components/top-analysts-sheet.tsx entirely. The only trigger (BigCallCard footer) is gone in T1. Inline card from T2 replaces the data surface. Retire dead analytics events: analysts_sheet_opened, analysts_sheet_row_tapped, analysts_leaderboard_link_tapped. Grep for any remaining imports of TopAnalystsSheet across apps/mobile and clean them up. Rebuild as a per-analyst drill-in sheet only if user research justifies it. Full criteria in .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint50.md",
+      "priority": "medium",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S50-T5",
+      "sprint": 50,
+      "title": "Cleanup: remove 'bigcall_footer' analytics source string",
+      "description": "Grep for the literal 'bigcall_footer' in apps/mobile (likely in AnalystCredibilityBadge analyticsSource prop sites or similar). Remove any remaining references. Update the AnalystBadgeSurface union type in analyst-credibility-badge.tsx if 'bigcall_footer' is listed as a member — remove it. This is mostly trivial after T1 but worth a dedicated grep to catch stragglers. Full criteria in .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint50.md",
+      "priority": "medium",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S50-T6",
+      "sprint": 50,
+      "title": "Annotate today-big-call route: retained for push cron",
+      "description": "Add a one-line code comment to apps/api/app/api/markets/today-big-call/route.ts noting: 'Retained for big-call push notification cron and future editorial surfaces. Do not deprecate without CEO sign-off.' No schema changes. No cron changes. Market.isBigCallDate field stays. /api/cron/big-call-push stays. This is purely documentation so a future engineer doesn't see an orphaned endpoint and delete it. Full criteria in .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint50.md",
+      "priority": "medium",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S51-T1",
+      "sprint": 51,
+      "title": "Compact TopAnalystsCard — strip oversized header, tighten padding (~200px → ~120px)",
+      "description": "Reduce visual weight of apps/mobile/src/components/top-analysts-card.tsx. Downgrade '🎯 TOP ANALYSTS · This week' uppercase header to regular text label 'Top analysts · this week'. Tighten row padding and gaps. Footer link 'See all →' (not 'See full leaderboard →'). Tier badges 🏆/⭐ stay (small visual signal). Target visual height: ~120px (down from ~200px). User direct feedback after S50 smoke-test: Finance tab too cluttered. Full criteria in .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint51.md",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S51-T2",
+      "sprint": 51,
+      "title": "PulseRibbon (Today's Pulse) collapsible, default closed, AsyncStorage persisted",
+      "description": "PulseRibbon (around line 623 of apps/mobile/src/components/finance-mode.tsx) becomes collapsible. Default state on first install: collapsed (header row visible with ▼ chevron). Tap header row to expand/collapse. Persist state via AsyncStorage key 'finance_section_collapsed_pulse'. A11y: accessibilityRole='button', accessibilityState={expanded: !collapsed}. Collapsed height target: ~44px (down from ~90px). pulseStyles.heading may need a new headingRow style to host the chevron — flagged as an open question. Full criteria in .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint51.md",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S51-T3",
+      "sprint": 51,
+      "title": "WeekToggleCard (Your Week) — compact strip with tap-to-expand",
+      "description": "WeekToggleCard (around line 789 of apps/mobile/src/components/finance-mode.tsx) defaults to a compact single-line strip: 'Your week: 3 right · 4 wrong · 6 pending ›' (~50px). Tap strip → expands to full toggle card with Your Week / Market Sentiment switch, stat bars, 'Tap to see all your calls' footer (~150px). Persist expanded state via AsyncStorage key 'finance_section_expanded_yourweek'. Default: collapsed-to-strip (NOT fully hidden — Your Week is a daily-check retention signal, must remain glance-able). Market Sentiment view only accessible after expansion. Full criteria in .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint51.md",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S51-T4",
+      "sprint": 51,
+      "title": "PulseRibbon: card-ify collapsed state + preview line of first 2 pills",
+      "description": "User feedback: collapsed Today's Pulse currently looks like a section divider (10px kicker label + chevron, no chrome). Fix in apps/mobile/src/components/finance-mode.tsx PulseRibbon function (~line 685). (1) Wrap the wrapper View in card chrome — rounded background, padding, matching TopAnalystsCard's cardStyles for visual consistency. (2) Collapsed state shows TWO rows inside the card: top row 'Today's Pulse' (icon optional) + chevron ▼; second row preview text showing the first 2 pill labels joined by ' · ' (e.g., 'Budget in 7d · Policy calendar') in muted color, ~12px. (3) Expanded state: same card chrome, header row (no preview line), pills ScrollView inside the card. Card chrome must match TopAnalystsCard visually (rounded corners, padding, background) so the cards stack as a coherent set, not a divider between cards.",
+      "priority": "high",
+      "status": "pending",
+      "qaVerdict": null,
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S51-T5",
+      "sprint": 51,
+      "title": "WeekToggleCard: add visible ▲ collapse chevron to expanded state header",
+      "description": "User feedback (and prior QA followup): expanded WeekToggleCard has no visible affordance to collapse back to compact strip — CTO's improvised 'tap active pill to close' is undiscoverable. Fix in apps/mobile/src/components/finance-mode.tsx WeekToggleCard function (~line 789). Add a small ▲ chevron in the top-right of the expanded card header row (alongside or above the Your Week / Market Sentiment toggle pills). Tappable, calls the existing toggleExpanded(). Visible only when expanded === true. Optional cleanup: REMOVE the active-pill-as-close handlers at lines ~920 and ~942 since the chevron is now the canonical collapse path — otherwise users might double-collapse by mistake. CTO's call on whether to keep both paths or just the chevron.",
+      "priority": "medium",
+      "status": "pending",
+      "qaVerdict": null,
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S52-T1",
+      "sprint": 52,
+      "title": "Merge Call of the Week + Top Analysts into single CombinedAnalystCard (experimental)",
+      "description": "Experimental merge per user direction. Build NEW component apps/mobile/src/components/combined-analyst-card.tsx that renders Call of the Week + Top Analysts in a single card chrome with a divider between them. Layout: TOP SECTION (featured opinion — label '🔥 THIS WEEK'S BIG CALL', avatar/name/time, direction badge + instrument, Vote → button); HORIZONTAL DIVIDER; BOTTOM SECTION ('Top this week:' label, up to 3 ranked analyst rows using AnalystCredibilityBadge layout='inline' size='sm', 'See all →' footer). Both sections retain their existing behaviors: featured-opinion tap → onOpenDetail; Vote button → existing handler; analyst row tap → /expert/[id]; See all tap → /expert-leaderboard. In finance-mode.tsx, REPLACE the two current sibling mounts (BigCallHeroCard wrapper around line 2236 + TopAnalystsCard around line 2251) with a single <CombinedAnalystCard /> mount. Pass both data sources (opinion + entries) as props. DO NOT delete BigCallHeroCard or TopAnalystsCard files — keep them as easy revert path. If user dislikes the merge, revert is a single mount swap in finance-mode.tsx. Card chrome matches existing TopAnalystsCard cardStyles. Independent fetches stay independent; combined card just renders whatever data has arrived.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S52-T2",
+      "sprint": 52,
+      "title": "Remove See all leaderboard link from CombinedAnalystCard (Top 3 is enough)",
+      "description": "User polish: removed See all link from CombinedAnalystCard along with onLeaderboardPress prop, handleLeaderboardPress handler, mobileApi import, and the prop pass in finance-mode.tsx. analysts_leaderboard_card_tapped event removed. Inert leaderboardLink* style entries left in StyleSheet — harmless dead code.",
+      "priority": "medium",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S52-T3",
+      "sprint": 52,
+      "title": "Tighten inter-card vertical gap on Finance tab (12px → 8px uniform)",
+      "description": "User polish: tightened spacing between Finance tab cards. Changed CombinedAnalystCard.card and PulseRibbon.card marginTop from spacing.sm (8) to spacing.xs (4). WeekToggleCard already had xs+xs. Result: uniform 8px gap between any two adjacent cards (was 12px between Combined and Pulse, 8px elsewhere).",
+      "priority": "low",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S52-T4",
+      "sprint": 52,
+      "title": "Pulse pills redesign — 2-line vertical layout with question + crowd consensus + urgency tint",
+      "description": "Redesign Today's Pulse pills from horizontal scrollable single-line to vertically stacked 2-line cards. Next Event pill shows event type + countdown + implied market title + crowd consensus % + vote count; tap routes DIRECT to /market/[id] (not the sheet). Policy Calendar pill shows label + count + preview of first 2 cluster titles + N more; tap opens existing PulseSheet. Add subtle red tint when cdLabel===today, amber when tomorrow. Surfaces unused crowdProbability + market title data already on ApiFlagshipEvent.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
     }
   ]
 }

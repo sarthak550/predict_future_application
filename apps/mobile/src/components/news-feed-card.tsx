@@ -24,6 +24,7 @@ import { useWatchlist } from "@/providers/watchlist-provider";
 import { getExpertInitials, getExpertInitialsColor } from "@/utils/expertAvatar";
 import { USE_POST_CARD } from "@/lib/feature-flags";
 import { ExpertOpinionPostCard } from "@/components/expert-opinion-post-card";
+import { AnalystCredibilityBadge } from "@/components/analyst-credibility-badge";
 
 // ── Expert opinion direction configuration ──
 
@@ -682,22 +683,16 @@ export function ExpertOpinionRow({
                     onPress={() => router.push(`/expert/${opinion.expertId}` as Parameters<typeof router.push>[0])}
                     hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
                   >
-                    <View style={expertStyles.expertNameRow}>
-                      <Text style={expertStyles.expertName} numberOfLines={1}>
-                        {isSourceAttribution
+                    <AnalystCredibilityBadge
+                      name={
+                        isSourceAttribution
                           ? opinion.expertOrganization
-                          : (opinion.expertName || opinion.expertOrganization)}
-                      </Text>
-                      {(isSourceAttribution || opinion.verified) && (
-                        <View style={expertStyles.verifiedBadge}>
-                          <Text style={expertStyles.verifiedBadgeText}>✓</Text>
-                        </View>
-                      )}
-                    </View>
+                          : (opinion.expertName || opinion.expertOrganization)
+                      }
+                      organization={isSourceAttribution ? "Trusted Source" : opinion.expertOrganization}
+                      size="sm"
+                    />
                   </Pressable>
-                  <Text style={expertStyles.expertOrg} numberOfLines={1}>
-                    {isSourceAttribution ? "Trusted Source" : opinion.expertOrganization}
-                  </Text>
                   {opinion.publishedAt && (
                     <Text
                       style={[

@@ -837,6 +837,7 @@ model ExpertOpinion {
 
   @@unique([expertId, storyId, quoteHash])
   @@index([expertId, publishedAt])
+  @@index([expertId, resolutionStatus, resolvedAt])
   @@index([isSourceAttribution])
   @@index([eventClusterId])
   @@index([resolutionStatus, resolutionEligibleAt])

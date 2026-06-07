@@ -14,7 +14,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
-import type { ApiBigCallMarket, ApiNewsFeedItem, AppAnalystTier, AppMarketCategory } from "@predict-future/types";
+import type { ApiNewsFeedItem, AppAnalystTier, AppMarketCategory } from "@predict-future/types";
 import { colors, radius, spacing } from "@predict-future/ui-tokens";
 
 import {
@@ -38,121 +38,6 @@ const CATEGORY_BAR_HEIGHT = 52;
 // Inject an insight card every N news cards (for items that have a market with votes)
 const INSIGHT_INTERVAL = 4;
 
-// ── Big Call Card ──────────────────────────────────────────────────────────────
-
-function BigCallCard({ market }: { market: ApiBigCallMarket }) {
-  const router = useRouter();
-
-  const handlePress = () => {
-    // Fire-and-forget analytics tap — never block navigation
-    void mobileApi.trackBigCallOpened(market.id).catch(() => {});
-    router.push(`/market/${market.id}`);
-  };
-
-  const totalVotes = market.yesCount + market.noCount;
-  const yesPercent = totalVotes > 0 ? Math.round((market.yesCount / totalVotes) * 100) : null;
-
-  return (
-    <Pressable onPress={handlePress} accessibilityRole="button" accessibilityLabel={`Today's Big Call: ${market.title}`} style={bigCallStyles.card}>
-      {/* Badge row */}
-      <View style={bigCallStyles.badgeRow}>
-        <Text style={bigCallStyles.badge}>Today's Big Call</Text>
-        {market.status === "OPEN" && (
-          <View style={bigCallStyles.liveDot} />
-        )}
-      </View>
-
-      {/* Market title */}
-      <Text style={bigCallStyles.title} numberOfLines={2}>{market.title}</Text>
-
-      {/* Mini stats row */}
-      <View style={bigCallStyles.statsRow}>
-        {yesPercent !== null && (
-          <Text style={bigCallStyles.stat}>
-            {`${yesPercent}% YES`}
-          </Text>
-        )}
-        <Text style={bigCallStyles.stat}>
-          {`${market.totalParticipants.toLocaleString()} analysts`}
-        </Text>
-        <Text style={bigCallStyles.stat}>
-          {`${market.totalVolume.toLocaleString()} pts`}
-        </Text>
-      </View>
-
-      {/* CTA */}
-      <View style={bigCallStyles.ctaButton}>
-        <Text style={bigCallStyles.ctaLabel}>Make Your Call</Text>
-      </View>
-    </Pressable>
-  );
-}
-
-const bigCallStyles = StyleSheet.create({
-  card: {
-    marginHorizontal: spacing.lg,
-    marginTop: spacing.sm,
-    marginBottom: spacing.xs,
-    padding: spacing.lg,
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    borderWidth: 1.5,
-    borderColor: colors.accent,
-    shadowColor: colors.accent,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  badgeRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: spacing.sm,
-    gap: spacing.sm,
-  },
-  badge: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: colors.accent,
-    textTransform: "uppercase",
-    letterSpacing: 0.8,
-  },
-  liveDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: colors.success,
-  },
-  title: {
-    fontSize: 17,
-    fontWeight: "700",
-    color: colors.text,
-    lineHeight: 23,
-    marginBottom: spacing.sm,
-  },
-  statsRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.md,
-    marginBottom: spacing.md,
-  },
-  stat: {
-    fontSize: 12,
-    color: colors.textMuted,
-    fontWeight: "500",
-  },
-  ctaButton: {
-    backgroundColor: colors.accent,
-    borderRadius: radius.md,
-    paddingVertical: spacing.sm,
-    alignItems: "center",
-  },
-  ctaLabel: {
-    color: colors.surface,
-    fontWeight: "700",
-    fontSize: 14,
-  },
-});
 
 const FEED_CATEGORIES = FILTER_BAR_CATEGORIES;
 
@@ -206,9 +91,6 @@ export default function FeedScreen() {
   // Personalization mode — "for_you" or "all". Loaded from AsyncStorage on mount.
   const [personalizationMode, setPersonalizationMode] = useState<PersonalizationMode>("all");
   const personalizationModeRef = useRef<PersonalizationMode>("all");
-
-  // Today's Big Call market — null while loading, undefined if no market set today
-  const [bigCallMarket, setBigCallMarket] = useState<ApiBigCallMarket | null | undefined>(null);
 
   // Tier upgrade nudge — shown when user is eligible for next tier
   const [tierUpgradeNextTier, setTierUpgradeNextTier] = useState<AppAnalystTier | null>(null);
@@ -285,19 +167,6 @@ export default function FeedScreen() {
     }).catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authStatus]);
-
-  // Fetch today's Big Call market on mount — no auth required.
-  // Runs once per tab mount; re-fetches on pull-to-refresh via onRefresh.
-  useEffect(() => {
-    let cancelled = false;
-    void mobileApi.getTodayBigCall().then((res) => {
-      if (!cancelled) setBigCallMarket(res.market ?? undefined);
-    }).catch(() => {
-      if (!cancelled) setBigCallMarket(undefined);
-    });
-    return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // Skeleton 150ms delay: only fires when loading is true and no items have
   // arrived yet AND we have never successfully loaded data before.
@@ -570,51 +439,52 @@ export default function FeedScreen() {
       {/* Platform trust banner — compact accuracy pill below the category bar */}
       <PlatformTrustBanner />
 
-      {/* Tier upgrade nudge — one-line dismissable banner for eligible users */}
-      {authStatus === "authenticated" && !tierNudgeDismissed && tierUpgradeNextTier !== null && (
-        <View style={styles.tierNudgeBanner}>
-          <Text style={styles.tierNudgeText} numberOfLines={1}>
-            {`You're one call away from ${ANALYST_TIER_LABELS[tierUpgradeNextTier]} tier — make it count.`}
-          </Text>
-          <Pressable
-            hitSlop={8}
-            onPress={async () => {
-              const today = new Date().toISOString().slice(0, 10);
-              const dismissKey = `tier_upgrade_nudge_dismissed_${today}`;
-              await AsyncStorage.setItem(dismissKey, "true").catch(() => {});
-              setTierNudgeDismissed(true);
-            }}
-            accessibilityLabel="Dismiss tier nudge"
-          >
-            <Ionicons name="close" size={14} color={colors.textMuted} />
-          </Pressable>
-        </View>
-      )}
-
-      {/* Today's Big Call — shown only when a market is designated for today */}
-      {bigCallMarket != null && (
-        <BigCallCard market={bigCallMarket} />
-      )}
-
-      {/* Nudge row: shown in "For You" mode when user has 0 follows */}
-      {personalizationMode === "for_you" && followCount === 0 && (
-        <Pressable
-          style={styles.followNudgeRow}
-          onPress={() => router.push("/(tabs)/leaderboard")}
-          accessibilityRole="button"
-          accessibilityLabel="Browse Leaderboard to find analysts to follow"
-        >
-          <Text style={styles.followNudgeText}>
-            Follow analysts to personalize your feed
-          </Text>
-          <Text style={styles.followNudgeLink}>Browse Leaderboard</Text>
-        </Pressable>
-      )}
-
       <FlatList
         ref={listRef}
         data={feedItems}
         keyExtractor={(item) => item._key}
+        ListHeaderComponent={
+          // Scrollable header — tier nudge and follow nudge scroll off with the
+          // feed. snapToInterval excludes ListHeaderComponent from snap calculations
+          // automatically, so news cards still snap cleanly.
+          <>
+            {/* Tier upgrade nudge — one-line dismissable banner for eligible users */}
+            {authStatus === "authenticated" && !tierNudgeDismissed && tierUpgradeNextTier !== null && (
+              <View style={styles.tierNudgeBanner}>
+                <Text style={styles.tierNudgeText} numberOfLines={1}>
+                  {`You're one call away from ${ANALYST_TIER_LABELS[tierUpgradeNextTier]} tier — make it count.`}
+                </Text>
+                <Pressable
+                  hitSlop={8}
+                  onPress={async () => {
+                    const today = new Date().toISOString().slice(0, 10);
+                    const dismissKey = `tier_upgrade_nudge_dismissed_${today}`;
+                    await AsyncStorage.setItem(dismissKey, "true").catch(() => {});
+                    setTierNudgeDismissed(true);
+                  }}
+                  accessibilityLabel="Dismiss tier nudge"
+                >
+                  <Ionicons name="close" size={14} color={colors.textMuted} />
+                </Pressable>
+              </View>
+            )}
+
+            {/* Nudge row: shown in "For You" mode when user has 0 follows */}
+            {personalizationMode === "for_you" && followCount === 0 && (
+              <Pressable
+                style={styles.followNudgeRow}
+                onPress={() => router.push("/(tabs)/leaderboard")}
+                accessibilityRole="button"
+                accessibilityLabel="Browse Leaderboard to find analysts to follow"
+              >
+                <Text style={styles.followNudgeText}>
+                  Follow analysts to personalize your feed
+                </Text>
+                <Text style={styles.followNudgeLink}>Browse Leaderboard</Text>
+              </Pressable>
+            )}
+          </>
+        }
         snapToInterval={cardHeight}
         snapToAlignment="start"
         decelerationRate={0.985}

@@ -29,3 +29,7 @@
 - [project_sprint32.md](project_sprint32.md) — S32 T1-T6: flagship events carousel, Create wizard toggle, expert consensus, push notifications, admin surface — all qa-review
 - [project_sprint33.md](project_sprint33.md) — S33 T1-T4: resolution push loop, weekly digest endpoint+cron, digest mobile card+screen, live consensus bar — all qa-review
 - [project_sprint34.md](project_sprint34.md) — S34-T1: ExpertOpinionPostCard redesign (LinkedIn-style), USE_POST_CARD flag, react-native-view-shot, recon findings on component structure
+- [project_sprint47.md](project_sprint47.md) — S47 all 3 tickets: F1 detail modal, full leaderboard, lap times, gaps, tire badges — one commit
+- [project_sprint49.md](project_sprint49.md) — S49 Bundle A: ApiTopExpertEntry type, GET /api/experts/top-weekly (query-time groupBy + new index), AnalystCredibilityBadge mobile component
+- [project_sprint50.md](project_sprint50.md) — S50: BigCallCard removed from Feed, TopAnalystsSheet deleted, new TopAnalystsCard in Finance tab below BigCallHeroCard — semantic correction of S49
+- [project_sprint51.md](project_sprint51.md) — S51 Finance density: TopAnalystsCard compact (~120px), PulseRibbon collapsible default-collapsed (~44px), WeekToggleCard compact strip default (~50px)

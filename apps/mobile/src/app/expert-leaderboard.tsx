@@ -16,12 +16,7 @@ import { colors, radius, spacing } from "@predict-future/ui-tokens";
 
 import { mobileApi } from "@/lib/api";
 import { getExpertInitials, getExpertInitialsColor } from "@/utils/expertAvatar";
-
-function credibilityColor(score: number): string {
-  if (score >= 0.6) return "#16a34a";
-  if (score >= 0.4) return "#d97706";
-  return "#dc2626";
-}
+import { AnalystCredibilityBadge } from "@/components/analyst-credibility-badge";
 
 function HitMissBar({ hitCount, missCount }: { hitCount: number; missCount: number }) {
   const total = hitCount + missCount;
@@ -39,10 +34,9 @@ function HitMissBar({ hitCount, missCount }: { hitCount: number; missCount: numb
 function LeaderboardRow({ entry }: { entry: ApiExpertLeaderboardEntry }) {
   const router = useRouter();
   const { rank, expert } = entry;
+  const displayName = expert.name || expert.organization;
   const initials = getExpertInitials(expert.name, expert.organization);
   const initialsColor = getExpertInitialsColor(expert.name || expert.organization);
-  const scoreColor = credibilityColor(expert.credibilityScore ?? 0);
-  const displayName = expert.name || expert.organization;
 
   return (
     <Pressable
@@ -61,30 +55,19 @@ function LeaderboardRow({ entry }: { entry: ApiExpertLeaderboardEntry }) {
         </View>
       )}
 
-      {/* Name + org + bar */}
+      {/* Name + credibility badge (inline) + hit/miss bar */}
       <View style={lbStyles.nameBlock}>
-        <View style={lbStyles.nameRow}>
-          <Text style={lbStyles.expertName} numberOfLines={1}>{displayName}</Text>
-          {expert.verified && (
-            <View style={lbStyles.verifiedBadge}>
-              <Text style={lbStyles.verifiedText}>✓</Text>
-            </View>
-          )}
-        </View>
-        {expert.name && expert.organization ? (
-          <Text style={lbStyles.orgName} numberOfLines={1}>{expert.organization}</Text>
-        ) : null}
+        <AnalystCredibilityBadge
+          name={displayName}
+          organization={expert.name && expert.organization ? expert.organization : undefined}
+          hitRate={expert.credibilityScore}
+          resolvedCount={expert.hitCount + expert.missCount}
+          size="sm"
+          layout="inline"
+          onPress={() => router.push(`/expert/${expert.id}`)}
+        />
         <HitMissBar hitCount={expert.hitCount} missCount={expert.missCount} />
       </View>
-
-      {/* Credibility badge */}
-      {expert.credibilityScore !== null && (
-        <View style={[lbStyles.credBadge, { backgroundColor: scoreColor + "20" }]}>
-          <Text style={[lbStyles.credText, { color: scoreColor }]}>
-            {Math.round(expert.credibilityScore * 100)}%
-          </Text>
-        </View>
-      )}
     </Pressable>
   );
 }

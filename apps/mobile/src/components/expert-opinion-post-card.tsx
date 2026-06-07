@@ -47,7 +47,7 @@ import { SnappedSlider as Slider } from "@/components/snapped-slider";
 import { trackVoteEvent } from "@/lib/analytics";
 import { mobileApi } from "@/lib/api";
 import { getExpertInitials, getExpertInitialsColor } from "@/utils/expertAvatar";
-import { AnalystTierBadge } from "@/components/analyst-tier-badge";
+import { AnalystCredibilityBadge } from "@/components/analyst-credibility-badge";
 
 // ─── Direction configuration ───────────────────────────────────────────────────
 
@@ -882,8 +882,13 @@ export type ExpertOpinionPostCardProps = {
   articlePublishedAt?: string;
   /** Tier of the analyst — from the expert profile or feed item */
   analystTier?: AppAnalystTier;
-  /** Percentage hit rate (0–100) for verified high-tier analysts */
-  hitRatePct?: number | null;
+  /**
+   * Weekly hit rate as a fraction 0.0–1.0 — used by AnalystCredibilityBadge.
+   * When provided alongside weeklyResolvedCount >= 3, the accuracy stat renders.
+   */
+  weeklyHitRate?: number | null;
+  /** Weekly resolved call count — required alongside weeklyHitRate. */
+  weeklyResolvedCount?: number | null;
   /** Whether the current user follows this expert */
   isFollowed?: boolean;
   /** Called when user taps Follow/Following button */
@@ -901,7 +906,8 @@ export function ExpertOpinionPostCard({
   opinion,
   articlePublishedAt,
   analystTier,
-  hitRatePct,
+  weeklyHitRate,
+  weeklyResolvedCount,
   isFollowed,
   onFollowToggle,
 }: ExpertOpinionPostCardProps) {
@@ -1031,12 +1037,6 @@ export function ExpertOpinionPostCard({
     ? formatRelativeTime(articlePublishedAt)
     : null;
 
-  const showVerifiedBadge = opinion.verified === true;
-  const showTierBadge =
-    analystTier &&
-    analystTier !== "ROOKIE" &&
-    !opinion.isSourceAttribution;
-
   return (
     <View ref={cardRef} style={styles.card} collapsable={false}>
 
@@ -1060,42 +1060,54 @@ export function ExpertOpinionPostCard({
         </Pressable>
 
         <View style={styles.headerMeta}>
-          <Pressable
-            onPress={() =>
-              router.push(`/expert/${opinion.expertId}` as Parameters<typeof router.push>[0])
-            }
-            hitSlop={{ top: 6, bottom: 6, left: 2, right: 2 }}
-          >
-            <View style={styles.nameRow}>
-              <Text style={styles.expertName} numberOfLines={1}>
-                {opinion.isSourceAttribution
-                  ? opinion.expertOrganization
-                  : opinion.expertName || opinion.expertOrganization}
-              </Text>
-              {showVerifiedBadge && (
+          {opinion.isSourceAttribution ? (
+            <Pressable
+              onPress={() =>
+                router.push(`/expert/${opinion.expertId}` as Parameters<typeof router.push>[0])
+              }
+              hitSlop={{ top: 6, bottom: 6, left: 2, right: 2 }}
+            >
+              <View style={styles.nameRow}>
+                <Text style={styles.expertName} numberOfLines={1}>
+                  {opinion.expertOrganization}
+                </Text>
                 <View style={styles.verifiedBadge}>
                   <Text style={styles.verifiedBadgeText}>✓</Text>
                 </View>
-              )}
-            </View>
-          </Pressable>
-
-          <View style={styles.orgBadgeRow}>
-            <Text style={styles.expertOrg} numberOfLines={1}>
-              {opinion.isSourceAttribution ? "Trusted Source" : opinion.expertOrganization}
-            </Text>
-            {showTierBadge && (
-              <AnalystTierBadge tier={analystTier} surface="public" />
-            )}
-            {showVerifiedBadge && hitRatePct != null && (
-              <Text style={styles.hitRateLabel}>{hitRatePct}% hit rate</Text>
-            )}
-            {isResolved && (
-              <View style={styles.resolvedStampInline}>
-                <Text style={styles.resolvedStampText}>RESOLVED</Text>
               </View>
-            )}
-          </View>
+              <View style={styles.orgBadgeRow}>
+                <Text style={styles.expertOrg} numberOfLines={1}>Trusted Source</Text>
+                {isResolved && (
+                  <View style={styles.resolvedStampInline}>
+                    <Text style={styles.resolvedStampText}>RESOLVED</Text>
+                  </View>
+                )}
+              </View>
+            </Pressable>
+          ) : (
+            <Pressable
+              onPress={() =>
+                router.push(`/expert/${opinion.expertId}` as Parameters<typeof router.push>[0])
+              }
+              hitSlop={{ top: 6, bottom: 6, left: 2, right: 2 }}
+            >
+              <AnalystCredibilityBadge
+                name={opinion.expertName || opinion.expertOrganization}
+                organization={opinion.expertOrganization}
+                tier={analystTier ?? null}
+                hitRate={weeklyHitRate ?? null}
+                resolvedCount={weeklyResolvedCount ?? null}
+                size="sm"
+              />
+              {isResolved && (
+                <View style={[styles.orgBadgeRow, { marginTop: 2 }]}>
+                  <View style={styles.resolvedStampInline}>
+                    <Text style={styles.resolvedStampText}>RESOLVED</Text>
+                  </View>
+                </View>
+              )}
+            </Pressable>
+          )}
           {/* When the analyst made the call — prefers analystCallAt when the
               extractor surfaced it, falls back to article publishedAt otherwise.
               Color is tuned to recency. */}
