@@ -43,8 +43,8 @@ export type ExploreEventName =
 export type ExploreEventProps = {
   groupId: string;
   groupName: string;
-  /** "spotlight" | "rail" */
-  surface: "spotlight" | "rail";
+  /** Surface that originated the tap. */
+  surface: "spotlight" | "rail" | "list";
 };
 
 export function trackExploreEvent(event: ExploreEventName, props: ExploreEventProps): void {

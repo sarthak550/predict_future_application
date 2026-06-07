@@ -3232,6 +3232,17 @@
       "qaVerdict": "pass",
       "failureNotes": null,
       "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S55-T8",
+      "sprint": 55,
+      "title": "Compact CommunitiesList replaces spotlight + rail in My Groups Discover (~52px rows)",
+      "description": "User feedback: even after the S55-T7 relocation, the CommunitySpotlightCard (200px) + CommunitiesRail (160px) were taking too much vertical space inside the My Groups sub-tab. Built CommunitiesList (compact vertical list, ~52px per row, max 5 visible) and replaced the spotlight + rail mounts. Each row: 32px colored avatar (category-colored, first letter) + name + meta (Category · N members) + Join chip. Old spotlight + rail components are now orphaned but left on disk pending a sweep.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
     }
   ]
 }

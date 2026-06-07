@@ -22,8 +22,7 @@ import {
   FILTER_BAR_CATEGORIES,
   type CategoryKey,
 } from "@/components/category-filter-bar";
-import { CommunitiesRail } from "@/components/communities-rail";
-import { CommunitySpotlightCard } from "@/components/community-spotlight-card";
+import { CommunitiesList } from "@/components/communities-list";
 import { MarketSummaryCard } from "@/components/market-summary-card";
 import { useApiQuery } from "@/hooks/useApiQuery";
 import { mobileApi } from "@/lib/api";
@@ -624,8 +623,7 @@ export default function MarketsScreen() {
           !isSearchMode && mode === "private" && discoverGroups.length > 0 ? (
             <View style={styles.discoverSection}>
               <Text style={styles.discoverSectionHeader}>Discover communities</Text>
-              <CommunitySpotlightCard group={discoverGroups[0]!} />
-              <CommunitiesRail groups={discoverGroups} />
+              <CommunitiesList groups={discoverGroups} limit={5} />
             </View>
           ) : !isSearchMode && mode === "public" && statusTab === "live" ? (
             <>
