@@ -87,6 +87,9 @@ export default function GroupsScreen() {
   const [myGroups, setMyGroups] = useState<MyGroup[]>([]);
   const [myGroupsLoading, setMyGroupsLoading] = useState(false);
 
+  // S56: Pending join requests count for the "My pending requests" row
+  const [pendingRequestCount, setPendingRequestCount] = useState(0);
+
   // Join by code state
   const [codeInput, setCodeInput] = useState("");
   const [joiningByCode, setJoiningByCode] = useState(false);
@@ -134,8 +137,14 @@ export default function GroupsScreen() {
     if (!session) return;
     setMyGroupsLoading(true);
     try {
-      const res = await mobileApi.getMyGroups();
-      setMyGroups(res.groups ?? []);
+      const [groupsRes, requestsRes] = await Promise.all([
+        mobileApi.getMyGroups(),
+        mobileApi.getMyGroupJoinRequests().catch(() => ({ requests: [] }))
+      ]);
+      setMyGroups(groupsRes.groups ?? []);
+      // Count only PENDING requests for the row badge.
+      const pending = requestsRes.requests.filter((r) => r.status === "PENDING").length;
+      setPendingRequestCount(pending);
     } catch {
       // Silent — my groups is secondary UI
     } finally {
@@ -373,6 +382,20 @@ export default function GroupsScreen() {
           <View style={styles.sectionBlock}>
             <Text style={styles.sectionTitle}>My Groups</Text>
 
+            {/* S56: "My pending requests" entry — only visible when N > 0 */}
+            {pendingRequestCount > 0 ? (
+              <Pressable
+                style={styles.pendingRequestsRow}
+                onPress={() => router.push("/my-join-requests")}
+              >
+                <Ionicons name="time-outline" size={18} color="#1D4ED8" />
+                <Text style={styles.pendingRequestsText}>
+                  Pending requests ({pendingRequestCount})
+                </Text>
+                <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+              </Pressable>
+            ) : null}
+
             {/* Join by invite code */}
             <JoinByCodeSection
               value={codeInput}
@@ -510,6 +533,19 @@ function DiscoverGroupCard({
           <Ionicons name="checkmark" size={13} color="#15803D" />
           <Text style={styles.joinBtnJoinedText}>Joined</Text>
         </View>
+      ) : group.visibility === "REQUEST_TO_JOIN" ? (
+        // S56: REQUEST_TO_JOIN — tapping navigates to group profile where the full
+        // state machine (submit/pending/rejected) lives. We don't inline it here to
+        // avoid duplicating state management in the discover list.
+        <Pressable
+          style={[styles.joinBtn, styles.joinBtnRTJ]}
+          onPress={(e) => {
+            e.stopPropagation?.();
+            onNavigate();
+          }}
+        >
+          <Text style={styles.joinBtnRTJText}>Request</Text>
+        </Pressable>
       ) : (
         <Pressable
           style={[styles.joinBtn, joining && styles.joinBtnDisabled]}
@@ -955,6 +991,35 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "700",
     color: colors.surface
+  },
+
+  // S56: Pending requests row
+  pendingRequestsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    backgroundColor: "#DBEAFE",
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    marginBottom: spacing.md
+  },
+  pendingRequestsText: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#1D4ED8"
+  },
+
+  // S56: Request-to-join button on discover card
+  joinBtnRTJ: {
+    borderColor: "#1D4ED8",
+    backgroundColor: "#EFF6FF"
+  },
+  joinBtnRTJText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#1D4ED8"
   },
 
   // Misc

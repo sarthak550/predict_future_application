@@ -59,9 +59,10 @@ export async function GET(request: Request) {
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-  // Base filter: OPEN and not archived.
+  // Base filter: OPEN and REQUEST_TO_JOIN groups, not archived.
+  // Both tiers have public listings; the difference is the join flow (direct vs request).
   const baseWhere = {
-    visibility: "OPEN" as const,
+    visibility: { in: ["OPEN", "REQUEST_TO_JOIN"] as ["OPEN", "REQUEST_TO_JOIN"] },
     isArchived: false,
     ...(category ? { category: category as never } : {}),
     // Exclude groups the authenticated user is already in.
@@ -135,6 +136,7 @@ export async function GET(request: Request) {
       description: true,
       category: true,
       coverImageUrl: true,
+      visibility: true,
       updatedAt: true,
       createdAt: true,
       owner: {
@@ -181,7 +183,9 @@ export async function GET(request: Request) {
     memberCount: g._count.memberships,
     coverImageUrl: g.coverImageUrl ?? null,
     ownerUsername: g.owner.username,
-    recentMarketCount: g.markets.length
+    recentMarketCount: g.markets.length,
+    // S56: mobile browse card uses this to render "Join" vs "Request to Join" CTA.
+    visibility: g.visibility
   }));
 
   return NextResponse.json({ groups: responseGroups, nextCursor });

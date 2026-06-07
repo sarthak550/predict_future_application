@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const GROUP_VISIBILITY_VALUES = ["INVITE_ONLY", "OPEN"] as const;
+const GROUP_VISIBILITY_VALUES = ["INVITE_ONLY", "OPEN", "REQUEST_TO_JOIN"] as const;
 
 const MARKET_CATEGORY_VALUES = [
   "GENERAL",

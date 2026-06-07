@@ -384,7 +384,29 @@ export type ApiHostStats = {
   } | null;
 };
 
-export type AppGroupVisibility = "INVITE_ONLY" | "OPEN";
+export type AppGroupVisibility = "INVITE_ONLY" | "OPEN" | "REQUEST_TO_JOIN";
+
+export type AppGroupJoinRequestStatus = "PENDING" | "APPROVED" | "REJECTED";
+
+export type ApiGroupJoinRequest = {
+  id: string;
+  groupId: string;
+  groupName: string;
+  groupSlug: string;
+  status: AppGroupJoinRequestStatus;
+  requestedAt: string;
+  decidedAt: string | null;
+  decisionNote: string | null;
+};
+
+export type ApiGroupJoinRequestInboxItem = {
+  id: string;
+  userId: string;
+  username: string;
+  avatarUrl: string | null;
+  requestedAt: string;
+  status: AppGroupJoinRequestStatus;
+};
 export type AppGroupRole = "OWNER" | "ADMIN" | "MEMBER";
 
 export type ApiGroupSummary = {
@@ -411,6 +433,8 @@ export type ApiDiscoverGroup = {
   coverImageUrl: string | null;
   ownerUsername: string;
   recentMarketCount: number;
+  /** S56: Visibility tier — mobile browse card uses this to render "Join" vs "Request to Join" CTA. */
+  visibility: AppGroupVisibility;
 };
 
 export type ApiDiscoverGroupsResponse = {
@@ -455,6 +479,14 @@ export type ApiGroupDetail = {
       closeAt?: string;
       creator?: { username: string };
     }>;
+    /** S56: Caller's current join request (PENDING or decided in last 7 days). Null if none. */
+    callerJoinRequest?: {
+      id: string;
+      status: AppGroupJoinRequestStatus;
+      decisionNote: string | null;
+    } | null;
+    /** S56: Count of PENDING join requests. Only populated for OWNER/ADMIN callers. */
+    pendingRequestCount?: number | null;
   };
 };
 

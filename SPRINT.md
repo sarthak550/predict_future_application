@@ -2,8 +2,8 @@
 
 > Human-readable view of `.claude/sprint-board.json`. Auto-maintained by the CEO/CTO/QA agents — do not edit by hand.
 
-**Current sprint:** 55
-**Status:** Sprint 55 QA COMPLETE (6/6) — Markets → Explore reframe: re-hidden Groups tab, renamed Markets tab to Explore with compass icon, Community spotlight card + Communities rail + Hosted-by [Group] chip on every group-hosted market card. Mobile-only, no schema. Tab bar back to 5. Pending device smoke-test on real screen sizes (gradient + card heights). Sprint 56 queued (REQUEST_TO_JOIN + approval inbox), S57 queued (discovery polish + per-group notification prefs + cover upload). Sprint 54 QA COMPLETE (8/8) — Open Groups foundation: GroupVisibility enum + INVITE_ONLY/OPEN tiers, owner moderation routes (remove/ban/unban) with ban check on invite-code path, public discover route (OPEN-only), open-join route with ban+memberCap guards, full group profile + member management screens, visibility/category pickers in create flow. Pending dev-server restart + device smoke-test. Sprint 53 QA COMPLETE (6/6) — Create-tab fix bundle: draft persistence + schema version, strict resolveAt validation, dead StepResolution/ResolutionMode dropped, eligibility gate inlined on PUBLIC option (top HostEligibilityCard removed), duplicate MC options blocked, inline char-count hints. ~215 dead lines removed. Sprint 52 QA COMPLETE (4/4) — CombinedAnalystCard merge + See-all removal + tighter inter-card gap + Pulse pills redesign with question/crowd-%/urgency-tint. Sprint 51 COMPLETE (5/5). Sprint 50 COMPLETE (6/6 — Top 3 Analysts moved from Feed to Finance). Sprint 49 COMPLETE (9/9). Legal review on SEBI Research Analyst public naming still required before production deploy. Sprint 48 COMPLETE (F1 timing reliability — retry, cache downgrade, empty-state, client timeout). Sprint 47 COMPLETE (F1 detail modal — full driver grid with lap times, gaps, tire data). Sprint 46 COMPLETE (Sports poll trust fix — all 3 tickets passed QA). Sprint 45 COMPLETE (F1 race card). Sprint 44 COMPLETE (Finance instrument filter overhaul). Sprint 43 COMPLETE. Sprints 38–42 COMPLETE (security/correctness hardening, 54 tickets). Sprints 12, 25–34 COMPLETE.
+**Current sprint:** 56
+**Status:** Sprint 56 QA COMPLETE (9/9) — REQUEST_TO_JOIN tier shipped: GroupJoinRequest model, submit/cancel/approve/reject routes, owner approval inbox + pending-count badge, requester My Requests surface, CTA state machine (Request to join / Pending / Declined), 3-option visibility picker in create flow, push notifications on request + decision. T2/T5 failed first QA pass (cancel auth + non-member member roster leak), fixed and re-verified. Pending dev-server restart + device smoke-test. Sprint 57 queued (discovery polish + per-group notification prefs + cover upload + featured curation + GroupModerationAction audit table). Sprint 55 QA COMPLETE (8/8 incl. T7/T8 amendments) — Markets → Explore + compact CommunitiesList in My Groups Discover + Hosted-by chip on every group-linked market. Sprint 56 queued (REQUEST_TO_JOIN + approval inbox), S57 queued (discovery polish + per-group notification prefs + cover upload). Sprint 54 QA COMPLETE (8/8) — Open Groups foundation: GroupVisibility enum + INVITE_ONLY/OPEN tiers, owner moderation routes (remove/ban/unban) with ban check on invite-code path, public discover route (OPEN-only), open-join route with ban+memberCap guards, full group profile + member management screens, visibility/category pickers in create flow. Pending dev-server restart + device smoke-test. Sprint 53 QA COMPLETE (6/6) — Create-tab fix bundle: draft persistence + schema version, strict resolveAt validation, dead StepResolution/ResolutionMode dropped, eligibility gate inlined on PUBLIC option (top HostEligibilityCard removed), duplicate MC options blocked, inline char-count hints. ~215 dead lines removed. Sprint 52 QA COMPLETE (4/4) — CombinedAnalystCard merge + See-all removal + tighter inter-card gap + Pulse pills redesign with question/crowd-%/urgency-tint. Sprint 51 COMPLETE (5/5). Sprint 50 COMPLETE (6/6 — Top 3 Analysts moved from Feed to Finance). Sprint 49 COMPLETE (9/9). Legal review on SEBI Research Analyst public naming still required before production deploy. Sprint 48 COMPLETE (F1 timing reliability — retry, cache downgrade, empty-state, client timeout). Sprint 47 COMPLETE (F1 detail modal — full driver grid with lap times, gaps, tire data). Sprint 46 COMPLETE (Sports poll trust fix — all 3 tickets passed QA). Sprint 45 COMPLETE (F1 race card). Sprint 44 COMPLETE (Finance instrument filter overhaul). Sprint 43 COMPLETE. Sprints 38–42 COMPLETE (security/correctness hardening, 54 tickets). Sprints 12, 25–34 COMPLETE.
 
 ---
 
@@ -753,5 +753,30 @@
 
 **Sprint-level note:** WS6 (Groups hidden) is NOT regressed by this sprint. The Hosted-by chip surfaces every group-linked market as a community entry point — organically more discoverable than a dedicated tab that only reaches users who specifically tap it. See brief for full rationale.
 
-**S56 queued:** REQUEST_TO_JOIN third visibility tier + GroupJoinRequest model + approval inbox + push notifications on request/decision.
 **S57 queued:** Discovery polish — cover image upload, category landing pages, search across markets+groups+instruments, featured-flag curation, per-group notification prefs, GroupModerationAction audit table.
+
+---
+
+## Sprint 56
+
+**Theme:** REQUEST_TO_JOIN — third visibility tier closes the gap between OPEN and INVITE_ONLY. Owners get an approval inbox; requesters get a request-pending CTA and push notifications on decision.
+**Status:** IN PROGRESS
+**Brief:** `.claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint56.md`
+
+| ID | Pri | Status | Title |
+|---|---|---|---|
+| S56-T1 | CRIT | ✅ done | Schema: REQUEST_TO_JOIN enum + GroupJoinRequestStatus enum + GroupJoinRequest model |
+| S56-T2 | CRIT | ✅ done | API: submit + cancel join request (cancel auth fixed: requester OR OWNER/ADMIN) |
+| S56-T3 | CRIT | ✅ done | API: approve + reject (atomic, idempotent, push) |
+| S56-T4 | CRIT | ✅ done | API: owner inbox + requester `mine` surface |
+| S56-T5 | CRIT | ✅ done | Update existing join + discover routes for RTJ tier (non-member memberships leak fixed) |
+| S56-T6 | HIGH | ✅ done | Mobile: CTA state machine — Request to join / Pending / Declined / Cancel |
+| S56-T7 | HIGH | ✅ done | Mobile: Approval inbox screen + pending-count badge |
+| S56-T8 | HIGH | ✅ done | Mobile: My Requests surface + create flow third visibility option |
+| S56-T9 | MED | ✅ done | Push notification helpers + 4 analytics events |
+
+**Sprint-level constraint:** T1 is the single schema-touching ticket (per `serialize_schema_writes` memory). All other tickets work against the deployed schema.
+
+**Race condition watch (T3):** Two admins approve the same request simultaneously. Must catch unique constraint on GroupMembership and return 200 idempotent, not 500.
+
+**S57 queued:** Discovery polish — cover image upload, per-group notification prefs (unlock for safe fan-out at scale), category landing pages, unified search, featured curation, GroupModerationAction audit table, bulk approve/reject.

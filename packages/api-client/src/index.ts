@@ -17,6 +17,8 @@ import type {
   ApiFootballMatchDetail,
   ApiDiscoverGroupsResponse,
   ApiGroupDetail,
+  ApiGroupJoinRequest,
+  ApiGroupJoinRequestInboxItem,
   ApiGroupMember,
   ApiGroupSummary,
   AppGroupVisibility,
@@ -392,6 +394,65 @@ export function createApiClient(options: ApiClientOptions) {
         `/api/groups/${groupId}/launch`,
         undefined,
         { method: "POST", auth: true }
+      );
+    },
+
+    // ── S56: Join-request flow ──────────────────────────────────────────
+
+    /** Submit a join request to a REQUEST_TO_JOIN group. */
+    submitGroupJoinRequest(groupId: string) {
+      return request<{ requestId: string; status: "PENDING" } | { alreadyMember: true }>(
+        `/api/groups/${groupId}/join-request`,
+        undefined,
+        { method: "POST", auth: true }
+      );
+    },
+
+    /** Cancel a pending join request (requester only). */
+    cancelGroupJoinRequest(groupId: string, requestId: string) {
+      return request<void>(
+        `/api/groups/${groupId}/join-request/${requestId}`,
+        undefined,
+        { method: "DELETE", auth: true }
+      );
+    },
+
+    /** Approve a pending join request (OWNER/ADMIN only). */
+    approveGroupJoinRequest(groupId: string, requestId: string) {
+      return request<{ approved: boolean }>(
+        `/api/groups/${groupId}/join-request/${requestId}/approve`,
+        undefined,
+        { method: "POST", auth: true }
+      );
+    },
+
+    /** Reject a pending join request (OWNER/ADMIN only). */
+    rejectGroupJoinRequest(groupId: string, requestId: string, body?: { note?: string }) {
+      return request<{ rejected: boolean }>(
+        `/api/groups/${groupId}/join-request/${requestId}/reject`,
+        undefined,
+        { method: "POST", body: JSON.stringify(body ?? {}), auth: true }
+      );
+    },
+
+    /** Get paginated pending join requests for a group (OWNER/ADMIN only). */
+    getGroupJoinRequests(
+      groupId: string,
+      query?: { status?: "PENDING" | "APPROVED" | "REJECTED"; cursor?: string; limit?: number }
+    ) {
+      return request<{ requests: ApiGroupJoinRequestInboxItem[]; nextCursor: string | null }>(
+        `/api/groups/${groupId}/join-requests`,
+        query as Record<string, string | number | boolean | undefined>,
+        { auth: true }
+      );
+    },
+
+    /** Get the calling user's own join requests across all groups. */
+    getMyGroupJoinRequests() {
+      return request<{ requests: ApiGroupJoinRequest[] }>(
+        "/api/groups/join-requests/mine",
+        undefined,
+        { auth: true }
       );
     },
     signIn(body: { email: string; password: string }) {

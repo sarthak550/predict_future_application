@@ -18,6 +18,7 @@ import { formatRelativeTime } from "@predict-future/utils";
 
 import { useApiQuery } from "@/hooks/useApiQuery";
 import { mobileApi } from "@/lib/api";
+import { trackGroupRequestEvent } from "@/lib/analytics";
 import { useSession } from "@/providers/session-provider";
 import type { AppMarketCategory } from "@predict-future/types";
 
@@ -43,13 +44,19 @@ type GroupMarket = {
   creator?: { username: string };
 };
 
+type CallerJoinRequest = {
+  id: string;
+  status: "PENDING" | "APPROVED" | "REJECTED";
+  decisionNote: string | null;
+} | null;
+
 type GroupData = {
   id: string;
   slug: string;
   name: string;
   description?: string | null;
   ownerId: string;
-  visibility: "INVITE_ONLY" | "OPEN";
+  visibility: "INVITE_ONLY" | "OPEN" | "REQUEST_TO_JOIN";
   category?: AppMarketCategory | null;
   memberCap?: number;
   coverImageUrl?: string | null;
@@ -57,6 +64,10 @@ type GroupData = {
   owner?: { username: string };
   memberships?: GroupMember[];
   markets?: GroupMarket[];
+  /** S56: Caller's current join request — populated for non-members on REQUEST_TO_JOIN groups. */
+  callerJoinRequest?: CallerJoinRequest;
+  /** S56: Count of PENDING join requests. Populated for OWNER/ADMIN callers only. */
+  pendingRequestCount?: number | null;
 };
 
 // ── Category colours ─────────────────────────────────────────────────
@@ -87,6 +98,42 @@ function categoryLabel(cat?: string | null): string {
 function normalizeParam(value: string | string[] | undefined): string | null {
   if (Array.isArray(value)) return value[0] ?? null;
   return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+// ── Member status ────────────────────────────────────────────────────
+//
+// S56 extension: two new states for REQUEST_TO_JOIN flow.
+
+type MemberStatus =
+  | "owner"
+  | "admin"
+  | "member"
+  | "banned"
+  | "request_pending"   // S56: user has a live PENDING join request
+  | "request_rejected"  // S56: user was rejected within the last 7 days
+  | "none";
+
+function resolveMemberStatus(
+  group: GroupData,
+  userId?: string | null
+): MemberStatus {
+  if (!userId) return "none";
+
+  const membership = group.memberships?.find((m) => m.userId === userId);
+
+  if (membership) {
+    if (membership.bannedAt) return "banned";
+    if (membership.role === "OWNER") return "owner";
+    if (membership.role === "ADMIN") return "admin";
+    return "member";
+  }
+
+  // No membership — check join request state (S56).
+  const jr = group.callerJoinRequest;
+  if (jr?.status === "PENDING") return "request_pending";
+  if (jr?.status === "REJECTED") return "request_rejected";
+
+  return "none";
 }
 
 // ── Screen ────────────────────────────────────────────────────────────
@@ -174,42 +221,37 @@ function CoverBanner({
 
 // ── Join CTA ─────────────────────────────────────────────────────────
 
-type MemberStatus = "owner" | "admin" | "member" | "banned" | "none";
-
-function resolveMemberStatus(
-  group: GroupData,
-  userId?: string | null
-): MemberStatus {
-  if (!userId) return "none";
-  const membership = group.memberships?.find((m) => m.userId === userId);
-  if (!membership) return "none";
-  if (membership.bannedAt) return "banned";
-  if (membership.role === "OWNER") return "owner";
-  if (membership.role === "ADMIN") return "admin";
-  return "member";
-}
-
 function JoinCTA({
   group,
   memberStatus,
+  joinRequest,
   onJoin,
+  onRequestJoin,
+  onCancelRequest,
   onLeave,
-  joining
+  joining,
+  requestingJoin,
+  cancellingRequest
 }: {
   group: GroupData;
   memberStatus: MemberStatus;
+  joinRequest: CallerJoinRequest;
   onJoin: () => void;
+  onRequestJoin: () => void;
+  onCancelRequest: () => void;
   onLeave: () => void;
   joining: boolean;
+  requestingJoin: boolean;
+  cancellingRequest: boolean;
 }) {
   const router = useRouter();
 
   if (memberStatus === "owner" || memberStatus === "admin") {
-    return null; // Role chip shown in header; no CTA bar needed.
+    return null;
   }
 
   if (memberStatus === "member") {
-    return null; // "Member" chip in header; no CTA bar.
+    return null;
   }
 
   if (memberStatus === "banned") {
@@ -222,7 +264,56 @@ function JoinCTA({
     );
   }
 
-  // Not a member.
+  // S56: Request pending state — show muted pill + cancel action.
+  if (memberStatus === "request_pending") {
+    return (
+      <View style={styles.ctaBar}>
+        <View style={[styles.ctaBtn, styles.ctaBtnMuted]}>
+          <Ionicons name="time-outline" size={15} color={colors.textMuted} style={{ marginRight: 6 }} />
+          <Text style={styles.ctaBtnTextMuted}>Request pending</Text>
+        </View>
+        <Pressable
+          style={styles.ctaBtnGhost}
+          onPress={onCancelRequest}
+          disabled={cancellingRequest}
+        >
+          {cancellingRequest ? (
+            <ActivityIndicator color={colors.accent} size="small" />
+          ) : (
+            <Text style={styles.ctaBtnGhostText}>Cancel request</Text>
+          )}
+        </Pressable>
+      </View>
+    );
+  }
+
+  // S56: Request rejected state — muted label, tap again to re-request.
+  if (memberStatus === "request_rejected") {
+    return (
+      <View style={styles.ctaBar}>
+        <View style={[styles.ctaBtn, styles.ctaBtnMuted]}>
+          <Ionicons name="close-circle-outline" size={15} color={colors.danger} style={{ marginRight: 6 }} />
+          <Text style={[styles.ctaBtnTextMuted, { color: colors.danger }]}>Request not approved</Text>
+        </View>
+        {joinRequest?.decisionNote ? (
+          <Text style={styles.decisionNote}>{joinRequest.decisionNote}</Text>
+        ) : null}
+        <Pressable
+          style={styles.ctaBtnGhost}
+          onPress={onRequestJoin}
+          disabled={requestingJoin}
+        >
+          {requestingJoin ? (
+            <ActivityIndicator color={colors.accent} size="small" />
+          ) : (
+            <Text style={styles.ctaBtnGhostText}>Request again</Text>
+          )}
+        </Pressable>
+      </View>
+    );
+  }
+
+  // memberStatus === "none"
   if (group.visibility === "OPEN") {
     return (
       <View style={styles.ctaBar}>
@@ -235,6 +326,25 @@ function JoinCTA({
             <ActivityIndicator color={colors.surface} size="small" />
           ) : (
             <Text style={styles.ctaBtnText}>Join Group</Text>
+          )}
+        </Pressable>
+      </View>
+    );
+  }
+
+  // S56: REQUEST_TO_JOIN — primary "Request to join" button.
+  if (group.visibility === "REQUEST_TO_JOIN") {
+    return (
+      <View style={styles.ctaBar}>
+        <Pressable
+          style={[styles.ctaBtn, requestingJoin && styles.ctaBtnDisabled]}
+          onPress={onRequestJoin}
+          disabled={requestingJoin}
+        >
+          {requestingJoin ? (
+            <ActivityIndicator color={colors.surface} size="small" />
+          ) : (
+            <Text style={styles.ctaBtnText}>Request to join</Text>
           )}
         </Pressable>
       </View>
@@ -274,16 +384,25 @@ function GroupBody({
   const userId = session?.userId ?? null;
 
   const [joining, setJoining] = useState(false);
+  const [requestingJoin, setRequestingJoin] = useState(false);
+  const [cancellingRequest, setCancellingRequest] = useState(false);
   const [descExpanded, setDescExpanded] = useState(false);
 
-  const memberStatus = resolveMemberStatus(group, userId);
+  // Derive join request state from group data — updated optimistically.
+  const [localJoinRequest, setLocalJoinRequest] = useState<CallerJoinRequest>(
+    group.callerJoinRequest ?? null
+  );
+
+  const memberStatus = resolveMemberStatus(
+    { ...group, callerJoinRequest: localJoinRequest },
+    userId
+  );
   const isAdminOrOwner = memberStatus === "owner" || memberStatus === "admin";
   const memberships = group.memberships ?? [];
   const memberCount = memberships.filter((m) => !m.bannedAt).length;
-  const markets = (group.markets ?? [])
-    .slice()
-    .sort((a, b) => (a.closeAt && b.closeAt ? 0 : 0))
-    .slice(0, 10);
+  const markets = (group.markets ?? []).slice(0, 10);
+
+  const pendingCount = group.pendingRequestCount ?? 0;
 
   async function handleJoin() {
     setJoining(true);
@@ -300,6 +419,54 @@ function GroupBody({
     }
   }
 
+  async function handleRequestJoin() {
+    setRequestingJoin(true);
+    try {
+      const res = await mobileApi.submitGroupJoinRequest(groupId);
+      if ("requestId" in res) {
+        // Optimistic state flip — no full reload needed.
+        setLocalJoinRequest({
+          id: res.requestId,
+          status: "PENDING",
+          decisionNote: null
+        });
+        trackGroupRequestEvent("group_request_submitted", {
+          groupId,
+          requestId: res.requestId,
+          surface: "group_profile"
+        });
+      }
+    } catch (err: unknown) {
+      Alert.alert(
+        "Could not submit request",
+        err instanceof Error ? err.message : "Something went wrong."
+      );
+    } finally {
+      setRequestingJoin(false);
+    }
+  }
+
+  async function handleCancelRequest() {
+    if (!localJoinRequest) return;
+    setCancellingRequest(true);
+    try {
+      await mobileApi.cancelGroupJoinRequest(groupId, localJoinRequest.id);
+      // Optimistic: reset to "none" state.
+      setLocalJoinRequest(null);
+      trackGroupRequestEvent("group_request_cancelled", {
+        groupId,
+        requestId: localJoinRequest.id
+      });
+    } catch (err: unknown) {
+      Alert.alert(
+        "Could not cancel request",
+        err instanceof Error ? err.message : "Something went wrong."
+      );
+    } finally {
+      setCancellingRequest(false);
+    }
+  }
+
   function handleLeave() {
     Alert.alert("Leave group?", "You can rejoin later.", [
       { text: "Cancel", style: "cancel" },
@@ -307,7 +474,6 @@ function GroupBody({
         text: "Leave",
         style: "destructive",
         onPress: () => {
-          // TODO S56: implement leave group endpoint
           Alert.alert("Not implemented", "Leave group is coming soon.");
         }
       }
@@ -322,6 +488,38 @@ function GroupBody({
     } catch {
       Alert.alert("Invite Code", group.inviteCode);
     }
+  }
+
+  function openAdminActions() {
+    const actions: Array<{ text: string; onPress?: () => void; style?: "default" | "cancel" | "destructive" }> = [
+      {
+        text: "Manage Members",
+        onPress: () => router.push(`/group/${groupId}/members`)
+      }
+    ];
+
+    // S56: Pending requests inbox entry (owner/admin only, show count badge).
+    if (pendingCount > 0) {
+      actions.push({
+        text: `Pending Requests (${pendingCount})`,
+        onPress: () => router.push(`/group/${groupId}/requests`)
+      });
+    } else {
+      actions.push({
+        text: "Pending Requests",
+        onPress: () => router.push(`/group/${groupId}/requests`)
+      });
+    }
+
+    actions.push({
+      text: "Edit Group",
+      onPress: () =>
+        Alert.alert("Coming soon", "Group settings are in a future sprint.")
+    });
+
+    actions.push({ text: "Cancel", style: "cancel" });
+
+    Alert.alert("Group Actions", "", actions);
   }
 
   return (
@@ -345,22 +543,20 @@ function GroupBody({
             {isAdminOrOwner ? (
               <Pressable
                 style={styles.kebabBtn}
-                onPress={() =>
-                  Alert.alert("Group Actions", "", [
-                    {
-                      text: "Manage Members",
-                      onPress: () => router.push(`/group/${groupId}/members`)
-                    },
-                    {
-                      text: "Edit Group",
-                      onPress: () =>
-                        Alert.alert("Coming soon", "Group settings are in Sprint 56.")
-                    },
-                    { text: "Cancel", style: "cancel" }
-                  ])
-                }
+                onPress={openAdminActions}
               >
-                <Ionicons name="ellipsis-vertical" size={20} color={colors.textMuted} />
+                {pendingCount > 0 ? (
+                  <View>
+                    <Ionicons name="ellipsis-vertical" size={20} color={colors.textMuted} />
+                    <View style={styles.pendingBadge}>
+                      <Text style={styles.pendingBadgeText}>
+                        {pendingCount > 9 ? "9+" : String(pendingCount)}
+                      </Text>
+                    </View>
+                  </View>
+                ) : (
+                  <Ionicons name="ellipsis-vertical" size={20} color={colors.textMuted} />
+                )}
               </Pressable>
             ) : null}
           </View>
@@ -386,7 +582,11 @@ function GroupBody({
             <View
               style={[
                 styles.pill,
-                group.visibility === "OPEN" ? styles.pillOpen : styles.pillInviteOnly
+                group.visibility === "OPEN"
+                  ? styles.pillOpen
+                  : group.visibility === "REQUEST_TO_JOIN"
+                  ? styles.pillRTJ
+                  : styles.pillInviteOnly
               ]}
             >
               <Text
@@ -394,10 +594,16 @@ function GroupBody({
                   styles.pillText,
                   group.visibility === "OPEN"
                     ? styles.pillTextOpen
+                    : group.visibility === "REQUEST_TO_JOIN"
+                    ? styles.pillTextRTJ
                     : styles.pillTextInviteOnly
                 ]}
               >
-                {group.visibility === "OPEN" ? "Open" : "Invite only"}
+                {group.visibility === "OPEN"
+                  ? "Open"
+                  : group.visibility === "REQUEST_TO_JOIN"
+                  ? "Request to join"
+                  : "Invite only"}
               </Text>
             </View>
 
@@ -567,9 +773,14 @@ function GroupBody({
       <JoinCTA
         group={group}
         memberStatus={memberStatus}
+        joinRequest={localJoinRequest}
         onJoin={handleJoin}
+        onRequestJoin={handleRequestJoin}
+        onCancelRequest={handleCancelRequest}
         onLeave={handleLeave}
         joining={joining}
+        requestingJoin={requestingJoin}
+        cancellingRequest={cancellingRequest}
       />
     </View>
   );
@@ -660,6 +871,23 @@ const styles = StyleSheet.create({
     padding: 4,
     marginLeft: spacing.sm
   },
+  pendingBadge: {
+    position: "absolute",
+    top: -4,
+    right: -4,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: colors.danger,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 3
+  },
+  pendingBadgeText: {
+    fontSize: 9,
+    fontWeight: "800",
+    color: "#fff"
+  },
 
   // Pills
   pillRow: {
@@ -683,6 +911,8 @@ const styles = StyleSheet.create({
   },
   pillOpen: { backgroundColor: "#DCFCE7" },
   pillTextOpen: { color: "#15803D" },
+  pillRTJ: { backgroundColor: "#DBEAFE" },
+  pillTextRTJ: { color: "#1D4ED8" },
   pillInviteOnly: { backgroundColor: "#F3F4F6" },
   pillTextInviteOnly: { color: "#6B7280" },
   pillOwner: { backgroundColor: "#EEF2FF" },
@@ -927,6 +1157,11 @@ const styles = StyleSheet.create({
   ctaBtnDisabled: {
     backgroundColor: colors.border
   },
+  ctaBtnMuted: {
+    backgroundColor: colors.background,
+    borderWidth: 1,
+    borderColor: colors.border
+  },
   ctaBtnText: {
     fontSize: 16,
     fontWeight: "700",
@@ -945,6 +1180,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "600",
     color: colors.accent
+  },
+  decisionNote: {
+    fontSize: 12,
+    color: colors.textMuted,
+    textAlign: "center",
+    paddingHorizontal: spacing.md,
+    fontStyle: "italic"
   },
 
   // Retry

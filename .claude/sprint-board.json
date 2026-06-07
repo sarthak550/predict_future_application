@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "currentSprint": 55,
+  "currentSprint": 56,
   "tickets": [
     {
       "id": "S7-T1",
@@ -3239,6 +3239,105 @@
       "title": "Compact CommunitiesList replaces spotlight + rail in My Groups Discover (~52px rows)",
       "description": "User feedback: even after the S55-T7 relocation, the CommunitySpotlightCard (200px) + CommunitiesRail (160px) were taking too much vertical space inside the My Groups sub-tab. Built CommunitiesList (compact vertical list, ~52px per row, max 5 visible) and replaced the spotlight + rail mounts. Each row: 32px colored avatar (category-colored, first letter) + name + meta (Category · N members) + Join chip. Old spotlight + rail components are now orphaned but left on disk pending a sweep.",
       "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S56-T1",
+      "sprint": 56,
+      "title": "Schema: add REQUEST_TO_JOIN enum + GroupJoinRequestStatus enum + GroupJoinRequest model (additive)",
+      "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint56.md for full acceptance criteria.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S56-T2",
+      "sprint": 56,
+      "title": "API: POST /:id/join-request (submit) + DELETE /:id/join-request/:requestId (cancel by requester)",
+      "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint56.md for full acceptance criteria.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S56-T3",
+      "sprint": 56,
+      "title": "API: POST /:id/join-request/:requestId/approve + reject (atomic membership create, idempotent, push on both)",
+      "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint56.md for full acceptance criteria.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S56-T4",
+      "sprint": 56,
+      "title": "API: GET /:id/join-requests (owner inbox, paginated) + GET /join-requests/mine (requester surface)",
+      "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint56.md for full acceptance criteria.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S56-T5",
+      "sprint": 56,
+      "title": "Update existing join route + discover route: REQUEST_TO_JOIN branch + RTJ groups surface in Explore",
+      "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint56.md for full acceptance criteria.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S56-T6",
+      "sprint": 56,
+      "title": "Mobile: extend group profile CTA state machine — Request to join / Pending / Declined states + Cancel flow",
+      "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint56.md for full acceptance criteria.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S56-T7",
+      "sprint": 56,
+      "title": "Mobile: Approval inbox screen (owner/admin only, approve/reject with note, pending-count badge on group profile)",
+      "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint56.md for full acceptance criteria.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S56-T8",
+      "sprint": 56,
+      "title": "Mobile: My Requests surface + group create flow third visibility option (Open / Request to join / Invite-only)",
+      "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint56.md for full acceptance criteria.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S56-T9",
+      "sprint": 56,
+      "title": "Push notification helpers + 4 analytics events (group_request_submitted/cancelled/approved/rejected)",
+      "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint56.md for full acceptance criteria.",
+      "priority": "medium",
       "status": "done",
       "qaVerdict": "pass",
       "failureNotes": null,

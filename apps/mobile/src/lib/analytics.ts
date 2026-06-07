@@ -101,3 +101,34 @@ export function resetAnalytics(): void {
     console.error("[analytics] reset failed:", err);
   }
 }
+
+// ── S56: Group join-request analytics ────────────────────────────────
+
+/**
+ * Four events for the REQUEST_TO_JOIN flow.
+ * Event names are stable — do not rename once shipped.
+ */
+export type GroupRequestEventName =
+  | "group_request_submitted"
+  | "group_request_cancelled"
+  | "group_request_approved"
+  | "group_request_rejected";
+
+export type GroupRequestEventProps = {
+  groupId: string;
+  requestId: string;
+  surface?: "group_profile" | "discover_card";
+};
+
+export function trackGroupRequestEvent(
+  event: GroupRequestEventName,
+  props: GroupRequestEventProps
+): void {
+  const c = getClient();
+  if (!c) return;
+  try {
+    c.capture(event, props);
+  } catch (err) {
+    console.error(`[analytics] capture failed for "${event}":`, err, props);
+  }
+}

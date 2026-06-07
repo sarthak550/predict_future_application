@@ -51,6 +51,8 @@ model User {
   following                  Follow[]              @relation("Follower")
   ownedGroups                Group[]               @relation("OwnedGroups")
   groupMemberships           GroupMembership[]
+  groupJoinRequests          GroupJoinRequest[]    @relation("JoinRequests")
+  decidedJoinRequests        GroupJoinRequest[]    @relation("JoinRequestDecider")
   leaderboardSnapshots       LeaderboardSnapshot[]
   approvedMarkets            Market[]              @relation("ApprovedMarkets")
   createdMarkets             Market[]              @relation("CreatedMarkets")
@@ -331,29 +333,53 @@ model CuratedFeedItem {
 }
 
 model Group {
-  id            String          @id @default(cuid())
-  slug          String          @unique
+  id            String               @id @default(cuid())
+  slug          String               @unique
   name          String
   description   String?
   ownerId       String
-  inviteCode    String          @unique
-  isArchived    Boolean         @default(false)
+  inviteCode    String               @unique
+  isArchived    Boolean              @default(false)
   /// S54: open discovery visibility model. Existing groups default to INVITE_ONLY.
-  visibility    GroupVisibility @default(INVITE_ONLY)
+  visibility    GroupVisibility      @default(INVITE_ONLY)
   /// Optional category tag for filtering in the discover feed.
   category      MarketCategory?
   /// Maximum members allowed. Default 10,000. Enforced on OPEN join path.
-  memberCap     Int             @default(10000)
+  memberCap     Int                  @default(10000)
   /// Cover image URL. Set by admin/seed in S54; upload UI is S56.
   coverImageUrl String?
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
-  owner         User            @relation("OwnedGroups", fields: [ownerId], references: [id], onDelete: Cascade)
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+  owner         User                 @relation("OwnedGroups", fields: [ownerId], references: [id], onDelete: Cascade)
   memberships   GroupMembership[]
   markets       Market[]
+  /// S56: join requests from users seeking entry into REQUEST_TO_JOIN groups.
+  joinRequests  GroupJoinRequest[]
 
   @@index([ownerId, createdAt])
   @@index([visibility, createdAt])
+}
+
+/// S56: A user's request to join a REQUEST_TO_JOIN group.
+/// Unique on (groupId, userId, status) so there can be at most one PENDING request
+/// per user per group. A new PENDING request after a REJECTED one is allowed because
+/// the unique key includes status (different values → no constraint violation).
+model GroupJoinRequest {
+  id           String                 @id @default(cuid())
+  groupId      String
+  userId       String
+  status       GroupJoinRequestStatus @default(PENDING)
+  requestedAt  DateTime               @default(now())
+  decidedAt    DateTime?
+  decidedById  String?
+  decisionNote String?
+
+  group     Group  @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user      User   @relation("JoinRequests", fields: [userId], references: [id], onDelete: Cascade)
+  decidedBy User?  @relation("JoinRequestDecider", fields: [decidedById], references: [id])
+
+  @@unique([groupId, userId, status])
+  @@index([groupId, status])
 }
 
 model GroupMembership {
@@ -1068,10 +1094,17 @@ enum GroupRole {
   MEMBER
 }
 
-/// S54: Two-tier visibility model. REQUEST_TO_JOIN ships in S55.
+/// Three-tier visibility model. INVITE_ONLY = invite code only. OPEN = anyone joins. REQUEST_TO_JOIN = owner approves.
 enum GroupVisibility {
   INVITE_ONLY
   OPEN
+  REQUEST_TO_JOIN
+}
+
+enum GroupJoinRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 enum MarketStatus {

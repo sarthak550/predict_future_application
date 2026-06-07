@@ -46,11 +46,22 @@ export async function POST(
     return NextResponse.json({ error: "Group not found." }, { status: 404 });
   }
 
-  // Enforce visibility — invite-code path handles INVITE_ONLY groups.
-  if (group.visibility !== "OPEN") {
+  // Enforce visibility — invite-code path handles INVITE_ONLY, join-request handles REQUEST_TO_JOIN.
+  if (group.visibility === "INVITE_ONLY") {
     return NextResponse.json(
       { error: "This group requires an invite code.", code: "invite_only" },
       { status: 403 }
+    );
+  }
+
+  if (group.visibility === "REQUEST_TO_JOIN") {
+    return NextResponse.json(
+      {
+        error: "This group requires a request to join.",
+        code: "request_to_join",
+        hint: "POST /api/groups/:id/join-request to submit a request."
+      },
+      { status: 400 }
     );
   }
 

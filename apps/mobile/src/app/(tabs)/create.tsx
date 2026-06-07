@@ -815,8 +815,8 @@ function StepAudience({
   const [newGroupDesc, setNewGroupDesc] = useState("");
   const [inviteCode, setInviteCode] = useState("");
   const [loading, setLoading] = useState(false);
-  // S54: new group defaults to OPEN (appears in discover feed)
-  const [newGroupVisibility, setNewGroupVisibility] = useState<"OPEN" | "INVITE_ONLY">("OPEN");
+  // S56: three-tier visibility. New groups default to OPEN (appears in discover feed).
+  const [newGroupVisibility, setNewGroupVisibility] = useState<"OPEN" | "REQUEST_TO_JOIN" | "INVITE_ONLY">("OPEN");
   const [newGroupCategory, setNewGroupCategory] = useState<AppMarketCategory | null>(null);
 
   const selectedGroup = groups.find((g) => g.id === groupId);
@@ -846,6 +846,8 @@ function StepAudience({
       void refetchGroups();
       if (newGroupVisibility === "INVITE_ONLY") {
         Alert.alert("Group Created!", `Share invite code: ${result.group.inviteCode}`);
+      } else if (newGroupVisibility === "REQUEST_TO_JOIN") {
+        Alert.alert("Group Created!", "Your group is discoverable — you approve every member before they join.");
       } else {
         Alert.alert("Group Created!", "Your group is now discoverable by anyone.");
       }
@@ -1061,7 +1063,7 @@ function StepAudience({
                 maxLength={200}
               />
 
-              {/* S54: Visibility picker */}
+              {/* S56: Visibility picker — three-tier (Open | Request to join | Invite only) */}
               <Text style={styles.grpFieldLabel}>Visibility</Text>
               <View style={styles.grpToggleRow}>
                 <Pressable
@@ -1088,6 +1090,27 @@ function StepAudience({
                 <Pressable
                   style={[
                     styles.grpToggleBtn,
+                    newGroupVisibility === "REQUEST_TO_JOIN" && styles.grpToggleBtnActive
+                  ]}
+                  onPress={() => setNewGroupVisibility("REQUEST_TO_JOIN")}
+                >
+                  <Ionicons
+                    name="person-add-outline"
+                    size={14}
+                    color={newGroupVisibility === "REQUEST_TO_JOIN" ? "#FFFFFF" : colors.accent}
+                  />
+                  <Text
+                    style={[
+                      styles.grpToggleBtnText,
+                      newGroupVisibility === "REQUEST_TO_JOIN" && styles.grpToggleBtnTextActive
+                    ]}
+                  >
+                    Request
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={[
+                    styles.grpToggleBtn,
                     newGroupVisibility === "INVITE_ONLY" && styles.grpToggleBtnActive
                   ]}
                   onPress={() => setNewGroupVisibility("INVITE_ONLY")}
@@ -1109,7 +1132,9 @@ function StepAudience({
               </View>
               <Text style={styles.grpFieldHint}>
                 {newGroupVisibility === "OPEN"
-                  ? "Open groups appear in search and anyone can join."
+                  ? "Open groups appear in discovery and anyone can join instantly."
+                  : newGroupVisibility === "REQUEST_TO_JOIN"
+                  ? "You approve every member before they join."
                   : "Invite-only groups are hidden — share the code with people you want in."}
               </Text>
 
