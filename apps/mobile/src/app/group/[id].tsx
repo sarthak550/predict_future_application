@@ -1,6 +1,6 @@
 import * as Clipboard from "expo-clipboard";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -20,7 +20,7 @@ import { useApiQuery } from "@/hooks/useApiQuery";
 import { mobileApi } from "@/lib/api";
 import { trackGroupRequestEvent } from "@/lib/analytics";
 import { useSession } from "@/providers/session-provider";
-import type { AppMarketCategory } from "@predict-future/types";
+import type { AppMarketCategory, GroupNotifLevel } from "@predict-future/types";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -377,6 +377,14 @@ function JoinCTA({
 
 // ── Body ─────────────────────────────────────────────────────────────
 
+// ── Notification level helpers ───────────────────────────────────────────────
+
+const NOTIF_LEVEL_LABELS: Record<GroupNotifLevel, string> = {
+  ALL: "All",
+  MENTIONS_ONLY: "Mentions",
+  NONE: "Off",
+};
+
 function GroupBody({
   group,
   groupId,
@@ -395,6 +403,9 @@ function GroupBody({
   const [cancellingRequest, setCancellingRequest] = useState(false);
   const [descExpanded, setDescExpanded] = useState(false);
 
+  // S58: Per-group notification preference (members only).
+  const [notifLevel, setNotifLevel] = useState<GroupNotifLevel>("ALL");
+
   // Derive join request state from group data — updated optimistically.
   const [localJoinRequest, setLocalJoinRequest] = useState<CallerJoinRequest>(
     group.callerJoinRequest ?? null
@@ -405,16 +416,72 @@ function GroupBody({
     userId
   );
   const isAdminOrOwner = memberStatus === "owner" || memberStatus === "admin";
+  const isMember =
+    memberStatus === "owner" ||
+    memberStatus === "admin" ||
+    memberStatus === "member";
   const memberships = group.memberships ?? [];
   const memberCount = memberships.filter((m) => !m.bannedAt).length;
   const markets = (group.markets ?? []).slice(0, 10);
 
   const pendingCount = group.pendingRequestCount ?? 0;
 
+  // S58: Fetch notification preference when the user is an active member.
+  useEffect(() => {
+    if (!isMember) return;
+    mobileApi.getGroupNotifPref(groupId).then((res) => {
+      setNotifLevel((res as { level: GroupNotifLevel }).level ?? "ALL");
+    }).catch(() => {
+      // Silently ignore — default ALL is already set.
+    });
+  }, [groupId, isMember]);
+
+  function handleNotifPress() {
+    const options: Array<{ text: string; onPress?: () => void; style?: "cancel" | "default" | "destructive" }> = [
+      {
+        text: "All activity",
+        onPress: () => void updateNotifLevel("ALL"),
+      },
+      {
+        text: "Mentions only",
+        onPress: () => void updateNotifLevel("MENTIONS_ONLY"),
+      },
+      {
+        text: "Off",
+        onPress: () => void updateNotifLevel("NONE"),
+      },
+      { text: "Cancel", style: "cancel" },
+    ];
+    Alert.alert("Group Notifications", "Choose your notification preference:", options);
+  }
+
+  async function updateNotifLevel(level: GroupNotifLevel) {
+    const previous = notifLevel;
+    setNotifLevel(level); // optimistic
+    try {
+      await mobileApi.setGroupNotifPref(groupId, { level });
+    } catch {
+      setNotifLevel(previous); // revert
+      Alert.alert("Could not update", "Failed to update notification preference. Please try again.");
+    }
+  }
+
   async function handleJoin() {
     setJoining(true);
     try {
       await mobileApi.joinOpenGroup(groupId);
+      // S58-T4: Apply the user's stored global group notification default if not ALL.
+      // We import AsyncStorage here lazily to avoid a top-level dependency in this file.
+      // The default is stored by the profile Settings screen.
+      try {
+        const AsyncStorage = (await import("@react-native-async-storage/async-storage")).default;
+        const storedDefault = await AsyncStorage.getItem("@groups_notif_default");
+        if (storedDefault === "MENTIONS_ONLY" || storedDefault === "NONE") {
+          await mobileApi.setGroupNotifPref(groupId, { level: storedDefault });
+        }
+      } catch {
+        // Non-fatal: pref defaults to ALL if this fails.
+      }
       onRefresh();
     } catch (err: unknown) {
       Alert.alert(
@@ -568,8 +635,7 @@ function GroupBody({
 
     actions.push({
       text: "Edit Group",
-      onPress: () =>
-        Alert.alert("Coming soon", "Group settings are in a future sprint.")
+      onPress: () => router.push(`/group/${groupId}/edit`)
     });
 
     // S57: Owner-only self-service actions.
@@ -710,6 +776,20 @@ function GroupBody({
             <Text style={styles.ownerText}>
               Hosted by @{group.owner.username}
             </Text>
+          ) : null}
+
+          {/* S58: Notification preference (active members only) */}
+          {isMember ? (
+            <Pressable style={styles.notifPrefRow} onPress={handleNotifPress}>
+              <View style={styles.notifPrefLeft}>
+                <Ionicons name="notifications-outline" size={16} color={colors.textMuted} />
+                <Text style={styles.notifPrefLabel}>Notifications</Text>
+              </View>
+              <View style={styles.notifPrefRight}>
+                <Text style={styles.notifPrefValue}>{NOTIF_LEVEL_LABELS[notifLevel]}</Text>
+                <Ionicons name="chevron-forward" size={14} color={colors.textMuted} />
+              </View>
+            </Pressable>
           ) : null}
 
           {/* Invite code (owner/admin only) */}
@@ -1014,6 +1094,37 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.textMuted,
     marginBottom: spacing.sm
+  },
+
+  // S58: Notification preference row
+  notifPrefRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: spacing.sm,
+    marginBottom: spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+  },
+  notifPrefLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  notifPrefLabel: {
+    fontSize: 14,
+    color: colors.text,
+    fontWeight: "500",
+  },
+  notifPrefRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  notifPrefValue: {
+    fontSize: 13,
+    color: colors.textMuted,
+    fontWeight: "500",
   },
 
   // Invite code

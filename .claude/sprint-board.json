@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "currentSprint": 57,
+  "currentSprint": 58,
   "tickets": [
     {
       "id": "S7-T1",
@@ -3393,6 +3393,96 @@
       "title": "Mobile: Transfer ownership picker on members screen (excludes self + banned)",
       "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint57.md for full acceptance criteria.",
       "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S58-T0",
+      "sprint": 58,
+      "title": "Schema: GroupNotificationPreference model + migration (single schema-write per sprint)",
+      "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint58.md for full acceptance criteria.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S58-T1",
+      "sprint": 58,
+      "title": "API: notification pref GET + PATCH endpoints",
+      "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint58.md for full acceptance criteria.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": [
+        "apps/api/app/api/groups/[id]/notification-preference/route.ts runtime 500: 'TypeError: Cannot read properties of undefined (reading \\'ALL\\')' at line 26 (VALID_LEVELS array init). GroupNotifLevel enum from @prisma/client resolves to undefined in the running Next.js server because prisma generate ran while the dev server was live — the .next/ bundle still carries the old client. Fix: restart the Next.js dev server after prisma generate so the new enum is bundled. In production CI this must be enforced: prisma generate MUST precede the Next.js build step."
+      ],
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S58-T2",
+      "sprint": 58,
+      "title": "Enforce prefs in group-request-push.ts (pref gate on all group push helpers; centralized)",
+      "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint58.md for full acceptance criteria.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S58-T3",
+      "sprint": 58,
+      "title": "Mobile: per-group notification setting on group profile (gear icon)",
+      "description": "See CEO brief at .claire/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint58.md for full acceptance criteria.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S58-T4",
+      "sprint": 58,
+      "title": "Mobile: global Groups notification default in app Settings",
+      "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint58.md for full acceptance criteria.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S58-T5",
+      "sprint": 58,
+      "title": "API: cover image upload endpoint (Vercel Blob signed URL flow; 5MB cap; hostname allowlist on PATCH)",
+      "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint58.md for full acceptance criteria.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S58-T6",
+      "sprint": 58,
+      "title": "Mobile: cover image picker on group create + edit (expo-image-picker)",
+      "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint58.md for full acceptance criteria.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S58-T7",
+      "sprint": 58,
+      "title": "API client + types: export new endpoints and types",
+      "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint58.md for full acceptance criteria.",
+      "priority": "medium",
       "status": "done",
       "qaVerdict": "pass",
       "failureNotes": null,

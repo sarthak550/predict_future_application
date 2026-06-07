@@ -12,7 +12,20 @@
  *   - New request: N owners+admins (typically 1–5, not the whole group).
  *   - Decision:    1 requester.
  * No budget gate needed (compare big-call-push which fans out to thousands).
+ *
+ * S58: Both helpers now gate on GroupNotificationPreference before sending.
+ * Gating rules:
+ *   ALL          → send (also the default when no pref row exists).
+ *   MENTIONS_ONLY → treated as ALL for join-request notifications.
+ *                  (MENTIONS_ONLY: treated as ALL until @-mention notifications are implemented.)
+ *   NONE         → suppress — no push sent to this user.
+ *
+ * TODO S58+: any new group-scoped push (e.g., group market created) must query
+ * GroupNotificationPreference and filter to level != NONE before fan-out.
+ * Never push to 10k OPEN group members without pref gating.
  */
+
+import { GroupNotifLevel } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 
@@ -84,7 +97,7 @@ export async function notifyOwnersAndAdminsOfNewRequest({
           bannedAt: null,
         },
         select: {
-          user: { select: { expoPushToken: true } },
+          user: { select: { id: true, expoPushToken: true } },
         },
       },
     },
@@ -92,7 +105,21 @@ export async function notifyOwnersAndAdminsOfNewRequest({
 
   if (!group) return;
 
+  // S58: Filter out users who have opted out of all group notifications (NONE).
+  // MENTIONS_ONLY is treated as ALL for join-request notifications — owners/admins need these.
+  const adminUserIds = group.memberships.map((m) => m.user.id).filter(Boolean);
+  const suppressedRows = await prisma.groupNotificationPreference.findMany({
+    where: {
+      groupId,
+      userId: { in: adminUserIds },
+      level: GroupNotifLevel.NONE,
+    },
+    select: { userId: true },
+  });
+  const suppressedUserIds = new Set(suppressedRows.map((r) => r.userId));
+
   const tokens = group.memberships
+    .filter((m) => !suppressedUserIds.has(m.user.id))
     .map((m) => m.user.expoPushToken)
     .filter((t): t is string => typeof t === "string" && t.length > 0);
 
@@ -136,6 +163,14 @@ export async function notifyRequesterOfDecision({
   groupId: string;
   note?: string | null;
 }): Promise<void> {
+  // S58: Check the user's group notification preference before sending.
+  // NONE = suppress. ALL or MENTIONS_ONLY = send (approve/reject are always relevant to the requester).
+  const pref = await prisma.groupNotificationPreference.findUnique({
+    where: { groupId_userId: { groupId, userId } },
+    select: { level: true },
+  });
+  if (pref?.level === GroupNotifLevel.NONE) return;
+
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: { expoPushToken: true },

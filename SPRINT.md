@@ -2,8 +2,8 @@
 
 > Human-readable view of `.claude/sprint-board.json`. Auto-maintained by the CEO/CTO/QA agents — do not edit by hand.
 
-**Current sprint:** 57
-**Status:** Sprint 57 QA COMPLETE (5/5) — Member self-service: Leave (409s OWNER), Transfer ownership (atomic $transaction array form preserves sole-OWNER invariant; outgoing owner → ADMIN), Archive (isArchived flag, memberships preserved, non-reversible v1, group detail now 404s archived). Two real CTO catches: GET /api/groups/[id] wasn't guarding isArchived (now does) and JoinCTA never rendered the Leave button (now wired). Sprint 58 queued (discovery polish + per-group notification prefs + cover upload + featured curation + GroupModerationAction audit table + bulk approve/reject). Sprint 56 QA COMPLETE (9/9) — REQUEST_TO_JOIN tier shipped. Sprint 55 QA COMPLETE (8/8 incl. T7/T8 amendments) — Markets → Explore + compact CommunitiesList in My Groups Discover + Hosted-by chip on every group-linked market. Sprint 56 queued (REQUEST_TO_JOIN + approval inbox), S57 queued (discovery polish + per-group notification prefs + cover upload). Sprint 54 QA COMPLETE (8/8) — Open Groups foundation: GroupVisibility enum + INVITE_ONLY/OPEN tiers, owner moderation routes (remove/ban/unban) with ban check on invite-code path, public discover route (OPEN-only), open-join route with ban+memberCap guards, full group profile + member management screens, visibility/category pickers in create flow. Pending dev-server restart + device smoke-test. Sprint 53 QA COMPLETE (6/6) — Create-tab fix bundle: draft persistence + schema version, strict resolveAt validation, dead StepResolution/ResolutionMode dropped, eligibility gate inlined on PUBLIC option (top HostEligibilityCard removed), duplicate MC options blocked, inline char-count hints. ~215 dead lines removed. Sprint 52 QA COMPLETE (4/4) — CombinedAnalystCard merge + See-all removal + tighter inter-card gap + Pulse pills redesign with question/crowd-%/urgency-tint. Sprint 51 COMPLETE (5/5). Sprint 50 COMPLETE (6/6 — Top 3 Analysts moved from Feed to Finance). Sprint 49 COMPLETE (9/9). Legal review on SEBI Research Analyst public naming still required before production deploy. Sprint 48 COMPLETE (F1 timing reliability — retry, cache downgrade, empty-state, client timeout). Sprint 47 COMPLETE (F1 detail modal — full driver grid with lap times, gaps, tire data). Sprint 46 COMPLETE (Sports poll trust fix — all 3 tickets passed QA). Sprint 45 COMPLETE (F1 race card). Sprint 44 COMPLETE (Finance instrument filter overhaul). Sprint 43 COMPLETE. Sprints 38–42 COMPLETE (security/correctness hardening, 54 tickets). Sprints 12, 25–34 COMPLETE.
+**Current sprint:** 58
+**Status:** Sprint 58 QA COMPLETE (8/8) — Per-group notification preferences + cover image upload pipeline. Production unlock for OPEN groups: GroupNotificationPreference model + GET/PATCH routes + centralized helper-level pref gate in group-request-push.ts (no inline call bypasses found). Cover image via Vercel Blob signed URLs with 5MB cap + hostname allowlist + OWNER/ADMIN-only token request. Mobile: gear-row on group profile + global default in Profile settings (AsyncStorage v1 — PASS-WITH-FOLLOWUP: consider User.defaultGroupNotificationLevel field in S59 for cross-device sync) + new group edit screen with expo-image-picker. T1 false-FAILED on runtime (stale .next bundle from prisma generate while dev server live — same operational gotcha as S54+S56; code is clean, dev-server restart unblocks). Sprint 57 QA COMPLETE (5/5) — Member self-service. Sprint 59 queued (GroupModerationAction audit table, featured flag, bulk approve/reject, group market creation push gated on S58 prefs, category landing pages). Sprint 56 QA COMPLETE (9/9) — REQUEST_TO_JOIN tier shipped. Sprint 55 QA COMPLETE (8/8 incl. T7/T8 amendments) — Markets → Explore + compact CommunitiesList in My Groups Discover + Hosted-by chip on every group-linked market. Sprint 56 queued (REQUEST_TO_JOIN + approval inbox), S57 queued (discovery polish + per-group notification prefs + cover upload). Sprint 54 QA COMPLETE (8/8) — Open Groups foundation: GroupVisibility enum + INVITE_ONLY/OPEN tiers, owner moderation routes (remove/ban/unban) with ban check on invite-code path, public discover route (OPEN-only), open-join route with ban+memberCap guards, full group profile + member management screens, visibility/category pickers in create flow. Pending dev-server restart + device smoke-test. Sprint 53 QA COMPLETE (6/6) — Create-tab fix bundle: draft persistence + schema version, strict resolveAt validation, dead StepResolution/ResolutionMode dropped, eligibility gate inlined on PUBLIC option (top HostEligibilityCard removed), duplicate MC options blocked, inline char-count hints. ~215 dead lines removed. Sprint 52 QA COMPLETE (4/4) — CombinedAnalystCard merge + See-all removal + tighter inter-card gap + Pulse pills redesign with question/crowd-%/urgency-tint. Sprint 51 COMPLETE (5/5). Sprint 50 COMPLETE (6/6 — Top 3 Analysts moved from Feed to Finance). Sprint 49 COMPLETE (9/9). Legal review on SEBI Research Analyst public naming still required before production deploy. Sprint 48 COMPLETE (F1 timing reliability — retry, cache downgrade, empty-state, client timeout). Sprint 47 COMPLETE (F1 detail modal — full driver grid with lap times, gaps, tire data). Sprint 46 COMPLETE (Sports poll trust fix — all 3 tickets passed QA). Sprint 45 COMPLETE (F1 race card). Sprint 44 COMPLETE (Finance instrument filter overhaul). Sprint 43 COMPLETE. Sprints 38–42 COMPLETE (security/correctness hardening, 54 tickets). Sprints 12, 25–34 COMPLETE.
 
 ---
 
@@ -798,3 +798,29 @@
 | S57-T5 | HIGH | ✅ done | Mobile: Transfer ownership picker on members screen (excludes self + banned) |
 
 **Sprint-level invariant:** Every group MUST have exactly one OWNER. Schema doesn't enforce this; code does. T2 must use `prisma.$transaction` for the role flip; if half-fails, you'd have 0 or 2 owners. QA flagged as the top verification target.
+
+---
+
+## Sprint 58
+
+**Theme:** Two-part production unlock for OPEN groups — per-group notification preferences (mandatory before any 10k-member group ships) + cover image upload pipeline (visual identity for groups in discovery surfaces).
+**Status:** IN PROGRESS
+**Brief:** `.claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint58.md`
+
+| ID | Pri | Status | Title |
+|---|---|---|---|
+| S58-T0 | CRIT | ✅ done | Schema: GroupNotificationPreference model + migration |
+| S58-T1 | CRIT | ✅ done | API: notification pref GET + PATCH endpoints (code clean; runtime needed `.next` bundle refresh — operational not code) |
+| S58-T2 | CRIT | ✅ done | Enforce prefs in group-request-push.ts (centralized helper-level gate) |
+| S58-T3 | HIGH | ✅ done | Mobile: per-group notification setting on group profile (gear icon) |
+| S58-T4 | HIGH | ✅ done | Mobile: global Groups notification default in app Settings |
+| S58-T5 | HIGH | ✅ done | API: cover image upload endpoint (Vercel Blob signed URL flow, 5MB cap, hostname allowlist) |
+| S58-T6 | HIGH | ✅ done | Mobile: cover image picker on group create + edit (expo-image-picker) |
+| S58-T7 | MED | ✅ done | API client + types: export new endpoints + types |
+
+**Sprint-level invariants:**
+- ONE schema migration (T0). Per `serialize_schema_writes`. `GroupModerationAction` audit table explicitly deferred to S59 to keep this constraint.
+- After T0 ships, `npx prisma generate` MUST run before the dev server restart per `prisma_generate_after_migration`. Same gotcha bit S54 and S56.
+- Push helper enforcement (T2) is the single gate. Audit grep to confirm no inline push logic bypasses it.
+
+**S59 queued:** GroupModerationAction audit table, featured flag curation (isFeatured on Group), bulk approve/reject in approval inbox, group market creation push (gated on S58 prefs), category landing pages.

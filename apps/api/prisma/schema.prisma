@@ -53,6 +53,8 @@ model User {
   groupMemberships           GroupMembership[]
   groupJoinRequests          GroupJoinRequest[]    @relation("JoinRequests")
   decidedJoinRequests        GroupJoinRequest[]    @relation("JoinRequestDecider")
+  /// S58: per-group notification preferences set by this user.
+  groupNotificationPreferences GroupNotificationPreference[]
   leaderboardSnapshots       LeaderboardSnapshot[]
   approvedMarkets            Market[]              @relation("ApprovedMarkets")
   createdMarkets             Market[]              @relation("CreatedMarkets")
@@ -346,7 +348,7 @@ model Group {
   category      MarketCategory?
   /// Maximum members allowed. Default 10,000. Enforced on OPEN join path.
   memberCap     Int                  @default(10000)
-  /// Cover image URL. Set by admin/seed in S54; upload UI is S56.
+  /// Cover image URL. Set by admin/seed in S54; upload UI is S58.
   coverImageUrl String?
   createdAt     DateTime             @default(now())
   updatedAt     DateTime             @updatedAt
@@ -355,6 +357,8 @@ model Group {
   markets       Market[]
   /// S56: join requests from users seeking entry into REQUEST_TO_JOIN groups.
   joinRequests  GroupJoinRequest[]
+  /// S58: per-member notification preferences for this group.
+  notificationPreferences GroupNotificationPreference[]
 
   @@index([ownerId, createdAt])
   @@index([visibility, createdAt])
@@ -1250,4 +1254,34 @@ enum UserDisplayMode {
   USERNAME
   /// Show anonymised pseudonym (AnonymousAnalyst_XXXXXX) on all public surfaces.
   ANONYMOUS
+}
+
+/// S58: Notification level for group-scoped push notifications.
+/// Absence of a GroupNotificationPreference row implies ALL (default).
+enum GroupNotifLevel {
+  /// Receive all group notifications (default when no pref row exists).
+  ALL
+  /// Receive only @-mention notifications. Treated as ALL for join-request
+  /// notifications until @-mention push is implemented.
+  MENTIONS_ONLY
+  /// Suppress all group-scoped push notifications.
+  NONE
+}
+
+/// S58: Per-user, per-group notification preference.
+/// No row = ALL (handled in query layer; no backfill on migration).
+/// Cascade-deletes when the Group or User is deleted.
+model GroupNotificationPreference {
+  id        String          @id @default(cuid())
+  groupId   String
+  userId    String
+  level     GroupNotifLevel @default(ALL)
+  updatedAt DateTime        @updatedAt
+  createdAt DateTime        @default(now())
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+  @@index([userId])
 }

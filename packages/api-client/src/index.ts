@@ -53,7 +53,12 @@ import type {
   AppLeagueTier,
   AppMarketCategory,
   AppMarketStatus,
-  AppUserDisplayMode
+  AppUserDisplayMode,
+  // S58: notification prefs + cover image
+  ApiGroupNotifPref,
+  ApiGroupCoverImageToken,
+  ApiGroupCoverImageUpdate,
+  GroupNotifLevel,
 } from "@predict-future/types";
 
 export type { ApiLeaderboardTimeWindow };
@@ -491,6 +496,83 @@ export function createApiClient(options: ApiClientOptions) {
         `/api/groups/${groupId}/archive`,
         undefined,
         { method: "POST", auth: true }
+      );
+    },
+
+    /**
+     * Update a group's name and/or description (OWNER or ADMIN only).
+     * S58-T6: used by the group edit screen.
+     */
+    updateGroup(
+      groupId: string,
+      body: { name?: string; description?: string }
+    ) {
+      return request<{ group: ApiGroupSummary }>(
+        `/api/groups/${groupId}`,
+        undefined,
+        { method: "PATCH", body: JSON.stringify(body), auth: true }
+      );
+    },
+
+    // ── S58: Notification preferences ────────────────────────────────────────
+
+    /**
+     * Get the calling user's notification preference for a specific group.
+     * Returns { level: "ALL" | "MENTIONS_ONLY" | "NONE" }.
+     * If no pref row exists, returns { level: "ALL" } without creating a row.
+     */
+    getGroupNotifPref(groupId: string) {
+      return request<ApiGroupNotifPref>(
+        `/api/groups/${groupId}/notification-preference`,
+        undefined,
+        { auth: true }
+      );
+    },
+
+    /**
+     * Upsert the calling user's notification preference for a specific group.
+     * Returns { level } with the saved value.
+     */
+    setGroupNotifPref(
+      groupId: string,
+      body: { level: GroupNotifLevel }
+    ) {
+      return request<ApiGroupNotifPref>(
+        `/api/groups/${groupId}/notification-preference`,
+        undefined,
+        { method: "PATCH", body: JSON.stringify(body), auth: true }
+      );
+    },
+
+    // ── S58: Cover image upload ───────────────────────────────────────────────
+
+    /**
+     * Request a short-lived Vercel Blob client upload token for a group cover image.
+     * Returns { clientToken, url } — use clientToken to upload directly to Blob.
+     */
+    getGroupCoverImageUploadToken(
+      groupId: string,
+      body: { filename: string; contentType: string }
+    ) {
+      return request<ApiGroupCoverImageToken>(
+        `/api/groups/${groupId}/cover-image`,
+        undefined,
+        { method: "POST", body: JSON.stringify(body), auth: true }
+      );
+    },
+
+    /**
+     * Persist the Vercel Blob URL to Group.coverImageUrl.
+     * Server validates the URL starts with the Vercel Blob hostname.
+     */
+    updateGroupCoverImage(
+      groupId: string,
+      body: { coverImageUrl: string }
+    ) {
+      return request<ApiGroupCoverImageUpdate>(
+        `/api/groups/${groupId}/cover-image`,
+        undefined,
+        { method: "PATCH", body: JSON.stringify(body), auth: true }
       );
     },
     signIn(body: { email: string; password: string }) {

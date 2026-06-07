@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 
-import { GroupRole, GroupVisibility, MarketCategory, type Prisma } from "@prisma/client";
+import { GroupNotifLevel, GroupRole, GroupVisibility, MarketCategory, type Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { slugify } from "@/lib/utils";
@@ -376,6 +376,43 @@ export async function archiveGroup(input: { groupId: string; callerId: string })
 }
 
 // ── Existing function below ───────────────────────────────────────────────────
+
+// ── S58: Notification preferences ─────────────────────────────────────────────
+
+/**
+ * Returns the caller's notification level for a specific group.
+ * If no preference row exists, returns ALL (the implicit default).
+ * NEVER creates a row on read.
+ */
+export async function getGroupNotifPref(
+  groupId: string,
+  userId: string
+): Promise<GroupNotifLevel> {
+  const row = await prisma.groupNotificationPreference.findUnique({
+    where: { groupId_userId: { groupId, userId } },
+    select: { level: true }
+  });
+  return row?.level ?? GroupNotifLevel.ALL;
+}
+
+/**
+ * Upserts a GroupNotificationPreference row for (groupId, userId).
+ * Creates the row if absent, updates if present.
+ * Returns the saved level.
+ */
+export async function setGroupNotifPref(
+  groupId: string,
+  userId: string,
+  level: GroupNotifLevel
+): Promise<GroupNotifLevel> {
+  const row = await prisma.groupNotificationPreference.upsert({
+    where: { groupId_userId: { groupId, userId } },
+    create: { groupId, userId, level },
+    update: { level },
+    select: { level: true }
+  });
+  return row.level;
+}
 
 export async function getUserGroups(userId: string) {
   const memberships = await prisma.groupMembership.findMany({

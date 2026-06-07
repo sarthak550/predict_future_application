@@ -3,6 +3,73 @@ import { NextResponse } from "next/server";
 import { getUserIdFromRequest } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
+// ── S58-T6: PATCH /api/groups/:id ─────────────────────────────────────────────
+// Update a group's name and/or description. Caller must be OWNER or ADMIN.
+
+export async function PATCH(
+  request: Request,
+  { params }: { params: { id: string } }
+) {
+  const userId = await getUserIdFromRequest(request);
+  if (!userId) {
+    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
+  }
+
+  const group = await prisma.group.findUnique({
+    where: { id: params.id },
+    select: { id: true, isArchived: true }
+  });
+
+  if (!group || group.isArchived) {
+    return NextResponse.json({ error: "Group not found." }, { status: 404 });
+  }
+
+  const membership = await prisma.groupMembership.findUnique({
+    where: { groupId_userId: { groupId: params.id, userId } },
+    select: { role: true, bannedAt: true }
+  });
+
+  if (!membership || membership.bannedAt != null) {
+    return NextResponse.json({ error: "Group not found." }, { status: 404 });
+  }
+  if (membership.role !== "OWNER" && membership.role !== "ADMIN") {
+    return NextResponse.json({ error: "Only owners and admins can edit the group." }, { status: 403 });
+  }
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
+  }
+
+  const { name, description } = body as { name?: unknown; description?: unknown };
+
+  if (name !== undefined && (typeof name !== "string" || name.trim().length < 3)) {
+    return NextResponse.json({ error: "name must be at least 3 characters." }, { status: 400 });
+  }
+
+  const data: { name?: string; description?: string | null } = {};
+  if (name !== undefined) data.name = (name as string).trim();
+  if (description !== undefined) {
+    data.description = typeof description === "string" && description.trim().length > 0
+      ? description.trim()
+      : null;
+  }
+
+  if (Object.keys(data).length === 0) {
+    return NextResponse.json({ error: "No fields to update." }, { status: 400 });
+  }
+
+  const updated = await prisma.group.update({
+    where: { id: params.id },
+    data,
+    select: { id: true, name: true, description: true, slug: true, inviteCode: true, visibility: true, coverImageUrl: true }
+  });
+
+  return NextResponse.json({ group: updated });
+}
+
 /**
  * GET /api/groups/:id
  *

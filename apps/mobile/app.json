@@ -24,7 +24,13 @@
         }
       ],
       "expo-secure-store",
-      "expo-localization"
+      "expo-localization",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Predict Future uses your photo library to let you set a cover image for your group."
+        }
+      ]
     ],
     "splash": {
       "backgroundColor": "#F6F7FB",
@@ -70,7 +76,10 @@
       "supportsTablet": false,
       "associatedDomains": [
         "applinks:predictfuture.app"
-      ]
+      ],
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "Predict Future uses your photo library to let you set a cover image for your group."
+      }
     }
   }
 }

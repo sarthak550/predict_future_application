@@ -35,6 +35,7 @@ import type {
   AppLeagueTier,
   AppMarketStatus,
   AppUserDisplayMode,
+  GroupNotifLevel,
 } from "@predict-future/types";
 import { formatPoints, formatRelativeTime } from "@predict-future/utils";
 import { colors, radius, spacing } from "@predict-future/ui-tokens";
@@ -353,6 +354,11 @@ export default function ProfileScreen() {
   // Track whether we have synced displayMode from the server response yet.
   const displayModeSynced = useRef(false);
 
+  // ── S58: Global group notification default ──
+  // Stored in AsyncStorage. Applied to new group memberships on join.
+  const GROUPS_NOTIF_KEY = "@groups_notif_default";
+  const [groupNotifDefault, setGroupNotifDefaultState] = useState<GroupNotifLevel>("ALL");
+
   const fetcher = useCallback(
     () => mobileApi.getMyProfile(),
     []
@@ -409,6 +415,16 @@ export default function ProfileScreen() {
       displayModeSynced.current = true;
     }
   }, [data]);
+
+  // ── S58: Load group notification default from AsyncStorage ──
+  useEffect(() => {
+    AsyncStorage.getItem(GROUPS_NOTIF_KEY).then((stored) => {
+      if (stored === "ALL" || stored === "MENTIONS_ONLY" || stored === "NONE") {
+        setGroupNotifDefaultState(stored);
+      }
+    }).catch(() => { /* ignore */ });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── Check if phone verify card should show ──
   useEffect(() => {
@@ -780,6 +796,21 @@ export default function ProfileScreen() {
                 "Failed to change display mode. Please try again.",
                 [{ text: "OK" }]
               );
+            }
+          }}
+        />
+
+        {/* ── S58: Group notifications default ── */}
+        <GroupNotifDefaultCard
+          current={groupNotifDefault}
+          onChange={async (level) => {
+            const previous = groupNotifDefault;
+            setGroupNotifDefaultState(level);
+            try {
+              await AsyncStorage.setItem(GROUPS_NOTIF_KEY, level);
+            } catch {
+              setGroupNotifDefaultState(previous);
+              Alert.alert("Could not save", "Failed to save group notification preference.");
             }
           }}
         />
@@ -2381,6 +2412,115 @@ const anonStyles = StyleSheet.create({
     color: colors.textMuted,
     lineHeight: 17,
     paddingLeft: 32 + spacing.md,
+  },
+});
+
+// ── S58: GroupNotifDefaultCard ────────────────────────────────────────────────
+
+const GROUP_NOTIF_OPTIONS: Array<{ label: string; sublabel: string; value: GroupNotifLevel }> = [
+  {
+    label: "All activity",
+    sublabel: "Get notified for all group events",
+    value: "ALL",
+  },
+  {
+    label: "Mentions only",
+    sublabel: "Only when you are mentioned",
+    value: "MENTIONS_ONLY",
+  },
+  {
+    label: "Off",
+    sublabel: "No group notifications",
+    value: "NONE",
+  },
+];
+
+function GroupNotifDefaultCard({
+  current,
+  onChange,
+}: {
+  current: GroupNotifLevel;
+  onChange: (level: GroupNotifLevel) => Promise<void>;
+}) {
+  function handlePress() {
+    const opts = GROUP_NOTIF_OPTIONS.map((o) => ({
+      text: current === o.value ? `${o.label} (current)` : o.label,
+      onPress: () => { void onChange(o.value); },
+    }));
+    Alert.alert(
+      "Group notification default",
+      "Applies to groups you join after changing this setting.",
+      [...opts, { text: "Cancel", style: "cancel" as const }]
+    );
+  }
+
+  const currentLabel =
+    GROUP_NOTIF_OPTIONS.find((o) => o.value === current)?.label ?? "All activity";
+
+  return (
+    <View style={groupNotifStyles.card}>
+      <Text style={groupNotifStyles.sectionTitle}>Groups</Text>
+      <Pressable style={groupNotifStyles.row} onPress={handlePress}>
+        <View style={groupNotifStyles.iconWrap}>
+          <Ionicons name="people-outline" size={18} color={colors.textMuted} />
+        </View>
+        <View style={groupNotifStyles.textWrap}>
+          <Text style={groupNotifStyles.label}>Group notifications default</Text>
+          <Text style={groupNotifStyles.sublabel}>
+            Applies to groups you join after changing this setting.
+          </Text>
+        </View>
+        <Text style={groupNotifStyles.value}>{currentLabel}</Text>
+        <Ionicons name="chevron-forward" size={14} color={colors.textMuted} />
+      </Pressable>
+    </View>
+  );
+}
+
+const groupNotifStyles = StyleSheet.create({
+  card: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    marginTop: spacing.lg,
+    padding: spacing.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+  },
+  sectionTitle: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: colors.textMuted,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: spacing.sm,
+  },
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  iconWrap: {
+    width: 32,
+    alignItems: "center",
+  },
+  textWrap: {
+    flex: 1,
+  },
+  label: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: colors.text,
+  },
+  sublabel: {
+    fontSize: 12,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  value: {
+    fontSize: 13,
+    color: colors.textMuted,
+    fontWeight: "500",
+    marginRight: 4,
   },
 });
 

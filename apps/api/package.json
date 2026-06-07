@@ -35,6 +35,7 @@
     "@types/jsdom": "^28.0.1",
     "@types/jsonwebtoken": "^9.0.10",
     "@upstash/redis": "^1.38.0",
+    "@vercel/blob": "^2.4.0",
     "bcryptjs": "^2.4.3",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",

@@ -386,6 +386,23 @@ export type ApiHostStats = {
 
 export type AppGroupVisibility = "INVITE_ONLY" | "OPEN" | "REQUEST_TO_JOIN";
 
+/** S58: Notification level for group-scoped push notifications. */
+export type GroupNotifLevel = "ALL" | "MENTIONS_ONLY" | "NONE";
+
+/** S58: Response shape for GET/PATCH /api/groups/:id/notification-preference. */
+export type ApiGroupNotifPref = { level: GroupNotifLevel };
+
+/** S58: Response shape for POST /api/groups/:id/cover-image (upload token). */
+export type ApiGroupCoverImageToken = {
+  clientToken: string;
+  url: string;
+};
+
+/** S58: Response shape for PATCH /api/groups/:id/cover-image. */
+export type ApiGroupCoverImageUpdate = {
+  coverImageUrl: string;
+};
+
 export type AppGroupJoinRequestStatus = "PENDING" | "APPROVED" | "REJECTED";
 
 export type ApiGroupJoinRequest = {
