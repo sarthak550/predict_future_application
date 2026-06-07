@@ -748,6 +748,7 @@
 | S55-T4 | HIGH | ✅ done | Communities rail: horizontal scrollable row of up to 8 OPEN groups |
 | S55-T5 | HIGH | ✅ done | Hosted-by chip on MarketSummaryCard for group-linked markets |
 | S55-T6 | MED | ✅ done | Deep link and in-app nav audit; add Explore analytics events |
+| S55-T7 | HIGH | ✅ done | Relocate spotlight + rail to My Groups sub-tab; bottom-of-feed Find-a-community CTA on Markets |
 
 **Sprint-level note:** WS6 (Groups hidden) is NOT regressed by this sprint. The Hosted-by chip surfaces every group-linked market as a community entry point — organically more discoverable than a dedicated tab that only reaches users who specifically tap it. See brief for full rationale.
 

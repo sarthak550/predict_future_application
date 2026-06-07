@@ -3221,6 +3221,17 @@
       "qaVerdict": "pass",
       "failureNotes": null,
       "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S55-T7",
+      "sprint": 55,
+      "title": "Relocate spotlight + rail to My Groups sub-tab; add bottom-of-feed Find-a-community CTA on Markets",
+      "description": "User feedback: spotlight + rail above the Markets feed was cluttering Explore. Removed both from Explore (Markets sub-tab) ListHeaderComponent. Relocated to the My Groups sub-tab as a Discover communities section. Added a subtle bottom-of-feed CTA on the Markets list that switches to My Groups → Discover. Hosted-by chip on every group-linked market card stays untouched — that contextual surface is doing the discovery work and was the only persistent community visibility that earned the real estate.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
     }
   ]
 }

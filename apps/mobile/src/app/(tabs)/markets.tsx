@@ -441,7 +441,7 @@ export default function MarketsScreen() {
           onPress={() => { setMode("public"); setStatusTab("live"); }}
         >
           <Text style={[styles.modeBtnText, mode === "public" && styles.modeBtnTextActive]}>
-            Explore
+            Markets
           </Text>
         </Pressable>
         <Pressable
@@ -618,20 +618,17 @@ export default function MarketsScreen() {
           <RefreshControl refreshing={loading} onRefresh={handleRefresh} tintColor={colors.accent} />
         }
         ListHeaderComponent={
-          !isSearchMode && mode === "public" && statusTab === "live" ? (
+          /* S55-T7: spotlight + rail live in My Groups sub-tab (Discover communities
+              section). Explore stays pure markets; communities still surface
+              contextually via the Hosted-by chip on every group-linked market card. */
+          !isSearchMode && mode === "private" && discoverGroups.length > 0 ? (
+            <View style={styles.discoverSection}>
+              <Text style={styles.discoverSectionHeader}>Discover communities</Text>
+              <CommunitySpotlightCard group={discoverGroups[0]!} />
+              <CommunitiesRail groups={discoverGroups} />
+            </View>
+          ) : !isSearchMode && mode === "public" && statusTab === "live" ? (
             <>
-              {/* Community spotlight — top OPEN group by member count (S55-T3) */}
-              {discoverGroups.length > 0 ? (
-                <View style={styles.spotlightWrapper}>
-                  <CommunitySpotlightCard group={discoverGroups[0]!} />
-                </View>
-              ) : null}
-
-              {/* Communities you might like — horizontal rail (S55-T4) */}
-              {discoverGroups.length > 0 ? (
-                <CommunitiesRail groups={discoverGroups} />
-              ) : null}
-
               {/* Trending carousel — hero cards (S31-T3) */}
               {(trendingMarkets.length > 0 || loadingTrending) ? (
                 <View style={styles.trendingShelf}>
@@ -708,7 +705,27 @@ export default function MarketsScreen() {
             <View style={styles.footerSpinner}>
               <ActivityIndicator size="small" color={colors.accent} />
             </View>
-          ) : null
+          ) : (
+            // S55-T7: subtle bottom-of-feed CTA into community discovery
+            // (the My Groups sub-tab also surfaces spotlight + rail there).
+            !isSearchMode && mode === "public" && statusTab === "live" ? (
+              <Pressable
+                style={({ pressed }) => [
+                  styles.discoverCommunitiesCta,
+                  pressed && { opacity: 0.7 },
+                ]}
+                onPress={() => { setMode("private"); setStatusTab("live"); }}
+                accessibilityRole="button"
+                accessibilityLabel="Browse communities to join"
+              >
+                <Feather name="users" size={14} color={colors.accent} />
+                <Text style={styles.discoverCommunitiesCtaText}>
+                  Find a community to join
+                </Text>
+                <Feather name="arrow-right" size={14} color={colors.accent} />
+              </Pressable>
+            ) : null
+          )
         }
         renderItem={({ item }) => <MarketSummaryCard item={item} />}
         ListEmptyComponent={
@@ -1460,11 +1477,50 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
 
-  // ── Community surfaces (S55) ─────────────────────────────────────
+  // ── Community surfaces (S55-T7: live in My Groups sub-tab) ──────
 
   spotlightWrapper: {
     marginTop: spacing.sm,
     marginBottom: spacing.sm,
+  },
+
+  discoverSection: {
+    marginTop: spacing.md,
+    marginBottom: spacing.sm,
+  },
+
+  discoverSectionHeader: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: colors.textMuted,
+    textTransform: "uppercase" as const,
+    letterSpacing: 0.6,
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.xs,
+  },
+
+  // ── Bottom-of-feed CTA into community discovery (S55-T7) ────────
+
+  discoverCommunitiesCta: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.lg,
+    marginBottom: spacing.lg,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    borderRadius: 12,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+
+  discoverCommunitiesCtaText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: colors.accent,
   },
 
   // ── Trending carousel (S31-T3) ────────────────────────────────────
