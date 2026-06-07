@@ -29,6 +29,34 @@ export type VoteEventName =
   | "opinion_vote_locked"
   | "opinion_vote_blocked";
 
+// ── Explore / community discovery events (S55) ────────────────────────
+
+/**
+ * Fired when a user taps the Community spotlight card CTA ("Join community").
+ * analytics: "markets_tab_opened" event name preserved for historical
+ * comparability — only new explore-specific events use the explore_ prefix.
+ */
+export type ExploreEventName =
+  | "explore_spotlight_tapped"
+  | "explore_communities_rail_tapped";
+
+export type ExploreEventProps = {
+  groupId: string;
+  groupName: string;
+  /** "spotlight" | "rail" */
+  surface: "spotlight" | "rail";
+};
+
+export function trackExploreEvent(event: ExploreEventName, props: ExploreEventProps): void {
+  const c = getClient();
+  if (!c) return;
+  try {
+    c.capture(event, props);
+  } catch (err) {
+    console.error(`[analytics] capture failed for "${event}":`, err, props);
+  }
+}
+
 export type VoteEventProps = {
   opinionId: string;
   expertId?: string;

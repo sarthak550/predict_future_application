@@ -14,7 +14,7 @@ import {
   View,
 } from "react-native";
 
-import type { ApiGroupSummary, ApiMarketSummary, ApiPollListItem } from "@predict-future/types";
+import type { ApiDiscoverGroup, ApiGroupSummary, ApiMarketSummary, ApiPollListItem } from "@predict-future/types";
 import { colors, radius, shadows, spacing } from "@predict-future/ui-tokens";
 
 import {
@@ -22,6 +22,8 @@ import {
   FILTER_BAR_CATEGORIES,
   type CategoryKey,
 } from "@/components/category-filter-bar";
+import { CommunitiesRail } from "@/components/communities-rail";
+import { CommunitySpotlightCard } from "@/components/community-spotlight-card";
 import { MarketSummaryCard } from "@/components/market-summary-card";
 import { useApiQuery } from "@/hooks/useApiQuery";
 import { mobileApi } from "@/lib/api";
@@ -207,6 +209,25 @@ export default function MarketsScreen() {
       .finally(() => setLoadingTrending(false));
   }, [mode]);
 
+  // ── discover groups (community spotlight + rail) ──────────────────
+  // Single fetch of limit=8: results[0] → spotlight, results[0..7] → rail.
+  // Independent from markets list — do NOT bundle into Promise.all.
+
+  const [discoverGroups, setDiscoverGroups] = useState<ApiDiscoverGroup[]>([]);
+
+  const loadDiscoverGroups = useCallback(() => {
+    mobileApi
+      .discoverGroups({ sort: "members", limit: 8 })
+      .then((res) => setDiscoverGroups(res.groups))
+      .catch(() => setDiscoverGroups([]));
+  }, []);
+
+  useEffect(() => {
+    if (mode === "public") {
+      loadDiscoverGroups();
+    }
+  }, [mode, loadDiscoverGroups]);
+
   // ── saved markets ─────────────────────────────────────────────────
 
   const [savedMarkets, setSavedMarkets] = useState<ApiMarketSummary[]>([]);
@@ -370,6 +391,8 @@ export default function MarketsScreen() {
         void loadSavedMarkets();
       } else {
         publicQuery.refetch();
+        // Refresh community surfaces independently
+        loadDiscoverGroups();
       }
     } else if (mode === "polls") {
       pollsQuery.refetch();
@@ -377,7 +400,7 @@ export default function MarketsScreen() {
       groupsQuery.refetch();
       fetchAllGroupMarkets();
     }
-  }, [mode, statusTab, publicQuery, pollsQuery, groupsQuery, fetchAllGroupMarkets, loadSavedMarkets]);
+  }, [mode, statusTab, publicQuery, pollsQuery, groupsQuery, fetchAllGroupMarkets, loadSavedMarkets, loadDiscoverGroups]);
 
   // ── render ────────────────────────────────────────────────────────
 
@@ -408,7 +431,7 @@ export default function MarketsScreen() {
     <View style={styles.screen}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.title}>Markets</Text>
+        <Text style={styles.title}>Explore</Text>
       </View>
 
       {/* ── Level 1: Public / Private / Polls toggle ── */}
@@ -597,6 +620,18 @@ export default function MarketsScreen() {
         ListHeaderComponent={
           !isSearchMode && mode === "public" && statusTab === "live" ? (
             <>
+              {/* Community spotlight — top OPEN group by member count (S55-T3) */}
+              {discoverGroups.length > 0 ? (
+                <View style={styles.spotlightWrapper}>
+                  <CommunitySpotlightCard group={discoverGroups[0]!} />
+                </View>
+              ) : null}
+
+              {/* Communities you might like — horizontal rail (S55-T4) */}
+              {discoverGroups.length > 0 ? (
+                <CommunitiesRail groups={discoverGroups} />
+              ) : null}
+
               {/* Trending carousel — hero cards (S31-T3) */}
               {(trendingMarkets.length > 0 || loadingTrending) ? (
                 <View style={styles.trendingShelf}>
@@ -1423,6 +1458,13 @@ const styles = StyleSheet.create({
   sortChipTextActive: {
     color: "#FFFFFF",
     fontWeight: "700",
+  },
+
+  // ── Community surfaces (S55) ─────────────────────────────────────
+
+  spotlightWrapper: {
+    marginTop: spacing.sm,
+    marginBottom: spacing.sm,
   },
 
   // ── Trending carousel (S31-T3) ────────────────────────────────────

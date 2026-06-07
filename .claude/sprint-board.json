@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "currentSprint": 54,
+  "currentSprint": 55,
   "tickets": [
     {
       "id": "S7-T1",
@@ -3150,6 +3150,72 @@
       "sprint": 54,
       "title": "Group create flow (mobile): visibility picker (Open default) + optional category picker",
       "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint54.md for full acceptance criteria.",
+      "priority": "medium",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S55-T1",
+      "sprint": 55,
+      "title": "Re-hide Groups tab (restore href: null in _layout.tsx)",
+      "description": "Re-add href: null to the Groups tab entry in apps/mobile/src/app/(tabs)/_layout.tsx. The groups.tsx file and route remain intact and navigable for deep links — only the tab bar entry is suppressed. Tab bar must show exactly 5 tabs after this change: Feed, Finance, Create, Markets (renamed in T2), Profile. Verify navigating programmatically to /(tabs)/groups still resolves without crash. See full context in .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint55.md S55-T1.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S55-T2",
+      "sprint": 55,
+      "title": "Rename Markets tab to Explore; update icon to compass-outline",
+      "description": "In apps/mobile/src/app/(tabs)/_layout.tsx update the markets screen title from 'Markets' to 'Explore' and icon from trending-up-outline to compass-outline (fallback: search-outline if compass-outline unavailable in installed Ionicons). Route path /(tabs)/markets is unchanged — label only. Grep all in-app user-visible copy strings referencing 'Markets tab' or 'go to Markets' and update to 'Explore'. Preserve all analytics event names (markets_tab_opened etc) with an inline comment noting historical comparability. See full criteria in cto_assignment_brief_sprint55.md S55-T2.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S55-T3",
+      "sprint": 55,
+      "title": "Community spotlight card: top OPEN group by member count at Explore top",
+      "description": "Build apps/mobile/src/components/community-spotlight-card.tsx. Props: group: ApiDiscoverGroup. Full-width ~200px card with cover image (or category gradient fallback) + dark overlay. Shows group name, member count, active markets count, description teaser, 'Featured' pill top-left, 'Join community' CTA bottom-right (navigates to /group/[id]). Data source: GET /api/groups/discover?sort=members&limit=8 (shared fetch with T4 — use results[0] for spotlight). Render as first item in markets.tsx ListHeaderComponent. Degrade gracefully if no OPEN groups. Independent fetch from markets list — do NOT Promise.all. See full spec in cto_assignment_brief_sprint55.md S55-T3.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S55-T4",
+      "sprint": 55,
+      "title": "Communities rail: horizontal scrollable row of up to 8 OPEN groups",
+      "description": "Build apps/mobile/src/components/communities-rail.tsx. Horizontal ScrollView of ~140x160px group cards (cover image/gradient fallback, group name, category badge, member count). Section header 'Communities you might like'. Data: reuse the same GET /api/groups/discover?sort=members&limit=8 fetch from T3 — results[0..7]. Each card taps to /group/[id]. Section header hidden when empty. Place in markets.tsx ListHeaderComponent below spotlight (T3), above CategoryFilterBar. Pull-to-refresh refreshes rail independently. See full spec in cto_assignment_brief_sprint55.md S55-T4.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S55-T5",
+      "sprint": 55,
+      "title": "Hosted-by chip on MarketSummaryCard for group-linked markets",
+      "description": "PRE-CONDITION: Verify whether the markets list API includes group relation (id, name, slug) in its Prisma query. If absent, add it and extend ApiMarketSummary in packages/types/src/index.ts with group?: { id: string; name: string; slug: string } | null. Then in apps/mobile/src/components/market-summary-card.tsx render a small chip below the title row when item.group != null: people-outline icon + 'Hosted by [group.name]', #F1F5F9 bg, 11px text, taps to /group/[group.id]. Chip is conditional — no visual change when group is null. Add compact?: boolean prop to suppress chip in dense contexts. TypeScript must compile cleanly across all three card callsites (markets list, feed, group profile). See full spec in cto_assignment_brief_sprint55.md S55-T5.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S55-T6",
+      "sprint": 55,
+      "title": "Deep link and in-app nav audit; add Explore analytics events",
+      "description": "Verify groups.tsx renders without crash when reached via router.push('/(tabs)/groups') while tab is hidden. Grep all router.push/replace calls for '/(tabs)/groups' — repoint any found to /(tabs)/markets or /group/[id] as appropriate. Verify onboarding copy does not reference 'Groups tab' (check apps/mobile/src/components/onboarding-walkthrough.tsx). Add analytics events: explore_communities_rail_tapped (on rail card tap) and explore_spotlight_tapped (on spotlight CTA tap). Do NOT rename existing markets_ prefixed events. See full spec in cto_assignment_brief_sprint55.md S55-T6.",
       "priority": "medium",
       "status": "done",
       "qaVerdict": "pass",

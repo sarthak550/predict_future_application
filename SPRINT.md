@@ -2,8 +2,8 @@
 
 > Human-readable view of `.claude/sprint-board.json`. Auto-maintained by the CEO/CTO/QA agents — do not edit by hand.
 
-**Current sprint:** 54
-**Status:** Sprint 54 QA COMPLETE (8/8) — Open Groups foundation: GroupVisibility enum + INVITE_ONLY/OPEN tiers, owner moderation routes (remove/ban/unban) with ban check on invite-code path, public discover route (OPEN-only), open-join route with ban+memberCap guards, Groups tab un-hidden with Browse + My Groups layout, full group profile + member management screens, visibility/category pickers in create flow. Pending dev-server restart + device smoke-test. Sprints 55–56 queued (request-to-join, discovery polish). Sprint 53 QA COMPLETE (6/6) — Create-tab fix bundle: draft persistence + schema version, strict resolveAt validation, dead StepResolution/ResolutionMode dropped, eligibility gate inlined on PUBLIC option (top HostEligibilityCard removed), duplicate MC options blocked, inline char-count hints. ~215 dead lines removed. Sprint 52 QA COMPLETE (4/4) — CombinedAnalystCard merge + See-all removal + tighter inter-card gap + Pulse pills redesign with question/crowd-%/urgency-tint. Sprint 51 COMPLETE (5/5). Sprint 50 COMPLETE (6/6 — Top 3 Analysts moved from Feed to Finance). Sprint 49 COMPLETE (9/9). Legal review on SEBI Research Analyst public naming still required before production deploy. Sprint 48 COMPLETE (F1 timing reliability — retry, cache downgrade, empty-state, client timeout). Sprint 47 COMPLETE (F1 detail modal — full driver grid with lap times, gaps, tire data). Sprint 46 COMPLETE (Sports poll trust fix — all 3 tickets passed QA). Sprint 45 COMPLETE (F1 race card). Sprint 44 COMPLETE (Finance instrument filter overhaul). Sprint 43 COMPLETE. Sprints 38–42 COMPLETE (security/correctness hardening, 54 tickets). Sprints 12, 25–34 COMPLETE.
+**Current sprint:** 55
+**Status:** Sprint 55 QA COMPLETE (6/6) — Markets → Explore reframe: re-hidden Groups tab, renamed Markets tab to Explore with compass icon, Community spotlight card + Communities rail + Hosted-by [Group] chip on every group-hosted market card. Mobile-only, no schema. Tab bar back to 5. Pending device smoke-test on real screen sizes (gradient + card heights). Sprint 56 queued (REQUEST_TO_JOIN + approval inbox), S57 queued (discovery polish + per-group notification prefs + cover upload). Sprint 54 QA COMPLETE (8/8) — Open Groups foundation: GroupVisibility enum + INVITE_ONLY/OPEN tiers, owner moderation routes (remove/ban/unban) with ban check on invite-code path, public discover route (OPEN-only), open-join route with ban+memberCap guards, full group profile + member management screens, visibility/category pickers in create flow. Pending dev-server restart + device smoke-test. Sprint 53 QA COMPLETE (6/6) — Create-tab fix bundle: draft persistence + schema version, strict resolveAt validation, dead StepResolution/ResolutionMode dropped, eligibility gate inlined on PUBLIC option (top HostEligibilityCard removed), duplicate MC options blocked, inline char-count hints. ~215 dead lines removed. Sprint 52 QA COMPLETE (4/4) — CombinedAnalystCard merge + See-all removal + tighter inter-card gap + Pulse pills redesign with question/crowd-%/urgency-tint. Sprint 51 COMPLETE (5/5). Sprint 50 COMPLETE (6/6 — Top 3 Analysts moved from Feed to Finance). Sprint 49 COMPLETE (9/9). Legal review on SEBI Research Analyst public naming still required before production deploy. Sprint 48 COMPLETE (F1 timing reliability — retry, cache downgrade, empty-state, client timeout). Sprint 47 COMPLETE (F1 detail modal — full driver grid with lap times, gaps, tire data). Sprint 46 COMPLETE (Sports poll trust fix — all 3 tickets passed QA). Sprint 45 COMPLETE (F1 race card). Sprint 44 COMPLETE (Finance instrument filter overhaul). Sprint 43 COMPLETE. Sprints 38–42 COMPLETE (security/correctness hardening, 54 tickets). Sprints 12, 25–34 COMPLETE.
 
 ---
 
@@ -712,7 +712,7 @@
 ## Sprint 54
 
 **Theme:** Open Groups (Pillar B community structure) — 2-tier visibility (INVITE_ONLY + OPEN), discovery surface, owner moderation. Closes WS3 (viral loop), WS6 (Groups hidden), WS8 (engagement loops thin).
-**Status:** IN PROGRESS
+**Status:** COMPLETE (8/8 done)
 **Brief:** `.claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint54.md`
 
 | ID | Pri | Status | Title |
@@ -728,5 +728,28 @@
 
 **Sprint-level constraint:** T2 (moderation routes) MUST ship in the same release as T6 (un-hidden Groups tab). First discoverable group will attract abuse within 24 hours.
 
-**S55 queued:** REQUEST_TO_JOIN third visibility tier + approval inbox + push on approve/deny.
-**S56 queued:** Cover image upload, category landing pages, search by name, featured groups, per-group notification preferences (required before fan-out is safe at scale), GroupModerationAction audit table.
+**S55 queued:** Markets → Explore reframe; Groups woven into Explore via spotlight, rail, and per-market chips.
+**S56 queued:** REQUEST_TO_JOIN third visibility tier + approval inbox + push on approve/deny.
+**S57 queued:** Cover image upload, category landing pages, search by name, featured groups, per-group notification prefs, GroupModerationAction audit table.
+
+---
+
+## Sprint 55
+
+**Theme:** Explore — Markets tab rebranded as discovery hub for both markets and communities. Groups tab re-hidden; Groups discoverability goes UP via three surfaces woven into Explore: Community spotlight, Communities rail, Hosted-by chip on every group-linked market card. 5-tab bar restored. Mobile-only, no schema changes.
+**Status:** COMPLETE (6/6 done)
+**Brief:** `.claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint55.md`
+
+| ID | Pri | Status | Title |
+|---|---|---|---|
+| S55-T1 | CRIT | ✅ done | Re-hide Groups tab (restore href: null in _layout.tsx) |
+| S55-T2 | CRIT | ✅ done | Rename Markets tab to Explore; update icon to compass-outline |
+| S55-T3 | HIGH | ✅ done | Community spotlight card: top OPEN group by member count at Explore top |
+| S55-T4 | HIGH | ✅ done | Communities rail: horizontal scrollable row of up to 8 OPEN groups |
+| S55-T5 | HIGH | ✅ done | Hosted-by chip on MarketSummaryCard for group-linked markets |
+| S55-T6 | MED | ✅ done | Deep link and in-app nav audit; add Explore analytics events |
+
+**Sprint-level note:** WS6 (Groups hidden) is NOT regressed by this sprint. The Hosted-by chip surfaces every group-linked market as a community entry point — organically more discoverable than a dedicated tab that only reaches users who specifically tap it. See brief for full rationale.
+
+**S56 queued:** REQUEST_TO_JOIN third visibility tier + GroupJoinRequest model + approval inbox + push notifications on request/decision.
+**S57 queued:** Discovery polish — cover image upload, category landing pages, search across markets+groups+instruments, featured-flag curation, per-group notification prefs, GroupModerationAction audit table.

@@ -117,6 +117,14 @@ export async function GET(request: Request) {
         select: {
           comments: true
         }
+      },
+      // S55-T5: include hosting group for the "Hosted by [Group]" chip on market cards.
+      group: {
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+        }
       }
     }
   });

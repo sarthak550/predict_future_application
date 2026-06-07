@@ -79,9 +79,11 @@ export default function TabsLayout() {
         <Tabs.Screen
           name="markets"
           options={{
-            title: "Markets",
+            // Renamed from "Markets" to "Explore" — route path /(tabs)/markets unchanged.
+            // analytics: existing "markets_tab_opened" event name preserved for historical comparability.
+            title: "Explore",
             tabBarIcon: ({ color, size }) => (
-              <Ionicons name="trending-up-outline" size={size} color={color} />
+              <Ionicons name="compass-outline" size={size} color={color} />
             ),
           }}
         />
@@ -98,10 +100,14 @@ export default function TabsLayout() {
         <Tabs.Screen
           name="groups"
           options={{
+            // Tab hidden from bar — Groups are discoverable via the Explore tab
+            // (community spotlight, communities rail, per-market Hosted-by chip).
+            // The route /(tabs)/groups remains navigable for deep links.
+            href: null,
             title: "Groups",
             tabBarIcon: ({ color, size }) => (
               <Ionicons name="people-outline" size={size} color={color} />
-            )
+            ),
           }}
         />
         <Tabs.Screen name="sports" options={{ href: null }} />

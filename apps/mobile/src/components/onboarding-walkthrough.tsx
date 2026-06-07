@@ -80,7 +80,7 @@ const STEPS: Step[] = [
   },
 ];
 
-const TAB_COUNT = 5; // Feed, Sports, Create, Markets, Profile
+const TAB_COUNT = 5; // Feed, Finance, Create, Explore, Profile
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 const TAB_BAR_HEIGHT = 72;
 const TAB_WIDTH = SCREEN_WIDTH / TAB_COUNT;

@@ -239,6 +239,13 @@ export type ApiMarketSummary = {
   flagshipEventAt?: string | null;
   /** One of: 'RBI' | 'BUDGET' | 'GST' | 'GLOBAL' | 'FED' | 'OTHER'. */
   flagshipEventType?: string | null;
+  /**
+   * S55-T5: The group that hosts this market, if any. Non-null only on group-hosted (PRIVATE)
+   * markets where the API includes the group relation. Used for the "Hosted by [Group]" chip
+   * on MarketSummaryCard. Optional so existing callers that don't include the group relation
+   * are unaffected.
+   */
+  group?: { id: string; name: string; slug: string } | null;
 };
 
 /**

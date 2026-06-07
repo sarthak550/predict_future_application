@@ -1,4 +1,4 @@
-import { Feather } from "@expo/vector-icons";
+import { Feather, Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import { Linking, Pressable, Share, StyleSheet, Text, View } from "react-native";
@@ -13,6 +13,11 @@ type Props = {
   item: ApiMarketSummary;
   /** Called after a successful save toggle so parent can sync state. */
   onSaveToggled?: (marketId: string, saved: boolean) => void;
+  /**
+   * S55-T5: When true, suppresses the "Hosted by [Group]" chip and other
+   * secondary metadata in dense / compact list contexts.
+   */
+  compact?: boolean;
 };
 
 async function shareMarket(item: ApiMarketSummary) {
@@ -21,7 +26,7 @@ async function shareMarket(item: ApiMarketSummary) {
   await Share.share({ message, url });
 }
 
-export function MarketSummaryCard({ item, onSaveToggled }: Props) {
+export function MarketSummaryCard({ item, onSaveToggled, compact = false }: Props) {
   const router = useRouter();
   const [isSaved, setIsSaved] = useState(item.iSaved ?? false);
   const [savingInFlight, setSavingInFlight] = useState(false);
@@ -181,6 +186,23 @@ export function MarketSummaryCard({ item, onSaveToggled }: Props) {
           </View>
         ) : null}
       </View>
+
+      {/* S55-T5: Hosted by [Group] chip — shown when market belongs to a group and not in compact mode */}
+      {!compact && item.group ? (
+        <Pressable
+          style={styles.hostedByChip}
+          onPress={(e) => {
+            e.stopPropagation?.();
+            router.push(`/group/${item.group!.id}` as Parameters<typeof router.push>[0]);
+          }}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel={`Hosted by ${item.group.name}`}
+        >
+          <Ionicons name="people-outline" size={11} color="#64748B" />
+          <Text style={styles.hostedByText}>Hosted by {item.group.name}</Text>
+        </Pressable>
+      ) : null}
 
       {/* Host line — only for native markets (no originPlatform) */}
       {!item.originPlatform && item.creator?.username ? (
@@ -428,6 +450,23 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: colors.textMuted,
     marginTop: 2,
+  },
+  // S55-T5: "Hosted by [Group]" chip
+  hostedByChip: {
+    marginTop: spacing.sm,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    alignSelf: "flex-start",
+    backgroundColor: "#F1F5F9",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+  },
+  hostedByText: {
+    fontSize: 11,
+    fontWeight: "500",
+    color: "#64748B",
   },
   host: {
     marginTop: spacing.md,
