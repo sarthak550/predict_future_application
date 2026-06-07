@@ -251,7 +251,14 @@ function JoinCTA({
   }
 
   if (memberStatus === "member") {
-    return null;
+    // S57: MEMBER can voluntarily leave. OWNER and ADMIN use the kebab menu.
+    return (
+      <View style={styles.ctaBar}>
+        <Pressable style={styles.ctaBtnGhost} onPress={onLeave}>
+          <Text style={[styles.ctaBtnGhostText, { color: colors.danger }]}>Leave group</Text>
+        </Pressable>
+      </View>
+    );
   }
 
   if (memberStatus === "banned") {
@@ -467,17 +474,65 @@ function GroupBody({
     }
   }
 
-  function handleLeave() {
-    Alert.alert("Leave group?", "You can rejoin later.", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Leave",
-        style: "destructive",
-        onPress: () => {
-          Alert.alert("Not implemented", "Leave group is coming soon.");
+  async function handleLeave() {
+    Alert.alert(
+      "Leave group?",
+      `Leave ${group.name}? You will lose access to its markets and members.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Leave",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await mobileApi.leaveGroup(groupId);
+              router.replace("/(tabs)/groups");
+            } catch (err: unknown) {
+              const code =
+                err != null && typeof err === "object" && "code" in err
+                  ? (err as { code: unknown }).code
+                  : undefined;
+              if (code === "owner_must_transfer_or_archive") {
+                Alert.alert(
+                  "You're the owner",
+                  "Transfer ownership or archive the group first."
+                );
+              } else {
+                Alert.alert(
+                  "Could not leave group",
+                  err instanceof Error ? err.message : "Something went wrong."
+                );
+              }
+            }
+          }
         }
-      }
-    ]);
+      ]
+    );
+  }
+
+  async function handleArchive() {
+    Alert.alert(
+      "Archive group?",
+      `Archive ${group.name}? This will close the group and remove it from discovery. This cannot be undone.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Archive",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await mobileApi.archiveGroup(groupId);
+              router.replace("/(tabs)/groups");
+            } catch (err: unknown) {
+              Alert.alert(
+                "Could not archive group",
+                err instanceof Error ? err.message : "Something went wrong."
+              );
+            }
+          }
+        }
+      ]
+    );
   }
 
   async function handleCopyInviteCode() {
@@ -516,6 +571,19 @@ function GroupBody({
       onPress: () =>
         Alert.alert("Coming soon", "Group settings are in a future sprint.")
     });
+
+    // S57: Owner-only self-service actions.
+    if (memberStatus === "owner") {
+      actions.push({
+        text: "Transfer Ownership",
+        onPress: () => router.push(`/group/${groupId}/members?mode=transfer`)
+      });
+      actions.push({
+        text: "Archive Group",
+        style: "destructive",
+        onPress: () => void handleArchive()
+      });
+    }
 
     actions.push({ text: "Cancel", style: "cancel" });
 

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "currentSprint": 56,
+  "currentSprint": 57,
   "tickets": [
     {
       "id": "S7-T1",
@@ -3338,6 +3338,61 @@
       "title": "Push notification helpers + 4 analytics events (group_request_submitted/cancelled/approved/rejected)",
       "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint56.md for full acceptance criteria.",
       "priority": "medium",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S57-T1",
+      "sprint": 57,
+      "title": "API: POST /api/groups/[id]/leave (self-leave; 409 if caller is OWNER)",
+      "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint57.md for full acceptance criteria.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S57-T2",
+      "sprint": 57,
+      "title": "API: POST /api/groups/[id]/transfer-ownership (atomic tx, outgoing owner demotes to ADMIN)",
+      "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint57.md for full acceptance criteria.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S57-T3",
+      "sprint": 57,
+      "title": "API: POST /api/groups/[id]/archive (isArchived=true; verify discover/getUserGroups filters)",
+      "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint57.md for full acceptance criteria.",
+      "priority": "critical",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S57-T4",
+      "sprint": 57,
+      "title": "Mobile: replace Leave stub with confirmation sheet + Transfer/Archive kebab actions for OWNER",
+      "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint57.md for full acceptance criteria.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S57-T5",
+      "sprint": 57,
+      "title": "Mobile: Transfer ownership picker on members screen (excludes self + banned)",
+      "description": "See CEO brief at .claude/agent-memory/ceo-product-strategist/cto_assignment_brief_sprint57.md for full acceptance criteria.",
+      "priority": "high",
       "status": "done",
       "qaVerdict": "pass",
       "failureNotes": null,

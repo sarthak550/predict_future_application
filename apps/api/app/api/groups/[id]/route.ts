@@ -77,7 +77,9 @@ export async function GET(
     }
   });
 
-  if (!group) {
+  if (!group || group.isArchived) {
+    // S57: archived groups return 404 to prevent deep-link access to closed groups.
+    // This is consistent with discover + getUserGroups which already filter isArchived: false.
     return NextResponse.json({ error: "Group not found." }, { status: 404 });
   }
 

@@ -193,6 +193,190 @@ export async function getDiscoverGroups(userId: string, limit = 20) {
   }));
 }
 
+// ── S57: Typed error codes ─────────────────────────────────────────────────────
+
+export class GroupServiceError extends Error {
+  constructor(
+    public readonly code: string,
+    message: string
+  ) {
+    super(message);
+    this.name = "GroupServiceError";
+  }
+}
+
+// ── S57: Leave group ───────────────────────────────────────────────────────────
+
+/**
+ * Hard-deletes the caller's GroupMembership row, allowing them to voluntarily
+ * leave a group. Banned users are tombstoned by design and cannot self-leave.
+ * Group OWNERs must transfer ownership or archive before leaving.
+ *
+ * Throws GroupServiceError with typed codes for route-level HTTP mapping.
+ */
+export async function leaveGroup(input: { groupId: string; userId: string }) {
+  const { groupId, userId } = input;
+
+  const group = await prisma.group.findUnique({
+    where: { id: groupId },
+    select: { id: true, isArchived: true }
+  });
+
+  if (!group || group.isArchived) {
+    throw new GroupServiceError("group_not_found", "Group not found.");
+  }
+
+  const membership = await prisma.groupMembership.findUnique({
+    where: { groupId_userId: { groupId, userId } },
+    select: { role: true, bannedAt: true }
+  });
+
+  if (!membership) {
+    throw new GroupServiceError("not_member", "You are not a member of this group.");
+  }
+
+  if (membership.bannedAt != null) {
+    // Banned users are tombstoned. The tombstone row must remain so re-join is blocked.
+    throw new GroupServiceError("banned", "You have been removed from this group.");
+  }
+
+  if (membership.role === GroupRole.OWNER) {
+    throw new GroupServiceError(
+      "owner_must_transfer_or_archive",
+      "Group owners must transfer ownership or archive the group before leaving."
+    );
+  }
+
+  await prisma.groupMembership.delete({
+    where: { groupId_userId: { groupId, userId } }
+  });
+}
+
+// ── S57: Transfer ownership ────────────────────────────────────────────────────
+
+/**
+ * Atomically transfers group ownership from the current OWNER to a new member.
+ * The outgoing owner is demoted to ADMIN (retains moderation power for cleanup).
+ * The incoming owner must be an active, non-banned MEMBER or ADMIN.
+ *
+ * Decision rationale (recorded per CEO brief):
+ *   - Outgoing owner → ADMIN (not MEMBER): they stewarded the group; admin power
+ *     lets them do cleanup (remove markets, manage members) without retaining the
+ *     reserved owner actions.
+ *
+ * // TODO S58: log ownership transfer to GroupModerationAction audit table.
+ *
+ * Throws GroupServiceError with typed codes for route-level HTTP mapping.
+ */
+export async function transferOwnership(input: {
+  groupId: string;
+  callerId: string;
+  newOwnerId: string;
+}) {
+  const { groupId, callerId, newOwnerId } = input;
+
+  const group = await prisma.group.findUnique({
+    where: { id: groupId },
+    select: { id: true, isArchived: true }
+  });
+
+  if (!group || group.isArchived) {
+    throw new GroupServiceError("group_not_found", "Group not found.");
+  }
+
+  const callerMembership = await prisma.groupMembership.findUnique({
+    where: { groupId_userId: { groupId, userId: callerId } },
+    select: { role: true }
+  });
+
+  if (!callerMembership || callerMembership.role !== GroupRole.OWNER) {
+    throw new GroupServiceError("forbidden", "Only the group owner can transfer ownership.");
+  }
+
+  if (newOwnerId === callerId) {
+    throw new GroupServiceError("self_transfer", "You are already the owner.");
+  }
+
+  const targetMembership = await prisma.groupMembership.findUnique({
+    where: { groupId_userId: { groupId, userId: newOwnerId } },
+    select: { role: true, bannedAt: true }
+  });
+
+  if (!targetMembership || targetMembership.bannedAt != null) {
+    throw new GroupServiceError(
+      "ineligible_target",
+      "Target user is not an eligible member."
+    );
+  }
+
+  // Atomic transaction: both role flips + Group.ownerId update must succeed or
+  // neither applies. This preserves the sole-OWNER invariant. Postgres transaction
+  // isolation is sufficient; no distributed lock needed.
+  await prisma.$transaction([
+    // 1. Demote outgoing owner to ADMIN.
+    prisma.groupMembership.update({
+      where: { groupId_userId: { groupId, userId: callerId } },
+      data: { role: GroupRole.ADMIN }
+    }),
+    // 2. Promote incoming member to OWNER.
+    prisma.groupMembership.update({
+      where: { groupId_userId: { groupId, userId: newOwnerId } },
+      data: { role: GroupRole.OWNER }
+    }),
+    // 3. Update Group.ownerId to mirror the membership change.
+    prisma.group.update({
+      where: { id: groupId },
+      data: { ownerId: newOwnerId }
+    })
+  ]);
+}
+
+// ── S57: Archive group ────────────────────────────────────────────────────────
+
+/**
+ * Flips Group.isArchived = true. Preserves all GroupMembership rows.
+ * Archive is NOT reversible in v1. // S58: add unarchive route if needed.
+ * isArchived is a simple boolean flip.
+ *
+ * Idempotent: calling archive on an already-archived group returns without error.
+ * Caller must be OWNER.
+ *
+ * Throws GroupServiceError with typed codes for route-level HTTP mapping.
+ */
+export async function archiveGroup(input: { groupId: string; callerId: string }) {
+  const { groupId, callerId } = input;
+
+  const group = await prisma.group.findUnique({
+    where: { id: groupId },
+    select: { id: true, isArchived: true }
+  });
+
+  if (!group) {
+    throw new GroupServiceError("group_not_found", "Group not found.");
+  }
+
+  // Idempotent — already archived; no-op.
+  if (group.isArchived) {
+    return;
+  }
+
+  const callerMembership = await prisma.groupMembership.findUnique({
+    where: { groupId_userId: { groupId, userId: callerId } },
+    select: { role: true }
+  });
+
+  if (!callerMembership || callerMembership.role !== GroupRole.OWNER) {
+    throw new GroupServiceError("forbidden", "Only the group owner can archive the group.");
+  }
+
+  await prisma.group.update({
+    where: { id: groupId },
+    data: { isArchived: true }
+  });
+}
+
+// ── Existing function below ───────────────────────────────────────────────────
+
 export async function getUserGroups(userId: string) {
   const memberships = await prisma.groupMembership.findMany({
     where: {

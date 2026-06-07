@@ -1,4 +1,4 @@
-import { Stack, useLocalSearchParams } from "expo-router";
+import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import {
   ActionSheetIOS,
@@ -30,8 +30,10 @@ function normalizeParam(value: string | string[] | undefined): string | null {
 // ── Screen ────────────────────────────────────────────────────────────
 
 export default function GroupMembersScreen() {
-  const params = useLocalSearchParams<{ id: string | string[] }>();
+  const params = useLocalSearchParams<{ id: string | string[]; mode?: string | string[] }>();
   const groupId = normalizeParam(params.id);
+  const modeParam = normalizeParam(params.mode);
+  const router = useRouter();
   const { session } = useSession();
 
   const [members, setMembers] = useState<ApiGroupMember[]>([]);
@@ -41,6 +43,10 @@ export default function GroupMembersScreen() {
   const [error, setError] = useState<string | null>(null);
   const [callerRole, setCallerRole] = useState<string | null>(null);
   const [callerOwnerId, setCallerOwnerId] = useState<string | null>(null);
+
+  // S57: transfer mode — active when mode=transfer query param is present AND caller is OWNER.
+  // Non-OWNER callers landing with mode=transfer see normal mode (guard applied in render).
+  const isTransferMode = modeParam === "transfer";
 
   const loadMembers = useCallback(
     async (reset = false) => {
@@ -189,6 +195,43 @@ export default function GroupMembersScreen() {
     );
   }
 
+  // S57: Transfer ownership to a selected member (transfer mode only).
+  async function handleTransferTo(member: ApiGroupMember) {
+    if (!groupId) return;
+    Alert.alert(
+      "Transfer ownership?",
+      `Transfer ownership of this group to @${member.user.username}? You will become an admin.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Transfer",
+          // Default (not destructive) — this is a deliberate power handoff, not a danger.
+          onPress: async () => {
+            try {
+              await mobileApi.transferOwnership(groupId, { newOwnerId: member.userId });
+              // Navigate back to group profile. The group detail will reload and the
+              // caller's memberStatus will now be "admin".
+              router.replace(`/group/${groupId}`);
+            } catch (err: unknown) {
+              const code =
+                err != null && typeof err === "object" && "code" in err
+                  ? (err as { code: unknown }).code
+                  : undefined;
+              if (code === "ineligible_target") {
+                Alert.alert("Cannot transfer", "This member cannot receive ownership.");
+              } else {
+                Alert.alert(
+                  "Transfer failed",
+                  err instanceof Error ? err.message : "Something went wrong."
+                );
+              }
+            }
+          }
+        }
+      ]
+    );
+  }
+
   function showMemberActions(member: ApiGroupMember) {
     const isBanned = member.bannedAt != null;
     const isOwner = member.role === "OWNER";
@@ -235,7 +278,16 @@ export default function GroupMembersScreen() {
     const isSelf = item.userId === session?.userId;
     const isItemOwner = item.role === "OWNER";
     const isBanned = item.bannedAt != null;
-    const canShowKebab = isAdminOrOwner && !isSelf && !isItemOwner;
+    const canShowKebab = isAdminOrOwner && !isSelf && !isItemOwner && !isTransferMode;
+
+    // S57: in transfer mode, eligible candidates are non-OWNER, non-banned, non-self members.
+    // Only the OWNER can be in transfer mode (guard applied in render, not here, for consistency).
+    const isTransferCandidate =
+      isTransferMode &&
+      callerRole === "OWNER" &&
+      !isItemOwner &&
+      !isBanned &&
+      !isSelf;
 
     return (
       <View
@@ -286,8 +338,15 @@ export default function GroupMembersScreen() {
           </Text>
         </View>
 
-        {/* Kebab */}
-        {canShowKebab ? (
+        {/* S57: Transfer mode — show "Make Owner" button for eligible candidates */}
+        {isTransferCandidate ? (
+          <Pressable
+            style={styles.makeOwnerBtn}
+            onPress={() => void handleTransferTo(item)}
+          >
+            <Text style={styles.makeOwnerText}>Make Owner</Text>
+          </Pressable>
+        ) : canShowKebab ? (
           <Pressable
             style={styles.kebabBtn}
             onPress={() => showMemberActions(item)}
@@ -299,15 +358,46 @@ export default function GroupMembersScreen() {
     );
   };
 
+  // S57: In transfer mode, eligible candidates are non-OWNER, non-banned, non-self active members.
+  // If the caller is the OWNER in transfer mode and there are no eligible candidates, show empty state.
+  const showTransferMode = isTransferMode && callerRole === "OWNER";
+  const eligibleCandidates = showTransferMode
+    ? members.filter(
+        (m) => m.role !== "OWNER" && m.bannedAt == null && m.userId !== session?.userId
+      )
+    : [];
+  const showTransferEmptyState = showTransferMode && !loading && eligibleCandidates.length === 0;
+
+  function handleArchiveFromTransferEmptyState() {
+    if (!groupId) return;
+    // Navigate back to group detail — the owner can open the archive action from the kebab.
+    router.replace(`/group/${groupId}`);
+  }
+
   return (
     <>
       <Stack.Screen
         options={{
           headerShown: true,
-          title: "Members"
+          title: showTransferMode ? "Transfer Ownership" : "Members"
         }}
       />
       <View style={styles.screen}>
+        {/* S57: Transfer mode banner — shown only to OWNER callers with mode=transfer */}
+        {showTransferMode ? (
+          <View style={styles.transferBanner}>
+            <Text style={styles.transferBannerText}>
+              Select a member to transfer ownership to
+            </Text>
+            <Pressable
+              onPress={() => router.replace(`/group/${groupId}`)}
+              style={styles.transferCancelBtn}
+            >
+              <Text style={styles.transferCancelText}>Cancel</Text>
+            </Pressable>
+          </View>
+        ) : null}
+
         {loading ? (
           <View style={styles.centerState}>
             <ActivityIndicator color={colors.accent} size="large" />
@@ -317,6 +407,22 @@ export default function GroupMembersScreen() {
             <Text style={styles.errorText}>{error}</Text>
             <Pressable onPress={() => loadMembers(true)} style={styles.retryBtn}>
               <Text style={styles.retryLabel}>Retry</Text>
+            </Pressable>
+          </View>
+        ) : showTransferEmptyState ? (
+          // S57: No eligible transfer candidates — owner is the only active member.
+          <View style={styles.centerState}>
+            <Text style={styles.emptyText}>
+              No eligible members to transfer to.
+            </Text>
+            <Text style={[styles.emptyText, { marginTop: spacing.xs }]}>
+              Archive the group instead?
+            </Text>
+            <Pressable
+              style={styles.retryBtn}
+              onPress={handleArchiveFromTransferEmptyState}
+            >
+              <Text style={styles.retryLabel}>Archive Group</Text>
             </Pressable>
           </View>
         ) : (
@@ -493,6 +599,48 @@ const styles = StyleSheet.create({
   },
   retryLabel: {
     fontSize: 14,
+    fontWeight: "700",
+    color: colors.surface
+  },
+
+  // S57: Transfer mode banner
+  transferBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: colors.accent + "15",
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.accent + "30"
+  },
+  transferBannerText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: colors.accent,
+    flex: 1
+  },
+  transferCancelBtn: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs
+  },
+  transferCancelText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: colors.textMuted
+  },
+
+  // S57: Make Owner button on each eligible member row
+  makeOwnerBtn: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.sm,
+    backgroundColor: colors.accent,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  makeOwnerText: {
+    fontSize: 12,
     fontWeight: "700",
     color: colors.surface
   }

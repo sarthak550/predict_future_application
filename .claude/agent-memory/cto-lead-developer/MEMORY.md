@@ -35,3 +35,4 @@
 - [project_sprint51.md](project_sprint51.md) — S51 Finance density: TopAnalystsCard compact (~120px), PulseRibbon collapsible default-collapsed (~44px), WeekToggleCard compact strip default (~50px)
 - [project_sprint54.md](project_sprint54.md) — S54 Open Groups: GroupVisibility enum, discover route, ban tombstone, group profile, tab un-hide, member management, create form pickers — all 8 tickets COMPLETE
 - [project_sprint56.md](project_sprint56.md) — S56 REQUEST_TO_JOIN: GroupJoinRequest model, 6 new API routes, approval inbox screen, my-requests screen, push helpers, analytics — all 9 tickets COMPLETE
+- [project_sprint57.md](project_sprint57.md) — S57 Member self-service: leave/transfer/archive routes, GroupServiceError, isArchived guard on detail route, mobile kebab + transfer picker — all 5 tickets COMPLETE

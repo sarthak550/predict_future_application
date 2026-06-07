@@ -455,6 +455,44 @@ export function createApiClient(options: ApiClientOptions) {
         { auth: true }
       );
     },
+
+    // ── S57: Member self-service ────────────────────────────────────────
+
+    /**
+     * Voluntarily leave a group. Caller must be ADMIN or MEMBER.
+     * OWNERs are rejected with code owner_must_transfer_or_archive (409).
+     */
+    leaveGroup(groupId: string) {
+      return request<{ left: boolean }>(
+        `/api/groups/${groupId}/leave`,
+        undefined,
+        { method: "POST", auth: true }
+      );
+    },
+
+    /**
+     * Transfer group ownership to another non-banned member.
+     * Caller must be OWNER. Outgoing owner is demoted to ADMIN.
+     */
+    transferOwnership(groupId: string, body: { newOwnerId: string }) {
+      return request<{ transferred: boolean; newOwnerId: string }>(
+        `/api/groups/${groupId}/transfer-ownership`,
+        undefined,
+        { method: "POST", body: JSON.stringify(body), auth: true }
+      );
+    },
+
+    /**
+     * Archive a group (OWNER only). Flips isArchived = true. Not reversible in v1.
+     * Idempotent — calling on an already-archived group returns 200.
+     */
+    archiveGroup(groupId: string) {
+      return request<{ archived: boolean }>(
+        `/api/groups/${groupId}/archive`,
+        undefined,
+        { method: "POST", auth: true }
+      );
+    },
     signIn(body: { email: string; password: string }) {
       return request<{ user: { id: string; username: string }; token: string }>(
         "/api/auth/mobile/login",

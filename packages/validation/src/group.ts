@@ -48,3 +48,11 @@ export const joinGroupFlexSchema = z.object({
     .max(32)
     .transform((value) => value.trim().toUpperCase())
 });
+
+/**
+ * S57: Body schema for POST /api/groups/:id/transfer-ownership.
+ * newOwnerId must be a valid CUID matching an active non-banned group member.
+ */
+export const transferOwnershipSchema = z.object({
+  newOwnerId: z.string().cuid({ message: "newOwnerId must be a valid CUID." })
+});
