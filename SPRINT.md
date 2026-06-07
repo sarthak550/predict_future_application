@@ -2,8 +2,8 @@
 
 > Human-readable view of `.claude/sprint-board.json`. Auto-maintained by the CEO/CTO/QA agents — do not edit by hand.
 
-**Current sprint:** 52
-**Status:** Sprint 52 QA COMPLETE (4/4) — CombinedAnalystCard merge + See-all removal + tighter inter-card gap + Pulse pills redesign with question/crowd-%/urgency-tint. Pending user device smoke-test. Sprint 51 COMPLETE (5/5). Sprint 50 COMPLETE (6/6 — Top 3 Analysts moved from Feed to Finance). Sprint 49 COMPLETE (9/9). Legal review on SEBI Research Analyst public naming still required before production deploy. Sprint 48 COMPLETE (F1 timing reliability — retry, cache downgrade, empty-state, client timeout). Sprint 47 COMPLETE (F1 detail modal — full driver grid with lap times, gaps, tire data). Sprint 46 COMPLETE (Sports poll trust fix — all 3 tickets passed QA). Sprint 45 COMPLETE (F1 race card). Sprint 44 COMPLETE (Finance instrument filter overhaul). Sprint 43 COMPLETE. Sprints 38–42 COMPLETE (security/correctness hardening, 54 tickets). Sprints 12, 25–34 COMPLETE.
+**Current sprint:** 53
+**Status:** Sprint 53 QA COMPLETE (6/6) — Create-tab fix bundle: draft persistence + schema version, strict resolveAt validation, dead StepResolution/ResolutionMode dropped, eligibility gate inlined on PUBLIC option (top HostEligibilityCard removed), duplicate MC options blocked, inline char-count hints. ~215 dead lines removed. Pending user device smoke-test. Sprint 52 QA COMPLETE (4/4) — CombinedAnalystCard merge + See-all removal + tighter inter-card gap + Pulse pills redesign with question/crowd-%/urgency-tint. Sprint 51 COMPLETE (5/5). Sprint 50 COMPLETE (6/6 — Top 3 Analysts moved from Feed to Finance). Sprint 49 COMPLETE (9/9). Legal review on SEBI Research Analyst public naming still required before production deploy. Sprint 48 COMPLETE (F1 timing reliability — retry, cache downgrade, empty-state, client timeout). Sprint 47 COMPLETE (F1 detail modal — full driver grid with lap times, gaps, tire data). Sprint 46 COMPLETE (Sports poll trust fix — all 3 tickets passed QA). Sprint 45 COMPLETE (F1 race card). Sprint 44 COMPLETE (Finance instrument filter overhaul). Sprint 43 COMPLETE. Sprints 38–42 COMPLETE (security/correctness hardening, 54 tickets). Sprints 12, 25–34 COMPLETE.
 
 ---
 
@@ -690,3 +690,19 @@
 | S52-T2 | MED | ✅ done | Remove See all link from CombinedAnalystCard (Top 3 is enough) |
 | S52-T3 | LOW | ✅ done | Tighten inter-card vertical gap on Finance tab (12px → 8px uniform) |
 | S52-T4 | HIGH | ✅ done | Pulse pills redesign — 2-line vertical with question + crowd % + urgency tint |
+
+---
+
+## Sprint 53
+
+**Theme:** Create tab immediate-fix bundle — bugs and friction surfaced by the post-S52 code audit before opening Pillar B casual-create work.
+**Status:** COMPLETE (6/6 done) — ~215 dead lines removed (2,855 → 2,640).
+
+| ID | Pri | Status | Title |
+|---|---|---|---|
+| S53-T1 | HIGH | ✅ done | Draft persistence: include mcOptions + flagship fields + schema version |
+| S53-T2 | HIGH | ✅ done | resolveAt strict validation (no silent submit-time fixup) |
+| S53-T3 | MED | ✅ done | Drop dead StepResolution + collapse ResolutionMode union to constant |
+| S53-T4 | HIGH | ✅ done | Eligibility gate inline on PUBLIC option card; drop redundant top HostEligibilityCard |
+| S53-T5 | MED | ✅ done | Block duplicate MULTIPLE_CHOICE options in client validation |
+| S53-T6 | LOW | ✅ done | Inline character-count hints on title (>=12) and description (>=24) |

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "currentSprint": 52,
+  "currentSprint": 53,
   "tickets": [
     {
       "id": "S7-T1",
@@ -2997,6 +2997,72 @@
       "title": "Pulse pills redesign — 2-line vertical layout with question + crowd consensus + urgency tint",
       "description": "Redesign Today's Pulse pills from horizontal scrollable single-line to vertically stacked 2-line cards. Next Event pill shows event type + countdown + implied market title + crowd consensus % + vote count; tap routes DIRECT to /market/[id] (not the sheet). Policy Calendar pill shows label + count + preview of first 2 cluster titles + N more; tap opens existing PulseSheet. Add subtle red tint when cdLabel===today, amber when tomorrow. Surfaces unused crowdProbability + market title data already on ApiFlagshipEvent.",
       "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S53-T1",
+      "sprint": 53,
+      "title": "Draft persistence: include mcOptions + flagship fields + schema version",
+      "description": "Create tab immediate-fix from post-S52 code audit. Self-contained mobile-only fix; details in CTO brief.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S53-T2",
+      "sprint": 53,
+      "title": "resolveAt strict validation (no silent submit-time fixup)",
+      "description": "Create tab immediate-fix from post-S52 code audit. Self-contained mobile-only fix; details in CTO brief.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S53-T3",
+      "sprint": 53,
+      "title": "Drop dead StepResolution + collapse ResolutionMode union to constant",
+      "description": "Create tab immediate-fix from post-S52 code audit. Self-contained mobile-only fix; details in CTO brief.",
+      "priority": "medium",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S53-T4",
+      "sprint": 53,
+      "title": "Eligibility gate inline on PUBLIC option card; drop redundant top HostEligibilityCard",
+      "description": "Create tab immediate-fix from post-S52 code audit. Self-contained mobile-only fix; details in CTO brief.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S53-T5",
+      "sprint": 53,
+      "title": "Block duplicate MULTIPLE_CHOICE options in client validation",
+      "description": "Create tab immediate-fix from post-S52 code audit. Self-contained mobile-only fix; details in CTO brief.",
+      "priority": "medium",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-07"
+    },
+    {
+      "id": "S53-T6",
+      "sprint": 53,
+      "title": "Inline character-count hints on title (>=12) and description (>=24)",
+      "description": "Create tab immediate-fix from post-S52 code audit. Self-contained mobile-only fix; details in CTO brief.",
+      "priority": "low",
       "status": "done",
       "qaVerdict": "pass",
       "failureNotes": null,
