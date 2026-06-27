@@ -1,0 +1,25 @@
+# Keep the build context small + never ship secrets into the image.
+**/node_modules
+**/.next
+**/.turbo
+**/dist
+**/*.tsbuildinfo
+**/coverage
+
+# Secrets — env vars are injected by App Runner at runtime, never baked in.
+**/.env
+**/.env.*
+
+# VCS / tooling / local junk
+.git
+.gitignore
+**/.DS_Store
+*.log
+
+# Mobile app — not part of the API image
+apps/mobile
+expo_go_backup
+
+# Docs / scratch
+**/*.md
+.claude

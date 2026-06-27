@@ -1,5 +1,10 @@
 generator client {
   provider = "prisma-client-js"
+  // "native" = your Mac for local dev; "debian-openssl-3.0.x" = the Linux container
+  // (node:20-bookworm-slim / Debian 12 / OpenSSL 3) used in the AWS App Runner image.
+  // Without the Debian target the query engine .so is missing in the container and
+  // every DB call throws at runtime.
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
 datasource db {
