@@ -9,7 +9,7 @@ import { createHash } from "crypto";
 
 import { OpinionDirection, type PrismaClient } from "@prisma/client";
 
-import { extractInstrumentFromQuote } from "@/lib/ai/extractInstrument";
+import { checkTickerMap, extractInstrumentFromQuote, normalizeYahooTicker } from "@/lib/ai/extractInstrument";
 import { callGeminiAI } from "@/lib/ai/gemini";
 import { notifyExpertFollowersOnNewOpinion } from "@/lib/notifyExpertFollowersOnNewOpinion";
 
@@ -168,6 +168,16 @@ Include: the specific instrument(s) + direction + conviction level, the key reas
 A reader who hasn't seen the article should come away with a clear, actionable understanding of the call.
 Do NOT truncate to a single vague sentence. Do NOT omit price targets or specific catalysts if present.
 
+ONE NET STANCE PER (EXPERT, INSTRUMENT) — STRICT:
+For a given expert (or source) and a given instrument, output AT MOST ONE opinion object, even if the article quotes them about that instrument in several places. There is exactly ONE correct direction per expert per instrument — if you find yourself emitting two, you have MISREAD the article: re-read all of their statements and determine their single net call.
+- Read ALL of the expert's statements about that instrument, then emit their single NET directional stance: BULLISH, BEARISH, or NEUTRAL.
+- Capture timeframe, conditions, levels and the strongest rationale from ALL of their statements INSIDE paraphrasedQuote — never as a second object. An expert who is near-term cautious but bullish over 12 months is ONE BULLISH object; the caution is nuance written into the quote (e.g. "Bullish on Bank Nifty with a 52,000 12-month target on credit growth, while flagging possible near-term range-bound action until results").
+- A conditional or hedged aside does NOT flip a clear directional call to NEUTRAL. Use NEUTRAL for an instrument only when the expert is genuinely non-committal on it with NO target, level, or buy/sell recommendation anywhere in the article.
+- Treat synonyms as the SAME instrument and merge them: "private banks"/"banking space"/"Bank Nifty" are one instrument; "the index"/"Nifty" and "Nifty 50" are one instrument. A call on a specific STOCK (e.g. HDFC Bank) is NEVER merged with a call on its sector/index (Bank Nifty). DIFFERENT instruments stay SEPARATE objects (Nifty 50 vs Nifty IT vs Bank Nifty are three different instruments — NOT a conflict).
+- MERGE is the default. Only when the two statements assert FLATLY OPPOSITE directions (one a clear buy / target-up call, the other a clear sell / target-down call) with no way to read them as one coherent stance, OMIT that instrument for that expert entirely — output NEITHER call. A cautionary or conditional hedge is NOT "opposite" — fold it into the single net-stance quote, never omit over a hedge.
+- DIFFERENT experts disagreeing on the same instrument is EXPECTED and REQUIRED — output one opinion per expert. This rule applies ONLY within a single expert/source, never across experts.
+Before returning, self-check: for every (expert, instrument) pair in your output there must be at most one object. If you produced two, MERGE them into one net-stance object — or omit both ONLY if their directions are flatly opposite (see the irreconcilable rule above). Different instruments (Nifty 50 vs Nifty IT) are NOT duplicates and must both be kept.
+
 ANALYST CALL DATE (analystCallAt) — when the analyst actually made the call:
 - Set ONLY if the article states or strongly implies a specific date for the call itself, distinct from when the article was published.
 - Examples that DO yield a date: "in a note dated 12 May 2026", "in Friday's research report", "speaking at the conference on Tuesday, 7 May".
@@ -185,15 +195,27 @@ Return [] if no qualifying calls found. Do not invent quotes.
 
 GOOD EXAMPLE (rich, substantive quote with price target and rationale):
 Article: "Sudip Bandyopadhyay of Inditrade Capital is bullish on capital goods. He sees L&T at ₹4,200 in 12 months, driven by the government's ₹11 lakh cr capex push and strong order book visibility. He recommends buying on every dip below ₹3,800."
-→ {"expertName":"Sudip Bandyopadhyay","expertOrganization":"Inditrade Capital","paraphrasedQuote":"Bullish on L&T; targets ₹4,200 in 12 months on ₹11 lakh cr govt capex cycle and strong order book. Recommends accumulating on dips below ₹3,800. Broader capital goods sector is his top overweight for FY27.","direction":"BULLISH","confidence":0.92,"isSourceAttribution":false}
+→ {"expertName":"Sudip Bandyopadhyay","expertOrganization":"Inditrade Capital","paraphrasedQuote":"Bullish on L&T; targets ₹4,200 in 12 months on ₹11 lakh cr govt capex cycle and strong order book. Recommends accumulating on dips below ₹3,800. Broader capital goods sector is his top overweight for FY27.","direction":"BULLISH","confidence":0.92,"isSourceAttribution":false,"analystCallAt":null,"rejectionReason":null,"instrumentType":"STOCK","instrumentLabel":"L&T"}
 
 GOOD EXAMPLE (named expert, no firm, multiple stocks):
 Article: "Sudip Bandyopadhyay, market expert, is bullish on capital goods for the long term, citing L&T and BHEL as top picks."
-→ {"expertName":"Sudip Bandyopadhyay","expertOrganization":"Independent","paraphrasedQuote":"Bullish on capital goods for the long term; L&T and BHEL are top picks. Post-correction levels offer good entry given intact government capex cycle and improving order inflows.","direction":"BULLISH","confidence":0.88,"isSourceAttribution":false}
+→ {"expertName":"Sudip Bandyopadhyay","expertOrganization":"Independent","paraphrasedQuote":"Bullish on capital goods for the long term; L&T and BHEL are top picks. Post-correction levels offer good entry given intact government capex cycle and improving order inflows.","direction":"BULLISH","confidence":0.88,"isSourceAttribution":false,"analystCallAt":null,"rejectionReason":null,"instrumentType":"SECTOR","instrumentLabel":"Capital Goods"}
 
 GOOD EXAMPLE (source attribution with sector analysis):
 Article: "ETMarkets analysis: Private banks look attractive after the recent 8% correction. HDFC Bank and Kotak Mahindra Bank trade at multi-year low valuations. Credit growth is expected to recover to 14% in H2FY27 as RBI rate cuts flow through."
-→ {"expertName":"","expertOrganization":"ETMarkets","paraphrasedQuote":"Private banks attractive after 8% correction; HDFC Bank and Kotak at multi-year low valuations. Credit growth seen recovering to 14% in H2FY27 as RBI rate cuts take effect — a re-rating catalyst for the sector.","direction":"BULLISH","confidence":0.85,"isSourceAttribution":true}
+→ {"expertName":"","expertOrganization":"ETMarkets","paraphrasedQuote":"Private banks attractive after 8% correction; HDFC Bank and Kotak at multi-year low valuations. Credit growth seen recovering to 14% in H2FY27 as RBI rate cuts take effect — a re-rating catalyst for the sector.","direction":"BULLISH","confidence":0.85,"isSourceAttribution":true,"analystCallAt":null,"rejectionReason":null,"instrumentType":"SECTOR","instrumentLabel":"Private Banks"}
+
+GOOD EXAMPLE (same expert, same instrument, two raw sentences → ONE synthesized net stance):
+Article: "Gaurav Dua of Sharekhan is bullish on Bank Nifty and sees it reaching 52,000 in 12 months on improving credit growth and easing NPAs. In the same note he cautioned that private banks could stay range-bound and even drift lower near term until Q1 results provide direction."
+WRONG (two objects for one expert+instrument — this is the bug to avoid): a BULLISH Bank Nifty object AND a separate NEUTRAL Bank Nifty object. "Private banks" is the SAME instrument as Bank Nifty, so this is one expert + one instrument = it must be ONE object.
+RIGHT (one net-stance object; near-term range-bound nuance folded into the quote; the 12-month bullish conviction wins the direction):
+→ {"expertName":"Gaurav Dua","expertOrganization":"Sharekhan","paraphrasedQuote":"Bullish on Bank Nifty with a 12-month target of 52,000 on improving credit growth and easing NPAs, while flagging that private banks may stay range-bound or drift lower near term until Q1 results give direction.","direction":"BULLISH","confidence":0.9,"isSourceAttribution":false,"analystCallAt":null,"rejectionReason":null,"instrumentType":"INDEX","instrumentLabel":"Bank Nifty"}
+
+CONTRAST EXAMPLE (distinct instruments are NOT a conflict — keep BOTH; each leg needs its own level/target):
+Article: "Sandeep Raina is bullish on Nifty 50 with a 27,000 target on strong domestic flows, but bearish on Nifty IT, seeing downside toward 38,000 on weak US tech spend."
+→ TWO objects (Nifty 50 and Nifty IT are DIFFERENT instruments — do NOT treat as a conflict, do NOT drop either):
+[{"expertName":"Sandeep Raina","expertOrganization":"Independent","paraphrasedQuote":"Bullish on Nifty 50 with a 27,000 target on strong domestic flows.","direction":"BULLISH","confidence":0.86,"isSourceAttribution":false,"analystCallAt":null,"rejectionReason":null,"instrumentType":"INDEX","instrumentLabel":"Nifty 50"},
+{"expertName":"Sandeep Raina","expertOrganization":"Independent","paraphrasedQuote":"Bearish on Nifty IT, sees downside toward 38,000 on weak US tech spend.","direction":"BEARISH","confidence":0.84,"isSourceAttribution":false,"analystCallAt":null,"rejectionReason":null,"instrumentType":"INDEX","instrumentLabel":"Nifty IT"}]
 
 BAD EXAMPLE (too vague — must improve or reject):
 → {"paraphrasedQuote":"Bullish on markets for the long term."} ← NO — no instrument, no rationale, no timeframe
@@ -557,6 +579,161 @@ export async function extractExpertOpinionsFromStory(story: {
  * Auto-creates Expert rows for new attributions (verified=false).
  * Never throws — logs errors and continues.
  */
+/**
+ * Enriched raw opinion: the AI-emitted opinion plus the instrument/ticker
+ * we resolved in-process before persistence. Used for in-memory dedup.
+ */
+type EnrichedRawOpinion = RawExpertOpinion & {
+  resolvedInstrument: string | null;
+  resolvedTicker: string | null;
+};
+
+/**
+ * Tight synonym map applied to the AI's own instrumentLabel (TIER 3 only), so
+ * "private banks" / "banking space" collapse onto Bank Nifty even when no ticker
+ * resolved. Deliberately small — an over-broad map causes false merges of
+ * genuinely-distinct instruments. Keys/values are already normalized (lowercase,
+ * alphanumerics only).
+ */
+const LABEL_SYNONYMS: Record<string, string> = {
+  banknifty: "banknifty",
+  niftybank: "banknifty",
+  privatebank: "banknifty",
+  privatebanks: "banknifty",
+  bankingspace: "banknifty",
+  nifty: "nifty50",
+  nifty50: "nifty50",
+  // NOTE: deliberately NOT mapping "the index" -> nifty50. In a bank/IT-focused
+  // article "the index" refers to THAT index, not Nifty 50; canonicalizing it
+  // blindly would over-merge a distinct call onto nifty50.
+};
+
+/**
+ * Normalizes an AI instrumentLabel and reports whether it hit the synonym map.
+ * `mapped: true` means we resolved a KNOWN canonical instrument (banknifty/nifty50),
+ * which is already index/sector-scoped — so the dedup key needs no instrumentType
+ * qualifier. `mapped: false` means an arbitrary label we can't canonicalize, where
+ * the type qualifier MUST be kept so e.g. STOCK "SBI" and INDEX "SBI" stay distinct.
+ */
+function normalizeLabel(label: string): { key: string; mapped: boolean } {
+  const base = label.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const canonical = LABEL_SYNONYMS[base];
+  return canonical ? { key: canonical, mapped: true } : { key: base, mapped: false };
+}
+
+/**
+ * Key for (expert, instrument) dedup within a single story:
+ *   1. Resolved Yahoo ticker (normalized) — "private banks" and "bank nifty" both
+ *      resolve to ^NSEBANK, so they share a key and collapse correctly. This is the
+ *      common path; extractInstrumentFromQuote returns {instrument,ticker} atomically
+ *      or null, so a resolved instrument always implies a resolved ticker (the bare
+ *      instrument-only branch below is therefore currently unreachable, kept only as
+ *      defensive code).
+ *   2. (currently unreachable — see above) resolved human-readable instrument name.
+ *   3. The AI's OWN instrumentLabel. If it hits the synonym map we key on the canonical
+ *      ALONE (mirrors TIER1, which merges across instrumentType) so a SECTOR "private
+ *      banks" and an INDEX "Bank Nifty" collapse. If it misses, we keep the instrumentType
+ *      qualifier so an unmapped STOCK "SBI" and INDEX "SBI" never false-merge.
+ * Only when ALL THREE are empty do we return null (passthrough). validateRawOpinions
+ * rejects instrumentType=NONE, so instrumentLabel is almost always present — this
+ * closes the null-ticker gap where two conflicting rows used to slip through ungrouped.
+ */
+function instrumentDedupKey(o: EnrichedRawOpinion): string | null {
+  if (o.resolvedTicker && o.resolvedTicker.length > 0) {
+    return `t:${normalizeYahooTicker(o.resolvedTicker).toUpperCase()}`;
+  }
+  if (o.resolvedInstrument && o.resolvedInstrument.length > 0) {
+    return `i:${o.resolvedInstrument.toLowerCase().replace(/[^a-z0-9]/g, "")}`;
+  }
+  if (o.instrumentLabel && o.instrumentLabel.length > 0) {
+    const { key, mapped } = normalizeLabel(o.instrumentLabel);
+    // mapped synonyms are already instrument-specific → no type prefix (so SECTOR vs
+    // INDEX synonyms of the SAME instrument collapse). Unmapped labels keep the type
+    // prefix to avoid merging a STOCK and an INDEX that happen to share a label.
+    return mapped ? `l:${key}` : `l:${o.instrumentType ?? "UNKNOWN"}:${key}`;
+  }
+  return null;
+}
+
+function expertGroupKey(o: EnrichedRawOpinion): string {
+  const name = o.isSourceAttribution
+    ? `${o.expertOrganization} Analysis`
+    : o.expertName;
+  return `${(name ?? "").toLowerCase().trim()}::${o.expertOrganization.toLowerCase().trim()}`;
+}
+
+/**
+ * Within a same-direction group, prefer:
+ *   1. Highest confidence score (AI is more sure)
+ *   2. Longest quote (more substantive content)
+ */
+function pickRepresentative(group: EnrichedRawOpinion[]): EnrichedRawOpinion {
+  return [...group].sort((a, b) => {
+    if (b.confidence !== a.confidence) return b.confidence - a.confidence;
+    return b.paraphrasedQuote.length - a.paraphrasedQuote.length;
+  })[0]!;
+}
+
+/**
+ * Collapse a single (expert, instrument) group to at most one opinion.
+ *
+ * Rules:
+ *   - 1 opinion → keep as-is
+ *   - All same direction → keep the representative (longest/most confident)
+ *   - Mixed BULLISH + NEUTRAL → keep BULLISH (directional view trumps non-view)
+ *   - Mixed BEARISH + NEUTRAL → keep BEARISH (directional view trumps non-view)
+ *   - BULLISH + BEARISH (with or without NEUTRAL) → drop ALL.
+ *     A single expert cannot credibly hold opposite directional views on the
+ *     same instrument in the same article. This is virtually always an AI
+ *     extraction artifact; showing both confuses the user. Suppress.
+ */
+function collapseGroup(group: EnrichedRawOpinion[]): EnrichedRawOpinion[] {
+  if (group.length <= 1) return group;
+
+  const dirs = new Set(group.map((o) => o.direction));
+  const hasBullish = dirs.has("BULLISH");
+  const hasBearish = dirs.has("BEARISH");
+
+  if (hasBullish && hasBearish) {
+    console.info(
+      `[Finance AI] Suppressing ${group.length} conflicting opinions (BULLISH+BEARISH) for ${group[0]!.expertName || group[0]!.expertOrganization} on ${group[0]!.resolvedTicker || group[0]!.resolvedInstrument || group[0]!.instrumentLabel}`
+    );
+    return [];
+  }
+
+  const winningDir: "BULLISH" | "BEARISH" | "NEUTRAL" = hasBullish
+    ? "BULLISH"
+    : hasBearish
+      ? "BEARISH"
+      : "NEUTRAL";
+  const candidates = group.filter((o) => o.direction === winningDir);
+  return [pickRepresentative(candidates)];
+}
+
+function collapseDuplicateOpinions(enriched: EnrichedRawOpinion[]): EnrichedRawOpinion[] {
+  const groups = new Map<string, EnrichedRawOpinion[]>();
+  const passthrough: EnrichedRawOpinion[] = [];
+
+  for (const op of enriched) {
+    const instKey = instrumentDedupKey(op);
+    if (!instKey) {
+      // No instrument resolved — can't dedup safely; let it through.
+      passthrough.push(op);
+      continue;
+    }
+    const key = `${expertGroupKey(op)}::${instKey}`;
+    const arr = groups.get(key) ?? [];
+    arr.push(op);
+    groups.set(key, arr);
+  }
+
+  const survivors: EnrichedRawOpinion[] = [...passthrough];
+  for (const group of groups.values()) {
+    survivors.push(...collapseGroup(group));
+  }
+  return survivors;
+}
+
 export async function persistExpertOpinions(
   prisma: PrismaClient,
   storyId: string,
@@ -564,14 +741,63 @@ export async function persistExpertOpinions(
   publishedAt: Date,
   opinions: RawExpertOpinion[]
 ): Promise<void> {
-  // Pull headline once for instrument extraction context
-  const story = await prisma.story.findUnique({
-    where: { id: storyId },
-    select: { headline: true },
-  });
-  const storyHeadline = story?.headline ?? "";
-
+  // ── Phase 1: resolve instrument/ticker for every raw opinion ──────────────
+  // Done up-front so phase 2 can dedup by (expert, instrument).
+  //
+  // Resolution order (deliberately NOT using the story headline):
+  //   1. The AI's OWN per-opinion instrumentLabel via keyword map → AI fallback. The
+  //      label is a CLEAN instrument name the AI committed after reading THIS quote
+  //      ("Nifty 50", "FMCG", "Bank Nifty"), so it carries neither headline contamination
+  //      (multi-sector articles tagging every opinion with the headline's instrument) nor
+  //      analyst-firm-name collisions (e.g. "Kotak" Institutional Equities → KOTAKBANK.NS).
+  //   2. Keyword map on the QUOTE (no AI, no headline) when the label doesn't resolve.
+  //   3. Keep the AI label as the human-readable instrument even when no ticker resolves,
+  //      so display + dedup still have a clean instrument identity.
+  const enriched: EnrichedRawOpinion[] = [];
   for (const opinion of opinions) {
+    let resolvedInstrument: string | null = null;
+    let resolvedTicker: string | null = null;
+    try {
+      // 1. AI label (keyword → AI fallback, headline-free).
+      if (opinion.instrumentLabel && opinion.instrumentLabel.trim().length > 0) {
+        const fromLabel = await extractInstrumentFromQuote(opinion.instrumentLabel, "");
+        if (fromLabel) {
+          resolvedInstrument = fromLabel.instrument;
+          resolvedTicker = fromLabel.ticker;
+        }
+      }
+      // 2. Quote keyword map only (no AI, no headline) — avoids prose firm-name collisions.
+      if (!resolvedTicker) {
+        const fromQuote = checkTickerMap(opinion.paraphrasedQuote, "");
+        if (fromQuote) {
+          resolvedInstrument = fromQuote.instrument;
+          resolvedTicker = normalizeYahooTicker(fromQuote.ticker);
+        }
+      }
+    } catch (err) {
+      console.warn(
+        `[Finance AI] Inline instrument extraction failed for "${opinion.expertName || opinion.expertOrganization}": ${err instanceof Error ? err.message : err}`
+      );
+    }
+    // 3. Fall back to the AI's clean label as the instrument name when no ticker resolved.
+    if (!resolvedInstrument && opinion.instrumentLabel && opinion.instrumentLabel.trim().length > 0) {
+      resolvedInstrument = opinion.instrumentLabel.trim();
+    }
+    enriched.push({ ...opinion, resolvedInstrument, resolvedTicker });
+  }
+
+  // ── Phase 2: collapse (expert, instrument) duplicates ──────────────────────
+  // Prevents the "same expert is Bullish AND Neutral on Bank Nifty in the same article" UX bug.
+  const survivors = collapseDuplicateOpinions(enriched);
+  const droppedCount = enriched.length - survivors.length;
+  if (droppedCount > 0) {
+    console.info(
+      `[Finance AI] Story ${storyId}: collapsed ${droppedCount} duplicate opinion(s) per (expert, instrument)`
+    );
+  }
+
+  // ── Phase 3: persist survivors ─────────────────────────────────────────────
+  for (const opinion of survivors) {
     try {
       // For source attributions, use publication as name; for analyst attributions, use analyst name
       const displayName = opinion.isSourceAttribution
@@ -598,23 +824,6 @@ export async function persistExpertOpinions(
       // Compute dedup key — SHA-256 of normalised quote to keep the B-tree index small
       const quoteHash = computeQuoteHash(opinion.paraphrasedQuote);
 
-      // Resolve instrument + ticker eagerly so the feed shows them on first render.
-      // Fast path is the keyword map (free); falls back to Groq when present.
-      // Never blocks persist — failures yield null/null which downstream tolerates.
-      let inlineInstrument: string | null = null;
-      let inlineTicker: string | null = null;
-      try {
-        const extracted = await extractInstrumentFromQuote(opinion.paraphrasedQuote, storyHeadline);
-        if (extracted) {
-          inlineInstrument = extracted.instrument;
-          inlineTicker = extracted.ticker;
-        }
-      } catch (err) {
-        console.warn(
-          `[Finance AI] Inline instrument extraction failed for "${displayName}": ${err instanceof Error ? err.message : err}`
-        );
-      }
-
       let created: Awaited<ReturnType<typeof prisma.expertOpinion.create>>;
       try {
         created = await prisma.expertOpinion.create({
@@ -629,8 +838,8 @@ export async function persistExpertOpinions(
             analystCallAt: opinion.analystCallAt ? new Date(opinion.analystCallAt) : null,
             resolutionStatus: "PENDING",
             isSourceAttribution: opinion.isSourceAttribution ?? false,
-            instrument: inlineInstrument,
-            instrumentTicker: inlineTicker,
+            instrument: opinion.resolvedInstrument,
+            instrumentTicker: opinion.resolvedTicker,
           },
         });
       } catch (createErr) {

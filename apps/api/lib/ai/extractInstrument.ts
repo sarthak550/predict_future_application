@@ -144,6 +144,21 @@ const INDEX_SECTOR_COMMODITY_MAP: Record<string, InstrumentResult> = {
   "banknifty": { instrument: "Bank Nifty", ticker: "^NSEBANK" },
   "sensex": { instrument: "Sensex", ticker: "^BSESN" },
   "midcap": { instrument: "Nifty Midcap 50", ticker: "^NSEMDCP50" },
+  // "Nifty <sector>" phrases MUST be matched before the bare "nifty" key below,
+  // otherwise the bare-"nifty" substring mis-tags them all as Nifty 50 (^NSEI) and
+  // fabricates false same-ticker BULLISH+BEARISH conflicts when one expert calls
+  // different sector indices. Tickers are the same verified Yahoo symbols used by
+  // the sector keys lower in this map.
+  "nifty bank": { instrument: "Bank Nifty", ticker: "^NSEBANK" },
+  "nifty it": { instrument: "Nifty IT", ticker: "^CNXIT" },
+  "nifty fmcg": { instrument: "Nifty FMCG", ticker: "^CNXFMCG" },
+  "nifty auto": { instrument: "Nifty Auto", ticker: "^CNXAUTO" },
+  "nifty pharma": { instrument: "Nifty Pharma", ticker: "^CNXPHARMA" },
+  "nifty metal": { instrument: "Nifty Metal", ticker: "^CNXMETAL" },
+  "nifty realty": { instrument: "Nifty Realty", ticker: "^CNXREALTY" },
+  "nifty energy": { instrument: "Nifty Energy", ticker: "^CNXENERGY" },
+  "nifty infra": { instrument: "Nifty Infra", ticker: "^CNXINFRA" },
+  "nifty psu bank": { instrument: "Nifty PSU Bank", ticker: "^CNXPSUBANK" },
   "nifty": { instrument: "Nifty 50", ticker: "^NSEI" },
   // Global indices — ordered most-specific first (verified on Yahoo Finance 2026-06-06)
   "s&p 500": { instrument: "S&P 500", ticker: "^GSPC" },
@@ -225,7 +240,7 @@ export function checkTickerMap(quote: string, headline: string): InstrumentResul
   // Pass 1: match STOCK_MAP against the quote only.
   // A stock named in the quote wins regardless of what the headline says.
   for (const [key, result] of Object.entries(STOCK_MAP)) {
-    if (quoteLower.includes(key)) {
+    if (wordIncludes(quoteLower, key)) {
       return result;
     }
   }
@@ -233,12 +248,42 @@ export function checkTickerMap(quote: string, headline: string): InstrumentResul
   // Pass 2: match INDEX_SECTOR_COMMODITY_MAP against quote + headline combined.
   // Reached only when the quote does not name a specific stock.
   for (const [key, result] of Object.entries(INDEX_SECTOR_COMMODITY_MAP)) {
-    if (combinedLower.includes(key)) {
+    if (wordIncludes(combinedLower, key)) {
       return result;
     }
   }
 
   return null;
+}
+
+/**
+ * Boundary-aware substring match. The key (trimmed) must appear in `text` flanked by
+ * non-alphanumeric characters (or string start/end) — i.e. as a whole token, not buried
+ * inside a longer word. This eliminates the substring-collision false positives that
+ * corrupted instrument tagging:
+ *   "dow"  → "downgrades"/"slowdown"     (Dow Jones)
+ *   "gold" → "Goldman" (Sachs)           (Gold commodity)
+ *   "itc"  → "switch"                    (ITC stock)
+ *   " lt " padding hacks for "result"    (L&T)
+ * Keys that previously space-padded for pseudo-boundaries (e.g. " lt ", " sbi ") work
+ * cleanly once trimmed. NOTE: this does NOT fix analyst FIRM names that are real tokens
+ * matching a stock (e.g. "Kotak" Institutional Equities → KOTAKBANK.NS); that is handled
+ * upstream by resolving from the AI's per-opinion instrumentLabel rather than the prose.
+ */
+function wordIncludes(text: string, rawKey: string): boolean {
+  const key = rawKey.trim();
+  if (key.length === 0) return false;
+  let from = 0;
+  for (;;) {
+    const idx = text.indexOf(key, from);
+    if (idx === -1) return false;
+    const before = idx === 0 ? "" : text.charAt(idx - 1);
+    const after = idx + key.length >= text.length ? "" : text.charAt(idx + key.length);
+    const beforeOk = before === "" || !/[a-z0-9]/.test(before);
+    const afterOk = after === "" || !/[a-z0-9]/.test(after);
+    if (beforeOk && afterOk) return true;
+    from = idx + 1;
+  }
 }
 
 /**
