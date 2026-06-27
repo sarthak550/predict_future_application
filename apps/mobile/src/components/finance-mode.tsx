@@ -37,6 +37,7 @@ import { ApiClientError } from "@predict-future/api-client";
 import { ExpertOpinionCard } from "@/components/expert-opinion-card";
 import { CombinedAnalystCard } from "@/components/combined-analyst-card";
 import { mobileApi } from "@/lib/api";
+import { withRetry } from "@/lib/retry";
 import { getExpertInitials, getExpertInitialsColor } from "@/utils/expertAvatar";
 import { AnalystTierBadge } from "@/components/analyst-tier-badge";
 import { isNSEHoliday } from "@/constants/nse-holidays-2026";
@@ -1881,20 +1882,25 @@ export function FinanceMode({
         console.error(`[finance-mode] ${label} fetch failed (card hidden):`, err);
         return null;
       };
+      // All seven are idempotent GETs — wrap each in withRetry so a transient
+      // "Network request failed" (flaky Wi-Fi / dropped socket / contention when 7
+      // requests fire at once) self-heals instead of permanently hiding the card.
+      // Critical fetches (markets/news) still propagate to the outer catch after
+      // retries are exhausted; side fetches still degrade gracefully via their .catch.
       const [marketsResult, newsResult, sentimentResult, verifiedResult, flagshipResult, digestResult, bigCallResult] = await Promise.all([
-        mobileApi.getFinanceMarkets(),
-        mobileApi.getNews(buildNewsFilterPayload()),
-        mobileApi.getFinanceExpertSentiment().catch(logSideFetch("expert-sentiment")),
-        mobileApi.getVerifiedCalls().catch((err) => {
+        withRetry(() => mobileApi.getFinanceMarkets()),
+        withRetry(() => mobileApi.getNews(buildNewsFilterPayload())),
+        withRetry(() => mobileApi.getFinanceExpertSentiment()).catch(logSideFetch("expert-sentiment")),
+        withRetry(() => mobileApi.getVerifiedCalls()).catch((err) => {
           console.error("[finance-mode] verified-calls fetch failed (showing empty):", err);
           return [];
         }),
-        mobileApi.getFlagshipEvents().catch((err) => {
+        withRetry(() => mobileApi.getFlagshipEvents()).catch((err) => {
           console.error("[finance-mode] flagship-events fetch failed (showing empty):", err);
           return { events: [] };
         }),
-        mobileApi.getMyCallsDigest().catch(logSideFetch("my-calls-digest")),
-        mobileApi.getFinanceBigCall().catch(logSideFetch("big-call")),
+        withRetry(() => mobileApi.getMyCallsDigest()).catch(logSideFetch("my-calls-digest")),
+        withRetry(() => mobileApi.getFinanceBigCall()).catch(logSideFetch("big-call")),
       ]);
 
       // Staleness check — if the user toggled a filter while load() was in
