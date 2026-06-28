@@ -18,7 +18,8 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 
 import type { ApiGroupSummary, ApiHostEligibility, AppMarketCategory, AppMarketStatus } from "@predict-future/types";
-import { colors, radius, shadows, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 import { useApiQuery } from "@/hooks/useApiQuery";
 import { mobileApi } from "@/lib/api";
@@ -101,6 +102,8 @@ type StepId =
 export default function CreateScreen() {
   const { session, status: sessionStatus } = useSession();
   const userId = session?.userId;
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
 
   // Prefill params passed from Sports tab or other deep links
   const params = useLocalSearchParams<{
@@ -200,6 +203,8 @@ function CreateWizard({
   eligibility: ApiHostEligibility | null;
 }) {
   const router = useRouter();
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const [stepIdx, setStepIdx] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [successState, setSuccessState] = useState<SuccessState | null>(null);
@@ -809,6 +814,8 @@ function StepAudience({
   eligible: boolean;
   eligibilityReasons: string[];
 }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [actionSheet, setActionSheet] = useState<"create" | "join" | null>(null);
   const [newGroupName, setNewGroupName] = useState("");
@@ -1235,6 +1242,7 @@ function StepType({
   category: AppMarketCategory;
   setCategory: (c: AppMarketCategory) => void;
 }) {
+  const styles = useThemedStyles(makeStyles);
   return (
     <View>
       <Text style={styles.stepTitle}>What kind of question?</Text>
@@ -1326,6 +1334,8 @@ function StepQuestion({
   mcOptions: string[];
   setMcOptions: (opts: string[]) => void;
 }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   return (
     <View>
       <Text style={styles.stepTitle}>Write your question</Text>
@@ -1500,6 +1510,8 @@ function StepHostSettings({
   gracePeriodHours: number;
   setGracePeriodHours: (v: number) => void;
 }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const bondAmount = Number(bondCap) || 0;
   const maxPool =
     poolRewardMode === "COMMISSION_BASED" && commissionBps > 0
@@ -1645,6 +1657,7 @@ function StepTiming({
   setResolveAt: (d: Date) => void;
   gracePeriodHours: number;
 }) {
+  const styles = useThemedStyles(makeStyles);
   const [closeMode, setCloseMode] = useState<"quick" | "exact">("quick");
   const [resolveMode, setResolveMode] = useState<"quick" | "exact">("quick");
 
@@ -1824,6 +1837,8 @@ function DateTimeInput({
   onChange: (d: Date) => void;
   minDate?: Date;
 }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   // Break the date into editable parts
   const [dateStr, setDateStr] = useState(
     `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`
@@ -1914,6 +1929,7 @@ function DateTimeInput({
 }
 
 function TimelineRow({ emoji, label, date, sub }: { emoji?: string; label: string; date: string; sub?: string }) {
+  const styles = useThemedStyles(makeStyles);
   return (
     <View style={styles.timelineRow}>
       {emoji ? (
@@ -1958,6 +1974,7 @@ function FlagshipEventSection({
   flagshipEventType: string;
   setFlagshipEventType: (type: string) => void;
 }) {
+  const styles = useThemedStyles(makeStyles);
   const minDate = new Date(Date.now() + 2 * 24 * 3600000);
   const maxDate = new Date(Date.now() + 90 * 24 * 3600000);
 
@@ -2074,6 +2091,7 @@ function StepReview({
   challengeWindowHours: number;
   gracePeriodHours: number;
 }) {
+  const styles = useThemedStyles(makeStyles);
   function fmtDate(d: Date) {
     return d.toLocaleDateString([], { month: "short", day: "numeric" }) +
       " at " +
@@ -2143,44 +2161,44 @@ function StepReview({
 // Styles
 // ---------------------------------------------------------------------------
 
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.background },
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
+  screen: { flex: 1, backgroundColor: t.colors.background },
   scrollContent: { padding: spacing.xl, paddingBottom: 120 },
   center: { flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.xl },
-  heroTitle: { fontSize: 28, fontWeight: "700", color: colors.text },
+  heroTitle: { fontSize: 28, fontWeight: "700", color: t.colors.text },
   heroSub: {
-    marginTop: spacing.md, fontSize: 15, color: colors.textMuted,
+    marginTop: spacing.md, fontSize: 15, color: t.colors.textMuted,
     textAlign: "center", lineHeight: 22,
   },
   code: { fontFamily: "Courier" },
 
   // Progress
   progressRow: { flexDirection: "row", gap: 6, marginBottom: spacing.xs },
-  progressDot: { flex: 1, height: 4, borderRadius: 2, backgroundColor: colors.border },
-  progressDotActive: { backgroundColor: colors.accent },
-  stepLabel: { fontSize: 12, color: colors.textMuted, marginBottom: spacing.lg },
+  progressDot: { flex: 1, height: 4, borderRadius: 2, backgroundColor: t.colors.border },
+  progressDotActive: { backgroundColor: t.colors.accent },
+  stepLabel: { fontSize: 12, color: t.colors.textMuted, marginBottom: spacing.lg },
 
   // Step content
-  stepTitle: { fontSize: 24, fontWeight: "700", color: colors.text, marginBottom: spacing.xs },
-  stepDesc: { fontSize: 14, color: colors.textMuted, marginBottom: spacing.lg, lineHeight: 20 },
+  stepTitle: { fontSize: 24, fontWeight: "700", color: t.colors.text, marginBottom: spacing.xs },
+  stepDesc: { fontSize: 14, color: t.colors.textMuted, marginBottom: spacing.lg, lineHeight: 20 },
 
   // Option cards
   optionCard: {
     padding: spacing.lg,
     borderRadius: radius.lg,
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderWidth: 2,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
     marginBottom: spacing.md,
   },
-  optionCardActive: { borderColor: colors.accent, backgroundColor: colors.accent + "0D" },
+  optionCardActive: { borderColor: t.colors.accent, backgroundColor: t.colors.accent + "0D" },
   optionCardLocked: { opacity: 0.5 },
-  optionTitle: { fontSize: 17, fontWeight: "700", color: colors.text },
-  optionTitleActive: { color: colors.accent },
-  optionTitleMuted: { color: colors.textMuted },
-  optionDesc: { fontSize: 13, color: colors.textMuted, marginTop: 4, lineHeight: 18 },
-  optionDescActive: { color: colors.text },
-  eligibilityReasonItem: { fontSize: 12, color: colors.textMuted, marginTop: 3, lineHeight: 17 },
+  optionTitle: { fontSize: 17, fontWeight: "700", color: t.colors.text },
+  optionTitleActive: { color: t.colors.accent },
+  optionTitleMuted: { color: t.colors.textMuted },
+  optionDesc: { fontSize: 13, color: t.colors.textMuted, marginTop: 4, lineHeight: 18 },
+  optionDescActive: { color: t.colors.text },
+  eligibilityReasonItem: { fontSize: 12, color: t.colors.textMuted, marginTop: 3, lineHeight: 17 },
 
   // Compact option cards (timing)
   optionCardCompact: {
@@ -2189,36 +2207,36 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: spacing.md,
     borderRadius: radius.md,
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderWidth: 2,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
     marginBottom: spacing.sm,
   },
-  optionCardCompactActive: { borderColor: colors.accent, backgroundColor: colors.accent + "0D" },
-  optionCompactTitle: { fontSize: 15, fontWeight: "600", color: colors.text },
-  optionCompactSub: { fontSize: 12, color: colors.textMuted },
+  optionCardCompactActive: { borderColor: t.colors.accent, backgroundColor: t.colors.accent + "0D" },
+  optionCompactTitle: { fontSize: 15, fontWeight: "600", color: t.colors.text },
+  optionCompactSub: { fontSize: 12, color: t.colors.textMuted },
 
   // Labels & inputs
-  label: { fontSize: 14, fontWeight: "600", color: colors.text, marginTop: spacing.lg, marginBottom: spacing.xs },
-  smallLabel: { fontSize: 12, fontWeight: "600", color: colors.textMuted, marginBottom: 4 },
-  hint: { fontSize: 13, color: colors.textMuted, marginBottom: spacing.sm, lineHeight: 18 },
-  charCount: { fontSize: 11, color: colors.textMuted, textAlign: "right", marginTop: 2 },
+  label: { fontSize: 14, fontWeight: "600", color: t.colors.text, marginTop: spacing.lg, marginBottom: spacing.xs },
+  smallLabel: { fontSize: 12, fontWeight: "600", color: t.colors.textMuted, marginBottom: 4 },
+  hint: { fontSize: 13, color: t.colors.textMuted, marginBottom: spacing.sm, lineHeight: 18 },
+  charCount: { fontSize: 11, color: t.colors.textMuted, textAlign: "right", marginTop: 2 },
   charCountRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 2 },
-  charHintNeeded: { fontSize: 11, color: colors.textMuted },
-  charHintDone: { fontSize: 11, color: colors.success },
-  errorHint: { fontSize: 12, color: colors.danger, marginTop: 4 },
+  charHintNeeded: { fontSize: 11, color: t.colors.textMuted },
+  charHintDone: { fontSize: 11, color: t.colors.success },
+  errorHint: { fontSize: 12, color: t.colors.danger, marginTop: 4 },
   computedText: {
-    fontSize: 13, color: colors.accent, fontWeight: "600",
+    fontSize: 13, color: t.colors.accent, fontWeight: "600",
     marginTop: spacing.sm,
   },
   input: {
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
     borderRadius: radius.md,
     padding: spacing.md,
     fontSize: 15,
-    color: colors.text,
+    color: t.colors.text,
   },
   textArea: { minHeight: 80, textAlignVertical: "top" },
   row: { flexDirection: "row", gap: spacing.md, marginTop: spacing.sm },
@@ -2230,24 +2248,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     borderRadius: radius.pill,
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
   },
-  pillActive: { backgroundColor: colors.text, borderColor: colors.text },
-  pillText: { fontSize: 13, fontWeight: "600", color: colors.textMuted },
+  pillActive: { backgroundColor: t.colors.text, borderColor: t.colors.text },
+  pillText: { fontSize: 13, fontWeight: "600", color: t.colors.textMuted },
   pillTextActive: { color: "#FFFFFF" },
 
   // Info box
   infoBox: {
     padding: spacing.md,
-    backgroundColor: colors.accent + "0D",
+    backgroundColor: t.colors.accent + "0D",
     borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: colors.accent + "33",
+    borderColor: t.colors.accent + "33",
     marginTop: spacing.sm,
   },
-  infoText: { fontSize: 13, color: colors.text, lineHeight: 18 },
+  infoText: { fontSize: 13, color: t.colors.text, lineHeight: 18 },
 
   // Groups
   groupSection: { marginTop: spacing.lg },
@@ -2264,22 +2282,22 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderRadius: radius.lg,
     borderWidth: 1.5,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
+    borderColor: t.colors.border,
+    backgroundColor: t.colors.surface,
   },
   grpDropdownText: {
     flex: 1,
     fontSize: 15,
     fontWeight: "600",
-    color: colors.text,
+    color: t.colors.text,
   },
   grpDropdownMenu: {
     marginTop: spacing.xs,
     borderRadius: radius.lg,
     borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-    ...shadows.card,
+    borderColor: t.colors.border,
+    backgroundColor: t.colors.surface,
+    ...t.shadows.card,
     overflow: "hidden",
   },
   grpDropdownItem: {
@@ -2289,28 +2307,28 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingVertical: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
+    borderBottomColor: t.colors.border,
   },
-  grpDropdownItemActive: { backgroundColor: colors.accent + "0D" },
+  grpDropdownItemActive: { backgroundColor: t.colors.accent + "0D" },
   grpDropdownItemLeft: { flex: 1 },
-  grpDropdownItemName: { fontSize: 15, fontWeight: "600", color: colors.text },
-  grpDropdownItemNameActive: { color: colors.accent },
-  grpDropdownItemMeta: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
+  grpDropdownItemName: { fontSize: 15, fontWeight: "600", color: t.colors.text },
+  grpDropdownItemNameActive: { color: t.colors.accent },
+  grpDropdownItemMeta: { fontSize: 12, color: t.colors.textMuted, marginTop: 2 },
 
   // Empty state
   grpEmptyCard: {
     alignItems: "center",
     padding: spacing.xl,
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderRadius: radius.lg,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
     borderStyle: "dashed",
   },
-  grpEmptyTitle: { fontSize: 16, fontWeight: "700", color: colors.text, marginTop: spacing.md },
+  grpEmptyTitle: { fontSize: 16, fontWeight: "700", color: t.colors.text, marginTop: spacing.md },
   grpEmptyDesc: {
     fontSize: 13,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     textAlign: "center",
     marginTop: spacing.xs,
     lineHeight: 18,
@@ -2330,37 +2348,37 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingVertical: 12,
     borderRadius: radius.lg,
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderWidth: 1.5,
-    borderColor: colors.accent,
+    borderColor: t.colors.accent,
   },
   grpActionBtnActive: {
-    backgroundColor: colors.accent,
-    borderColor: colors.accent,
+    backgroundColor: t.colors.accent,
+    borderColor: t.colors.accent,
   },
-  grpActionBtnText: { fontSize: 14, fontWeight: "700", color: colors.accent },
+  grpActionBtnText: { fontSize: 14, fontWeight: "700", color: t.colors.accent },
   grpActionBtnTextActive: { color: "#FFFFFF" },
 
   // Inline sheet
   grpSheet: {
     marginTop: spacing.md,
     padding: spacing.lg,
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderRadius: radius.lg,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
   },
   grpSheetTitle: {
     fontSize: 15,
     fontWeight: "700",
-    color: colors.text,
+    color: t.colors.text,
     marginBottom: spacing.md,
   },
   grpSheetBtn: {
     marginTop: spacing.md,
     paddingVertical: 14,
     borderRadius: radius.lg,
-    backgroundColor: colors.accent,
+    backgroundColor: t.colors.accent,
     alignItems: "center",
   },
   grpSheetBtnText: { color: "#FFFFFF", fontWeight: "700", fontSize: 15 },
@@ -2369,7 +2387,7 @@ const styles = StyleSheet.create({
   grpFieldLabel: {
     fontSize: 12,
     fontWeight: "700",
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     textTransform: "uppercase",
     letterSpacing: 0.5,
     marginTop: spacing.md,
@@ -2377,7 +2395,7 @@ const styles = StyleSheet.create({
   },
   grpFieldHint: {
     fontSize: 12,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     lineHeight: 17,
     marginTop: spacing.xs,
     marginBottom: spacing.sm
@@ -2395,16 +2413,16 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: radius.md,
     borderWidth: 1.5,
-    borderColor: colors.accent,
-    backgroundColor: colors.surface
+    borderColor: t.colors.accent,
+    backgroundColor: t.colors.surface
   },
   grpToggleBtnActive: {
-    backgroundColor: colors.accent
+    backgroundColor: t.colors.accent
   },
   grpToggleBtnText: {
     fontSize: 13,
     fontWeight: "700",
-    color: colors.accent
+    color: t.colors.accent
   },
   grpToggleBtnTextActive: {
     color: "#FFFFFF"
@@ -2419,43 +2437,43 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: radius.sm,
     borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface
+    borderColor: t.colors.border,
+    backgroundColor: t.colors.surface
   },
   grpCategoryChipActive: {
-    borderColor: colors.accent,
-    backgroundColor: colors.accent + "15"
+    borderColor: t.colors.accent,
+    backgroundColor: t.colors.accent + "15"
   },
   grpCategoryChipText: {
     fontSize: 12,
     fontWeight: "600",
-    color: colors.textMuted
+    color: t.colors.textMuted
   },
   grpCategoryChipTextActive: {
-    color: colors.accent
+    color: t.colors.accent
   },
 
   // Timeline summary
   timelineSummary: {
     marginTop: spacing.xl,
     padding: spacing.lg,
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderRadius: radius.lg,
   },
-  timelineTitle: { fontSize: 16, fontWeight: "700", color: colors.text, marginBottom: spacing.md },
+  timelineTitle: { fontSize: 16, fontWeight: "700", color: t.colors.text, marginBottom: spacing.md },
   timelineRow: { flexDirection: "row", alignItems: "flex-start", marginBottom: spacing.md },
   timelineDot: {
     width: 10,
     height: 10,
     borderRadius: 5,
-    backgroundColor: colors.accent,
+    backgroundColor: t.colors.accent,
     marginTop: 4,
     marginRight: spacing.md,
   },
   timelineEmoji: { fontSize: 16, marginTop: 1, marginRight: spacing.md },
-  timelineLabel: { fontSize: 13, fontWeight: "600", color: colors.text },
-  timelineDate: { fontSize: 12, color: colors.textMuted },
-  timelineSub: { fontSize: 11, color: colors.accent, marginTop: 1 },
+  timelineLabel: { fontSize: 13, fontWeight: "600", color: t.colors.text },
+  timelineDate: { fontSize: 12, color: t.colors.textMuted },
+  timelineSub: { fontSize: 11, color: t.colors.accent, marginTop: 1 },
 
   // Mode toggle (quick pick vs exact)
   modeToggleRow: {
@@ -2467,13 +2485,13 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: spacing.sm,
     borderRadius: radius.md,
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
     alignItems: "center",
   },
-  modeToggleActive: { backgroundColor: colors.accent, borderColor: colors.accent },
-  modeToggleText: { fontSize: 13, fontWeight: "600", color: colors.textMuted },
+  modeToggleActive: { backgroundColor: t.colors.accent, borderColor: t.colors.accent },
+  modeToggleText: { fontSize: 13, fontWeight: "600", color: t.colors.textMuted },
   modeToggleTextActive: { color: "#FFFFFF" },
 
   // Selected date display
@@ -2483,27 +2501,27 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: spacing.md,
     padding: spacing.md,
-    backgroundColor: colors.accent + "0D",
+    backgroundColor: t.colors.accent + "0D",
     borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: colors.accent + "33",
+    borderColor: t.colors.accent + "33",
   },
-  selectedDateLabel: { fontSize: 13, fontWeight: "600", color: colors.accent },
-  selectedDateValue: { fontSize: 13, fontWeight: "700", color: colors.text },
+  selectedDateLabel: { fontSize: 13, fontWeight: "600", color: t.colors.accent },
+  selectedDateValue: { fontSize: 13, fontWeight: "700", color: t.colors.text },
 
   // Date time input
   dateTimeContainer: { marginTop: spacing.sm },
   dateTimeRow: { flexDirection: "row", gap: spacing.md },
   dateTimeField: { flex: 1 },
-  dateTimeFieldLabel: { fontSize: 11, fontWeight: "600", color: colors.textMuted, marginBottom: 4 },
+  dateTimeFieldLabel: { fontSize: 11, fontWeight: "600", color: t.colors.textMuted, marginBottom: 4 },
   dateTimeInput: {
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
     borderRadius: radius.md,
     padding: spacing.md,
     fontSize: 16,
-    color: colors.text,
+    color: t.colors.text,
     fontVariant: ["tabular-nums"],
   },
 
@@ -2512,18 +2530,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     borderRadius: radius.pill,
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
   },
-  timingPillActive: { backgroundColor: colors.accent, borderColor: colors.accent },
-  timingPillText: { fontSize: 13, fontWeight: "600", color: colors.textMuted },
+  timingPillActive: { backgroundColor: t.colors.accent, borderColor: t.colors.accent },
+  timingPillText: { fontSize: 13, fontWeight: "600", color: t.colors.textMuted },
   timingPillTextActive: { color: "#FFFFFF" },
 
   // Review card
   reviewCard: {
     padding: spacing.xl,
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderRadius: radius.lg,
   },
   tagRow: { flexDirection: "row", gap: spacing.sm, marginBottom: spacing.md, flexWrap: "wrap" },
@@ -2531,14 +2549,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     paddingVertical: 3,
     borderRadius: radius.pill,
-    backgroundColor: colors.text,
+    backgroundColor: t.colors.text,
   },
   tagText: { color: "#FFF", fontSize: 11, fontWeight: "700", textTransform: "uppercase" },
-  reviewTitle: { fontSize: 20, fontWeight: "700", color: colors.text, marginTop: spacing.sm },
-  reviewDesc: { fontSize: 14, color: colors.textMuted, marginTop: spacing.sm, lineHeight: 20 },
-  reviewDivider: { height: 1, backgroundColor: colors.border, marginVertical: spacing.lg },
-  reviewSectionTitle: { fontSize: 15, fontWeight: "700", color: colors.text, marginBottom: spacing.sm },
-  reviewMeta: { fontSize: 13, color: colors.textMuted, marginTop: spacing.xs },
+  reviewTitle: { fontSize: 20, fontWeight: "700", color: t.colors.text, marginTop: spacing.sm },
+  reviewDesc: { fontSize: 14, color: t.colors.textMuted, marginTop: spacing.sm, lineHeight: 20 },
+  reviewDivider: { height: 1, backgroundColor: t.colors.border, marginVertical: spacing.lg },
+  reviewSectionTitle: { fontSize: 15, fontWeight: "700", color: t.colors.text, marginBottom: spacing.sm },
+  reviewMeta: { fontSize: 13, color: t.colors.textMuted, marginTop: spacing.xs },
 
   // Advanced settings disclosure toggle
   advancedToggleRow: {
@@ -2547,22 +2565,22 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: spacing.md,
     padding: spacing.md,
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
   },
   advancedToggleLabel: {
     fontSize: 13,
     fontWeight: "600",
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
   advancedToggleLabelActive: {
-    color: colors.accent,
+    color: t.colors.accent,
   },
   advancedToggleSub: {
     fontSize: 11,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     marginTop: 2,
   },
 
@@ -2573,32 +2591,32 @@ const styles = StyleSheet.create({
     marginTop: spacing.xl,
     paddingTop: spacing.lg,
     borderTopWidth: 1,
-    borderTopColor: colors.border,
+    borderTopColor: t.colors.border,
   },
   backBtn: {
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
     borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
   },
-  backLabel: { fontSize: 15, fontWeight: "600", color: colors.text },
+  backLabel: { fontSize: 15, fontWeight: "600", color: t.colors.text },
   nextBtn: {
     paddingHorizontal: spacing.xl,
     paddingVertical: spacing.md,
     borderRadius: radius.md,
-    backgroundColor: colors.accent,
+    backgroundColor: t.colors.accent,
   },
   submitBtn: {
     paddingHorizontal: spacing.xl,
     paddingVertical: spacing.md,
     borderRadius: radius.md,
-    backgroundColor: colors.success,
+    backgroundColor: t.colors.success,
   },
   nextLabel: { color: "#FFF", fontSize: 15, fontWeight: "700" },
   btnDisabled: { opacity: 0.4 },
 
-  // Draft banner
+  // Draft banner — amber warning, intentional semantic color, kept as-is
   draftBanner: {
     backgroundColor: "#FFFBEB",
     borderRadius: radius.md,
@@ -2638,7 +2656,7 @@ const styles = StyleSheet.create({
     color: "#D97706",
   },
 
-  // Moderation notice (review step)
+  // Moderation notice (review step) — amber warning, intentional semantic color, kept as-is
   moderationNotice: {
     marginTop: spacing.md,
     padding: spacing.md,
@@ -2656,7 +2674,7 @@ const styles = StyleSheet.create({
   // Draft saved indicator
   draftSavedLabel: {
     fontSize: 12,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     textAlign: "right",
     marginTop: spacing.md,
     marginBottom: -spacing.sm,
@@ -2674,19 +2692,20 @@ const styles = StyleSheet.create({
   successHeadline: {
     fontSize: 28,
     fontWeight: "700",
-    color: colors.text,
+    color: t.colors.text,
     textAlign: "center",
     marginBottom: spacing.md,
   },
   successTitle: {
     fontSize: 17,
     fontWeight: "600",
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     textAlign: "center",
     lineHeight: 24,
     marginBottom: spacing.lg,
     paddingHorizontal: spacing.lg,
   },
+  // Success status badges — semantic green/amber, intentional, kept as-is
   successStatusBadge: {
     backgroundColor: "#DCFCE7",
     borderRadius: radius.md,
@@ -2717,7 +2736,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xl,
     paddingVertical: spacing.md,
     borderRadius: radius.lg,
-    backgroundColor: colors.accent,
+    backgroundColor: t.colors.accent,
     marginBottom: spacing.md,
     minWidth: 200,
     justifyContent: "center",
@@ -2731,7 +2750,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xl,
     paddingVertical: spacing.md,
     borderRadius: radius.lg,
-    backgroundColor: colors.success,
+    backgroundColor: t.colors.success,
     marginBottom: spacing.md,
     minWidth: 200,
     alignItems: "center",
@@ -2746,12 +2765,12 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     borderRadius: radius.lg,
     borderWidth: 1.5,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
     minWidth: 200,
     alignItems: "center",
   },
   successAnotherBtnText: {
-    color: colors.text,
+    color: t.colors.text,
     fontWeight: "600",
     fontSize: 15,
   },
@@ -2773,11 +2792,11 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
   },
   mcAddBtnText: {
-    color: colors.accent,
+    color: t.colors.accent,
     fontWeight: "600",
     fontSize: 14,
   },
-  // Flagship event section styles (S32-T3)
+  // Flagship event section — amber admin UI, intentional semantic color, kept as-is
   flagshipSection: {
     marginTop: spacing.lg,
     marginBottom: spacing.sm,
@@ -2814,7 +2833,7 @@ const styles = StyleSheet.create({
     width: 42,
     height: 24,
     borderRadius: 12,
-    backgroundColor: "#D1D5DB",
+    backgroundColor: t.colors.border,
     padding: 2,
     justifyContent: "center",
   },
@@ -2825,7 +2844,7 @@ const styles = StyleSheet.create({
     width: 20,
     height: 20,
     borderRadius: 10,
-    backgroundColor: "#fff",
+    backgroundColor: t.colors.surface,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.15,

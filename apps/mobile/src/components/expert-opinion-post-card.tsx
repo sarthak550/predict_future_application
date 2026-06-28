@@ -180,6 +180,32 @@ function ExpertAvatar({
   );
 }
 
+const makeConsensusStyles = (t: ThemeContextValue) => StyleSheet.create({
+  preVoteWrap: { marginBottom: 6 },
+  preVoteTrack: {
+    flexDirection: "row",
+    height: 3,
+    borderRadius: 2,
+    overflow: "hidden",
+    backgroundColor: t.colors.border,
+    marginBottom: 4,
+  },
+  preVoteFill: { backgroundColor: "#16a34a", height: 3 },
+  preVoteRest: { backgroundColor: t.colors.border, height: 3 },
+  preVoteLabel: { fontSize: 11, color: t.colors.textMuted, letterSpacing: 0.1 },
+  postVoteWrap: { marginBottom: 6 },
+  splitTrack: {
+    flexDirection: "row",
+    height: 5,
+    borderRadius: 3,
+    overflow: "hidden",
+    marginBottom: 4,
+  },
+  splitSegment: { height: 5 },
+  splitLabels: { flexDirection: "row", justifyContent: "space-between" },
+  splitLabel: { fontSize: 10, fontWeight: "600", letterSpacing: 0.1 },
+});
+
 /**
  * ConsensusBar — slim social-proof bar showing live Poll A aggregate.
  * Pre-vote: single thin green bar + label.
@@ -194,6 +220,8 @@ function ConsensusBar({
   hasVoted: boolean;
   userBucketIndex: number;
 }) {
+  const consensusStyles = useThemedStyles(makeConsensusStyles);
+  const { colors } = useTheme();
   const impl = tallies.implication;
   if (impl.total === 0) return null;
 
@@ -250,7 +278,7 @@ function ConsensusBar({
           <View
             style={[
               consensusStyles.splitSegment,
-              { flex: neutralFlex, backgroundColor: userIsNeutral ? "#9ca3af" : "#e5e7eb" },
+              { flex: neutralFlex, backgroundColor: userIsNeutral ? "#9ca3af" : colors.border },
             ]}
           />
         )}
@@ -264,13 +292,13 @@ function ConsensusBar({
         )}
       </View>
       <View style={consensusStyles.splitLabels}>
-        <Text style={[consensusStyles.splitLabel, { color: userIsAgree ? "#16a34a" : "#6b7280" }]}>
+        <Text style={[consensusStyles.splitLabel, { color: userIsAgree ? "#16a34a" : colors.textMuted }]}>
           {agreePct}% agreed
         </Text>
-        <Text style={[consensusStyles.splitLabel, { color: "#9ca3af" }]}>
+        <Text style={[consensusStyles.splitLabel, { color: colors.textSubtle }]}>
           {Math.round((neutralCount / totalSafe) * 100)}% neutral
         </Text>
-        <Text style={[consensusStyles.splitLabel, { color: userIsDisagree ? "#dc2626" : "#6b7280" }]}>
+        <Text style={[consensusStyles.splitLabel, { color: userIsDisagree ? "#dc2626" : colors.textMuted }]}>
           {Math.round((disagreeCount / totalSafe) * 100)}% disagreed
         </Text>
       </View>
@@ -278,33 +306,87 @@ function ConsensusBar({
   );
 }
 
-const consensusStyles = StyleSheet.create({
-  preVoteWrap: { marginBottom: 6 },
-  preVoteTrack: {
-    flexDirection: "row",
-    height: 3,
-    borderRadius: 2,
-    overflow: "hidden",
-    backgroundColor: "#e5e7eb",
-    marginBottom: 4,
-  },
-  preVoteFill: { backgroundColor: "#16a34a", height: 3 },
-  preVoteRest: { backgroundColor: "#e5e7eb", height: 3 },
-  preVoteLabel: { fontSize: 11, color: "#6b7280", letterSpacing: 0.1 },
-  postVoteWrap: { marginBottom: 6 },
-  splitTrack: {
-    flexDirection: "row",
-    height: 5,
-    borderRadius: 3,
-    overflow: "hidden",
-    marginBottom: 4,
-  },
-  splitSegment: { height: 5 },
-  splitLabels: { flexDirection: "row", justifyContent: "space-between" },
-  splitLabel: { fontSize: 10, fontWeight: "600", letterSpacing: 0.1 },
-});
-
 // ─── Poll A ────────────────────────────────────────────────────────────────────
+
+const makePollStyles = (t: ThemeContextValue) => StyleSheet.create({
+  section: {
+    paddingTop: spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: t.colors.border,
+    marginTop: spacing.sm,
+  },
+  sectionHeader: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: t.colors.text,
+    marginBottom: 8,
+    letterSpacing: 0.1,
+  },
+  sliderSkeletonTrack: {
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: t.colors.border,
+    marginVertical: 8,
+  },
+  sliderPositionLabel: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: t.colors.text,
+    textAlign: "center",
+    marginBottom: 6,
+  },
+  slider: { width: "100%", height: 36 },
+  tickRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingHorizontal: 4,
+    marginBottom: 10,
+  },
+  tickLabel: {
+    fontSize: 11,
+    color: t.colors.textSubtle,
+    fontWeight: "600",
+    width: 20,
+    textAlign: "center",
+  },
+  submitVoteBtn: {
+    backgroundColor: t.colors.accent,
+    borderRadius: radius.sm,
+    paddingVertical: 10,
+    alignItems: "center",
+    marginTop: 2,
+  },
+  submitVoteBtnDisabled: { opacity: 0.55 },
+  submitVoteBtnText: { color: "#fff", fontSize: 13, fontWeight: "700", letterSpacing: 0.3 },
+  castVoteBtn: {
+    backgroundColor: "#4338ca",
+    borderRadius: radius.sm,
+    paddingVertical: 9,
+    alignItems: "center",
+    marginTop: spacing.sm,
+  },
+  castVoteBtnText: { color: "#fff", fontSize: 12, fontWeight: "700", letterSpacing: 0.2 },
+  castVoteHint: { fontSize: 10, color: t.colors.textMuted, marginTop: 4, textAlign: "center" },
+  histogramRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    justifyContent: "space-around",
+    height: 34,
+    marginBottom: 2,
+  },
+  histogramCell: { alignItems: "center", flex: 1 },
+  histogramBar: { width: 14, borderRadius: 3 },
+  medianFlag: { marginBottom: 1 },
+  medianFlagText: { fontSize: 8, color: t.colors.textSubtle },
+  youVotedChip: {
+    fontSize: 11,
+    color: t.colors.textMuted,
+    marginTop: 6,
+    textAlign: "center",
+    fontStyle: "italic",
+  },
+  errorText: { fontSize: 11, color: "#dc2626", marginTop: 4, textAlign: "center" },
+});
 
 function PollA({
   opinion,
@@ -318,6 +400,7 @@ function PollA({
   onVoted: (tallies: ApiExpertOpinionTallies) => void;
 }) {
   const pollStyles = useThemedStyles(makePollStyles);
+  const { colors } = useTheme();
   const [voting, setVoting] = useState(false);
   const [pendingBucket, setPendingBucket] = useState<number>(2);
   const [localChoice, setLocalChoice] = useState<ApiImplicationChoice | null>(
@@ -507,7 +590,7 @@ function PollA({
             value={pendingBucket}
             onValueChange={(val) => setPendingBucket(Math.round(val))}
             minimumTrackTintColor={IMPLICATION_BUCKETS[pendingBucket]?.color ?? "#6b7280"}
-            maximumTrackTintColor="#E5E7EB"
+            maximumTrackTintColor={colors.border}
             thumbTintColor={IMPLICATION_BUCKETS[pendingBucket]?.color ?? "#6b7280"}
             disabled={voting}
           />
@@ -578,7 +661,7 @@ function PollA({
             minimumTrackTintColor={
               IMPLICATION_BUCKETS[isDraftEditable ? pendingBucket : votedBucketIndex]?.color ?? "#6b7280"
             }
-            maximumTrackTintColor="#E5E7EB"
+            maximumTrackTintColor={colors.border}
             thumbTintColor={
               IMPLICATION_BUCKETS[isDraftEditable ? pendingBucket : votedBucketIndex]?.color ?? "#6b7280"
             }
@@ -657,86 +740,6 @@ function PollA({
     </View>
   );
 }
-
-const makePollStyles = (t: ThemeContextValue) => StyleSheet.create({
-  section: {
-    paddingTop: spacing.sm,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "#E5E7EB",
-    marginTop: spacing.sm,
-  },
-  sectionHeader: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#374151",
-    marginBottom: 8,
-    letterSpacing: 0.1,
-  },
-  sliderSkeletonTrack: {
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: "#E5E7EB",
-    marginVertical: 8,
-  },
-  sliderPositionLabel: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: "#111827",
-    textAlign: "center",
-    marginBottom: 6,
-  },
-  slider: { width: "100%", height: 36 },
-  tickRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    paddingHorizontal: 4,
-    marginBottom: 10,
-  },
-  tickLabel: {
-    fontSize: 11,
-    color: "#9CA3AF",
-    fontWeight: "600",
-    width: 20,
-    textAlign: "center",
-  },
-  submitVoteBtn: {
-    backgroundColor: t.colors.accent,
-    borderRadius: radius.sm,
-    paddingVertical: 10,
-    alignItems: "center",
-    marginTop: 2,
-  },
-  submitVoteBtnDisabled: { opacity: 0.55 },
-  submitVoteBtnText: { color: "#fff", fontSize: 13, fontWeight: "700", letterSpacing: 0.3 },
-  castVoteBtn: {
-    backgroundColor: "#4338ca",
-    borderRadius: radius.sm,
-    paddingVertical: 9,
-    alignItems: "center",
-    marginTop: spacing.sm,
-  },
-  castVoteBtnText: { color: "#fff", fontSize: 12, fontWeight: "700", letterSpacing: 0.2 },
-  castVoteHint: { fontSize: 10, color: "#6b7280", marginTop: 4, textAlign: "center" },
-  histogramRow: {
-    flexDirection: "row",
-    alignItems: "flex-end",
-    justifyContent: "space-around",
-    height: 34,
-    marginBottom: 2,
-  },
-  histogramCell: { alignItems: "center", flex: 1 },
-  histogramBar: { width: 14, borderRadius: 3 },
-  medianFlag: { marginBottom: 1 },
-  medianFlagText: { fontSize: 8, color: "#9ca3af" },
-  youVotedChip: {
-    fontSize: 11,
-    color: "#6b7280",
-    marginTop: 6,
-    textAlign: "center",
-    fontStyle: "italic",
-  },
-  errorText: { fontSize: 11, color: "#dc2626", marginTop: 4, textAlign: "center" },
-});
 
 // ─── Share-only composed view (off-screen) ─────────────────────────────────────
 
@@ -1190,7 +1193,7 @@ export function ExpertOpinionPostCard({
         onPress={() => void Linking.openURL(opinion.sourceUrl)}
         style={styles.sourceStrip}
       >
-        <Ionicons name="open-outline" size={11} color="#6b7280" style={{ marginRight: 4 }} />
+        <Ionicons name="open-outline" size={11} color={colors.textMuted} style={{ marginRight: 4 }} />
         <Text style={styles.sourceText} numberOfLines={1}>
           AI-summarized from{" "}
           <Text style={styles.sourceLink}>{sourceDomain}</Text>
@@ -1313,9 +1316,9 @@ export function ExpertOpinionPostCard({
           style={styles.shareBtn}
         >
           {sharing ? (
-            <ActivityIndicator size={13} color="#9ca3af" />
+            <ActivityIndicator size={13} color={colors.textSubtle} />
           ) : (
-            <Ionicons name="share-outline" size={16} color="#9ca3af" />
+            <Ionicons name="share-outline" size={16} color={colors.textSubtle} />
           )}
         </Pressable>
       </View>
@@ -1340,9 +1343,9 @@ const makeCardStyles = (t: ThemeContextValue) => StyleSheet.create({
     paddingTop: spacing.md,
     paddingBottom: spacing.sm,
     borderRadius: radius.md,
-    backgroundColor: "#fff",
+    backgroundColor: t.colors.surface,
     borderWidth: 1,
-    borderColor: "#E5E7EB",
+    borderColor: t.colors.border,
     // Subtle card shadow — Robinhood / fintech premium feel
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
@@ -1357,27 +1360,27 @@ const makeCardStyles = (t: ThemeContextValue) => StyleSheet.create({
     position: "absolute",
     top: 10,
     right: 10,
-    backgroundColor: "#f1f5f9",
+    backgroundColor: t.colors.surfaceMuted,
     borderRadius: 4,
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderWidth: 1,
-    borderColor: "#cbd5e1",
+    borderColor: t.colors.border,
     zIndex: 10,
   },
   resolvedStampText: {
     fontSize: 9,
     fontWeight: "800",
-    color: "#64748b",
+    color: t.colors.textMuted,
     letterSpacing: 1.2,
   },
   resolvedStampInline: {
     paddingHorizontal: 6,
     paddingVertical: 2,
-    backgroundColor: "#f1f5f9",
+    backgroundColor: t.colors.surfaceMuted,
     borderRadius: 4,
     borderWidth: 1,
-    borderColor: "#cbd5e1",
+    borderColor: t.colors.border,
   },
 
   // Resolution-reason inline banner
@@ -1396,7 +1399,7 @@ const makeCardStyles = (t: ThemeContextValue) => StyleSheet.create({
   },
   resolutionBannerText: {
     fontSize: 12,
-    color: "#374151",
+    color: t.colors.text,
     lineHeight: 17,
   },
 
@@ -1411,17 +1414,17 @@ const makeCardStyles = (t: ThemeContextValue) => StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 999,
-    backgroundColor: "#f1f5f9",
+    backgroundColor: t.colors.surfaceMuted,
   },
   narrativeChipText: {
     fontSize: 11,
     fontWeight: "600",
-    color: "#475569",
+    color: t.colors.textMuted,
   },
   narrativeChipSubtle: {
     fontSize: 11,
     fontWeight: "500",
-    color: "#94a3b8",
+    color: t.colors.textSubtle,
   },
 
   // Header zone
@@ -1445,7 +1448,7 @@ const makeCardStyles = (t: ThemeContextValue) => StyleSheet.create({
   expertName: {
     fontSize: 15,
     fontWeight: "700",
-    color: "#111827",
+    color: t.colors.text,
     flexShrink: 1,
   },
   verifiedBadge: {
@@ -1469,9 +1472,9 @@ const makeCardStyles = (t: ThemeContextValue) => StyleSheet.create({
   },
   expertOrg: {
     fontSize: 12,
-    color: "#6b7280",
+    color: t.colors.textMuted,
   },
-  calledAt: { fontSize: 11, color: "#9ca3af", marginTop: 2, fontWeight: "500" as const },
+  calledAt: { fontSize: 11, color: t.colors.textSubtle, marginTop: 2, fontWeight: "500" as const },
   hitRateLabel: {
     fontSize: 11,
     color: "#16a34a",
@@ -1534,7 +1537,7 @@ const makeCardStyles = (t: ThemeContextValue) => StyleSheet.create({
     paddingVertical: 3,
     borderRadius: 6,
     borderWidth: 1,
-    backgroundColor: "#fff",
+    backgroundColor: t.colors.surface,
   },
   tickerSymbol: {
     fontSize: 11,
@@ -1546,7 +1549,7 @@ const makeCardStyles = (t: ThemeContextValue) => StyleSheet.create({
   // Body
   body: {
     fontSize: 14,
-    color: "#374151",
+    color: t.colors.text,
     lineHeight: 21,
     letterSpacing: 0.1,
     marginBottom: 4,
@@ -1567,7 +1570,7 @@ const makeCardStyles = (t: ThemeContextValue) => StyleSheet.create({
   },
   sourceText: {
     fontSize: 12,
-    color: "#6b7280",
+    color: t.colors.textMuted,
     flex: 1,
   },
   sourceLink: {
@@ -1583,15 +1586,15 @@ const makeCardStyles = (t: ThemeContextValue) => StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 7,
     borderRadius: 999,
-    backgroundColor: "#f1f5f9",
+    backgroundColor: t.colors.surfaceMuted,
     borderWidth: 1,
-    borderColor: "#e2e8f0",
+    borderColor: t.colors.border,
   },
-  siblingsChipText: { fontSize: 12, fontWeight: "600", color: "#475569", flex: 1 },
+  siblingsChipText: { fontSize: 12, fontWeight: "600", color: t.colors.textMuted, flex: 1 },
   siblingsChipBullish: { color: "#16a34a", fontWeight: "700" },
   siblingsChipBearish: { color: "#dc2626", fontWeight: "700" },
   siblingsChipNeutral: { color: "#6b7280", fontWeight: "700" },
-  siblingsChipChevron: { fontSize: 16, color: "#94a3b8", marginLeft: 6 },
+  siblingsChipChevron: { fontSize: 16, color: t.colors.textSubtle, marginLeft: 6 },
 
   // Footer
   footer: {
@@ -1601,11 +1604,11 @@ const makeCardStyles = (t: ThemeContextValue) => StyleSheet.create({
     marginTop: spacing.sm,
     paddingTop: spacing.sm,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "#E5E7EB",
+    borderTopColor: t.colors.border,
   },
   disclaimer: {
     fontSize: 10,
-    color: "#9ca3af",
+    color: t.colors.textSubtle,
     flex: 1,
     letterSpacing: 0.1,
   },

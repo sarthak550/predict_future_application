@@ -85,6 +85,55 @@ function implicationChoiceToIndex(choice: string): number {
 
 // ─── S33-T4: Live Consensus Bar ───────────────────────────────────────────────
 
+const makeConsensusStyles = (t: ThemeContextValue) => StyleSheet.create({
+  preVoteWrap: {
+    marginBottom: 6,
+  },
+  preVoteTrack: {
+    flexDirection: "row",
+    height: 3,
+    borderRadius: 2,
+    overflow: "hidden",
+    backgroundColor: t.colors.border,
+    marginBottom: 4,
+  },
+  preVoteFill: {
+    backgroundColor: "#16a34a",
+    height: 3,
+  },
+  preVoteRest: {
+    backgroundColor: t.colors.border,
+    height: 3,
+  },
+  preVoteLabel: {
+    fontSize: 11,
+    color: t.colors.textMuted,
+    letterSpacing: 0.1,
+  },
+  postVoteWrap: {
+    marginBottom: 6,
+  },
+  splitTrack: {
+    flexDirection: "row",
+    height: 5,
+    borderRadius: 3,
+    overflow: "hidden",
+    marginBottom: 4,
+  },
+  splitSegment: {
+    height: 5,
+  },
+  splitLabels: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  splitLabel: {
+    fontSize: 10,
+    fontWeight: "600",
+    letterSpacing: 0.1,
+  },
+});
+
 /**
  * Slim social-proof bar showing live Poll A aggregate.
  *
@@ -104,6 +153,8 @@ function ConsensusBar({
   /** 0-4 bucket index for the user's current choice; -1 if no vote */
   userBucketIndex: number;
 }) {
+  const consensusStyles = useThemedStyles(makeConsensusStyles);
+  const { colors } = useTheme();
   const impl = tallies.implication;
   if (impl.total === 0) return null;
 
@@ -169,7 +220,7 @@ function ConsensusBar({
               consensusStyles.splitSegment,
               {
                 flex: neutralFlex,
-                backgroundColor: userIsNeutral ? "#9ca3af" : "#e5e7eb",
+                backgroundColor: userIsNeutral ? "#9ca3af" : colors.border,
               },
             ]}
           />
@@ -187,13 +238,13 @@ function ConsensusBar({
         )}
       </View>
       <View style={consensusStyles.splitLabels}>
-        <Text style={[consensusStyles.splitLabel, { color: userIsAgree ? "#16a34a" : "#6b7280" }]}>
+        <Text style={[consensusStyles.splitLabel, { color: userIsAgree ? "#16a34a" : colors.textMuted }]}>
           {agreePct}% agreed
         </Text>
-        <Text style={[consensusStyles.splitLabel, { color: "#9ca3af" }]}>
+        <Text style={[consensusStyles.splitLabel, { color: colors.textSubtle }]}>
           {Math.round((neutralCount / totalSafe) * 100)}% neutral
         </Text>
-        <Text style={[consensusStyles.splitLabel, { color: userIsDisagree ? "#dc2626" : "#6b7280" }]}>
+        <Text style={[consensusStyles.splitLabel, { color: userIsDisagree ? "#dc2626" : colors.textMuted }]}>
           {Math.round((disagreeCount / totalSafe) * 100)}% disagreed
         </Text>
       </View>
@@ -201,52 +252,228 @@ function ConsensusBar({
   );
 }
 
-const consensusStyles = StyleSheet.create({
-  preVoteWrap: {
+// ── Poll styles (Poll A + Poll B) ──
+
+const makePollStyles = (t: ThemeContextValue) => StyleSheet.create({
+  section: {
+    marginTop: spacing.sm,
+    paddingTop: spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: t.colors.border,
+  },
+  pollBSection: {
+    marginTop: spacing.sm,
+  },
+  sectionHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
     marginBottom: 6,
   },
-  preVoteTrack: {
+  sectionHeader: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: t.colors.text,
+    marginBottom: 6,
+  },
+  choiceRow: {
     flexDirection: "row",
-    height: 3,
-    borderRadius: 2,
-    overflow: "hidden",
-    backgroundColor: "#e5e7eb",
+    gap: 6,
+    flexWrap: "wrap",
+  },
+  choiceBtn: {
+    flex: 1,
+    minWidth: 80,
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    alignItems: "center",
+  },
+  choiceBtnText: {
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  tallyRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
     marginBottom: 4,
   },
-  preVoteFill: {
-    backgroundColor: "#16a34a",
-    height: 3,
-  },
-  preVoteRest: {
-    backgroundColor: "#e5e7eb",
-    height: 3,
-  },
-  preVoteLabel: {
+  tallyLabel: {
     fontSize: 11,
-    color: "#6b7280",
-    letterSpacing: 0.1,
+    color: t.colors.text,
+    width: 72,
   },
-  postVoteWrap: {
-    marginBottom: 6,
-  },
-  splitTrack: {
-    flexDirection: "row",
-    height: 5,
+  barTrack: {
+    flex: 1,
+    height: 6,
+    backgroundColor: t.colors.border,
     borderRadius: 3,
     overflow: "hidden",
-    marginBottom: 4,
   },
-  splitSegment: {
-    height: 5,
+  barFill: {
+    height: 6,
+    borderRadius: 3,
   },
-  splitLabels: {
+  pctLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    width: 30,
+    textAlign: "right",
+  },
+  youVotedChip: {
+    marginTop: 4,
+    fontSize: 10,
+    color: "#4338CA",
+    fontWeight: "700",
+  },
+  crowdSummary: {
+    marginTop: 4,
+    fontSize: 10,
+    color: t.colors.textMuted,
+    lineHeight: 14,
+  },
+  errorText: {
+    marginTop: 4,
+    fontSize: 10,
+    color: "#dc2626",
+  },
+  skeletonRow: {
+    flexDirection: "row",
+    gap: 6,
+  },
+  skeletonBtn: {
+    flex: 1,
+    height: 30,
+    borderRadius: radius.sm,
+    backgroundColor: t.colors.border,
+  },
+  lockedContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    opacity: 0.5,
+    paddingVertical: 6,
+  },
+  lockedText: {
+    fontSize: 11,
+    color: t.colors.textMuted,
+    fontStyle: "italic",
+  },
+  resolutionChip: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radius.pill,
+    marginBottom: 8,
+  },
+  resolutionChipText: {
+    fontSize: 10,
+    fontWeight: "700",
+  },
+
+  // ── Poll A slider styles ──
+  slider: {
+    width: "100%",
+    height: 36,
+    marginVertical: 2,
+  },
+  sliderPositionLabel: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: t.colors.text,
+    textAlign: "center",
+    marginBottom: 2,
+  },
+  tickRow: {
     flexDirection: "row",
     justifyContent: "space-between",
+    paddingHorizontal: 8,
+    marginTop: 2,
   },
-  splitLabel: {
-    fontSize: 10,
+  tickLabel: {
+    fontSize: 11,
     fontWeight: "600",
-    letterSpacing: 0.1,
+    color: t.colors.textSubtle,
+    width: 20,
+    textAlign: "center",
+  },
+  submitVoteBtn: {
+    marginTop: 10,
+    paddingVertical: 10,
+    borderRadius: radius.md,
+    backgroundColor: "#4338CA",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  submitVoteBtnDisabled: {
+    opacity: 0.5,
+  },
+  submitVoteBtnText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#fff",
+  },
+  castVoteBtn: {
+    backgroundColor: "#4338CA",
+    borderRadius: radius.md,
+    paddingVertical: 9,
+    alignItems: "center",
+    marginTop: 8,
+  },
+  castVoteBtnText: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 0.2,
+  },
+  castVoteHint: {
+    fontSize: 10,
+    color: t.colors.textMuted,
+    marginTop: 4,
+    textAlign: "center",
+  },
+  // Histogram overlay (post-vote)
+  histogramRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-end",
+    paddingHorizontal: 8,
+    height: 44,
+    marginBottom: 2,
+  },
+  histogramCell: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "flex-end",
+  },
+  histogramBar: {
+    width: 12,
+    borderRadius: 3,
+    minHeight: 2,
+  },
+  medianFlag: {
+    marginBottom: 2,
+  },
+  medianFlagText: {
+    fontSize: 9,
+    color: t.colors.textMuted,
+    lineHeight: 10,
+  },
+  // Loading skeleton for slider
+  sliderSkeletonTrack: {
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: t.colors.border,
+    marginVertical: 14,
+    width: "100%",
+  },
+  sliderSkeletonTick: {
+    flex: 1,
+    height: 16,
+    borderRadius: 2,
+    backgroundColor: t.colors.border,
+    marginHorizontal: 3,
   },
 });
 
@@ -262,6 +489,8 @@ function PollA({
   loadingTallies: boolean;
   onVoted: (tallies: ApiExpertOpinionTallies) => void;
 }) {
+  const pollStyles = useThemedStyles(makePollStyles);
+  const { colors } = useTheme();
   const [voting, setVoting] = useState(false);
   // Tracks the slider thumb position before the user commits (default: 2 = FLAT)
   const [pendingBucket, setPendingBucket] = useState<number>(2);
@@ -389,7 +618,7 @@ function PollA({
             value={pendingBucket}
             onValueChange={(val) => setPendingBucket(Math.round(val))}
             minimumTrackTintColor={IMPLICATION_BUCKETS[pendingBucket]?.color ?? "#6b7280"}
-            maximumTrackTintColor="#E5E7EB"
+            maximumTrackTintColor={colors.border}
             thumbTintColor={IMPLICATION_BUCKETS[pendingBucket]?.color ?? "#6b7280"}
             disabled={voting}
           />
@@ -462,7 +691,7 @@ function PollA({
             step={1}
             value={votedBucketIndex}
             minimumTrackTintColor={IMPLICATION_BUCKETS[votedBucketIndex]?.color ?? "#6b7280"}
-            maximumTrackTintColor="#E5E7EB"
+            maximumTrackTintColor={colors.border}
             thumbTintColor={IMPLICATION_BUCKETS[votedBucketIndex]?.color ?? "#6b7280"}
             disabled={true}
           />
@@ -1294,7 +1523,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     letterSpacing: 1,
     textTransform: "uppercase",
     color: t.colors.accent,
-    backgroundColor: "#EFF6FF",
+    backgroundColor: t.colors.surfaceMuted,
     alignSelf: "flex-start",
     paddingHorizontal: 10,
     paddingVertical: 3,
@@ -1344,9 +1573,9 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     marginTop: spacing.lg,
     padding: spacing.lg,
     borderRadius: radius.md,
-    backgroundColor: "#F8FAFF",
+    backgroundColor: t.colors.surfaceMuted,
     borderWidth: 1,
-    borderColor: "#E8EDF5",
+    borderColor: t.colors.border,
     // Prevent the poll panel from growing unbounded on small viewports
     maxHeight: 260,
     overflow: "hidden",
@@ -1370,7 +1599,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     marginTop: spacing.md,
     height: 8,
     borderRadius: radius.pill,
-    backgroundColor: "#E2E8F0",
+    backgroundColor: t.colors.border,
     overflow: "hidden",
   },
   progressFill: {
@@ -1428,11 +1657,11 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     height: 44,
     borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: "#E2E8F0",
+    borderColor: t.colors.border,
     paddingHorizontal: spacing.md,
     fontSize: 16,
     color: t.colors.text,
-    backgroundColor: "#fff",
+    backgroundColor: t.colors.surface,
   },
   unitLabel: { fontSize: 13, fontWeight: "600", color: t.colors.textMuted },
   submitBtn: {
@@ -1505,10 +1734,10 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     marginTop: spacing.md,
     paddingVertical: 11,
     borderRadius: radius.md,
-    backgroundColor: "#F3F4F6",
+    backgroundColor: t.colors.surfaceMuted,
     alignItems: "center",
   },
-  closedText: { fontSize: 14, fontWeight: "700", color: "#6B7280" },
+  closedText: { fontSize: 14, fontWeight: "700", color: t.colors.textMuted },
 
   errorText: { marginTop: spacing.sm, fontSize: 12, color: "#DC2626" },
   link: { marginTop: spacing.md, fontSize: 14, fontWeight: "700", color: t.colors.accent },
@@ -1539,9 +1768,9 @@ const makeExpertStyles = (t: ThemeContextValue) => StyleSheet.create({
     marginTop: spacing.lg,
     padding: spacing.md,
     borderRadius: radius.md,
-    backgroundColor: "#EEF2FF",
+    backgroundColor: t.colors.surfaceMuted,
     borderWidth: 1,
-    borderColor: "#C7D2FE",
+    borderColor: t.colors.border,
   },
   header: {
     flexDirection: "row",
@@ -1646,14 +1875,14 @@ const makeExpertStyles = (t: ThemeContextValue) => StyleSheet.create({
   expertName: {
     fontSize: 15,
     fontWeight: "600",
-    color: t.colors.text ?? "#1e1b4b",
+    color: t.colors.text,
     flexShrink: 1,
   },
   expertOrg: {
     fontSize: 12,
-    color: t.colors.textMuted ?? "#6b7280",
+    color: t.colors.textMuted,
   },
-  calledAt: { fontSize: 11, color: "#9ca3af", marginTop: 2, fontWeight: "500" as const },
+  calledAt: { fontSize: 11, color: t.colors.textSubtle, marginTop: 2, fontWeight: "500" as const },
   verifiedBadge: {
     width: 13,
     height: 13,
@@ -1691,13 +1920,13 @@ const makeExpertStyles = (t: ThemeContextValue) => StyleSheet.create({
   quoteText: {
     fontSize: 14,
     lineHeight: 20,
-    color: "#1a1a1a",
+    color: t.colors.text,
   },
   footer: {
     marginTop: 2,
     fontSize: 10,
     lineHeight: 14,
-    color: "#6B7280",
+    color: t.colors.textMuted,
     textDecorationLine: "underline",
   },
   resolutionStrip: {
@@ -1734,7 +1963,7 @@ const makeExpertStyles = (t: ThemeContextValue) => StyleSheet.create({
   },
   resolutionDates: {
     fontSize: 10,
-    color: "#6b7280",
+    color: t.colors.textMuted,
     marginTop: 3,
   },
   expandBtn: {
@@ -1745,230 +1974,5 @@ const makeExpertStyles = (t: ThemeContextValue) => StyleSheet.create({
     fontSize: 12,
     fontWeight: "700",
     color: "#4338CA",
-  },
-});
-
-// ── Poll styles (Poll A + Poll B) ──
-
-const pollStyles = StyleSheet.create({
-  section: {
-    marginTop: spacing.sm,
-    paddingTop: spacing.sm,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "#C7D2FE",
-  },
-  pollBSection: {
-    marginTop: spacing.sm,
-  },
-  sectionHeaderRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 6,
-  },
-  sectionHeader: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: "#374151",
-    marginBottom: 6,
-  },
-  choiceRow: {
-    flexDirection: "row",
-    gap: 6,
-    flexWrap: "wrap",
-  },
-  choiceBtn: {
-    flex: 1,
-    minWidth: 80,
-    paddingVertical: 7,
-    paddingHorizontal: 10,
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    alignItems: "center",
-  },
-  choiceBtnText: {
-    fontSize: 12,
-    fontWeight: "700",
-  },
-  tallyRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginBottom: 4,
-  },
-  tallyLabel: {
-    fontSize: 11,
-    color: "#374151",
-    width: 72,
-  },
-  barTrack: {
-    flex: 1,
-    height: 6,
-    backgroundColor: "#E5E7EB",
-    borderRadius: 3,
-    overflow: "hidden",
-  },
-  barFill: {
-    height: 6,
-    borderRadius: 3,
-  },
-  pctLabel: {
-    fontSize: 11,
-    fontWeight: "700",
-    width: 30,
-    textAlign: "right",
-  },
-  youVotedChip: {
-    marginTop: 4,
-    fontSize: 10,
-    color: "#4338CA",
-    fontWeight: "700",
-  },
-  crowdSummary: {
-    marginTop: 4,
-    fontSize: 10,
-    color: "#6B7280",
-    lineHeight: 14,
-  },
-  errorText: {
-    marginTop: 4,
-    fontSize: 10,
-    color: "#dc2626",
-  },
-  skeletonRow: {
-    flexDirection: "row",
-    gap: 6,
-  },
-  skeletonBtn: {
-    flex: 1,
-    height: 30,
-    borderRadius: radius.sm,
-    backgroundColor: "#E5E7EB",
-  },
-  lockedContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    opacity: 0.5,
-    paddingVertical: 6,
-  },
-  lockedText: {
-    fontSize: 11,
-    color: "#6B7280",
-    fontStyle: "italic",
-  },
-  resolutionChip: {
-    alignSelf: "flex-start",
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: radius.pill,
-    marginBottom: 8,
-  },
-  resolutionChipText: {
-    fontSize: 10,
-    fontWeight: "700",
-  },
-
-  // ── Poll A slider styles ──
-  slider: {
-    width: "100%",
-    height: 36,
-    marginVertical: 2,
-  },
-  sliderPositionLabel: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: "#374151",
-    textAlign: "center",
-    marginBottom: 2,
-  },
-  tickRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    paddingHorizontal: 8,
-    marginTop: 2,
-  },
-  tickLabel: {
-    fontSize: 11,
-    fontWeight: "600",
-    color: "#9CA3AF",
-    width: 20,
-    textAlign: "center",
-  },
-  submitVoteBtn: {
-    marginTop: 10,
-    paddingVertical: 10,
-    borderRadius: radius.md,
-    backgroundColor: "#4338CA",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  submitVoteBtnDisabled: {
-    opacity: 0.5,
-  },
-  submitVoteBtnText: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: "#fff",
-  },
-  castVoteBtn: {
-    backgroundColor: "#4338CA",
-    borderRadius: radius.md,
-    paddingVertical: 9,
-    alignItems: "center",
-    marginTop: 8,
-  },
-  castVoteBtnText: {
-    color: "#fff",
-    fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: 0.2,
-  },
-  castVoteHint: {
-    fontSize: 10,
-    color: "#6b7280",
-    marginTop: 4,
-    textAlign: "center",
-  },
-  // Histogram overlay (post-vote)
-  histogramRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-end",
-    paddingHorizontal: 8,
-    height: 44,
-    marginBottom: 2,
-  },
-  histogramCell: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "flex-end",
-  },
-  histogramBar: {
-    width: 12,
-    borderRadius: 3,
-    minHeight: 2,
-  },
-  medianFlag: {
-    marginBottom: 2,
-  },
-  medianFlagText: {
-    fontSize: 9,
-    color: "#6B7280",
-    lineHeight: 10,
-  },
-  // Loading skeleton for slider
-  sliderSkeletonTrack: {
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: "#E5E7EB",
-    marginVertical: 14,
-    width: "100%",
-  },
-  sliderSkeletonTick: {
-    flex: 1,
-    height: 16,
-    borderRadius: 2,
-    backgroundColor: "#E5E7EB",
-    marginHorizontal: 3,
   },
 });

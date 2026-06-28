@@ -17,7 +17,8 @@ import {
 
 import type { ApiLiveScore, ApiCricketMatchDetail, ApiFootballMatchDetail, ApiMarketSummary, ApiNewsFeedItem } from "@predict-future/types";
 import { formatRelativeTime } from "@predict-future/utils";
-import { colors, radius, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 import { F1DetailModal } from "@/components/f1-detail-modal";
 import { NewsFeedCard } from "@/components/news-feed-card";
@@ -37,11 +38,8 @@ const LEAGUE_ICONS: Record<string, React.ComponentProps<typeof Feather>["name"]>
   F1: "zap",
 };
 
-const STATUS_COLORS: Record<string, string> = {
-  in: "#ef4444",
-  post: colors.textMuted,
-  pre: colors.accent,
-};
+// STATUS_COLORS keys mapped in JSX using useTheme() — see SportsScreen and helpers
+const STATUS_COLOR_IN = "#ef4444";
 
 function formatMatchTime(startTime: string): string {
   const date = new Date(startTime);
@@ -58,6 +56,8 @@ function formatMatchTime(startTime: string): string {
 
 export default function SportsScreen() {
   const { height } = useWindowDimensions();
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const [scores, setScores] = useState<ApiLiveScore[]>([]);
   const [loadingScores, setLoadingScores] = useState(true);
   const [news, setNews] = useState<ApiNewsFeedItem[]>([]);
@@ -298,8 +298,11 @@ function ScoreCard({ score, onPress }: { score: ApiLiveScore; onPress: () => voi
     return <RaceCard score={score} onPress={onPress} />;
   }
 
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const isLive = score.status === "in";
   const isCricket = score.sport === "Cricket";
+  const statusColor = score.status === "in" ? STATUS_COLOR_IN : score.status === "post" ? colors.textMuted : colors.accent;
 
   return (
     <Pressable style={[styles.scoreCard, isLive && styles.scoreCardLive]} onPress={onPress}>
@@ -312,7 +315,7 @@ function ScoreCard({ score, onPress }: { score: ApiLiveScore; onPress: () => voi
         </View>
         <View style={styles.scoreStatusBadge}>
           {isLive && <View style={styles.scoreStatusDot} />}
-          <Text style={[styles.scoreStatusText, { color: STATUS_COLORS[score.status] ?? colors.textMuted }]}>
+          <Text style={[styles.scoreStatusText, { color: statusColor }]}>
             {isLive ? score.shortDetail || "LIVE" : score.status === "post" ? "FINAL" : formatMatchTime(score.startTime)}
           </Text>
         </View>
@@ -341,11 +344,14 @@ function normaliseTeamColour(raw: string | undefined): string | undefined {
 }
 
 function RaceCard({ score, onPress }: { score: ApiLiveScore; onPress: () => void }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const [expanded, setExpanded] = useState(false);
   const isLive = score.status === "in";
   const lb = score.leaderboard ?? [];
   const podium = lb.slice(0, 3);
   const rest = lb.slice(3);
+  const statusColor = score.status === "in" ? STATUS_COLOR_IN : score.status === "post" ? colors.textMuted : colors.accent;
 
   return (
     <Pressable style={[styles.scoreCard, isLive && styles.scoreCardLive]} onPress={onPress}>
@@ -357,7 +363,7 @@ function RaceCard({ score, onPress }: { score: ApiLiveScore; onPress: () => void
         </View>
         <View style={styles.scoreStatusBadge}>
           {isLive && <View style={styles.scoreStatusDot} />}
-          <Text style={[styles.scoreStatusText, { color: STATUS_COLORS[score.status] ?? colors.textMuted }]}>
+          <Text style={[styles.scoreStatusText, { color: statusColor }]}>
             {isLive ? "LIVE" : score.status === "post" ? "FINAL" : formatMatchTime(score.startTime)}
           </Text>
         </View>
@@ -432,6 +438,8 @@ function TeamRow({ team, isLive, isCricket }: {
   isLive: boolean;
   isCricket: boolean;
 }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   if (!team.name && !team.score) return null;
 
   return (
@@ -474,6 +482,7 @@ function MatchDetailModal({ match, relatedNews, onClose }: {
   onClose: () => void;
 }) {
   const router = useRouter();
+  const { colors } = useTheme();
   const [cricketDetail, setCricketDetail] = useState<ApiCricketMatchDetail | null>(null);
   const [footballDetail, setFootballDetail] = useState<ApiFootballMatchDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
@@ -554,7 +563,7 @@ function MatchDetailModal({ match, relatedNews, onClose }: {
 
   const isLive = match.status === "in";
   const isCricket = match.sport === "Cricket";
-  const statusColor = STATUS_COLORS[match.status] ?? colors.textMuted;
+  const statusColor = match.status === "in" ? STATUS_COLOR_IN : match.status === "post" ? colors.textMuted : colors.accent;
 
   // Find related news by matching team names
   const matchedNews = relatedNews.filter((n) => {
@@ -936,6 +945,7 @@ function LinkedMarketsPanel({
   onCreatePrediction: () => void;
 }) {
   const router = useRouter();
+  const { colors } = useTheme();
   return (
     <View style={linkedStyles.panel}>
       <Text style={linkedStyles.heading}>Predictions</Text>
@@ -963,6 +973,7 @@ function LinkedMarketsPanel({
   );
 }
 
+// linkedStyles lives inside dark modals — rgba overlays are intentional dark panel styling
 const linkedStyles = StyleSheet.create({
   panel: {
     marginTop: spacing.md,
@@ -1006,7 +1017,8 @@ const linkedStyles = StyleSheet.create({
     marginTop: spacing.md,
     paddingVertical: 10,
     borderRadius: radius.md,
-    backgroundColor: colors.accent,
+    // uses colors.accent — but this component calls useTheme() in JSX above
+    backgroundColor: "#6366f1", // brand accent; component reads colors.accent live for icons
   },
   createBtnText: {
     fontSize: 13,
@@ -1154,7 +1166,7 @@ function CricketScorecardTab({ detail, selectedIdx, onSelectIdx }: {
   if (innings.length === 0) {
     return (
       <View style={{ padding: spacing.xl, alignItems: "center" }}>
-        <Text style={{ color: colors.textMuted, fontSize: 13 }}>No scorecard data available</Text>
+        <Text style={{ color: "rgba(255,255,255,0.4)", fontSize: 13 }}>No scorecard data available</Text>
       </View>
     );
   }
@@ -1448,7 +1460,7 @@ function FootballLineupTab({ detail }: { detail: ApiFootballMatchDetail }) {
 function InfoRow({ icon, text }: { icon: React.ComponentProps<typeof Feather>["name"]; text: string }) {
   return (
     <View style={modal.infoRow}>
-      <Feather name={icon} size={14} color={colors.textMuted} />
+      <Feather name={icon} size={14} color="rgba(255,255,255,0.4)" />
       <Text style={modal.infoText}>{text}</Text>
     </View>
   );
@@ -1457,6 +1469,8 @@ function InfoRow({ icon, text }: { icon: React.ComponentProps<typeof Feather>["n
 // ---- Sports News Card ----
 
 function SportsNewsCard({ item, onPress }: { item: ApiNewsFeedItem; onPress: () => void }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   return (
     <Pressable
       style={({ pressed }) => [styles.newsCard, pressed && styles.newsCardPressed]}
@@ -1496,6 +1510,7 @@ function StoryModal({
   cardHeight: number;
   onClose: () => void;
 }) {
+  const storyModal = useThemedStyles(makeStoryModalStyles);
   if (!item) return null;
   return (
     <Modal visible animationType="slide" transparent onRequestClose={onClose}>
@@ -1510,11 +1525,11 @@ function StoryModal({
   );
 }
 
-const storyModal = StyleSheet.create({
+const makeStoryModalStyles = (t: ThemeContextValue) => StyleSheet.create({
   overlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.55)", justifyContent: "flex-end" },
   dismiss: { flex: 1 },
   sheet: {
-    backgroundColor: colors.background,
+    backgroundColor: t.colors.background,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     overflow: "hidden",
@@ -1522,15 +1537,15 @@ const storyModal = StyleSheet.create({
   },
   handle: {
     width: 36, height: 4, borderRadius: 2,
-    backgroundColor: colors.border,
+    backgroundColor: t.colors.border,
     alignSelf: "center", marginBottom: 6,
   },
 });
 
 // ---- Styles ----
 
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.background },
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
+  screen: { flex: 1, backgroundColor: t.colors.background },
   errorScreen: { justifyContent: "flex-start" },
   errorBox: {
     flex: 1,
@@ -1541,7 +1556,7 @@ const styles = StyleSheet.create({
   },
   errorText: {
     fontSize: 14,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     textAlign: "center",
     lineHeight: 20,
   },
@@ -1550,7 +1565,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xl,
     paddingVertical: spacing.sm,
     borderRadius: radius.md,
-    backgroundColor: colors.accent,
+    backgroundColor: t.colors.accent,
   },
   retryBtnText: { color: "#FFFFFF", fontWeight: "700", fontSize: 14 },
   header: {
@@ -1560,11 +1575,11 @@ const styles = StyleSheet.create({
     paddingTop: 60,
     paddingHorizontal: spacing.lg,
     paddingBottom: spacing.md,
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    borderBottomColor: t.colors.border,
   },
-  headerTitle: { fontSize: 22, fontWeight: "800", color: colors.text },
+  headerTitle: { fontSize: 22, fontWeight: "800", color: t.colors.text },
   liveBadge: {
     flexDirection: "row", alignItems: "center", gap: 4, marginLeft: spacing.sm,
     paddingHorizontal: spacing.sm, paddingVertical: 3, borderRadius: radius.pill,
@@ -1580,22 +1595,22 @@ const styles = StyleSheet.create({
   leagueChip: {
     flexDirection: "row", alignItems: "center", gap: 4,
     paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
-    borderRadius: radius.pill, borderWidth: 1, borderColor: colors.border,
-    backgroundColor: colors.surface,
+    borderRadius: radius.pill, borderWidth: 1, borderColor: t.colors.border,
+    backgroundColor: t.colors.surface,
   },
-  leagueChipActive: { backgroundColor: colors.text, borderColor: colors.text },
-  leagueChipText: { fontSize: 12, fontWeight: "700", color: colors.text },
-  leagueChipTextActive: { color: colors.surface },
+  leagueChipActive: { backgroundColor: t.colors.text, borderColor: t.colors.text },
+  leagueChipText: { fontSize: 12, fontWeight: "700", color: t.colors.text },
+  leagueChipTextActive: { color: t.colors.surface },
   chipLiveDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: "#ef4444" },
 
   // Loading / empty
   loadingBox: { alignItems: "center", justifyContent: "center", padding: spacing.xl, gap: spacing.sm },
-  loadingText: { fontSize: 13, color: colors.textMuted },
+  loadingText: { fontSize: 13, color: t.colors.textMuted },
   emptyScores: { alignItems: "center", justifyContent: "center", padding: spacing.xl, gap: spacing.xs },
-  emptyScoresText: { fontSize: 15, fontWeight: "600", color: colors.textMuted },
-  emptyScoresSub: { fontSize: 13, color: colors.textMuted },
+  emptyScoresText: { fontSize: 15, fontWeight: "600", color: t.colors.textMuted },
+  emptyScoresSub: { fontSize: 13, color: t.colors.textMuted },
 
-  // Score cards
+  // Score cards — intentionally dark UI strip regardless of app theme
   scoresSection: { paddingHorizontal: spacing.md, paddingTop: spacing.sm, gap: spacing.sm },
   scoreCard: {
     padding: spacing.md, borderRadius: radius.md,
@@ -1638,20 +1653,20 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", gap: spacing.sm,
     paddingHorizontal: spacing.lg, paddingTop: spacing.xl, paddingBottom: spacing.sm,
   },
-  newsHeaderText: { fontSize: 16, fontWeight: "700", color: colors.text },
+  newsHeaderText: { fontSize: 16, fontWeight: "700", color: t.colors.text },
   newsCard: {
     marginHorizontal: spacing.md, marginBottom: spacing.xs,
     paddingHorizontal: spacing.md, paddingVertical: spacing.md,
-    borderRadius: radius.md, backgroundColor: colors.surface,
-    borderWidth: 1, borderColor: colors.border,
+    borderRadius: radius.md, backgroundColor: t.colors.surface,
+    borderWidth: 1, borderColor: t.colors.border,
   },
   newsCardInner: { flexDirection: "row", alignItems: "flex-start", gap: spacing.md },
   newsCardText: { flex: 1 },
-  newsThumb: { width: 64, height: 64, borderRadius: radius.sm, backgroundColor: colors.surface },
-  newsHeadline: { fontSize: 14, fontWeight: "700", lineHeight: 20, color: colors.text },
+  newsThumb: { width: 64, height: 64, borderRadius: radius.sm, backgroundColor: t.colors.surface },
+  newsHeadline: { fontSize: 14, fontWeight: "700", lineHeight: 20, color: t.colors.text },
   newsMetaRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: spacing.xs },
-  newsMeta: { fontSize: 11, color: colors.textMuted },
-  newsMetaDot: { fontSize: 11, color: colors.textMuted },
+  newsMeta: { fontSize: 11, color: t.colors.textMuted },
+  newsMetaDot: { fontSize: 11, color: t.colors.textMuted },
   newsCardPressed: { opacity: 0.85 },
   newsCardPollHint: {
     flexDirection: "row",
@@ -1660,21 +1675,21 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
     paddingTop: spacing.sm,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
+    borderTopColor: t.colors.border,
   },
   newsCardPollHintText: {
     fontSize: 11,
     fontWeight: "600",
-    color: colors.accent,
+    color: t.colors.accent,
   },
   newsSummaryBlock: {
     marginTop: spacing.sm, padding: spacing.md, borderRadius: radius.sm,
-    backgroundColor: colors.surfaceMuted,
+    backgroundColor: t.colors.surfaceMuted,
   },
-  newsSummaryText: { fontSize: 13, lineHeight: 19, color: colors.textMuted },
+  newsSummaryText: { fontSize: 13, lineHeight: 19, color: t.colors.textMuted },
 });
 
-// ---- Modal styles ----
+// ---- Modal styles — intentional dark overlay panel, kept as-is ----
 
 const modal = StyleSheet.create({
   overlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "flex-end" },
@@ -1758,10 +1773,10 @@ const modal = StyleSheet.create({
     paddingVertical: 6, paddingHorizontal: spacing.sm, borderRadius: radius.sm,
     backgroundColor: "rgba(14,165,233,0.08)",
   },
-  marketLinkText: { fontSize: 12, fontWeight: "600", color: colors.accent, flex: 1 },
+  marketLinkText: { fontSize: 12, fontWeight: "600", color: "#0ea5e9", flex: 1 },
 });
 
-// ---- Cricket Scorecard styles ----
+// ---- Cricket Scorecard styles — intentional dark panel ----
 
 const cs = StyleSheet.create({
   // Score header
@@ -1796,7 +1811,7 @@ const cs = StyleSheet.create({
   tab: {
     flex: 1, paddingVertical: 10, alignItems: "center",
   },
-  tabActive: { backgroundColor: colors.accent },
+  tabActive: { backgroundColor: "#6366f1" },
   tabText: { fontSize: 13, fontWeight: "700", color: "rgba(255,255,255,0.5)" },
   tabTextActive: { color: "#FFF" },
 
@@ -1813,7 +1828,7 @@ const cs = StyleSheet.create({
     fontSize: 12, fontWeight: "800", letterSpacing: 0.5,
     color: "rgba(255,255,255,0.4)", textTransform: "uppercase", marginBottom: spacing.xs,
   },
-  runRate: { fontSize: 12, fontWeight: "700", color: colors.accent },
+  runRate: { fontSize: 12, fontWeight: "700", color: "#6366f1" },
 
   // Current players (summary)
   currentPlayers: { marginTop: spacing.sm },
@@ -1853,7 +1868,7 @@ const cs = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: "rgba(255,255,255,0.04)",
   },
   partnershipWicket: {
-    fontSize: 11, fontWeight: "800", color: colors.accent, width: 28,
+    fontSize: 11, fontWeight: "800", color: "#6366f1", width: 28,
     paddingTop: 2,
   },
   partnershipDetail: { flex: 1 },
@@ -1867,9 +1882,9 @@ const cs = StyleSheet.create({
     borderRadius: radius.pill, backgroundColor: "rgba(255,255,255,0.06)",
     borderWidth: 1, borderColor: "transparent",
   },
-  inningsChipActive: { backgroundColor: "rgba(14,165,233,0.15)", borderColor: colors.accent },
+  inningsChipActive: { backgroundColor: "rgba(14,165,233,0.15)", borderColor: "#6366f1" },
   inningsChipText: { fontSize: 12, fontWeight: "700", color: "rgba(255,255,255,0.5)" },
-  inningsChipTextActive: { color: colors.accent },
+  inningsChipTextActive: { color: "#6366f1" },
 
   // Table
   tableHeaderRow: {
@@ -1919,12 +1934,12 @@ const cs = StyleSheet.create({
     borderRadius: radius.sm, backgroundColor: "rgba(255,255,255,0.06)",
     alignItems: "center",
   },
-  fowNum: { fontSize: 10, fontWeight: "800", color: colors.accent },
+  fowNum: { fontSize: 10, fontWeight: "800", color: "#6366f1" },
   fowDetail: { fontSize: 11, fontWeight: "600", color: "rgba(255,255,255,0.6)" },
   fowBatter: { fontSize: 9, color: "rgba(255,255,255,0.35)" },
 });
 
-// ---- Football styles ----
+// ---- Football styles — intentional dark panel ----
 
 const fs = StyleSheet.create({
   // Score header
@@ -1954,7 +1969,7 @@ const fs = StyleSheet.create({
     borderRadius: radius.sm, backgroundColor: "rgba(255,255,255,0.06)", overflow: "hidden",
   },
   tab: { flex: 1, paddingVertical: 10, alignItems: "center" },
-  tabActive: { backgroundColor: colors.accent },
+  tabActive: { backgroundColor: "#6366f1" },
   tabText: { fontSize: 13, fontWeight: "700", color: "rgba(255,255,255,0.5)" },
   tabTextActive: { color: "#FFF" },
 
@@ -1996,7 +2011,7 @@ const fs = StyleSheet.create({
   possessionBarContainer: {
     flex: 1, flexDirection: "row", height: 8, borderRadius: 4, overflow: "hidden",
   },
-  possessionBarHome: { backgroundColor: colors.accent },
+  possessionBarHome: { backgroundColor: "#6366f1" },
   possessionBarAway: { backgroundColor: "rgba(255,255,255,0.2)" },
   possessionValue: {
     fontSize: 13, fontWeight: "700", color: "#FFF", width: 42, textAlign: "center",
@@ -2031,7 +2046,7 @@ const fs = StyleSheet.create({
   statBarContainer: {
     flexDirection: "row", height: 6, borderRadius: 3, overflow: "hidden", gap: 2,
   },
-  statBarHome: { backgroundColor: colors.accent, borderRadius: 3 },
+  statBarHome: { backgroundColor: "#6366f1", borderRadius: 3 },
   statBarAway: { backgroundColor: "rgba(255,255,255,0.2)", borderRadius: 3 },
 
   // Lineup tab
@@ -2045,7 +2060,7 @@ const fs = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: "rgba(255,255,255,0.03)",
   },
   lineupJersey: {
-    fontSize: 12, fontWeight: "800", color: colors.accent, width: 24, textAlign: "center",
+    fontSize: 12, fontWeight: "800", color: "#6366f1", width: 24, textAlign: "center",
     fontVariant: ["tabular-nums"],
   },
   lineupName: { fontSize: 13, fontWeight: "600", color: "#e2e8f0", flex: 1 },
@@ -2055,7 +2070,7 @@ const fs = StyleSheet.create({
   },
 });
 
-// ---- Race Card styles ----
+// ---- Race Card styles — intentional dark panel ----
 
 const raceStyles = StyleSheet.create({
   sessionName: {
@@ -2174,7 +2189,7 @@ const raceStyles = StyleSheet.create({
   expandText: {
     fontSize: 11,
     fontWeight: "700",
-    color: colors.accent,
+    color: "#6366f1",
     letterSpacing: 0.3,
   },
 });

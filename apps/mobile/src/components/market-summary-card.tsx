@@ -202,7 +202,7 @@ export function MarketSummaryCard({ item, onSaveToggled, compact = false }: Prop
           accessibilityRole="button"
           accessibilityLabel={`Hosted by ${item.group.name}`}
         >
-          <Ionicons name="people-outline" size={11} color="#64748B" />
+          <Ionicons name="people-outline" size={11} color={colors.textMuted} />
           <Text style={styles.hostedByText}>Hosted by {item.group.name}</Text>
         </Pressable>
       ) : null}
@@ -276,7 +276,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     backgroundColor: "#DCFCE7",
   },
   badgeClosed: {
-    backgroundColor: "#F3F4F6",
+    backgroundColor: t.colors.surfaceMuted,
   },
   badgeText: {
     fontSize: 11,
@@ -288,7 +288,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     color: "#16A34A",
   },
   badgeTextClosed: {
-    color: "#6B7280",
+    color: t.colors.textMuted,
   },
   category: {
     fontSize: 11,
@@ -319,20 +319,20 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     paddingHorizontal: 7,
     paddingVertical: 2,
     borderRadius: 10,
-    backgroundColor: "#F3F4F6",
+    backgroundColor: t.colors.surfaceMuted,
     borderWidth: 1,
-    borderColor: "#E5E7EB",
+    borderColor: t.colors.border,
   },
   manifoldBadgeText: {
     fontSize: 10,
     fontWeight: "600",
-    color: "#6B7280",
+    color: t.colors.textMuted,
     letterSpacing: 0.3,
   },
   crowdLine: {
     fontSize: 11,
     fontWeight: "500",
-    color: "#6B7280",
+    color: t.colors.textMuted,
   },
   numericSection: {
     marginTop: spacing.lg,
@@ -363,7 +363,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     marginTop: spacing.sm,
     height: 8,
     borderRadius: radius.pill,
-    backgroundColor: "#E0E7FF",
+    backgroundColor: t.colors.surfaceMuted,
     position: "relative",
     overflow: "visible",
   },
@@ -461,7 +461,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     alignItems: "center",
     gap: 4,
     alignSelf: "flex-start",
-    backgroundColor: "#F1F5F9",
+    backgroundColor: t.colors.surfaceMuted,
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 4,
@@ -469,7 +469,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   hostedByText: {
     fontSize: 11,
     fontWeight: "500",
-    color: "#64748B",
+    color: t.colors.textMuted,
   },
   host: {
     marginTop: spacing.md,

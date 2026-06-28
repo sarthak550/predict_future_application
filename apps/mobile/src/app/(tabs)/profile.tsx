@@ -236,7 +236,7 @@ const makeTierProgressStyles = (t: ThemeContextValue) => StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     marginTop: spacing.xs,
-    backgroundColor: "#F5F3FF",
+    backgroundColor: t.colors.surfaceMuted,
     borderRadius: radius.sm,
     paddingHorizontal: 8,
     paddingVertical: 4,
@@ -1160,7 +1160,7 @@ function ActivityRow({
     }
     // Position
     if (item.marketStatus !== "RESOLVED" || item.winningSide == null) {
-      return <Ionicons name="time-outline" size={16} color="#94A3B8" />;
+      return <Ionicons name="time-outline" size={16} color={colors.textSubtle} />;
     }
     if (item.call === item.winningSide) {
       return <Ionicons name="checkmark-circle" size={16} color="#059669" />;
@@ -1179,7 +1179,7 @@ function ActivityRow({
         </Text>
         <View style={styles.trackMeta}>
           {/* Kind badge */}
-          <View style={[styles.statusPill, { backgroundColor: item.kind === "position" ? "#EFF6FF" : "#F5F3FF" }]}>
+          <View style={[styles.statusPill, { backgroundColor: colors.surfaceMuted }]}>
             <Text style={[styles.statusPillText, { color: item.kind === "position" ? "#2563EB" : "#7C3AED" }]}>
               {item.kind === "position" ? "Bet" : "Vote"}
             </Text>
