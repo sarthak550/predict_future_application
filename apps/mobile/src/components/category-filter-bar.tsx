@@ -23,7 +23,8 @@ import {
   View,
 } from "react-native";
 
-import { colors, radius, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
+import { useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 export type CategoryKey =
   | "ALL"
@@ -86,6 +87,8 @@ export function CategoryFilterBar({
   elevated = false,
   trailingNode,
 }: CategoryFilterBarProps) {
+  const styles = useThemedStyles(makeStyles);
+
   const containerStyle = elevated
     ? [styles.elevatedContainer]
     : [styles.inlineContainer];
@@ -124,14 +127,14 @@ export function CategoryFilterBar({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   inlineContainer: {
     // No background — inherits parent
   },
   elevatedContainer: {
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
+    borderBottomColor: t.colors.border,
   },
   scrollContent: {
     paddingHorizontal: spacing.lg,
@@ -145,15 +148,15 @@ const styles = StyleSheet.create({
     borderRadius: 17,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
   },
   pillActive: {
-    backgroundColor: colors.accent,
-    borderColor: colors.accent,
+    backgroundColor: t.colors.accent,
+    borderColor: t.colors.accent,
     // Subtle elevation for the active pill
-    shadowColor: colors.accent,
+    shadowColor: t.colors.accent,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 4,
@@ -162,7 +165,7 @@ const styles = StyleSheet.create({
   pillText: {
     fontSize: 12,
     fontWeight: "600",
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
   pillTextActive: {
     color: "#FFFFFF",

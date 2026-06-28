@@ -12,14 +12,82 @@ import {
 } from "react-native";
 
 import type { ApiExpertSearchResult } from "@predict-future/types";
-import { colors, radius, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 import { mobileApi } from "@/lib/api";
 import { getExpertInitials, getExpertInitialsColor } from "@/utils/expertAvatar";
 import { AnalystCredibilityBadge } from "@/components/analyst-credibility-badge";
 
+const makeSrStyles = (t: ThemeContextValue) => StyleSheet.create({
+  searchBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    margin: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+    backgroundColor: t.colors.surface,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: t.colors.border,
+  },
+  searchIcon: { fontSize: 16 },
+  input: {
+    flex: 1,
+    fontSize: 15,
+    color: t.colors.text,
+  },
+  center: { flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.xl },
+  hintText: { fontSize: 14, color: t.colors.textMuted, textAlign: "center" },
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: t.colors.border,
+    backgroundColor: t.colors.background,
+  },
+  avatar: { width: 44, height: 44, borderRadius: 22 },
+  avatarFallback: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarInitials: { fontSize: 15, fontWeight: "800", color: "#fff" },
+  nameBlock: { flex: 1, gap: 2 },
+  nameRow: { flexDirection: "row", alignItems: "center", gap: 4 },
+  expertName: { fontSize: 15, fontWeight: "700", color: t.colors.text, flexShrink: 1 },
+  orgName: { fontSize: 12, color: t.colors.textMuted },
+  statsText: { fontSize: 11, color: t.colors.textMuted, marginTop: 2 },
+  verifiedBadge: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: "#2563eb",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  verifiedText: { fontSize: 8, fontWeight: "800", color: "#fff", lineHeight: 12 },
+  credBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: radius.sm,
+    minWidth: 44,
+    alignItems: "center",
+  },
+  credText: { fontSize: 13, fontWeight: "700" },
+  chevron: { fontSize: 20, color: t.colors.textMuted, paddingHorizontal: 4 },
+});
+
 function ExpertRow({ expert }: { expert: ApiExpertSearchResult }) {
   const router = useRouter();
+  const srStyles = useThemedStyles(makeSrStyles);
   const initials = getExpertInitials(expert.name, expert.organization);
   const initialsColor = getExpertInitialsColor(expert.name || expert.organization);
   const displayName = expert.name || expert.organization;
@@ -62,6 +130,8 @@ function ExpertRow({ expert }: { expert: ApiExpertSearchResult }) {
 }
 
 export default function ExpertSearchScreen() {
+  const { colors } = useTheme();
+  const srStyles = useThemedStyles(makeSrStyles);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<ApiExpertSearchResult[]>([]);
   const [loading, setLoading] = useState(false);
@@ -140,69 +210,3 @@ export default function ExpertSearchScreen() {
     </View>
   );
 }
-
-const srStyles = StyleSheet.create({
-  searchBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm,
-    margin: spacing.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 10,
-    backgroundColor: colors.surface ?? "#f4f4f5",
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  searchIcon: { fontSize: 16 },
-  input: {
-    flex: 1,
-    fontSize: 15,
-    color: colors.text,
-  },
-  center: { flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.xl },
-  hintText: { fontSize: 14, color: colors.textMuted, textAlign: "center" },
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    backgroundColor: colors.background,
-  },
-  avatar: { width: 44, height: 44, borderRadius: 22 },
-  avatarFallback: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  avatarInitials: { fontSize: 15, fontWeight: "800", color: "#fff" },
-  nameBlock: { flex: 1, gap: 2 },
-  nameRow: { flexDirection: "row", alignItems: "center", gap: 4 },
-  expertName: { fontSize: 15, fontWeight: "700", color: colors.text, flexShrink: 1 },
-  orgName: { fontSize: 12, color: colors.textMuted },
-  statsText: { fontSize: 11, color: colors.textMuted, marginTop: 2 },
-  verifiedBadge: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: "#2563eb",
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
-  verifiedText: { fontSize: 8, fontWeight: "800", color: "#fff", lineHeight: 12 },
-  credBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: radius.sm,
-    minWidth: 44,
-    alignItems: "center",
-  },
-  credText: { fontSize: 13, fontWeight: "700" },
-  chevron: { fontSize: 20, color: colors.textMuted, paddingHorizontal: 4 },
-});

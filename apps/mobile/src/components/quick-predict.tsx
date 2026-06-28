@@ -3,7 +3,8 @@ import { useState } from "react";
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import type { AppMarketType, AppVoteSide } from "@predict-future/types";
-import { colors, radius, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 import { mobileApi } from "@/lib/api";
 import { useSession } from "@/providers/session-provider";
@@ -40,6 +41,8 @@ export function QuickPredict({
   maxValue,
   userVote,
 }: Props) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const { session, status: authStatus } = useSession();
   const [loading, setLoading] = useState(false);
   const [localVote, setLocalVote] = useState<{ side: AppVoteSide | null; numericValue?: number } | null>(null);
@@ -156,7 +159,7 @@ export function QuickPredict({
             value={guess}
             onChangeText={setGuess}
             keyboardType="decimal-pad"
-            placeholder={`Enter your guess (${min}\u2013${max})`}
+            placeholder={`Enter your guess (${min}–${max})`}
             placeholderTextColor={colors.textMuted}
             selectTextOnFocus
           />
@@ -242,7 +245,7 @@ export function QuickPredict({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   container: { marginTop: spacing.lg },
 
   // Probability bar
@@ -259,34 +262,34 @@ const styles = StyleSheet.create({
   yesBtnPct: { fontSize: 24, fontWeight: "700", color: "#059669", marginTop: 2 },
   noBtnLabel: { fontSize: 12, fontWeight: "800", letterSpacing: 0.5, color: "#e11d48" },
   noBtnPct: { fontSize: 24, fontWeight: "700", color: "#e11d48", marginTop: 2 },
-  hint: { marginTop: spacing.sm, textAlign: "center", fontSize: 12, color: colors.textMuted },
+  hint: { marginTop: spacing.sm, textAlign: "center", fontSize: 12, color: t.colors.textMuted },
 
   // Result row
   resultRow: { marginTop: spacing.sm, flexDirection: "row", justifyContent: "space-between" },
-  resultLabel: { fontSize: 13, fontWeight: "600", color: colors.textMuted },
+  resultLabel: { fontSize: 13, fontWeight: "600", color: t.colors.textMuted },
 
   // Voted state
   votedBox: { marginTop: spacing.md, flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: "#ecfdf5", paddingVertical: spacing.md, paddingHorizontal: spacing.lg, borderRadius: radius.md, borderWidth: 1, borderColor: "#a7f3d0" },
   votedText: { fontSize: 14, fontWeight: "600", color: "#059669" },
-  voteCount: { marginTop: spacing.sm, textAlign: "center", fontSize: 12, color: colors.textMuted },
+  voteCount: { marginTop: spacing.sm, textAlign: "center", fontSize: 12, color: t.colors.textMuted },
 
   // Closed market
   closedContainer: { marginTop: spacing.lg },
   closedRow: { marginTop: spacing.sm, flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  closedLabel: { fontSize: 12, fontWeight: "600", color: colors.textMuted },
-  closedStatus: { fontSize: 10, fontWeight: "700", letterSpacing: 0.5, textTransform: "uppercase", color: colors.textMuted, paddingHorizontal: spacing.sm, paddingVertical: 2, borderRadius: radius.sm, backgroundColor: colors.surfaceMuted, overflow: "hidden" },
+  closedLabel: { fontSize: 12, fontWeight: "600", color: t.colors.textMuted },
+  closedStatus: { fontSize: 10, fontWeight: "700", letterSpacing: 0.5, textTransform: "uppercase", color: t.colors.textMuted, paddingHorizontal: spacing.sm, paddingVertical: 2, borderRadius: radius.sm, backgroundColor: t.colors.surfaceMuted, overflow: "hidden" },
 
   // Numeric poll
   numericHeader: { flexDirection: "row", alignItems: "center", gap: spacing.xs, marginBottom: spacing.sm },
-  numericLabel: { fontSize: 12, fontWeight: "800", letterSpacing: 0.8, color: colors.accent },
+  numericLabel: { fontSize: 12, fontWeight: "800", letterSpacing: 0.8, color: t.colors.accent },
   numericRangeRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
-  numericRange: { fontSize: 13, fontWeight: "700", color: colors.textMuted },
-  numericRangeBar: { flex: 1, height: 6, borderRadius: radius.pill, backgroundColor: colors.border },
-  numericRangeFill: { width: "100%", height: "100%", borderRadius: radius.pill, backgroundColor: colors.accent, opacity: 0.3 },
-  numericUnit: { marginTop: spacing.xs, fontSize: 12, color: colors.textMuted },
+  numericRange: { fontSize: 13, fontWeight: "700", color: t.colors.textMuted },
+  numericRangeBar: { flex: 1, height: 6, borderRadius: radius.pill, backgroundColor: t.colors.border },
+  numericRangeFill: { width: "100%", height: "100%", borderRadius: radius.pill, backgroundColor: t.colors.accent, opacity: 0.3 },
+  numericUnit: { marginTop: spacing.xs, fontSize: 12, color: t.colors.textMuted },
   numericInputRow: { marginTop: spacing.md },
-  numericInput: { paddingHorizontal: spacing.md, paddingVertical: spacing.md, borderRadius: radius.md, backgroundColor: colors.surfaceMuted, borderWidth: 2, borderColor: colors.accent, fontSize: 20, fontWeight: "700", color: colors.text, textAlign: "center" },
-  numericSubmitBtn: { marginTop: spacing.md, alignItems: "center", paddingVertical: spacing.md, borderRadius: radius.md, backgroundColor: colors.accent },
+  numericInput: { paddingHorizontal: spacing.md, paddingVertical: spacing.md, borderRadius: radius.md, backgroundColor: t.colors.surfaceMuted, borderWidth: 2, borderColor: t.colors.accent, fontSize: 20, fontWeight: "700", color: t.colors.text, textAlign: "center" },
+  numericSubmitBtn: { marginTop: spacing.md, alignItems: "center", paddingVertical: spacing.md, borderRadius: radius.md, backgroundColor: t.colors.accent },
   numericSubmitLabel: { fontSize: 15, fontWeight: "700", color: "#FFF" },
   numericClosedBox: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: spacing.sm },
 });

@@ -1,6 +1,7 @@
 import { StyleSheet, View, type ViewStyle } from "react-native";
 
-import { colors, radius, shadows, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
+import { useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 type Props = {
   children: React.ReactNode;
@@ -9,6 +10,8 @@ type Props = {
 };
 
 export function Card({ children, elevated, style }: Props) {
+  const styles = useThemedStyles(makeStyles);
+
   return (
     <View style={[styles.card, elevated && styles.elevated, style]}>
       {children}
@@ -16,16 +19,16 @@ export function Card({ children, elevated, style }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   card: {
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderRadius: radius.lg,
     padding: spacing.xl,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.7)",
+    borderColor: t.colors.border,
   },
   elevated: {
     borderWidth: 0,
-    ...shadows.card,
+    ...t.shadows.card,
   },
 });

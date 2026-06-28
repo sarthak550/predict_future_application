@@ -17,7 +17,8 @@ import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { Animated, Modal, Pressable, StyleSheet, Text, View } from "react-native";
 
-import { colors, radius, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 import { mobileApi } from "@/lib/api";
 import { useSession } from "@/providers/session-provider";
 
@@ -39,6 +40,7 @@ type ModalVariant = "reminder" | "reset" | null;
 export function StreakReminder() {
   const { session, status } = useSession();
   const router = useRouter();
+  const styles = useThemedStyles(makeStyles);
   const [variant, setVariant] = useState<ModalVariant>(null);
   const [streak, setStreak] = useState(0);
   const [fadeAnim] = useState(() => new Animated.Value(0));
@@ -119,41 +121,41 @@ export function StreakReminder() {
       statusBarTranslucent
       onRequestClose={dismiss}
     >
-      <Animated.View style={[sStyles.overlay, { opacity: fadeAnim }]}>
-        <View style={sStyles.card}>
+      <Animated.View style={[styles.overlay, { opacity: fadeAnim }]}>
+        <View style={styles.card}>
           {variant === "reminder" ? (
             <>
-              <Text style={sStyles.emoji}>🔥</Text>
-              <Text style={sStyles.title}>
+              <Text style={styles.emoji}>🔥</Text>
+              <Text style={styles.title}>
                 {streak >= 7
                   ? `${streak}-day Weekly Streak!`
                   : `Your ${streak}-day streak is at risk!`}
               </Text>
-              <Text style={sStyles.body}>
+              <Text style={styles.body}>
                 Make a prediction today to keep it alive.
               </Text>
               <Pressable
-                style={[sStyles.primaryBtn, streak >= 7 && sStyles.goldBtn]}
+                style={[styles.primaryBtn, streak >= 7 && styles.goldBtn]}
                 onPress={goPredict}
               >
-                <Text style={sStyles.primaryBtnText}>Go Predict</Text>
+                <Text style={styles.primaryBtnText}>Go Predict</Text>
               </Pressable>
-              <Pressable onPress={dismiss} style={sStyles.laterBtn}>
-                <Text style={sStyles.laterText}>Later</Text>
+              <Pressable onPress={dismiss} style={styles.laterBtn}>
+                <Text style={styles.laterText}>Later</Text>
               </Pressable>
             </>
           ) : (
             <>
-              <Text style={sStyles.emoji}>💔</Text>
-              <Text style={sStyles.title}>Streak Reset</Text>
-              <Text style={sStyles.body}>
+              <Text style={styles.emoji}>💔</Text>
+              <Text style={styles.title}>Streak Reset</Text>
+              <Text style={styles.body}>
                 Your streak reset. Start a new one today!
               </Text>
-              <Pressable style={sStyles.primaryBtn} onPress={goPredict}>
-                <Text style={sStyles.primaryBtnText}>Start Fresh</Text>
+              <Pressable style={styles.primaryBtn} onPress={goPredict}>
+                <Text style={styles.primaryBtnText}>Start Fresh</Text>
               </Pressable>
-              <Pressable onPress={dismiss} style={sStyles.laterBtn}>
-                <Text style={sStyles.laterText}>Dismiss</Text>
+              <Pressable onPress={dismiss} style={styles.laterBtn}>
+                <Text style={styles.laterText}>Dismiss</Text>
               </Pressable>
             </>
           )}
@@ -171,17 +173,19 @@ type StreakBadgeProps = {
 };
 
 export function StreakBadge({ streak, onPress }: StreakBadgeProps) {
+  const styles = useThemedStyles(makeStyles);
+
   if (streak < 2) return null;
 
   const isWeekly = streak >= 7;
   return (
     <Pressable
       onPress={onPress}
-      style={[sStyles.badge, isWeekly && sStyles.badgeGold]}
+      style={[styles.badge, isWeekly && styles.badgeGold]}
       hitSlop={8}
     >
-      <Text style={sStyles.badgeEmoji}>🔥</Text>
-      <Text style={[sStyles.badgeText, isWeekly && sStyles.badgeTextGold]}>
+      <Text style={styles.badgeEmoji}>🔥</Text>
+      <Text style={[styles.badgeText, isWeekly && styles.badgeTextGold]}>
         {streak}
       </Text>
     </Pressable>
@@ -190,7 +194,7 @@ export function StreakBadge({ streak, onPress }: StreakBadgeProps) {
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
-const sStyles = StyleSheet.create({
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   overlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.6)",
@@ -199,7 +203,7 @@ const sStyles = StyleSheet.create({
     padding: spacing.xl,
   },
   card: {
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderRadius: radius.lg,
     padding: spacing.xl,
     width: "100%",
@@ -217,14 +221,14 @@ const sStyles = StyleSheet.create({
   title: {
     fontSize: 22,
     fontWeight: "800",
-    color: colors.text,
+    color: t.colors.text,
     textAlign: "center",
     marginBottom: spacing.sm,
   },
   body: {
     fontSize: 15,
     lineHeight: 22,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     textAlign: "center",
     marginBottom: spacing.xl,
   },
@@ -232,7 +236,7 @@ const sStyles = StyleSheet.create({
     width: "100%",
     paddingVertical: spacing.md,
     borderRadius: radius.pill,
-    backgroundColor: colors.accent,
+    backgroundColor: t.colors.accent,
     alignItems: "center",
     marginBottom: spacing.sm,
   },
@@ -251,7 +255,7 @@ const sStyles = StyleSheet.create({
   laterText: {
     fontSize: 14,
     fontWeight: "600",
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
   // Feed header badge
   badge: {

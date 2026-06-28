@@ -17,7 +17,8 @@ import type {
   AppMarketStatus,
   ProfileRecentCall,
 } from "@predict-future/types";
-import { colors, radius, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 import { PlatformTrustBanner } from "@/components/platform-trust-banner";
 import { VerifiedBadge } from "@/components/verified-badge";
@@ -59,19 +60,382 @@ const MARKET_STATUS_META: Record<string, { label: string; color: string; bg: str
   CANCELLED: { label: "Cancelled", color: "#94A3B8", bg: "#F8FAFC" },
 };
 
-function getMarketStatusMeta(status: string) {
+function getMarketStatusMeta(
+  status: string,
+  fallbackColor: string,
+  fallbackBg: string,
+) {
   return (
     MARKET_STATUS_META[status] ?? {
       label: status,
-      color: colors.textMuted as string,
-      bg: colors.background as string,
+      color: fallbackColor,
+      bg: fallbackBg,
     }
   );
 }
 
+// ── Styles factory ────────────────────────────────────────────────────────────
+
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
+  screen: { flex: 1, backgroundColor: t.colors.background },
+  scrollContent: {
+    padding: spacing.xl,
+    paddingBottom: spacing["2xl"],
+    gap: spacing.lg,
+  },
+  center: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: spacing.xl,
+    backgroundColor: t.colors.background,
+  },
+
+  // Header card
+  headerCard: {
+    backgroundColor: t.colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+  },
+  headerTop: { flexDirection: "row", alignItems: "center", gap: spacing.md },
+  avatarCircle: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: t.colors.accent,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarText: { fontSize: 20, fontWeight: "700", color: "#FFFFFF" },
+  headerRight: { flex: 1 },
+  usernameRow: { flexDirection: "row", alignItems: "center" },
+  username: { fontSize: 20, fontWeight: "700", color: t.colors.text },
+  tagRow: { flexDirection: "row", gap: spacing.xs, marginTop: spacing.xs, flexWrap: "wrap" },
+  tag: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+    backgroundColor: t.colors.border,
+  },
+  tagAccent: { backgroundColor: "#FFF7ED" },
+  tagText: { fontSize: 11, fontWeight: "600", color: t.colors.textMuted },
+
+  // Reputation bar
+  repRow: { marginTop: spacing.md },
+  repLabel: { fontSize: 12, color: t.colors.textMuted, marginBottom: 6 },
+  repBarTrack: {
+    height: 6,
+    backgroundColor: t.colors.border,
+    borderRadius: 3,
+    overflow: "hidden",
+  },
+  repBarFill: {
+    height: "100%",
+    backgroundColor: t.colors.accent,
+    borderRadius: 3,
+  },
+
+  // Stats card (horizontal row)
+  statsCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: t.colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+  },
+  statBox: { flex: 1, alignItems: "center" },
+  statValue: {
+    fontSize: 22,
+    fontWeight: "800",
+    color: t.colors.text,
+  },
+  statLabel: {
+    fontSize: 11,
+    color: t.colors.textMuted,
+    marginTop: 2,
+  },
+  statDivider: {
+    width: 1,
+    height: 36,
+    backgroundColor: t.colors.border,
+  },
+
+  // Tips received card (S26-T2)
+  tipsCard: {
+    backgroundColor: t.colors.surface,
+    borderRadius: radius.lg,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    alignItems: "center",
+  },
+  tipsText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: t.colors.textMuted,
+  },
+
+  // Share portfolio button (S26-T4)
+  sharePortfolioBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: t.colors.surface,
+    borderRadius: radius.lg,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    borderWidth: 1,
+    borderColor: t.colors.border,
+  },
+  sharePortfolioBtnPressed: { opacity: 0.65 },
+  sharePortfolioBtnLabel: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: t.colors.accent,
+  },
+
+  // Calibration scorecard link row
+  calibrationRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: t.colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+  },
+  calibrationRowPressed: { opacity: 0.6 },
+  calibrationText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: t.colors.accent,
+  },
+  calibrationChevron: {
+    fontSize: 20,
+    color: t.colors.textMuted,
+  },
+
+  // Generic card
+  card: {
+    backgroundColor: t.colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+  },
+  sectionTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: t.colors.text,
+    marginBottom: spacing.sm,
+  },
+  emptyText: {
+    fontSize: 13,
+    color: t.colors.textMuted,
+    paddingVertical: spacing.sm,
+  },
+
+  // Badges
+  badgeShelf: { gap: spacing.sm, paddingVertical: spacing.xs },
+  badgePill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.pill,
+  },
+  badgePillEmoji: { fontSize: 14 },
+  badgePillLabel: { fontSize: 12, fontWeight: "600" },
+
+  // Category breakdown
+  catBreakRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: spacing.sm,
+    gap: spacing.sm,
+  },
+  catBreakLabel: {
+    width: 68,
+    fontSize: 12,
+    fontWeight: "600",
+    color: t.colors.textMuted,
+  },
+  catBreakBarTrack: {
+    flex: 1,
+    height: 6,
+    backgroundColor: t.colors.border,
+    borderRadius: 3,
+    overflow: "hidden",
+  },
+  catBreakBarFill: {
+    height: "100%",
+    backgroundColor: t.colors.accent,
+    borderRadius: 3,
+  },
+  catBreakPct: {
+    width: 36,
+    fontSize: 12,
+    fontWeight: "700",
+    color: t.colors.text,
+    textAlign: "right",
+  },
+
+  // Market rows
+  marketRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: t.colors.border,
+  },
+  marketRowPressed: { opacity: 0.65 },
+  marketTitle: {
+    fontSize: 14,
+    color: t.colors.text,
+    fontWeight: "500",
+    lineHeight: 20,
+  },
+  statusPill: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+  },
+  statusPillText: { fontSize: 11, fontWeight: "600" },
+
+  // Error / empty states
+  errorTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: t.colors.text,
+    textAlign: "center",
+  },
+  errorSubtitle: {
+    fontSize: 14,
+    color: t.colors.textMuted,
+    textAlign: "center",
+    marginTop: spacing.sm,
+    lineHeight: 20,
+  },
+  retryBtn: {
+    marginTop: spacing.lg,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: t.colors.accent,
+  },
+  backBtn: {
+    backgroundColor: t.colors.surface,
+    borderWidth: 1,
+    borderColor: t.colors.border,
+  },
+  retryLabel: {
+    color: "#FFFFFF",
+    fontWeight: "700",
+    fontSize: 14,
+    textAlign: "center",
+  },
+  emptyCard: {
+    backgroundColor: t.colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.xl,
+    alignItems: "center",
+  },
+  emptyCardText: {
+    fontSize: 14,
+    color: t.colors.textMuted,
+    textAlign: "center",
+    lineHeight: 20,
+  },
+
+  // Recent Calls (S30-T3)
+  recentCallRow: {
+    paddingVertical: spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: t.colors.border,
+  },
+  recentCallTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: t.colors.text,
+    lineHeight: 20,
+    marginBottom: spacing.xs,
+  },
+  recentCallChips: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.xs,
+    marginBottom: spacing.xs,
+  },
+  chip: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+  },
+  chipText: {
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  upvoteChip: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+    backgroundColor: "#EFF6FF",
+  },
+  upvoteChipText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#1D4ED8",
+  },
+  recentCallReasoning: {
+    fontSize: 13,
+    color: t.colors.textMuted,
+    lineHeight: 18,
+  },
+
+  // Follow button
+  followRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: spacing.md,
+    marginBottom: spacing.xs,
+  },
+  followerCountText: {
+    fontSize: 13,
+    color: t.colors.textMuted,
+    fontWeight: "500",
+  },
+  followBtn: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.xs + 2,
+    borderRadius: radius.pill,
+    minWidth: 90,
+    alignItems: "center",
+  },
+  followBtnFilled: {
+    backgroundColor: t.colors.accent,
+  },
+  followBtnOutlined: {
+    backgroundColor: "transparent",
+    borderWidth: 1.5,
+    borderColor: t.colors.accent,
+  },
+  followBtnPressed: {
+    opacity: 0.65,
+  },
+  followBtnLabel: {
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  followBtnLabelFilled: {
+    color: "#FFFFFF",
+  },
+  followBtnLabelOutlined: {
+    color: t.colors.accent,
+  },
+});
+
 // ── Sub-components ────────────────────────────────────────────────────────────
 
 function StatBox({ label, value }: { label: string; value: string }) {
+  const styles = useThemedStyles(makeStyles);
   return (
     <View style={styles.statBox}>
       <Text style={styles.statValue}>{value}</Text>
@@ -81,6 +445,7 @@ function StatBox({ label, value }: { label: string; value: string }) {
 }
 
 function Tag({ label, accent }: { label: string; accent?: boolean }) {
+  const styles = useThemedStyles(makeStyles);
   return (
     <View style={[styles.tag, accent === true && styles.tagAccent]}>
       <Text style={styles.tagText}>{label}</Text>
@@ -93,6 +458,7 @@ function BadgesSection({
 }: {
   badges: NonNullable<ApiUserProfile["badges"]>;
 }) {
+  const styles = useThemedStyles(makeStyles);
   return (
     <View style={styles.card}>
       <Text style={styles.sectionTitle}>Badges</Text>
@@ -125,6 +491,7 @@ function BadgesSection({
 }
 
 function CategoryBreakdown({ categoryStats }: { categoryStats: ApiCategoryStat[] }) {
+  const styles = useThemedStyles(makeStyles);
   const top3 = [...categoryStats]
     .sort((a, b) => b.accuracyScore - a.accuracyScore)
     .slice(0, 3);
@@ -158,6 +525,8 @@ function CreatedMarketsSection({
   markets: Array<{ id: string; title: string; status: AppMarketStatus }>;
 }) {
   const router = useRouter();
+  const styles = useThemedStyles(makeStyles);
+  const { colors } = useTheme();
 
   return (
     <View style={styles.card}>
@@ -165,7 +534,7 @@ function CreatedMarketsSection({
         Recent Markets
       </Text>
       {markets.map((m) => {
-        const meta = getMarketStatusMeta(m.status);
+        const meta = getMarketStatusMeta(m.status, colors.textMuted as string, colors.background as string);
         return (
           <Pressable
             key={m.id}
@@ -215,6 +584,7 @@ function RecentCallsSection({
   recentCalls: ProfileRecentCall[];
 }) {
   const router = useRouter();
+  const styles = useThemedStyles(makeStyles);
 
   return (
     <View style={styles.card}>
@@ -294,6 +664,7 @@ function FollowButton({
   initialFollowing: boolean;
   initialFollowerCount: number;
 }) {
+  const styles = useThemedStyles(makeStyles);
   const [following, setFollowing] = useState(initialFollowing);
   const [followerCount, setFollowerCount] = useState(initialFollowerCount);
   const [loading, setLoading] = useState(false);
@@ -358,6 +729,8 @@ export default function UserProfileScreen() {
   const { username } = useLocalSearchParams<{ username: string }>();
   const router = useRouter();
   const { session } = useSession();
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
 
   const fetcher = useCallback(
     () => mobileApi.getUserProfile(username),
@@ -608,361 +981,3 @@ export default function UserProfileScreen() {
     </>
   );
 }
-
-// ── Styles ────────────────────────────────────────────────────────────────────
-
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.background as string },
-  scrollContent: {
-    padding: spacing.xl,
-    paddingBottom: spacing["2xl"],
-    gap: spacing.lg,
-  },
-  center: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    padding: spacing.xl,
-    backgroundColor: colors.background as string,
-  },
-
-  // Header card
-  headerCard: {
-    backgroundColor: colors.surface as string,
-    borderRadius: radius.lg,
-    padding: spacing.lg,
-  },
-  headerTop: { flexDirection: "row", alignItems: "center", gap: spacing.md },
-  avatarCircle: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: colors.accent as string,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  avatarText: { fontSize: 20, fontWeight: "700", color: "#FFFFFF" },
-  headerRight: { flex: 1 },
-  usernameRow: { flexDirection: "row", alignItems: "center" },
-  username: { fontSize: 20, fontWeight: "700", color: colors.text as string },
-  tagRow: { flexDirection: "row", gap: spacing.xs, marginTop: spacing.xs, flexWrap: "wrap" },
-  tag: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
-    borderRadius: radius.pill,
-    backgroundColor: colors.border as string,
-  },
-  tagAccent: { backgroundColor: "#FFF7ED" },
-  tagText: { fontSize: 11, fontWeight: "600", color: colors.textMuted as string },
-
-  // Reputation bar
-  repRow: { marginTop: spacing.md },
-  repLabel: { fontSize: 12, color: colors.textMuted as string, marginBottom: 6 },
-  repBarTrack: {
-    height: 6,
-    backgroundColor: colors.border as string,
-    borderRadius: 3,
-    overflow: "hidden",
-  },
-  repBarFill: {
-    height: "100%",
-    backgroundColor: colors.accent as string,
-    borderRadius: 3,
-  },
-
-  // Stats card (horizontal row)
-  statsCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: colors.surface as string,
-    borderRadius: radius.lg,
-    padding: spacing.lg,
-  },
-  statBox: { flex: 1, alignItems: "center" },
-  statValue: {
-    fontSize: 22,
-    fontWeight: "800",
-    color: colors.text as string,
-  },
-  statLabel: {
-    fontSize: 11,
-    color: colors.textMuted as string,
-    marginTop: 2,
-  },
-  statDivider: {
-    width: 1,
-    height: 36,
-    backgroundColor: colors.border as string,
-  },
-
-  // Tips received card (S26-T2)
-  tipsCard: {
-    backgroundColor: colors.surface as string,
-    borderRadius: radius.lg,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.lg,
-    alignItems: "center",
-  },
-  tipsText: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: colors.textMuted as string,
-  },
-
-  // Share portfolio button (S26-T4)
-  sharePortfolioBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.surface as string,
-    borderRadius: radius.lg,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.lg,
-    borderWidth: 1,
-    borderColor: colors.border as string,
-  },
-  sharePortfolioBtnPressed: { opacity: 0.65 },
-  sharePortfolioBtnLabel: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: colors.accent as string,
-  },
-
-  // Calibration scorecard link row
-  calibrationRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: colors.surface as string,
-    borderRadius: radius.lg,
-    padding: spacing.lg,
-  },
-  calibrationRowPressed: { opacity: 0.6 },
-  calibrationText: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: colors.accent as string,
-  },
-  calibrationChevron: {
-    fontSize: 20,
-    color: colors.textMuted as string,
-  },
-
-  // Generic card
-  card: {
-    backgroundColor: colors.surface as string,
-    borderRadius: radius.lg,
-    padding: spacing.lg,
-  },
-  sectionTitle: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: colors.text as string,
-    marginBottom: spacing.sm,
-  },
-  emptyText: {
-    fontSize: 13,
-    color: colors.textMuted as string,
-    paddingVertical: spacing.sm,
-  },
-
-  // Badges
-  badgeShelf: { gap: spacing.sm, paddingVertical: spacing.xs },
-  badgePill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-    borderRadius: radius.pill,
-  },
-  badgePillEmoji: { fontSize: 14 },
-  badgePillLabel: { fontSize: 12, fontWeight: "600" },
-
-  // Category breakdown
-  catBreakRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: spacing.sm,
-    gap: spacing.sm,
-  },
-  catBreakLabel: {
-    width: 68,
-    fontSize: 12,
-    fontWeight: "600",
-    color: colors.textMuted as string,
-  },
-  catBreakBarTrack: {
-    flex: 1,
-    height: 6,
-    backgroundColor: colors.border as string,
-    borderRadius: 3,
-    overflow: "hidden",
-  },
-  catBreakBarFill: {
-    height: "100%",
-    backgroundColor: colors.accent as string,
-    borderRadius: 3,
-  },
-  catBreakPct: {
-    width: 36,
-    fontSize: 12,
-    fontWeight: "700",
-    color: colors.text as string,
-    textAlign: "right",
-  },
-
-  // Market rows
-  marketRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: spacing.sm,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border as string,
-  },
-  marketRowPressed: { opacity: 0.65 },
-  marketTitle: {
-    fontSize: 14,
-    color: colors.text as string,
-    fontWeight: "500",
-    lineHeight: 20,
-  },
-  statusPill: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
-    borderRadius: radius.pill,
-  },
-  statusPillText: { fontSize: 11, fontWeight: "600" },
-
-  // Error / empty states
-  errorTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: colors.text as string,
-    textAlign: "center",
-  },
-  errorSubtitle: {
-    fontSize: 14,
-    color: colors.textMuted as string,
-    textAlign: "center",
-    marginTop: spacing.sm,
-    lineHeight: 20,
-  },
-  retryBtn: {
-    marginTop: spacing.lg,
-    paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.md,
-    borderRadius: radius.md,
-    backgroundColor: colors.accent as string,
-  },
-  backBtn: {
-    backgroundColor: colors.surface as string,
-    borderWidth: 1,
-    borderColor: colors.border as string,
-  },
-  retryLabel: {
-    color: "#FFFFFF",
-    fontWeight: "700",
-    fontSize: 14,
-    textAlign: "center",
-  },
-  emptyCard: {
-    backgroundColor: colors.surface as string,
-    borderRadius: radius.lg,
-    padding: spacing.xl,
-    alignItems: "center",
-  },
-  emptyCardText: {
-    fontSize: 14,
-    color: colors.textMuted as string,
-    textAlign: "center",
-    lineHeight: 20,
-  },
-
-  // Recent Calls (S30-T3)
-  recentCallRow: {
-    paddingVertical: spacing.md,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border as string,
-  },
-  recentCallTitle: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: colors.text as string,
-    lineHeight: 20,
-    marginBottom: spacing.xs,
-  },
-  recentCallChips: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.xs,
-    marginBottom: spacing.xs,
-  },
-  chip: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
-    borderRadius: radius.pill,
-  },
-  chipText: {
-    fontSize: 11,
-    fontWeight: "700",
-  },
-  upvoteChip: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
-    borderRadius: radius.pill,
-    backgroundColor: "#EFF6FF",
-  },
-  upvoteChipText: {
-    fontSize: 11,
-    fontWeight: "600",
-    color: "#1D4ED8",
-  },
-  recentCallReasoning: {
-    fontSize: 13,
-    color: colors.textMuted as string,
-    lineHeight: 18,
-  },
-
-  // Follow button
-  followRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginTop: spacing.md,
-    marginBottom: spacing.xs,
-  },
-  followerCountText: {
-    fontSize: 13,
-    color: colors.textMuted as string,
-    fontWeight: "500",
-  },
-  followBtn: {
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.xs + 2,
-    borderRadius: radius.pill,
-    minWidth: 90,
-    alignItems: "center",
-  },
-  followBtnFilled: {
-    backgroundColor: colors.accent as string,
-  },
-  followBtnOutlined: {
-    backgroundColor: "transparent",
-    borderWidth: 1.5,
-    borderColor: colors.accent as string,
-  },
-  followBtnPressed: {
-    opacity: 0.65,
-  },
-  followBtnLabel: {
-    fontSize: 14,
-    fontWeight: "700",
-  },
-  followBtnLabelFilled: {
-    color: "#FFFFFF",
-  },
-  followBtnLabelOutlined: {
-    color: colors.accent as string,
-  },
-});

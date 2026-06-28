@@ -21,15 +21,18 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
-import { colors, radius, shadows, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
 import { formatRelativeTime } from "@predict-future/utils";
 import type { ApiGroupJoinRequest } from "@predict-future/types";
 
 import { mobileApi } from "@/lib/api";
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 // ── Status badge ──────────────────────────────────────────────────────
 
 function StatusBadge({ status }: { status: "PENDING" | "APPROVED" | "REJECTED" }) {
+  const styles = useThemedStyles(makeStyles);
+  // Status colours are intentional semantic colours, kept hardcoded
   const cfg = {
     PENDING: { bg: "#DBEAFE", text: "#1D4ED8", label: "Pending" },
     APPROVED: { bg: "#DCFCE7", text: "#15803D", label: "Approved" },
@@ -43,10 +46,100 @@ function StatusBadge({ status }: { status: "PENDING" | "APPROVED" | "REJECTED" }
   );
 }
 
+// ── Style factory ─────────────────────────────────────────────────────
+
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
+  screen: {
+    flex: 1,
+    backgroundColor: t.colors.background
+  },
+  listContent: {
+    padding: spacing.md,
+    paddingBottom: 40
+  },
+  centerState: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: spacing.xl,
+    gap: spacing.md,
+    minHeight: 200
+  },
+  errorText: {
+    fontSize: 14,
+    color: t.colors.danger,
+    textAlign: "center"
+  },
+  emptyText: {
+    fontSize: 14,
+    color: t.colors.textMuted,
+    fontStyle: "italic"
+  },
+
+  // Request row
+  requestRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: t.colors.surface,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginBottom: spacing.xs,
+    gap: spacing.md,
+    ...t.shadows.card
+  },
+  groupAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: radius.md,
+    backgroundColor: t.colors.accent + "20",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0
+  },
+  groupAvatarLetter: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: t.colors.accent
+  },
+  requestInfo: {
+    flex: 1,
+    gap: 2
+  },
+  groupName: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: t.colors.text
+  },
+  requestedAt: {
+    fontSize: 11,
+    color: t.colors.textMuted
+  },
+  decisionNote: {
+    fontSize: 11,
+    color: t.colors.textMuted,
+    fontStyle: "italic",
+    marginTop: 2
+  },
+
+  // Status badge
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 100,
+    flexShrink: 0
+  },
+  statusBadgeText: {
+    fontSize: 11,
+    fontWeight: "700"
+  }
+});
+
 // ── Screen ────────────────────────────────────────────────────────────
 
 export default function MyJoinRequestsScreen() {
   const router = useRouter();
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const [requests, setRequests] = useState<ApiGroupJoinRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -134,91 +227,3 @@ export default function MyJoinRequestsScreen() {
     </>
   );
 }
-
-// ── Styles ─────────────────────────────────────────────────────────────
-
-const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: colors.background
-  },
-  listContent: {
-    padding: spacing.md,
-    paddingBottom: 40
-  },
-  centerState: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    padding: spacing.xl,
-    gap: spacing.md,
-    minHeight: 200
-  },
-  errorText: {
-    fontSize: 14,
-    color: colors.danger,
-    textAlign: "center"
-  },
-  emptyText: {
-    fontSize: 14,
-    color: colors.textMuted,
-    fontStyle: "italic"
-  },
-
-  // Request row
-  requestRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    padding: spacing.md,
-    marginBottom: spacing.xs,
-    gap: spacing.md,
-    ...shadows.card
-  },
-  groupAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: radius.md,
-    backgroundColor: colors.accent + "20",
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0
-  },
-  groupAvatarLetter: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: colors.accent
-  },
-  requestInfo: {
-    flex: 1,
-    gap: 2
-  },
-  groupName: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: colors.text
-  },
-  requestedAt: {
-    fontSize: 11,
-    color: colors.textMuted
-  },
-  decisionNote: {
-    fontSize: 11,
-    color: colors.textMuted,
-    fontStyle: "italic",
-    marginTop: 2
-  },
-
-  // Status badge
-  statusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 100,
-    flexShrink: 0
-  },
-  statusBadgeText: {
-    fontSize: 11,
-    fontWeight: "700"
-  }
-});

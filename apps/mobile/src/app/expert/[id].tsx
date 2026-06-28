@@ -12,7 +12,8 @@ import {
 } from "react-native";
 
 import type { ApiExpertCall, ApiExpertProfile } from "@predict-future/types";
-import { colors, radius, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 import { mobileApi } from "@/lib/api";
 import { withRetry } from "@/lib/retry";
@@ -46,8 +47,116 @@ const RESOLUTION_COLOR: Record<string, string> = {
   NOT_GRADED: "#9ca3af",
 };
 
+const makeExpertProfileStyles = (t: ThemeContextValue) => StyleSheet.create({
+  center: { flex: 1, alignItems: "center", justifyContent: "center" },
+  errorText: { color: "#dc2626", fontSize: 15, padding: spacing.lg, textAlign: "center" },
+  headerSection: { padding: spacing.lg },
+  avatarRow: { flexDirection: "row", gap: spacing.md, marginBottom: spacing.lg, alignItems: "flex-start" },
+  avatar: { width: 56, height: 56, borderRadius: 28 },
+  avatarFallback: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarInitials: { fontSize: 18, fontWeight: "800", color: "#fff" },
+  nameBlock: { flex: 1, gap: 4 },
+  nameRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  expertName: { fontSize: 18, fontWeight: "800", color: t.colors.text, flexShrink: 1 },
+  verifiedInlineBadge: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: "#2563eb",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  verifiedInlineText: { fontSize: 9, fontWeight: "800", color: "#fff", lineHeight: 14 },
+  orgName: { fontSize: 13, color: t.colors.textMuted },
+  badgeRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 4 },
+  verifiedBadge: {
+    backgroundColor: "#eff6ff",
+    borderRadius: radius.pill,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  verifiedText: { fontSize: 11, fontWeight: "700", color: "#2563eb" },
+  credBadge: { borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 2 },
+  credBadgeText: { fontSize: 11, fontWeight: "700" },
+  provisionalBadge: {
+    backgroundColor: t.colors.surfaceMuted,
+    borderRadius: radius.pill,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  provisionalText: { fontSize: 10, color: t.colors.textMuted, fontStyle: "italic" },
+  statsRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginBottom: spacing.lg,
+  },
+  statTile: {
+    flex: 1,
+    backgroundColor: t.colors.surface,
+    borderRadius: radius.md,
+    padding: spacing.sm,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: t.colors.border,
+  },
+  statValue: { fontSize: 18, fontWeight: "800", color: t.colors.text },
+  statLabel: { fontSize: 10, color: t.colors.textMuted, marginTop: 2 },
+  sectionTitle: { fontSize: 14, fontWeight: "800", color: t.colors.text, marginBottom: spacing.sm },
+  callRow: {
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.sm,
+    padding: spacing.md,
+    backgroundColor: t.colors.surface,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: t.colors.border,
+  },
+  callStoryHeadline: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: t.colors.accent,
+    marginBottom: 4,
+  },
+  callQuote: { fontSize: 13, color: t.colors.text, lineHeight: 18, marginBottom: 6 },
+  callMeta: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 4 },
+  badge: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: radius.pill },
+  badgeText: { fontSize: 10, fontWeight: "700" },
+  crowdNote: { fontSize: 10, color: t.colors.textMuted, alignSelf: "center" },
+  callFooter: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  callDate: { fontSize: 10, color: t.colors.textMuted },
+  callReadMore: { fontSize: 10, fontWeight: "700", color: t.colors.accent },
+  emptyText: { textAlign: "center", color: t.colors.textMuted, padding: spacing.lg },
+  filterRow: { marginBottom: spacing.md },
+  filterChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: t.colors.border,
+    backgroundColor: t.colors.surface,
+  },
+  filterChipText: { fontSize: 12, fontWeight: "700", color: t.colors.textMuted },
+  resolutionNote: {
+    borderLeftWidth: 2,
+    paddingLeft: 8,
+    marginBottom: 6,
+    marginTop: 2,
+  },
+  resolutionNoteText: { fontSize: 11, color: t.colors.textMuted, fontStyle: "italic", lineHeight: 16 },
+  loadMoreBtn: { margin: spacing.lg, alignItems: "center" },
+  loadMoreText: { fontSize: 13, fontWeight: "700", color: t.colors.accent },
+});
+
 function CallRow({ call }: { call: ApiExpertCall }) {
   const router = useRouter();
+  const expertProfileStyles = useThemedStyles(makeExpertProfileStyles);
   const dirColor = DIRECTION_COLOR[call.direction] ?? "#6b7280";
   const dirLabel = DIRECTION_LABEL[call.direction] ?? call.direction;
   const resColor = RESOLUTION_COLOR[call.resolutionStatus] ?? "#6b7280";
@@ -105,6 +214,8 @@ function CallRow({ call }: { call: ApiExpertCall }) {
 export default function ExpertProfileScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const { colors } = useTheme();
+  const expertProfileStyles = useThemedStyles(makeExpertProfileStyles);
 
   const [profile, setProfile] = useState<ApiExpertProfile | null>(null);
   const [calls, setCalls] = useState<ApiExpertCall[]>([]);
@@ -308,110 +419,3 @@ export default function ExpertProfileScreen() {
     </View>
   );
 }
-
-const expertProfileStyles = StyleSheet.create({
-  center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  errorText: { color: "#dc2626", fontSize: 15, padding: spacing.lg, textAlign: "center" },
-  headerSection: { padding: spacing.lg },
-  avatarRow: { flexDirection: "row", gap: spacing.md, marginBottom: spacing.lg, alignItems: "flex-start" },
-  avatar: { width: 56, height: 56, borderRadius: 28 },
-  avatarFallback: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  avatarInitials: { fontSize: 18, fontWeight: "800", color: "#fff" },
-  nameBlock: { flex: 1, gap: 4 },
-  nameRow: { flexDirection: "row", alignItems: "center", gap: 6 },
-  expertName: { fontSize: 18, fontWeight: "800", color: colors.text, flexShrink: 1 },
-  verifiedInlineBadge: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    backgroundColor: "#2563eb",
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
-  verifiedInlineText: { fontSize: 9, fontWeight: "800", color: "#fff", lineHeight: 14 },
-  orgName: { fontSize: 13, color: colors.textMuted },
-  badgeRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 4 },
-  verifiedBadge: {
-    backgroundColor: "#eff6ff",
-    borderRadius: radius.pill,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-  },
-  verifiedText: { fontSize: 11, fontWeight: "700", color: "#2563eb" },
-  credBadge: { borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 2 },
-  credBadgeText: { fontSize: 11, fontWeight: "700" },
-  provisionalBadge: {
-    backgroundColor: "#f3f4f6",
-    borderRadius: radius.pill,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-  },
-  provisionalText: { fontSize: 10, color: "#6b7280", fontStyle: "italic" },
-  statsRow: {
-    flexDirection: "row",
-    gap: spacing.sm,
-    marginBottom: spacing.lg,
-  },
-  statTile: {
-    flex: 1,
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    padding: spacing.sm,
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  statValue: { fontSize: 18, fontWeight: "800", color: colors.text },
-  statLabel: { fontSize: 10, color: colors.textMuted, marginTop: 2 },
-  sectionTitle: { fontSize: 14, fontWeight: "800", color: colors.text, marginBottom: spacing.sm },
-  callRow: {
-    marginHorizontal: spacing.lg,
-    marginBottom: spacing.sm,
-    padding: spacing.md,
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  callStoryHeadline: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: colors.accent,
-    marginBottom: 4,
-  },
-  callQuote: { fontSize: 13, color: colors.text, lineHeight: 18, marginBottom: 6 },
-  callMeta: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 4 },
-  badge: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: radius.pill },
-  badgeText: { fontSize: 10, fontWeight: "700" },
-  crowdNote: { fontSize: 10, color: colors.textMuted, alignSelf: "center" },
-  callFooter: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  callDate: { fontSize: 10, color: colors.textMuted },
-  callReadMore: { fontSize: 10, fontWeight: "700", color: colors.accent },
-  emptyText: { textAlign: "center", color: colors.textMuted, padding: spacing.lg },
-  filterRow: { marginBottom: spacing.md },
-  filterChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-  },
-  filterChipText: { fontSize: 12, fontWeight: "700", color: colors.textMuted },
-  resolutionNote: {
-    borderLeftWidth: 2,
-    paddingLeft: 8,
-    marginBottom: 6,
-    marginTop: 2,
-  },
-  resolutionNoteText: { fontSize: 11, color: colors.textMuted, fontStyle: "italic", lineHeight: 16 },
-  loadMoreBtn: { margin: spacing.lg, alignItems: "center" },
-  loadMoreText: { fontSize: 13, fontWeight: "700", color: colors.accent },
-});

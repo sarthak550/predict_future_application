@@ -4,7 +4,8 @@ import { Image, Pressable, StyleSheet, Text, View } from "react-native";
 
 import type { ApiNewsFeedItem } from "@predict-future/types";
 import { formatRelativeTime } from "@predict-future/utils";
-import { colors, radius, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 const CATEGORY_COLORS: Record<string, string> = {
   SPORTS: "#14b8a6",
@@ -22,6 +23,9 @@ type Props = {
 };
 
 export function PredictionCard({ item }: Props) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   const market = item.market;
   const catColor = CATEGORY_COLORS[item.category] ?? colors.accent;
 
@@ -102,13 +106,13 @@ export function PredictionCard({ item }: Props) {
   return cardContent;
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   card: {
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderRadius: radius.lg,
     padding: spacing.lg,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
   },
   topRow: {
     flexDirection: "row",
@@ -138,16 +142,16 @@ const styles = StyleSheet.create({
   trendingText: {
     fontSize: 10,
     fontWeight: "700",
-    color: colors.warning,
+    color: t.colors.warning,
   },
   timeText: {
     fontSize: 11,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
   newsHeadline: {
     marginTop: spacing.sm,
     fontSize: 12,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     fontWeight: "500",
   },
   predictionTitle: {
@@ -155,26 +159,26 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: "700",
     lineHeight: 23,
-    color: colors.text,
+    color: t.colors.text,
   },
   noPrediction: {
     marginTop: spacing.xs,
     fontSize: 14,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     fontStyle: "italic",
   },
   barTrack: {
     marginTop: spacing.md,
     height: 6,
     borderRadius: radius.pill,
-    backgroundColor: colors.border,
+    backgroundColor: t.colors.border,
     overflow: "hidden",
     flexDirection: "row",
   },
   barYes: {
     height: "100%",
     borderRadius: radius.pill,
-    backgroundColor: colors.accent,
+    backgroundColor: t.colors.accent,
   },
   oddsRow: {
     marginTop: spacing.xs,
@@ -205,18 +209,18 @@ const styles = StyleSheet.create({
   sourceName: {
     fontSize: 11,
     fontWeight: "600",
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
   volumeText: {
     fontSize: 11,
     fontWeight: "600",
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
   thumbnail: {
     marginTop: spacing.md,
     width: "100%",
     height: 120,
     borderRadius: radius.md,
-    backgroundColor: colors.surfaceMuted,
+    backgroundColor: t.colors.surfaceMuted,
   },
 });

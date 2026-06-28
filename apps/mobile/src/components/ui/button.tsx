@@ -1,6 +1,7 @@
 import { ActivityIndicator, Pressable, StyleSheet, Text, type ViewStyle } from "react-native";
 
-import { colors, radius, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 type Variant = "primary" | "secondary" | "ghost" | "danger" | "accent";
 type Size = "sm" | "md" | "lg";
@@ -15,14 +16,6 @@ type Props = {
   style?: ViewStyle;
 };
 
-const variantStyles: Record<Variant, { bg: string; text: string; border?: string }> = {
-  primary: { bg: colors.text, text: colors.surface },
-  secondary: { bg: "transparent", text: colors.text, border: colors.border },
-  ghost: { bg: "transparent", text: colors.textMuted },
-  danger: { bg: "transparent", text: colors.danger, border: colors.danger },
-  accent: { bg: colors.accent, text: colors.surface },
-};
-
 const sizeStyles: Record<Size, { paddingH: number; paddingV: number; fontSize: number }> = {
   sm: { paddingH: spacing.md, paddingV: spacing.xs + 2, fontSize: 13 },
   md: { paddingH: spacing.xl, paddingV: spacing.md, fontSize: 15 },
@@ -30,8 +23,19 @@ const sizeStyles: Record<Size, { paddingH: number; paddingV: number; fontSize: n
 };
 
 export function Button({ label, onPress, variant = "primary", size = "md", loading, disabled, style }: Props) {
-  const v = variantStyles[variant];
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const s = sizeStyles[size];
+
+  const variantMap: Record<Variant, { bg: string; text: string; border?: string }> = {
+    primary: { bg: colors.text, text: colors.surface },
+    secondary: { bg: "transparent", text: colors.text, border: colors.border },
+    ghost: { bg: "transparent", text: colors.textMuted },
+    danger: { bg: "transparent", text: colors.danger, border: colors.danger },
+    accent: { bg: colors.accent, text: colors.surface },
+  };
+
+  const v = variantMap[variant];
 
   return (
     <Pressable
@@ -59,7 +63,7 @@ export function Button({ label, onPress, variant = "primary", size = "md", loadi
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (_t: ThemeContextValue) => StyleSheet.create({
   base: {
     alignItems: "center",
     justifyContent: "center",

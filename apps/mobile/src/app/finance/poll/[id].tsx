@@ -37,9 +37,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { mobileApi } from "@/lib/api";
 import { useApiQuery } from "@/hooks/useApiQuery";
-import { colors, radius, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
 import { formatRelativeTime } from "@predict-future/utils";
 import type { ApiPollDetail } from "@predict-future/types";
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 type RelatedOpinion = {
   id: string;
@@ -94,8 +95,6 @@ function countdown(target: string): string {
   return hours > 0 ? `in ${hours}h` : "Today";
 }
 
-// ─── Screen ───────────────────────────────────────────────────────────────────
-
 // ─── Adapter: normalise ApiPollDetail into the PollResponse shape ────────────
 
 function pollDetailToResponse(poll: ApiPollDetail): PollResponse {
@@ -130,10 +129,237 @@ function pollDetailToResponse(poll: ApiPollDetail): PollResponse {
   };
 }
 
+// ─── Styles ──────────────────────────────────────────────────────────────────
+
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
+  screen: { flex: 1, backgroundColor: t.colors.background },
+  center: { flex: 1, justifyContent: "center", alignItems: "center", padding: spacing.xl },
+  topBar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
+  backBtn: { padding: 4 },
+  topBarTitle: { fontSize: 16, fontWeight: "700", color: t.colors.text },
+  errorText: { color: t.colors.textMuted, marginBottom: spacing.md, textAlign: "center" },
+  retryBtn: { backgroundColor: t.colors.accent, paddingHorizontal: 18, paddingVertical: 8, borderRadius: 8 },
+  retryBtnText: { color: "#fff", fontWeight: "700" },
+
+  headerCard: {
+    backgroundColor: "rgba(245, 158, 11, 0.08)",
+    borderLeftWidth: 4,
+    borderLeftColor: "#f59e0b",
+    marginHorizontal: spacing.md,
+    marginTop: spacing.sm,
+    padding: spacing.lg,
+    borderRadius: radius.lg,
+  },
+  headerMeta: { flexDirection: "row", gap: spacing.sm, marginBottom: spacing.sm },
+  typeChip: { backgroundColor: "#f59e0b", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4 },
+  typeChipText: { color: "#fff", fontSize: 11, fontWeight: "800", letterSpacing: 0.5 },
+  cdChip: { backgroundColor: "rgba(146, 64, 14, 0.15)", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4 },
+  cdChipText: { color: "#92400e", fontSize: 11, fontWeight: "700" },
+  cdChipClosed: { backgroundColor: "rgba(107, 114, 128, 0.15)" },
+  cdChipTextClosed: { color: "#6b7280" },
+  title: { fontSize: 20, fontWeight: "800", color: t.colors.text, lineHeight: 26 },
+  description: { fontSize: 14, color: t.colors.textMuted, marginTop: 8, lineHeight: 20 },
+  metaLine: { fontSize: 12, color: t.colors.textMuted, marginTop: 12, fontWeight: "600" },
+
+  // S61-T2: EMI impact box on header card
+  emiBox: {
+    marginTop: 12,
+    backgroundColor: "rgba(220, 38, 38, 0.06)",
+    borderLeftWidth: 3,
+    borderLeftColor: "#DC2626",
+    borderRadius: 6,
+    padding: 10,
+  },
+  emiLabel: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: "#991B1B",
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
+    marginBottom: 3,
+  },
+  emiText: {
+    fontSize: 13,
+    color: t.colors.text,
+    lineHeight: 18,
+  },
+
+  // S61-T5: Sister-market CTA card
+  sisterCta: {
+    marginHorizontal: spacing.md,
+    marginTop: spacing.md,
+    backgroundColor: t.colors.surfaceMuted,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
+    padding: spacing.md,
+  },
+  sisterCtaInner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  sisterCtaLabel: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: "#1D4ED8",
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+    marginBottom: 2,
+  },
+  sisterCtaTitle: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#1E3A8A",
+  },
+  sisterCtaSub: {
+    fontSize: 12,
+    color: "#3B82F6",
+    marginTop: 2,
+    lineHeight: 17,
+  },
+  sisterCtaArrow: {
+    fontSize: 28,
+    color: "#3B82F6",
+    fontWeight: "600",
+    lineHeight: 32,
+  },
+
+  card: {
+    backgroundColor: t.colors.surface,
+    marginHorizontal: spacing.md,
+    marginTop: spacing.md,
+    padding: spacing.lg,
+    borderRadius: radius.lg,
+  },
+  sectionLabel: { fontSize: 11, fontWeight: "800", letterSpacing: 0.5, color: t.colors.textMuted, textTransform: "uppercase", marginBottom: 8 },
+  helperLine: { fontSize: 12, color: t.colors.textMuted, marginBottom: 12, lineHeight: 17 },
+  consensusEmpty: { fontSize: 13, color: t.colors.textMuted, fontStyle: "italic" },
+
+  // S61-T2: You vs the crowd note
+  youVsCrowdNote: {
+    fontSize: 12,
+    color: "#4338CA",
+    marginBottom: 10,
+    fontStyle: "italic",
+    lineHeight: 17,
+  },
+  participantNote: {
+    fontSize: 11,
+    color: t.colors.textMuted,
+    marginTop: 8,
+  },
+
+  mcRow: { marginBottom: spacing.sm },
+  mcRowHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 },
+  mcLabel: { fontSize: 13, color: t.colors.text, flex: 1, marginRight: 4 },
+  mcLabelMine: { fontWeight: "700", color: "#92400e" },
+  mcPct: { fontSize: 13, fontWeight: "700", color: t.colors.text, minWidth: 36, textAlign: "right" },
+  mcPctMine: { color: "#92400e" },
+  mcBar: { height: 6, backgroundColor: t.colors.surfaceMuted, borderRadius: 3, overflow: "hidden" },
+  mcBarFill: { height: "100%", backgroundColor: t.colors.accent, borderRadius: 3 },
+  mcBarFillMine: { backgroundColor: "#f59e0b" },
+  mcBarFillCrowd: { backgroundColor: "#6366F1" },
+
+  // Your pick + crowd fave inline badges
+  yourPickBadge: {
+    backgroundColor: "#FEF3C7",
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+  },
+  yourPickBadgeText: {
+    fontSize: 9,
+    fontWeight: "800",
+    color: "#92400e",
+    letterSpacing: 0.2,
+  },
+  crowdFaveBadge: {
+    backgroundColor: "#EEF2FF",
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+  },
+  crowdFaveBadgeText: {
+    fontSize: 9,
+    fontWeight: "800",
+    color: "#4338CA",
+    letterSpacing: 0.2,
+  },
+
+  sideTag: { alignSelf: "flex-start", paddingHorizontal: 14, paddingVertical: 6, borderRadius: 999 },
+  sideTagYes: { backgroundColor: "#dcfce7" },
+  sideTagNo: { backgroundColor: "#fee2e2" },
+  sideTagText: { fontSize: 13, fontWeight: "800", letterSpacing: 0.5, color: t.colors.text },
+
+  opinionRow: { paddingVertical: spacing.md, borderBottomWidth: 1, borderBottomColor: t.colors.border },
+  opinionHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  opinionExpert: { fontSize: 14, fontWeight: "700", color: t.colors.text, flex: 1, marginRight: 8 },
+  opinionOrg: { fontSize: 11, color: t.colors.textMuted, marginTop: 2 },
+  opinionQuote: { fontSize: 13, color: t.colors.text, fontStyle: "italic", marginTop: 6, lineHeight: 18 },
+  opinionMeta: { fontSize: 11, color: t.colors.textMuted, marginTop: 6 },
+  directionPill: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 4 },
+  directionText: { fontSize: 10, fontWeight: "800", color: "#fff", letterSpacing: 0.5 },
+  dirBullish: { backgroundColor: "#16a34a" },
+  dirBearish: { backgroundColor: "#dc2626" },
+  dirNeutral: { backgroundColor: "#6b7280" },
+
+  stickyBar: {
+    position: "absolute", left: 0, right: 0, bottom: 0,
+    backgroundColor: t.colors.surface, borderTopWidth: 1, borderTopColor: t.colors.border,
+    paddingHorizontal: spacing.md, paddingTop: 10,
+  },
+  voteBtn: { backgroundColor: t.colors.accent, paddingVertical: 14, borderRadius: radius.md, alignItems: "center" },
+  voteBtnText: { color: "#fff", fontSize: 16, fontWeight: "800", letterSpacing: 0.3 },
+  votedBadge: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 14, backgroundColor: "rgba(34, 197, 94, 0.1)", borderRadius: radius.md },
+  votedBadgeText: { color: t.colors.accent, fontSize: 14, fontWeight: "700" },
+
+  sheetBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)" },
+  sheet: { position: "absolute", left: 0, right: 0, bottom: 0, backgroundColor: t.colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: spacing.lg },
+  sheetHandle: { width: 40, height: 4, borderRadius: 2, backgroundColor: t.colors.border, alignSelf: "center", marginBottom: spacing.md },
+  sheetHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 },
+  sheetTitle: { fontSize: 18, fontWeight: "800", color: t.colors.text },
+  sheetClose: { color: t.colors.accent, fontSize: 14, fontWeight: "600" },
+  sheetSub: { fontSize: 13, color: t.colors.textMuted, marginBottom: spacing.md },
+
+  // S61-T2: EMI line inside the vote sheet
+  sheetEmiBox: {
+    backgroundColor: "rgba(220, 38, 38, 0.06)",
+    borderLeftWidth: 3,
+    borderLeftColor: "#DC2626",
+    borderRadius: 6,
+    padding: 10,
+    marginBottom: spacing.md,
+  },
+  sheetEmiText: {
+    fontSize: 12,
+    color: t.colors.text,
+    lineHeight: 17,
+  },
+
+  sideRow: { flexDirection: "row", gap: spacing.md, marginBottom: spacing.md },
+  sideBtn: { flex: 1, paddingVertical: 18, borderRadius: radius.md, alignItems: "center", borderWidth: 1 },
+  sideYes: { backgroundColor: "#f0fdf4", borderColor: "#86efac" },
+  sideYesActive: { backgroundColor: "#16a34a", borderColor: "#16a34a" },
+  sideNo: { backgroundColor: "#fef2f2", borderColor: "#fca5a5" },
+  sideNoActive: { backgroundColor: "#dc2626", borderColor: "#dc2626" },
+  sideBtnText: { fontSize: 18, fontWeight: "800", color: t.colors.text },
+  mcChoice: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 14, paddingHorizontal: 14, borderRadius: radius.md, marginBottom: 8, borderWidth: 1, borderColor: t.colors.border },
+  mcChoiceSelected: { backgroundColor: "rgba(245, 158, 11, 0.08)", borderColor: "#f59e0b" },
+  mcChoiceText: { fontSize: 14, color: t.colors.text, flex: 1 },
+  mcChoiceTextSelected: { fontWeight: "700" },
+  submitBtn: { backgroundColor: t.colors.accent, paddingVertical: 14, borderRadius: radius.md, alignItems: "center", marginTop: 8 },
+  submitBtnText: { color: "#fff", fontSize: 15, fontWeight: "800" },
+  disclaimer: { fontSize: 11, color: t.colors.textMuted, textAlign: "center", marginTop: 8, lineHeight: 16 },
+  errorLine: { color: "#dc2626", fontSize: 12, marginBottom: 8 },
+});
+
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function PollDetailScreen() {
   const router = useRouter();
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const {
     id,
     // Legacy Market-path params (non-RBI flagship polls)
@@ -359,6 +585,7 @@ export default function PollDetailScreen() {
 // ─── Sister-market CTA (S61-T5) ──────────────────────────────────────────────
 
 function SisterMarketCta({ onPress }: { onPress: () => void }) {
+  const styles = useThemedStyles(makeStyles);
   return (
     <Pressable
       style={({ pressed }) => [styles.sisterCta, pressed && { opacity: 0.8 }]}
@@ -393,6 +620,8 @@ function VoteConsensus({
   userOptionId: string | null;
   hasVoted: boolean;
 }) {
+  const styles = useThemedStyles(makeStyles);
+
   if (!hasVoted) {
     return (
       <View style={styles.card}>
@@ -498,6 +727,7 @@ function VoteConsensus({
 
 function ExpertOpinionsSection({ opinions }: { opinions: RelatedOpinion[] }) {
   const router = useRouter();
+  const styles = useThemedStyles(makeStyles);
 
   if (opinions.length === 0) {
     return (
@@ -575,6 +805,8 @@ function PollVoteSheet({
   onSuccess: () => void;
 }) {
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const [selectedSide, setSelectedSide] = useState<"YES" | "NO" | null>(null);
   // Honour the preselect param from MpcPollPackCard option chip tap.
   const [selectedOptionId, setSelectedOptionId] = useState<string | null>(preselectOptionId);
@@ -691,228 +923,3 @@ function PollVoteSheet({
     </Modal>
   );
 }
-
-// ─── Styles ──────────────────────────────────────────────────────────────────
-
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.background },
-  center: { flex: 1, justifyContent: "center", alignItems: "center", padding: spacing.xl },
-  topBar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
-  backBtn: { padding: 4 },
-  topBarTitle: { fontSize: 16, fontWeight: "700", color: colors.text },
-  errorText: { color: colors.textMuted, marginBottom: spacing.md, textAlign: "center" },
-  retryBtn: { backgroundColor: colors.accent, paddingHorizontal: 18, paddingVertical: 8, borderRadius: 8 },
-  retryBtnText: { color: "#fff", fontWeight: "700" },
-
-  headerCard: {
-    backgroundColor: "rgba(245, 158, 11, 0.08)",
-    borderLeftWidth: 4,
-    borderLeftColor: "#f59e0b",
-    marginHorizontal: spacing.md,
-    marginTop: spacing.sm,
-    padding: spacing.lg,
-    borderRadius: radius.lg,
-  },
-  headerMeta: { flexDirection: "row", gap: spacing.sm, marginBottom: spacing.sm },
-  typeChip: { backgroundColor: "#f59e0b", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4 },
-  typeChipText: { color: "#fff", fontSize: 11, fontWeight: "800", letterSpacing: 0.5 },
-  cdChip: { backgroundColor: "rgba(146, 64, 14, 0.15)", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4 },
-  cdChipText: { color: "#92400e", fontSize: 11, fontWeight: "700" },
-  cdChipClosed: { backgroundColor: "rgba(107, 114, 128, 0.15)" },
-  cdChipTextClosed: { color: "#6b7280" },
-  title: { fontSize: 20, fontWeight: "800", color: colors.text, lineHeight: 26 },
-  description: { fontSize: 14, color: colors.textMuted, marginTop: 8, lineHeight: 20 },
-  metaLine: { fontSize: 12, color: colors.textMuted, marginTop: 12, fontWeight: "600" },
-
-  // S61-T2: EMI impact box on header card
-  emiBox: {
-    marginTop: 12,
-    backgroundColor: "rgba(220, 38, 38, 0.06)",
-    borderLeftWidth: 3,
-    borderLeftColor: "#DC2626",
-    borderRadius: 6,
-    padding: 10,
-  },
-  emiLabel: {
-    fontSize: 10,
-    fontWeight: "800",
-    color: "#991B1B",
-    letterSpacing: 0.4,
-    textTransform: "uppercase",
-    marginBottom: 3,
-  },
-  emiText: {
-    fontSize: 13,
-    color: "#374151",
-    lineHeight: 18,
-  },
-
-  // S61-T5: Sister-market CTA card
-  sisterCta: {
-    marginHorizontal: spacing.md,
-    marginTop: spacing.md,
-    backgroundColor: "#EFF6FF",
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: "#BFDBFE",
-    padding: spacing.md,
-  },
-  sisterCtaInner: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  sisterCtaLabel: {
-    fontSize: 10,
-    fontWeight: "800",
-    color: "#1D4ED8",
-    letterSpacing: 0.5,
-    textTransform: "uppercase",
-    marginBottom: 2,
-  },
-  sisterCtaTitle: {
-    fontSize: 15,
-    fontWeight: "800",
-    color: "#1E3A8A",
-  },
-  sisterCtaSub: {
-    fontSize: 12,
-    color: "#3B82F6",
-    marginTop: 2,
-    lineHeight: 17,
-  },
-  sisterCtaArrow: {
-    fontSize: 28,
-    color: "#3B82F6",
-    fontWeight: "600",
-    lineHeight: 32,
-  },
-
-  card: {
-    backgroundColor: colors.surface,
-    marginHorizontal: spacing.md,
-    marginTop: spacing.md,
-    padding: spacing.lg,
-    borderRadius: radius.lg,
-  },
-  sectionLabel: { fontSize: 11, fontWeight: "800", letterSpacing: 0.5, color: colors.textMuted, textTransform: "uppercase", marginBottom: 8 },
-  helperLine: { fontSize: 12, color: colors.textMuted, marginBottom: 12, lineHeight: 17 },
-  consensusEmpty: { fontSize: 13, color: colors.textMuted, fontStyle: "italic" },
-
-  // S61-T2: You vs the crowd note
-  youVsCrowdNote: {
-    fontSize: 12,
-    color: "#4338CA",
-    marginBottom: 10,
-    fontStyle: "italic",
-    lineHeight: 17,
-  },
-  participantNote: {
-    fontSize: 11,
-    color: colors.textMuted,
-    marginTop: 8,
-  },
-
-  mcRow: { marginBottom: spacing.sm },
-  mcRowHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 },
-  mcLabel: { fontSize: 13, color: colors.text, flex: 1, marginRight: 4 },
-  mcLabelMine: { fontWeight: "700", color: "#92400e" },
-  mcPct: { fontSize: 13, fontWeight: "700", color: colors.text, minWidth: 36, textAlign: "right" },
-  mcPctMine: { color: "#92400e" },
-  mcBar: { height: 6, backgroundColor: "#f3f4f6", borderRadius: 3, overflow: "hidden" },
-  mcBarFill: { height: "100%", backgroundColor: colors.accent, borderRadius: 3 },
-  mcBarFillMine: { backgroundColor: "#f59e0b" },
-  mcBarFillCrowd: { backgroundColor: "#6366F1" },
-
-  // Your pick + crowd fave inline badges
-  yourPickBadge: {
-    backgroundColor: "#FEF3C7",
-    borderRadius: 4,
-    paddingHorizontal: 5,
-    paddingVertical: 1,
-  },
-  yourPickBadgeText: {
-    fontSize: 9,
-    fontWeight: "800",
-    color: "#92400e",
-    letterSpacing: 0.2,
-  },
-  crowdFaveBadge: {
-    backgroundColor: "#EEF2FF",
-    borderRadius: 4,
-    paddingHorizontal: 5,
-    paddingVertical: 1,
-  },
-  crowdFaveBadgeText: {
-    fontSize: 9,
-    fontWeight: "800",
-    color: "#4338CA",
-    letterSpacing: 0.2,
-  },
-
-  sideTag: { alignSelf: "flex-start", paddingHorizontal: 14, paddingVertical: 6, borderRadius: 999 },
-  sideTagYes: { backgroundColor: "#dcfce7" },
-  sideTagNo: { backgroundColor: "#fee2e2" },
-  sideTagText: { fontSize: 13, fontWeight: "800", letterSpacing: 0.5, color: colors.text },
-
-  opinionRow: { paddingVertical: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border },
-  opinionHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  opinionExpert: { fontSize: 14, fontWeight: "700", color: colors.text, flex: 1, marginRight: 8 },
-  opinionOrg: { fontSize: 11, color: colors.textMuted, marginTop: 2 },
-  opinionQuote: { fontSize: 13, color: colors.text, fontStyle: "italic", marginTop: 6, lineHeight: 18 },
-  opinionMeta: { fontSize: 11, color: colors.textMuted, marginTop: 6 },
-  directionPill: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 4 },
-  directionText: { fontSize: 10, fontWeight: "800", color: "#fff", letterSpacing: 0.5 },
-  dirBullish: { backgroundColor: "#16a34a" },
-  dirBearish: { backgroundColor: "#dc2626" },
-  dirNeutral: { backgroundColor: "#6b7280" },
-
-  stickyBar: {
-    position: "absolute", left: 0, right: 0, bottom: 0,
-    backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border,
-    paddingHorizontal: spacing.md, paddingTop: 10,
-  },
-  voteBtn: { backgroundColor: colors.accent, paddingVertical: 14, borderRadius: radius.md, alignItems: "center" },
-  voteBtnText: { color: "#fff", fontSize: 16, fontWeight: "800", letterSpacing: 0.3 },
-  votedBadge: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 14, backgroundColor: "rgba(34, 197, 94, 0.1)", borderRadius: radius.md },
-  votedBadgeText: { color: colors.accent, fontSize: 14, fontWeight: "700" },
-
-  sheetBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)" },
-  sheet: { position: "absolute", left: 0, right: 0, bottom: 0, backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: spacing.lg },
-  sheetHandle: { width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border, alignSelf: "center", marginBottom: spacing.md },
-  sheetHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 },
-  sheetTitle: { fontSize: 18, fontWeight: "800", color: colors.text },
-  sheetClose: { color: colors.accent, fontSize: 14, fontWeight: "600" },
-  sheetSub: { fontSize: 13, color: colors.textMuted, marginBottom: spacing.md },
-
-  // S61-T2: EMI line inside the vote sheet
-  sheetEmiBox: {
-    backgroundColor: "rgba(220, 38, 38, 0.06)",
-    borderLeftWidth: 3,
-    borderLeftColor: "#DC2626",
-    borderRadius: 6,
-    padding: 10,
-    marginBottom: spacing.md,
-  },
-  sheetEmiText: {
-    fontSize: 12,
-    color: "#374151",
-    lineHeight: 17,
-  },
-
-  sideRow: { flexDirection: "row", gap: spacing.md, marginBottom: spacing.md },
-  sideBtn: { flex: 1, paddingVertical: 18, borderRadius: radius.md, alignItems: "center", borderWidth: 1 },
-  sideYes: { backgroundColor: "#f0fdf4", borderColor: "#86efac" },
-  sideYesActive: { backgroundColor: "#16a34a", borderColor: "#16a34a" },
-  sideNo: { backgroundColor: "#fef2f2", borderColor: "#fca5a5" },
-  sideNoActive: { backgroundColor: "#dc2626", borderColor: "#dc2626" },
-  sideBtnText: { fontSize: 18, fontWeight: "800", color: colors.text },
-  mcChoice: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 14, paddingHorizontal: 14, borderRadius: radius.md, marginBottom: 8, borderWidth: 1, borderColor: colors.border },
-  mcChoiceSelected: { backgroundColor: "rgba(245, 158, 11, 0.08)", borderColor: "#f59e0b" },
-  mcChoiceText: { fontSize: 14, color: colors.text, flex: 1 },
-  mcChoiceTextSelected: { fontWeight: "700" },
-  submitBtn: { backgroundColor: colors.accent, paddingVertical: 14, borderRadius: radius.md, alignItems: "center", marginTop: 8 },
-  submitBtnText: { color: "#fff", fontSize: 15, fontWeight: "800" },
-  disclaimer: { fontSize: 11, color: colors.textMuted, textAlign: "center", marginTop: 8, lineHeight: 16 },
-  errorLine: { color: "#dc2626", fontSize: 12, marginBottom: 8 },
-});

@@ -25,9 +25,10 @@ import {
 } from "react-native";
 
 import type { ApiF1Driver, ApiF1SessionDetail, ApiLiveScore } from "@predict-future/types";
-import { colors, radius, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
 
 import { mobileApi } from "@/lib/api";
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 // ─── Tire compound colour palette (official F1 colours) ───────────────────────
 
@@ -71,14 +72,6 @@ function formatGap(seconds: number, position: number): string {
   return `+${seconds.toFixed(3)}s`;
 }
 
-// ─── Status pill label/colour ─────────────────────────────────────────────────
-
-const STATUS_CONFIG: Record<string, { label: string; colour: string }> = {
-  live:     { label: "LIVE",     colour: "#ef4444" },
-  finished: { label: "FINISHED", colour: colors.textMuted },
-  upcoming: { label: "UPCOMING", colour: colors.accent },
-};
-
 // ─── Session type helpers ─────────────────────────────────────────────────────
 
 function isRaceType(type: string): boolean {
@@ -89,6 +82,276 @@ function isQualifyingType(type: string): boolean {
   return type === "Qualifying";
 }
 
+// ─── Style factories ──────────────────────────────────────────────────────────
+
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
+  overlay: {
+    flex: 1,
+    justifyContent: "flex-end",
+    backgroundColor: "rgba(0,0,0,0.6)",
+  },
+  dismiss: {
+    flex: 1,
+  },
+  content: {
+    backgroundColor: t.colors.surface,
+    borderTopLeftRadius: radius.lg,
+    borderTopRightRadius: radius.lg,
+    maxHeight: "90%",
+    minHeight: 300,
+    paddingTop: spacing.sm,
+    paddingHorizontal: spacing.md,
+  },
+  handle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: t.colors.border,
+    alignSelf: "center",
+    marginBottom: spacing.sm,
+  },
+  closeBtn: {
+    position: "absolute",
+    top: spacing.md,
+    right: spacing.md,
+    zIndex: 10,
+  },
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: spacing.sm,
+    marginBottom: 4,
+  },
+  headerLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    flex: 1,
+  },
+  sessionName: {
+    color: t.colors.text,
+    fontWeight: "700",
+    fontSize: 15,
+  },
+  sessionType: {
+    color: t.colors.textMuted,
+    fontSize: 12,
+    marginLeft: 2,
+  },
+  statusPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 20,
+    borderWidth: 1,
+  },
+  statusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  statusText: {
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.5,
+  },
+  circuit: {
+    color: t.colors.textMuted,
+    fontSize: 12,
+    marginBottom: spacing.sm,
+  },
+  colLabels: {
+    flexDirection: "row",
+    paddingVertical: 6,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: t.colors.border,
+    marginBottom: 4,
+  },
+  colLabel: {
+    color: t.colors.textMuted,
+    fontSize: 11,
+    fontWeight: "600",
+    letterSpacing: 0.3,
+    textAlign: "right",
+    minWidth: 60,
+  },
+  separator: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: t.colors.border,
+  },
+  centered: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 60,
+  },
+  loadingText: {
+    color: t.colors.textMuted,
+    fontSize: 13,
+    marginTop: spacing.md,
+  },
+  errorText: {
+    color: t.colors.textMuted,
+    fontSize: 14,
+    marginTop: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  retryBtn: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    backgroundColor: t.colors.accent,
+    borderRadius: radius.md,
+  },
+  retryText: {
+    color: "#fff",
+    fontWeight: "600",
+    fontSize: 14,
+  },
+  emptyText: {
+    color: t.colors.textMuted,
+    fontSize: 13,
+    textAlign: "center",
+  },
+  timingMissingBanner: {
+    textAlign: "center",
+    color: t.colors.textMuted,
+    fontSize: 13,
+    marginVertical: 12,
+    paddingHorizontal: 16,
+  },
+});
+
+const makeDriverStyles = (t: ThemeContextValue) => StyleSheet.create({
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 10,
+    paddingRight: 4,
+    gap: 8,
+  },
+  stripe: {
+    width: 3,
+    height: 44,
+    borderRadius: 2,
+  },
+  posBadge: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  posText: {
+    color: t.colors.text,
+    fontWeight: "700",
+    fontSize: 12,
+  },
+  headshotContainer: {
+    width: 36,
+    height: 36,
+  },
+  headshot: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: t.colors.surface,
+  },
+  headshotFallback: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: t.colors.surface,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headshotFallbackText: {
+    color: t.colors.textMuted,
+    fontWeight: "700",
+    fontSize: 15,
+  },
+  driverInfo: {
+    flex: 1,
+    minWidth: 0,
+  },
+  abbreviation: {
+    color: t.colors.text,
+    fontWeight: "700",
+    fontSize: 13,
+  },
+  fullName: {
+    color: t.colors.textMuted,
+    fontSize: 11,
+  },
+  teamName: {
+    color: t.colors.textMuted,
+    fontSize: 10,
+  },
+  stats: {
+    alignItems: "flex-end",
+    gap: 2,
+  },
+  statRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  statLabel: {
+    color: t.colors.textMuted,
+    fontSize: 10,
+    minWidth: 26,
+    textAlign: "right",
+  },
+  stat: {
+    color: t.colors.text,
+    fontSize: 12,
+    fontVariant: ["tabular-nums"],
+    minWidth: 68,
+    textAlign: "right",
+  },
+  statGap: {
+    color: t.colors.textMuted,
+    fontSize: 11,
+    marginBottom: 2,
+  },
+  statFastest: {
+    color: FL_COLOUR,
+  },
+  badges: {
+    alignItems: "flex-end",
+    gap: 4,
+    minWidth: 32,
+  },
+  flBadge: {
+    backgroundColor: FL_COLOUR,
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+  },
+  flText: {
+    color: "#fff",
+    fontSize: 9,
+    fontWeight: "700",
+    letterSpacing: 0.3,
+  },
+  tireBadge: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  tireBadgeHardBorder: {
+    borderWidth: 1,
+    borderColor: "#cccccc",
+  },
+  tireText: {
+    fontSize: 11,
+    fontWeight: "700",
+  },
+});
+
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 function DriverRow({
@@ -98,9 +361,10 @@ function DriverRow({
   driver: ApiF1Driver;
   sessionType: string;
 }) {
+  const dr = useThemedStyles(makeDriverStyles);
   const isRace = isRaceType(sessionType);
   const isQualifying = isQualifyingType(sessionType);
-  const badgeColour = POS_BADGE_COLOURS[driver.position] ?? colors.surface;
+  const badgeColour = POS_BADGE_COLOURS[driver.position] ?? "#e2e8f0";
   const tire = driver.tireCompound ? TIRE_COLOURS[driver.tireCompound] : null;
 
   const showGap = isRace;
@@ -226,6 +490,17 @@ type Props = {
 };
 
 export function F1DetailModal({ match, onClose }: Props) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
+  // STATUS_CONFIG references theme colours — built inside the component so it
+  // always reflects the active palette.
+  const STATUS_CONFIG: Record<string, { label: string; colour: string }> = {
+    live:     { label: "LIVE",     colour: "#ef4444" },
+    finished: { label: "FINISHED", colour: colors.textMuted },
+    upcoming: { label: "UPCOMING", colour: colors.accent },
+  };
+
   const [detail, setDetail] = useState<ApiF1SessionDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -410,273 +685,3 @@ export function F1DetailModal({ match, onClose }: Props) {
     </Modal>
   );
 }
-
-// ─── Styles ───────────────────────────────────────────────────────────────────
-
-const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    justifyContent: "flex-end",
-    backgroundColor: "rgba(0,0,0,0.6)",
-  },
-  dismiss: {
-    flex: 1,
-  },
-  content: {
-    backgroundColor: colors.background,
-    borderTopLeftRadius: radius.lg,
-    borderTopRightRadius: radius.lg,
-    maxHeight: "90%",
-    minHeight: 300,
-    paddingTop: spacing.sm,
-    paddingHorizontal: spacing.md,
-  },
-  handle: {
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: colors.border,
-    alignSelf: "center",
-    marginBottom: spacing.sm,
-  },
-  closeBtn: {
-    position: "absolute",
-    top: spacing.md,
-    right: spacing.md,
-    zIndex: 10,
-  },
-  header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginTop: spacing.sm,
-    marginBottom: 4,
-  },
-  headerLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    flex: 1,
-  },
-  sessionName: {
-    color: colors.text,
-    fontWeight: "700",
-    fontSize: 15,
-  },
-  sessionType: {
-    color: colors.textMuted,
-    fontSize: 12,
-    marginLeft: 2,
-  },
-  statusPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 20,
-    borderWidth: 1,
-  },
-  statusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  statusText: {
-    fontSize: 11,
-    fontWeight: "700",
-    letterSpacing: 0.5,
-  },
-  circuit: {
-    color: colors.textMuted,
-    fontSize: 12,
-    marginBottom: spacing.sm,
-  },
-  colLabels: {
-    flexDirection: "row",
-    paddingVertical: 6,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-    marginBottom: 4,
-  },
-  colLabel: {
-    color: colors.textMuted,
-    fontSize: 11,
-    fontWeight: "600",
-    letterSpacing: 0.3,
-    textAlign: "right",
-    minWidth: 60,
-  },
-  separator: {
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: colors.border,
-  },
-  centered: {
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 60,
-  },
-  loadingText: {
-    color: colors.textMuted,
-    fontSize: 13,
-    marginTop: spacing.md,
-  },
-  errorText: {
-    color: colors.textMuted,
-    fontSize: 14,
-    marginTop: spacing.sm,
-    marginBottom: spacing.md,
-  },
-  retryBtn: {
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    backgroundColor: colors.accent,
-    borderRadius: radius.md,
-  },
-  retryText: {
-    color: "#fff",
-    fontWeight: "600",
-    fontSize: 14,
-  },
-  emptyText: {
-    color: colors.textMuted,
-    fontSize: 13,
-    textAlign: "center",
-  },
-  timingMissingBanner: {
-    textAlign: "center",
-    color: colors.textMuted,
-    fontSize: 13,
-    marginVertical: 12,
-    paddingHorizontal: 16,
-  },
-});
-
-const dr = StyleSheet.create({
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 10,
-    paddingRight: 4,
-    gap: 8,
-  },
-  stripe: {
-    width: 3,
-    height: 44,
-    borderRadius: 2,
-  },
-  posBadge: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  posText: {
-    color: colors.text,
-    fontWeight: "700",
-    fontSize: 12,
-  },
-  headshotContainer: {
-    width: 36,
-    height: 36,
-  },
-  headshot: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: colors.surface,
-  },
-  headshotFallback: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: colors.surface,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  headshotFallbackText: {
-    color: colors.textMuted,
-    fontWeight: "700",
-    fontSize: 15,
-  },
-  driverInfo: {
-    flex: 1,
-    minWidth: 0,
-  },
-  abbreviation: {
-    color: colors.text,
-    fontWeight: "700",
-    fontSize: 13,
-  },
-  fullName: {
-    color: colors.textMuted,
-    fontSize: 11,
-  },
-  teamName: {
-    color: colors.textMuted,
-    fontSize: 10,
-  },
-  stats: {
-    alignItems: "flex-end",
-    gap: 2,
-  },
-  statRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-  },
-  statLabel: {
-    color: colors.textMuted,
-    fontSize: 10,
-    minWidth: 26,
-    textAlign: "right",
-  },
-  stat: {
-    color: colors.text,
-    fontSize: 12,
-    fontVariant: ["tabular-nums"],
-    minWidth: 68,
-    textAlign: "right",
-  },
-  statGap: {
-    color: colors.textMuted,
-    fontSize: 11,
-    marginBottom: 2,
-  },
-  statFastest: {
-    color: FL_COLOUR,
-  },
-  badges: {
-    alignItems: "flex-end",
-    gap: 4,
-    minWidth: 32,
-  },
-  flBadge: {
-    backgroundColor: FL_COLOUR,
-    borderRadius: 4,
-    paddingHorizontal: 5,
-    paddingVertical: 2,
-  },
-  flText: {
-    color: "#fff",
-    fontSize: 9,
-    fontWeight: "700",
-    letterSpacing: 0.3,
-  },
-  tireBadge: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  tireBadgeHardBorder: {
-    borderWidth: 1,
-    borderColor: "#cccccc",
-  },
-  tireText: {
-    fontSize: 11,
-    fontWeight: "700",
-  },
-});

@@ -12,13 +12,97 @@ import {
 } from "react-native";
 
 import type { ApiExpertLeaderboardEntry } from "@predict-future/types";
-import { colors, radius, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 import { mobileApi } from "@/lib/api";
 import { getExpertInitials, getExpertInitialsColor } from "@/utils/expertAvatar";
 import { AnalystCredibilityBadge } from "@/components/analyst-credibility-badge";
 
+const makeLbStyles = (t: ThemeContextValue) => StyleSheet.create({
+  center: { flex: 1, alignItems: "center", justifyContent: "center" },
+  subtitle: {
+    fontSize: 12,
+    color: t.colors.textMuted,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.sm,
+  },
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: t.colors.border,
+    backgroundColor: t.colors.background,
+  },
+  rank: {
+    width: 32,
+    fontSize: 13,
+    fontWeight: "700",
+    color: t.colors.textMuted,
+    textAlign: "center",
+  },
+  rankTop: { color: "#d97706" },
+  avatar: { width: 40, height: 40, borderRadius: 20 },
+  avatarFallback: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#818CF8",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarInitials: { fontSize: 14, fontWeight: "800", color: "#fff" },
+  nameBlock: { flex: 1, gap: 2 },
+  nameRow: { flexDirection: "row", alignItems: "center", gap: 4 },
+  expertName: { fontSize: 14, fontWeight: "700", color: t.colors.text, flexShrink: 1 },
+  orgName: { fontSize: 11, color: t.colors.textMuted },
+  verifiedBadge: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: "#2563eb",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  verifiedText: { fontSize: 8, fontWeight: "800", color: "#fff", lineHeight: 12 },
+  barTrack: {
+    flexDirection: "row",
+    height: 4,
+    borderRadius: 2,
+    overflow: "hidden",
+    marginTop: 4,
+    backgroundColor: t.colors.border,
+  },
+  barHit: { backgroundColor: "#16a34a" },
+  barMiss: { backgroundColor: "#dc2626" },
+  credBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    minWidth: 44,
+    alignItems: "center",
+  },
+  credText: { fontSize: 12, fontWeight: "800" },
+  emptyContainer: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.xl,
+    alignItems: "center",
+  },
+  emptyText: {
+    fontSize: 14,
+    color: t.colors.textMuted,
+    textAlign: "center",
+    lineHeight: 20,
+  },
+});
+
 function HitMissBar({ hitCount, missCount }: { hitCount: number; missCount: number }) {
+  const lbStyles = useThemedStyles(makeLbStyles);
   const total = hitCount + missCount;
   if (total === 0) return null;
   const hitPct = hitCount / total;
@@ -33,6 +117,7 @@ function HitMissBar({ hitCount, missCount }: { hitCount: number; missCount: numb
 
 function LeaderboardRow({ entry }: { entry: ApiExpertLeaderboardEntry }) {
   const router = useRouter();
+  const lbStyles = useThemedStyles(makeLbStyles);
   const { rank, expert } = entry;
   const displayName = expert.name || expert.organization;
   const initials = getExpertInitials(expert.name, expert.organization);
@@ -74,6 +159,8 @@ function LeaderboardRow({ entry }: { entry: ApiExpertLeaderboardEntry }) {
 
 export default function ExpertLeaderboardScreen() {
   const router = useRouter();
+  const { colors } = useTheme();
+  const lbStyles = useThemedStyles(makeLbStyles);
   const [entries, setEntries] = useState<ApiExpertLeaderboardEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -144,85 +231,3 @@ export default function ExpertLeaderboardScreen() {
     </View>
   );
 }
-
-const lbStyles = StyleSheet.create({
-  center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  subtitle: {
-    fontSize: 12,
-    color: colors.textMuted,
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.md,
-    paddingBottom: spacing.sm,
-  },
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    backgroundColor: colors.background,
-  },
-  rank: {
-    width: 32,
-    fontSize: 13,
-    fontWeight: "700",
-    color: colors.textMuted,
-    textAlign: "center",
-  },
-  rankTop: { color: "#d97706" },
-  avatar: { width: 40, height: 40, borderRadius: 20 },
-  avatarFallback: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "#818CF8",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  avatarInitials: { fontSize: 14, fontWeight: "800", color: "#fff" },
-  nameBlock: { flex: 1, gap: 2 },
-  nameRow: { flexDirection: "row", alignItems: "center", gap: 4 },
-  expertName: { fontSize: 14, fontWeight: "700", color: colors.text, flexShrink: 1 },
-  orgName: { fontSize: 11, color: colors.textMuted },
-  verifiedBadge: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: "#2563eb",
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
-  verifiedText: { fontSize: 8, fontWeight: "800", color: "#fff", lineHeight: 12 },
-  barTrack: {
-    flexDirection: "row",
-    height: 4,
-    borderRadius: 2,
-    overflow: "hidden",
-    marginTop: 4,
-    backgroundColor: colors.border,
-  },
-  barHit: { backgroundColor: "#16a34a" },
-  barMiss: { backgroundColor: "#dc2626" },
-  credBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: radius.pill,
-    minWidth: 44,
-    alignItems: "center",
-  },
-  credText: { fontSize: 12, fontWeight: "800" },
-  emptyContainer: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.xl,
-    alignItems: "center",
-  },
-  emptyText: {
-    fontSize: 14,
-    color: colors.textMuted,
-    textAlign: "center",
-    lineHeight: 20,
-  },
-});

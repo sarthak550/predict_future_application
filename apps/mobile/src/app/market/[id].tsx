@@ -24,12 +24,13 @@ import type { Session } from "@/providers/session-provider";
 
 import type { ApiAnalystPosition, ApiMarketDetail, ApiMarketSummary, ApiProbabilityHistory } from "@predict-future/types";
 import { formatPercent, formatPoints, formatRelativeTime } from "@predict-future/utils";
-import { colors, radius, shadows, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
 
 import { useApiQuery } from "@/hooks/useApiQuery";
 import { useInterval } from "@/hooks/useInterval";
 import { mobileApi } from "@/lib/api";
 import { useSession } from "@/providers/session-provider";
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 import { GradientButton } from "@/components/gradient-button";
 import { VerifiedBadge } from "@/components/verified-badge";
 
@@ -128,6 +129,8 @@ export default function MarketDetailScreen() {
   const id = normalizeParam(params.id);
   const justResolved = params.justResolved === "true";
   const insets = useSafeAreaInsets();
+  const styles = useThemedStyles(makeStyles);
+  const { colors } = useTheme();
 
   const fetcher = useCallback(
     () => mobileApi.getMarketById(id as string),
@@ -315,6 +318,8 @@ function StickyBettingBar({
   onRefresh,
   bottomInset,
 }: StickyBettingBarProps) {
+  const styles = useThemedStyles(makeStyles);
+  const { colors } = useTheme();
   const market = data.market;
   const positions = data.userPositions ?? [];
   const hasPosition = positions.length > 0;
@@ -582,6 +587,8 @@ function BettingSheet({
   onBetSuccess,
   bottomInset,
 }: BettingSheetProps) {
+  const styles = useThemedStyles(makeStyles);
+  const { colors } = useTheme();
   const market = data.market;
   const positions = data.userPositions ?? [];
   const hasPosition = positions.length > 0;
@@ -918,6 +925,8 @@ function MultiChoiceBettingSheet({
   onBetSuccess,
   bottomInset,
 }: MultiChoiceBettingSheetProps) {
+  const styles = useThemedStyles(makeStyles);
+  const { colors } = useTheme();
   const market = data.market;
   const options = market.options ?? [];
   const totalStaked = options.reduce((sum, o) => sum + o.totalStaked, 0);
@@ -1120,6 +1129,7 @@ type ResolutionPayoffModalProps = {
 };
 
 function ResolutionPayoffModal({ modalData, onClose }: ResolutionPayoffModalProps) {
+  const styles = useThemedStyles(makeStyles);
   const { won, winningSide, userSide, payout, marketTitle, marketId, positions } = modalData;
   const totalCommitted = positions.reduce((sum, p) => sum + p.amount, 0);
 
@@ -1254,6 +1264,8 @@ function AnalystPositionsSection({
   positions: ApiAnalystPosition[];
   currentUserId: string | null;
 }) {
+  const analystPosStyles = useThemedStyles(makeAnalystPosStyles);
+  const { colors } = useTheme();
   const [localPositions, setLocalPositions] = useState<ApiAnalystPosition[]>(positions);
 
   // Sync when parent re-renders with fresh data
@@ -1335,7 +1347,7 @@ function AnalystPositionsSection({
                 <Feather
                   name="thumbs-up"
                   size={13}
-                  color={p.iUpvotedReasoning ? colors.accent : (colors.textMuted as string)}
+                  color={p.iUpvotedReasoning ? colors.accent : colors.textMuted}
                 />
                 {p.reasoningUpvotes > 0 && (
                   <Text style={[
@@ -1354,9 +1366,9 @@ function AnalystPositionsSection({
   );
 }
 
-const analystPosStyles = StyleSheet.create({
+const makeAnalystPosStyles = (t: ThemeContextValue) => StyleSheet.create({
   card: {
-    backgroundColor: colors.surface as string,
+    backgroundColor: t.colors.surface,
     borderRadius: radius.lg,
     padding: spacing.lg,
     marginTop: spacing.sm,
@@ -1364,7 +1376,7 @@ const analystPosStyles = StyleSheet.create({
   title: {
     fontSize: 13,
     fontWeight: "700",
-    color: colors.text as string,
+    color: t.colors.text,
     marginBottom: spacing.md,
     textTransform: "uppercase",
     letterSpacing: 0.5,
@@ -1373,7 +1385,7 @@ const analystPosStyles = StyleSheet.create({
     marginBottom: spacing.md,
     paddingBottom: spacing.md,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border as string,
+    borderBottomColor: t.colors.border,
   },
   rowHeader: {
     flexDirection: "row",
@@ -1388,15 +1400,15 @@ const analystPosStyles = StyleSheet.create({
   },
   pillYes: { backgroundColor: "#DCFCE7" },
   pillNo: { backgroundColor: "#FEE2E2" },
-  sidePillText: { fontSize: 11, fontWeight: "700", color: "#374151" },
+  sidePillText: { fontSize: 11, fontWeight: "700", color: t.colors.text },
   username: {
     fontSize: 12,
-    color: colors.textMuted as string,
+    color: t.colors.textMuted,
     flex: 1,
   },
   reasoning: {
     fontSize: 13,
-    color: colors.text as string,
+    color: t.colors.text,
     lineHeight: 19,
     marginBottom: spacing.xs,
   },
@@ -1409,11 +1421,11 @@ const analystPosStyles = StyleSheet.create({
   },
   upvoteCount: {
     fontSize: 12,
-    color: colors.textMuted as string,
+    color: t.colors.textMuted,
     fontWeight: "600",
   },
   upvoteCountActive: {
-    color: colors.accent as string,
+    color: t.colors.accent,
   },
 });
 
@@ -1431,6 +1443,8 @@ function MarketBody({
   onRefresh: () => void;
   onOpenBetSheet: () => void;
 }) {
+  const styles = useThemedStyles(makeStyles);
+  const { colors } = useTheme();
   const { session } = useSession();
   const market = data.market;
   const positions = data.userPositions ?? [];
@@ -2002,6 +2016,7 @@ function ResolutionSection({
   originPlatform?: string | null;
   resolutionSourceUrl?: string | null;
 }) {
+  const styles = useThemedStyles(makeStyles);
   const outcomeLabel = winningSide ? `Resolved ${winningSide}` : "Resolved";
   const isYes = winningSide === "YES";
   const isNo = winningSide === "NO";
@@ -2083,6 +2098,7 @@ function ResolutionSection({
 // ─── InfoItem ─────────────────────────────────────────────────────────────────
 
 function InfoItem({ label, value }: { label: string; value: string }) {
+  const styles = useThemedStyles(makeStyles);
   return (
     <View style={styles.infoItem}>
       <Text style={styles.infoValue}>{value}</Text>
@@ -2095,6 +2111,8 @@ function InfoItem({ label, value }: { label: string; value: string }) {
 
 function RelatedMarketsRail({ currentMarketId, title }: { currentMarketId: string; title: string }) {
   const router = useRouter();
+  const styles = useThemedStyles(makeStyles);
+  const relatedStyles = useThemedStyles(makeRelatedStyles);
   const [markets, setMarkets] = useState<ApiMarketSummary[]>([]);
 
   useEffect(() => {
@@ -2151,15 +2169,15 @@ function RelatedMarketsRail({ currentMarketId, title }: { currentMarketId: strin
   );
 }
 
-const relatedStyles = StyleSheet.create({
+const makeRelatedStyles = (t: ThemeContextValue) => StyleSheet.create({
   scrollContent: { gap: 10, paddingVertical: 4 },
   card: {
     width: 160,
-    backgroundColor: colors.background,
+    backgroundColor: t.colors.background,
     borderRadius: radius.md,
     padding: 10,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
     gap: 6,
   },
   catBadge: {
@@ -2167,19 +2185,19 @@ const relatedStyles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 8,
-    backgroundColor: "#EEF2FF",
+    backgroundColor: t.colors.surfaceMuted,
   },
   catText: {
     fontSize: 9,
     fontWeight: "800",
     letterSpacing: 0.4,
-    color: colors.accent,
+    color: t.colors.accent,
     textTransform: "uppercase",
   },
   title: {
     fontSize: 12,
     fontWeight: "700",
-    color: colors.text,
+    color: t.colors.text,
     lineHeight: 17,
   },
   probRow: { gap: 4 },
@@ -2195,7 +2213,7 @@ const relatedStyles = StyleSheet.create({
     backgroundColor: "#16A34A",
   },
   probLabel: { fontSize: 10, fontWeight: "700", color: "#16A34A" },
-  players: { fontSize: 10, color: colors.textMuted },
+  players: { fontSize: 10, color: t.colors.textMuted },
 });
 
 // ─── ProbabilityChart (S27-T2 + interactive drag inspector) ──────────────────
@@ -2225,6 +2243,7 @@ function ProbabilityChart({
   isResolved: boolean;
   outcome: string | null;
 }) {
+  const styles = useThemedStyles(makeStyles);
   const [chartWidth, setChartWidth] = useState(0);
   const [touchX, setTouchX] = useState<number | null>(null);
   const [range, setRange] = useState<RangeKey>("ALL");
@@ -2513,6 +2532,8 @@ function CommentsSection({
   isOpen: boolean;
   session: Session | null;
 }) {
+  const styles = useThemedStyles(makeStyles);
+  const { colors } = useTheme();
   const router = useRouter();
   const fetcher = useCallback(
     () => mobileApi.getMarketComments(marketId),
@@ -2719,15 +2740,15 @@ function CommentsSection({
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   // Root layout
   root: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: t.colors.background,
   },
   screen: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: t.colors.background,
   },
   content: {
     padding: spacing.lg,
@@ -2760,10 +2781,10 @@ const styles = StyleSheet.create({
 
   // ── Cards ──
   card: {
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderRadius: radius.lg,
     padding: spacing.xl,
-    ...shadows.card,
+    ...t.shadows.card,
   },
   topRow: {
     flexDirection: "row",
@@ -2776,7 +2797,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
   },
   badgeOpen: { backgroundColor: "#DCFCE7" },
-  badgeClosed: { backgroundColor: "#F3F4F6" },
+  badgeClosed: { backgroundColor: t.colors.surfaceMuted },
   badgeText: {
     fontSize: 11,
     fontWeight: "800",
@@ -2784,26 +2805,26 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
   },
   badgeTextOpen: { color: "#16A34A" },
-  badgeTextClosed: { color: "#6B7280" },
+  badgeTextClosed: { color: t.colors.textMuted },
   categoryLabel: {
     fontSize: 11,
     fontWeight: "700",
     letterSpacing: 0.5,
     textTransform: "uppercase",
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
   cardTitle: {
     marginTop: spacing.md,
     fontSize: 22,
     fontWeight: "700",
     lineHeight: 28,
-    color: colors.text,
+    color: t.colors.text,
   },
   subtitle: {
     marginTop: spacing.sm,
     fontSize: 15,
     lineHeight: 22,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
 
   // ── Numeric avg ──
@@ -2813,7 +2834,7 @@ const styles = StyleSheet.create({
   numericLabel: {
     fontSize: 12,
     fontWeight: "600",
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     textTransform: "uppercase",
     letterSpacing: 0.5,
   },
@@ -2826,11 +2847,11 @@ const styles = StyleSheet.create({
   numericAvgValue: {
     fontSize: 26,
     fontWeight: "800",
-    color: colors.primary,
+    color: t.colors.primary,
   },
   numericGuessCount: {
     fontSize: 13,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
   rangeTrack: {
     marginTop: spacing.md,
@@ -2846,7 +2867,7 @@ const styles = StyleSheet.create({
     width: 16,
     height: 16,
     borderRadius: 8,
-    backgroundColor: colors.primary,
+    backgroundColor: t.colors.primary,
     marginLeft: -8,
     borderWidth: 2,
     borderColor: "#fff",
@@ -2858,7 +2879,7 @@ const styles = StyleSheet.create({
   },
   rangeLabelText: {
     fontSize: 12,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
 
   // ── Probability bar ──
@@ -2906,11 +2927,11 @@ const styles = StyleSheet.create({
   infoValue: {
     fontSize: 15,
     fontWeight: "700",
-    color: colors.text,
+    color: t.colors.text,
   },
   infoLabel: {
     fontSize: 11,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     marginTop: 2,
   },
   hostRow: {
@@ -2921,12 +2942,12 @@ const styles = StyleSheet.create({
   hostLabel: {
     fontSize: 14,
     fontWeight: "600",
-    color: colors.accent,
+    color: t.colors.accent,
   },
   sourceAttributionDetail: {
     fontSize: 12,
     fontWeight: "500",
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
   manifoldLink: {
     marginTop: spacing.sm,
@@ -2935,14 +2956,14 @@ const styles = StyleSheet.create({
   manifoldLinkText: {
     fontSize: 13,
     fontWeight: "600",
-    color: colors.accent,
+    color: t.colors.accent,
   },
 
   // ── Positions ──
   sectionTitle: {
     fontSize: 18,
     fontWeight: "700",
-    color: colors.text,
+    color: t.colors.text,
     marginBottom: spacing.md,
   },
   positionRow: {
@@ -2966,30 +2987,30 @@ const styles = StyleSheet.create({
   positionAmount: {
     fontSize: 14,
     fontWeight: "700",
-    color: colors.text,
+    color: t.colors.text,
     flex: 1,
   },
   positionDate: {
     fontSize: 12,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
   totalRow: {
     marginTop: spacing.md,
     paddingTop: spacing.md,
     borderTopWidth: 1,
-    borderTopColor: colors.border,
+    borderTopColor: t.colors.border,
     flexDirection: "row",
     justifyContent: "space-between",
   },
   totalLabel: {
     fontSize: 14,
     fontWeight: "600",
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
   totalValue: {
     fontSize: 16,
     fontWeight: "800",
-    color: colors.text,
+    color: t.colors.text,
   },
   addMoreBtn: {
     marginTop: spacing.md,
@@ -2998,12 +3019,12 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     borderRadius: radius.md,
     borderWidth: 1.5,
-    borderColor: colors.primary,
+    borderColor: t.colors.primary,
   },
   addMoreBtnText: {
     fontSize: 14,
     fontWeight: "700",
-    color: colors.primary,
+    color: t.colors.primary,
   },
 
   // ── Betting panel (inside sheet) ──
@@ -3039,15 +3060,15 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "800",
     letterSpacing: 1,
-    color: colors.text,
+    color: t.colors.text,
   },
   sideBtnTextActive: {
-    color: colors.text,
+    color: t.colors.text,
   },
   sideProb: {
     marginTop: 4,
     fontSize: 13,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
   lockedSideRow: {
     flexDirection: "row",
@@ -3058,16 +3079,16 @@ const styles = StyleSheet.create({
   lockedLabel: {
     fontSize: 14,
     fontWeight: "600",
-    color: colors.text,
+    color: t.colors.text,
   },
   lockedValue: {
     fontSize: 16,
     fontWeight: "700",
-    color: colors.primary,
+    color: t.colors.primary,
   },
   lockedHint: {
     fontSize: 13,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
   numericSection: {
     marginBottom: spacing.md,
@@ -3075,18 +3096,18 @@ const styles = StyleSheet.create({
   inputLabel: {
     fontSize: 14,
     fontWeight: "600",
-    color: colors.text,
+    color: t.colors.text,
     marginBottom: spacing.sm,
   },
   textInput: {
     height: 48,
     borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: "#D1D5DB",
+    borderColor: t.colors.border,
     paddingHorizontal: spacing.md,
     fontSize: 16,
-    color: colors.text,
-    backgroundColor: "#fff",
+    color: t.colors.text,
+    backgroundColor: t.colors.surface,
   },
   presetRow: {
     flexDirection: "row",
@@ -3098,15 +3119,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: radius.pill,
-    backgroundColor: "#F3F4F6",
+    backgroundColor: t.colors.surfaceMuted,
   },
   presetPillActive: {
-    backgroundColor: colors.primary,
+    backgroundColor: t.colors.primary,
   },
   presetText: {
     fontSize: 14,
     fontWeight: "700",
-    color: colors.text,
+    color: t.colors.text,
   },
   presetTextActive: {
     color: "#fff",
@@ -3119,12 +3140,12 @@ const styles = StyleSheet.create({
   },
   estimatedReturnLabel: {
     fontSize: 14,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
   estimatedReturnValue: {
     fontSize: 14,
     fontWeight: "700",
-    color: colors.text,
+    color: t.colors.text,
   },
   betError: {
     marginTop: spacing.sm,
@@ -3137,29 +3158,29 @@ const styles = StyleSheet.create({
     marginTop: spacing.md,
     paddingVertical: spacing.sm,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
+    borderTopColor: t.colors.border,
   },
   reasoningToggleLabel: {
     flex: 1,
     fontSize: 13,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
   reasoningInputWrapper: {
     marginTop: spacing.sm,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
     borderRadius: radius.sm,
     padding: spacing.sm,
   },
   reasoningInput: {
     fontSize: 14,
-    color: colors.text,
+    color: t.colors.text,
     minHeight: 72,
     lineHeight: 20,
   },
   reasoningCounter: {
     fontSize: 11,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     textAlign: "right",
     marginTop: spacing.xs,
   },
@@ -3213,12 +3234,12 @@ const styles = StyleSheet.create({
 
   // ── Closed ──
   closedCard: {
-    backgroundColor: "#F9FAFB",
+    backgroundColor: t.colors.surfaceMuted,
   },
   closedText: {
     fontSize: 15,
     fontWeight: "600",
-    color: "#6B7280",
+    color: t.colors.textMuted,
     textAlign: "center",
   },
 
@@ -3228,13 +3249,13 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderRadius: radius.md,
     borderWidth: 1.5,
-    borderColor: colors.accent,
+    borderColor: t.colors.accent,
     alignItems: "center",
   },
   shareBtnText: {
     fontSize: 15,
     fontWeight: "700",
-    color: colors.accent,
+    color: t.colors.accent,
   },
   shareLink: {
     marginTop: spacing.md,
@@ -3243,7 +3264,7 @@ const styles = StyleSheet.create({
   shareLinkText: {
     fontSize: 13,
     fontWeight: "600",
-    color: colors.accent,
+    color: t.colors.accent,
     textDecorationLine: "underline",
   },
 
@@ -3271,7 +3292,7 @@ const styles = StyleSheet.create({
 
   // ── Error / retry ──
   error: {
-    color: colors.danger,
+    color: t.colors.danger,
   },
   retryBtn: {
     marginTop: spacing.lg,
@@ -3279,10 +3300,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
     borderRadius: radius.md,
-    backgroundColor: colors.accent,
+    backgroundColor: t.colors.accent,
   },
   retryLabel: {
-    color: colors.surface,
+    color: t.colors.surface,
     fontWeight: "700",
     fontSize: 14,
   },
@@ -3311,9 +3332,9 @@ const styles = StyleSheet.create({
     borderColor: "#FCA5A5",
   },
   resolutionOutcomeBadgeNeutral: {
-    backgroundColor: "#F3F4F6",
+    backgroundColor: t.colors.surfaceMuted,
     borderWidth: 1,
-    borderColor: "#D1D5DB",
+    borderColor: t.colors.border,
   },
   resolutionOutcomeBadgeText: {
     fontSize: 14,
@@ -3327,7 +3348,7 @@ const styles = StyleSheet.create({
     color: "#DC2626",
   },
   resolutionOutcomeBadgeTextNeutral: {
-    color: "#6B7280",
+    color: t.colors.textMuted,
   },
   overturnedBadge: {
     paddingHorizontal: spacing.md,
@@ -3345,7 +3366,7 @@ const styles = StyleSheet.create({
   resolutionMeta: {
     fontSize: 14,
     lineHeight: 20,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     fontWeight: "500",
   },
 
@@ -3413,7 +3434,7 @@ const styles = StyleSheet.create({
   // ── Comments ──
   commentsEmpty: {
     fontSize: 14,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     textAlign: "center",
     paddingVertical: spacing.md,
   },
@@ -3422,7 +3443,7 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     paddingVertical: spacing.sm,
     borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    borderBottomColor: t.colors.border,
   },
   commentAvatar: {
     width: 36,
@@ -3453,16 +3474,16 @@ const styles = StyleSheet.create({
   commentUsername: {
     fontSize: 13,
     fontWeight: "700",
-    color: colors.text,
+    color: t.colors.text,
   },
   commentTime: {
     fontSize: 12,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
   commentContent: {
     fontSize: 14,
     lineHeight: 20,
-    color: colors.text,
+    color: t.colors.text,
   },
   commentInputRow: {
     flexDirection: "row",
@@ -3471,22 +3492,22 @@ const styles = StyleSheet.create({
     marginTop: spacing.lg,
     paddingTop: spacing.md,
     borderTopWidth: 1,
-    borderTopColor: colors.border,
+    borderTopColor: t.colors.border,
   },
   commentInput: {
     flex: 1,
     height: 40,
     borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: "#D1D5DB",
+    borderColor: t.colors.border,
     paddingHorizontal: spacing.md,
     fontSize: 14,
-    color: colors.text,
-    backgroundColor: "#fff",
+    color: t.colors.text,
+    backgroundColor: t.colors.surface,
   },
   commentCharsLeft: {
     fontSize: 12,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     minWidth: 28,
     textAlign: "right",
   },
@@ -3494,7 +3515,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: 10,
     borderRadius: radius.md,
-    backgroundColor: colors.primary,
+    backgroundColor: t.colors.primary,
     alignItems: "center",
     justifyContent: "center",
     minWidth: 52,
@@ -3507,13 +3528,13 @@ const styles = StyleSheet.create({
   commentsClosedNote: {
     marginTop: spacing.md,
     fontSize: 13,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     textAlign: "center",
   },
   commentsSignInNote: {
     marginTop: spacing.md,
     fontSize: 13,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     textAlign: "center",
   },
   commentTimeRow: {
@@ -3535,7 +3556,7 @@ const styles = StyleSheet.create({
   },
   commentTipsLine: {
     fontSize: 11,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     marginTop: 4,
   },
   commentToast: {
@@ -3554,12 +3575,12 @@ const styles = StyleSheet.create({
 
   // ── Sticky betting bar ──
   stickyBar: {
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderTopWidth: 1,
-    borderTopColor: colors.border,
+    borderTopColor: t.colors.border,
     paddingTop: spacing.md,
     paddingHorizontal: spacing.lg,
-    ...shadows.card,
+    ...t.shadows.card,
   },
   stickyBarInner: {
     flexDirection: "row",
@@ -3575,7 +3596,7 @@ const styles = StyleSheet.create({
   stickyProbLabel: {
     fontSize: 11,
     fontWeight: "600",
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     textTransform: "uppercase",
     letterSpacing: 0.4,
   },
@@ -3601,23 +3622,23 @@ const styles = StyleSheet.create({
   stickyPosPillText: {
     fontSize: 12,
     fontWeight: "700",
-    color: colors.text,
+    color: t.colors.text,
   },
   stickyPositionAmount: {
     fontSize: 13,
     fontWeight: "600",
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
   stickyPositionLabel: {
     fontSize: 13,
     fontWeight: "600",
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
   predictBtn: {
     paddingHorizontal: spacing.xl,
     paddingVertical: 14,
     borderRadius: radius.md,
-    backgroundColor: colors.primary,
+    backgroundColor: t.colors.primary,
     alignItems: "center",
     minWidth: 110,
   },
@@ -3632,7 +3653,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 14,
     fontWeight: "600",
-    color: colors.text,
+    color: t.colors.text,
   },
   stickyPollBtns: {
     flexDirection: "row",
@@ -3658,7 +3679,7 @@ const styles = StyleSheet.create({
   },
   stickyPollSubtext: {
     fontSize: 12,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     marginLeft: spacing.sm,
   },
   stickyError: {
@@ -3678,7 +3699,7 @@ const styles = StyleSheet.create({
   votedChipText: {
     fontSize: 14,
     fontWeight: "700",
-    color: colors.text,
+    color: t.colors.text,
   },
 
   // ── Outcome pill (resolved bar) ──
@@ -3692,20 +3713,20 @@ const styles = StyleSheet.create({
   outcomePillText: {
     fontSize: 14,
     fontWeight: "700",
-    color: colors.text,
+    color: t.colors.text,
   },
   stickyShareBtn: {
     paddingHorizontal: spacing.lg,
     paddingVertical: 12,
     borderRadius: radius.md,
     borderWidth: 1.5,
-    borderColor: colors.accent,
+    borderColor: t.colors.accent,
     alignItems: "center",
   },
   stickyShareBtnText: {
     fontSize: 14,
     fontWeight: "700",
-    color: colors.accent,
+    color: t.colors.accent,
   },
 
   // ── Bottom sheet ──
@@ -3714,7 +3735,7 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0,0,0,0.45)",
   },
   sheetContainer: {
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     paddingHorizontal: spacing.xl,
@@ -3725,7 +3746,7 @@ const styles = StyleSheet.create({
     width: 40,
     height: 4,
     borderRadius: 2,
-    backgroundColor: "#D1D5DB",
+    backgroundColor: t.colors.border,
     alignSelf: "center",
     marginBottom: spacing.md,
   },
@@ -3738,7 +3759,7 @@ const styles = StyleSheet.create({
   sheetTitle: {
     fontSize: 20,
     fontWeight: "700",
-    color: colors.text,
+    color: t.colors.text,
   },
   sheetCloseBtn: {
     paddingHorizontal: spacing.md,
@@ -3747,7 +3768,7 @@ const styles = StyleSheet.create({
   sheetCloseBtnText: {
     fontSize: 15,
     fontWeight: "600",
-    color: colors.accent,
+    color: t.colors.accent,
   },
   sheetSuccessSection: {
     paddingVertical: spacing.xl,
@@ -3775,14 +3796,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xl,
   },
   payoffCard: {
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderRadius: 24,
     paddingHorizontal: spacing.xl,
     paddingVertical: 36,
     alignItems: "center",
     width: "100%",
     maxWidth: 360,
-    ...shadows.card,
+    ...t.shadows.card,
   },
   payoffIconCircle: {
     width: 72,
@@ -3831,14 +3852,14 @@ const styles = StyleSheet.create({
   },
   payoffSubtext: {
     fontSize: 15,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     textAlign: "center",
     marginBottom: spacing.xs,
   },
   payoffMarketTitle: {
     fontSize: 15,
     fontWeight: "700",
-    color: colors.text,
+    color: t.colors.text,
     textAlign: "center",
     marginBottom: spacing.xl,
     lineHeight: 22,
@@ -3855,7 +3876,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   payoffBtnShare: {
-    backgroundColor: colors.primary,
+    backgroundColor: t.colors.primary,
   },
   payoffBtnShareText: {
     fontSize: 15,
@@ -3863,9 +3884,9 @@ const styles = StyleSheet.create({
     color: "#fff",
   },
   payoffBtnClose: {
-    backgroundColor: "#F3F4F6",
+    backgroundColor: t.colors.surfaceMuted,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
   },
   payoffBtnCloseFull: {
     width: "100%",
@@ -3873,21 +3894,21 @@ const styles = StyleSheet.create({
   payoffBtnCloseText: {
     fontSize: 15,
     fontWeight: "700",
-    color: colors.text,
+    color: t.colors.text,
   },
 
   // ── Multi-choice options ──
   multiChoiceOption: {
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
     borderRadius: radius.md,
     padding: spacing.sm,
     marginBottom: spacing.sm,
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
   },
   multiChoiceOptionSelected: {
-    borderColor: colors.accent,
-    backgroundColor: "#EFF6FF",
+    borderColor: t.colors.accent,
+    backgroundColor: t.colors.surfaceMuted,
   },
   multiChoiceOptionRow: {
     flexDirection: "row",
@@ -3899,69 +3920,69 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 14,
     fontWeight: "600",
-    color: colors.text,
+    color: t.colors.text,
   },
   multiChoiceOptionLabelSelected: {
-    color: colors.accent,
+    color: t.colors.accent,
   },
   multiChoiceOptionPct: {
     fontSize: 13,
     fontWeight: "700",
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     marginLeft: spacing.sm,
   },
   multiChoiceBar: {
     height: 4,
-    backgroundColor: colors.border,
+    backgroundColor: t.colors.border,
     borderRadius: 2,
     overflow: "hidden",
   },
   multiChoiceBarFill: {
     height: "100%",
-    backgroundColor: colors.textMuted,
+    backgroundColor: t.colors.textMuted,
     borderRadius: 2,
   },
   multiChoiceBarFillSelected: {
-    backgroundColor: colors.accent,
+    backgroundColor: t.colors.accent,
   },
 
   // ── Percentile rank (S25-T4) ──
   percentileCard: {
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderRadius: radius.lg,
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.xl,
     borderLeftWidth: 3,
-    borderLeftColor: colors.accent,
-    ...shadows.card,
+    borderLeftColor: t.colors.accent,
+    ...t.shadows.card,
   },
   percentileText: {
     fontSize: 13,
     fontWeight: "600",
-    color: colors.accent,
+    color: t.colors.accent,
     letterSpacing: 0.1,
   },
 
   // ── Probability Chart (S27-T2) ──
   probChartCard: {
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderRadius: radius.lg,
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.md,
     marginHorizontal: spacing.md,
     marginBottom: spacing.md,
-    ...shadows.card,
+    ...t.shadows.card,
   },
   probChartTitle: {
     fontSize: 14,
     fontWeight: "700",
-    color: colors.text,
+    color: t.colors.text,
     marginBottom: spacing.sm,
     letterSpacing: 0.2,
   },
   probChartEmpty: {
     fontSize: 13,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     textAlign: "center",
     paddingVertical: spacing.md,
   },
@@ -3976,7 +3997,7 @@ const styles = StyleSheet.create({
   },
   probChartYLabel: {
     fontSize: 10,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
   probChartCanvas: {
     position: "relative",
@@ -3987,13 +4008,13 @@ const styles = StyleSheet.create({
     position: "absolute",
     width: 5,
     height: 1,
-    backgroundColor: colors.textMuted,
+    backgroundColor: t.colors.textMuted,
     opacity: 0.4,
   },
   probChartSegment: {
     position: "absolute",
     height: 2,
-    backgroundColor: colors.accent,
+    backgroundColor: t.colors.accent,
     borderRadius: 1,
     transformOrigin: "left center",
   },
@@ -4002,7 +4023,7 @@ const styles = StyleSheet.create({
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: colors.accent,
+    backgroundColor: t.colors.accent,
   },
   probChartOutcomeMarker: {
     position: "absolute",
@@ -4022,7 +4043,7 @@ const styles = StyleSheet.create({
   },
   probChartXLabel: {
     fontSize: 10,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
   probChartHeader: {
     marginBottom: spacing.sm,
@@ -4036,19 +4057,19 @@ const styles = StyleSheet.create({
   probChartHeadlinePct: {
     fontSize: 22,
     fontWeight: "800",
-    color: colors.text,
+    color: t.colors.text,
     letterSpacing: -0.3,
   },
   probChartHeadlineDate: {
     fontSize: 11,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     fontWeight: "500",
   },
   probChartHairline: {
     position: "absolute",
     top: 0,
     width: 1,
-    backgroundColor: colors.text,
+    backgroundColor: t.colors.text,
     opacity: 0.35,
   },
   probChartInspectDot: {
@@ -4058,7 +4079,7 @@ const styles = StyleSheet.create({
     borderRadius: 5,
     backgroundColor: "#ffffff",
     borderWidth: 2,
-    borderColor: colors.accent,
+    borderColor: t.colors.accent,
   },
   probChartRangeRow: {
     flexDirection: "row",
@@ -4072,19 +4093,19 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     backgroundColor: "transparent",
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
   },
   probChartRangePillActive: {
-    backgroundColor: colors.text,
-    borderColor: colors.text,
+    backgroundColor: t.colors.text,
+    borderColor: t.colors.text,
   },
   probChartRangeText: {
     fontSize: 11,
     fontWeight: "700",
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
   probChartRangeTextActive: {
-    color: colors.surface,
+    color: t.colors.surface,
   },
   probChartFinalBadge: {
     flexDirection: "row",

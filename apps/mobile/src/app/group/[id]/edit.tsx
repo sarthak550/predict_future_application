@@ -34,11 +34,12 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
-import { colors, radius, shadows, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
 
 import { useApiQuery } from "@/hooks/useApiQuery";
 import { mobileApi } from "@/lib/api";
 import { useSession } from "@/providers/session-provider";
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
 
@@ -63,6 +64,8 @@ export default function GroupEditScreen() {
   const router = useRouter();
   const { session } = useSession();
   const userId = session?.userId ?? null;
+  const styles = useThemedStyles(makeStyles);
+  const { colors } = useTheme();
 
   const fetcher = useCallback(
     () => mobileApi.getGroupById(groupId as string),
@@ -346,10 +349,10 @@ export default function GroupEditScreen() {
 
 // ── Styles ─────────────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: t.colors.background,
   },
   center: {
     flex: 1,
@@ -358,7 +361,7 @@ const styles = StyleSheet.create({
     padding: spacing.xl,
   },
   errorText: {
-    color: colors.danger,
+    color: t.colors.danger,
     fontSize: 14,
     textAlign: "center",
   },
@@ -376,20 +379,20 @@ const styles = StyleSheet.create({
     width: "100%",
     height: 180,
     borderRadius: radius.md,
-    backgroundColor: colors.border,
+    backgroundColor: t.colors.border,
   },
   coverPlaceholder: {
     width: "100%",
     height: 180,
     borderRadius: radius.md,
-    backgroundColor: colors.border,
+    backgroundColor: t.colors.surfaceMuted,
     alignItems: "center",
     justifyContent: "center",
     gap: spacing.sm,
   },
   coverPlaceholderText: {
     fontSize: 13,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
   changeCoverBtn: {
     flexDirection: "row",
@@ -398,9 +401,9 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: spacing.lg,
     borderRadius: radius.md,
-    backgroundColor: colors.accent,
+    backgroundColor: t.colors.accent,
     gap: spacing.xs,
-    ...shadows.card,
+    ...t.shadows.card,
   },
   changeCoverBtnDisabled: {
     opacity: 0.6,
@@ -408,7 +411,7 @@ const styles = StyleSheet.create({
   changeCoverBtnText: {
     fontSize: 14,
     fontWeight: "700",
-    color: colors.surface,
+    color: t.colors.surface,
   },
 
   // Fields
@@ -418,20 +421,20 @@ const styles = StyleSheet.create({
   fieldLabel: {
     fontSize: 13,
     fontWeight: "600",
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     textTransform: "uppercase",
     letterSpacing: 0.4,
   },
   textInput: {
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderRadius: radius.md,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.md,
     fontSize: 15,
-    color: colors.text,
-    ...shadows.card,
+    color: t.colors.text,
+    ...t.shadows.card,
   },
   textArea: {
     minHeight: 96,
@@ -442,11 +445,11 @@ const styles = StyleSheet.create({
   saveBtn: {
     paddingVertical: 14,
     borderRadius: radius.md,
-    backgroundColor: colors.accent,
+    backgroundColor: t.colors.accent,
     alignItems: "center",
     justifyContent: "center",
     marginTop: spacing.md,
-    ...shadows.card,
+    ...t.shadows.card,
   },
   saveBtnDisabled: {
     opacity: 0.6,
@@ -454,6 +457,6 @@ const styles = StyleSheet.create({
   saveBtnText: {
     fontSize: 16,
     fontWeight: "700",
-    color: colors.surface,
+    color: t.colors.surface,
   },
 });

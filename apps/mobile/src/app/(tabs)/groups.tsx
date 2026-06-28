@@ -15,11 +15,12 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
-import { colors, radius, shadows, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
 import type { ApiDiscoverGroup, ApiGroupSummary, AppMarketCategory } from "@predict-future/types";
 
 import { mobileApi } from "@/lib/api";
 import { useSession } from "@/providers/session-provider";
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 // ── Category filter config ─────────────────────────────────────────────
 
@@ -68,11 +69,413 @@ function categoryLabel(cat?: string | null): string {
 
 type MyGroup = ApiGroupSummary & { memberCount?: number; marketCount?: number };
 
+// ── Shared style factory ───────────────────────────────────────────────
+
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
+  screen: {
+    flex: 1,
+    backgroundColor: t.colors.background
+  },
+  scroll: { flex: 1 },
+  content: {
+    padding: spacing.lg,
+    paddingBottom: 100
+  },
+  centerState: {
+    flex: 1,
+    paddingTop: 80,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.md
+  },
+
+  // Header
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: spacing.lg
+  },
+  screenTitle: {
+    fontSize: 28,
+    fontWeight: "800",
+    color: t.colors.text,
+    letterSpacing: -0.5
+  },
+  createBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: t.colors.accent
+  },
+  createBtnText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: t.colors.surface
+  },
+
+  // Section block
+  sectionBlock: {
+    marginBottom: spacing.xl
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: t.colors.text,
+    marginBottom: spacing.md
+  },
+
+  // Category filter
+  filterScroll: {
+    marginBottom: spacing.md
+  },
+  filterScrollContent: {
+    gap: spacing.sm,
+    paddingRight: spacing.md
+  },
+  filterChip: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    borderColor: t.colors.border,
+    backgroundColor: t.colors.surface
+  },
+  filterChipActive: {
+    borderColor: t.colors.accent,
+    backgroundColor: t.colors.accent + "15"
+  },
+  filterChipText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: t.colors.textMuted
+  },
+  filterChipTextActive: {
+    color: t.colors.accent
+  },
+
+  // Sort
+  sortRow: {
+    flexDirection: "row",
+    gap: spacing.xs,
+    marginBottom: spacing.md
+  },
+  sortBtn: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    borderRadius: radius.sm,
+    backgroundColor: t.colors.surfaceMuted
+  },
+  sortBtnActive: {
+    backgroundColor: t.colors.accent
+  },
+  sortBtnText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: t.colors.textMuted
+  },
+  sortBtnTextActive: {
+    color: t.colors.surface
+  },
+
+  // Browse group list
+  groupList: {
+    gap: spacing.sm
+  },
+
+  // Discover card
+  discoverCard: {
+    backgroundColor: t.colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    ...t.shadows.card
+  },
+  discoverThumb: {
+    width: 44,
+    height: 44,
+    borderRadius: radius.md,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  discoverThumbLetter: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "rgba(255,255,255,0.9)"
+  },
+  discoverInfo: {
+    flex: 1,
+    gap: 3
+  },
+  discoverName: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: t.colors.text
+  },
+  discoverMeta: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.xs,
+    alignItems: "center"
+  },
+  discoverCategory: {
+    fontSize: 11,
+    fontWeight: "700"
+  },
+  discoverMetaText: {
+    fontSize: 11,
+    color: t.colors.textMuted
+  },
+  discoverDesc: {
+    fontSize: 12,
+    color: t.colors.textMuted,
+    lineHeight: 16
+  },
+  joinBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    borderColor: t.colors.accent
+  },
+  joinBtnJoined: {
+    borderColor: "#15803D",
+    backgroundColor: "#DCFCE7"
+  },
+  joinBtnText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: t.colors.accent
+  },
+  joinBtnJoinedText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#15803D"
+  },
+  joinBtnDisabled: {
+    opacity: 0.5
+  },
+
+  // Load more
+  loadMoreBtn: {
+    alignItems: "center",
+    paddingVertical: spacing.md
+  },
+  loadMoreText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: t.colors.accent
+  },
+
+  // My groups list
+  listCard: {
+    backgroundColor: t.colors.surface,
+    borderRadius: radius.lg,
+    overflow: "hidden",
+    ...t.shadows.card
+  },
+  groupRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.lg,
+    gap: spacing.sm
+  },
+  groupRowBorder: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: t.colors.border
+  },
+  groupRowLeft: {
+    flex: 1,
+    gap: 3
+  },
+  groupName: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: t.colors.text
+  },
+  groupMeta: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    marginTop: 2
+  },
+  groupMetaText: {
+    fontSize: 12,
+    color: t.colors.textMuted
+  },
+  groupMetaSep: {
+    fontSize: 12,
+    color: t.colors.border
+  },
+
+  // Join by code
+  joinCodeCard: {
+    backgroundColor: t.colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.xl,
+    marginBottom: spacing.md,
+    ...t.shadows.card
+  },
+  sectionLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: t.colors.textMuted,
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+    marginBottom: spacing.sm
+  },
+  joinCodeRow: {
+    flexDirection: "row",
+    gap: spacing.sm
+  },
+  joinCodeInput: {
+    flex: 1,
+    height: 44,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    borderColor: t.colors.border,
+    backgroundColor: t.colors.background,
+    fontSize: 15,
+    fontWeight: "700",
+    color: t.colors.text,
+    letterSpacing: 1
+  },
+  joinCodeBtn: {
+    width: 72,
+    height: 44,
+    borderRadius: radius.md,
+    backgroundColor: t.colors.accent,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  joinCodeBtnText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: t.colors.surface
+  },
+
+  // Loader
+  loaderBox: {
+    alignItems: "center",
+    paddingVertical: spacing.xl
+  },
+
+  // Error card — directional red, keep hardcoded
+  errorCard: {
+    backgroundColor: "#FEF2F2",
+    borderRadius: radius.lg,
+    padding: spacing.xl,
+    borderWidth: 1,
+    borderColor: "#FECACA"
+  },
+  errorText: {
+    fontSize: 14,
+    color: "#DC2626",
+    lineHeight: 20
+  },
+  retryBtn: {
+    marginTop: spacing.md,
+    alignSelf: "flex-start",
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: t.colors.accent
+  },
+  retryLabel: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: t.colors.surface
+  },
+
+  // Empty state card
+  emptyCard: {
+    backgroundColor: t.colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.xl,
+    alignItems: "center",
+    gap: spacing.sm,
+    ...t.shadows.card
+  },
+  emptyTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: t.colors.text,
+    textAlign: "center",
+    marginTop: spacing.xs
+  },
+  emptySubtitle: {
+    fontSize: 14,
+    color: t.colors.textMuted,
+    textAlign: "center",
+    lineHeight: 20
+  },
+
+  // Unauthenticated
+  signInBtn: {
+    marginTop: spacing.sm,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: t.colors.accent
+  },
+  signInBtnText: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: t.colors.surface
+  },
+
+  // S56: Pending requests row — status blue, intentionally hardcoded
+  pendingRequestsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    backgroundColor: "#DBEAFE",
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    marginBottom: spacing.md
+  },
+  pendingRequestsText: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#1D4ED8"
+  },
+
+  // S56: Request-to-join button — status blue, intentionally hardcoded
+  joinBtnRTJ: {
+    borderColor: "#1D4ED8",
+    backgroundColor: "#EFF6FF"
+  },
+  joinBtnRTJText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#1D4ED8"
+  },
+
+  // Misc
+  btnDisabled: {
+    opacity: 0.5
+  }
+});
+
 // ── Screen ────────────────────────────────────────────────────────────
 
 export default function GroupsScreen() {
   const { session, status: sessionStatus } = useSession();
   const router = useRouter();
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
 
   // Browse state
   const [browseGroups, setBrowseGroups] = useState<ApiDiscoverGroup[]>([]);
@@ -475,6 +878,8 @@ function DiscoverGroupCard({
   onJoin: () => void;
   onNavigate: () => void;
 }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const [joining, setJoining] = useState(false);
 
   async function handleJoin() {
@@ -579,6 +984,9 @@ function JoinByCodeSection({
   onJoin: () => void;
   loading: boolean;
 }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   return (
     <View style={styles.joinCodeCard}>
       <Text style={styles.sectionLabel}>Join with invite code</Text>
@@ -614,6 +1022,9 @@ function JoinByCodeSection({
 // ── Unauthenticated State ─────────────────────────────────────────────
 
 function UnauthenticatedState({ onSignIn }: { onSignIn: () => void }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   return (
     <View style={styles.emptyCard}>
       <Ionicons name="people-outline" size={40} color={colors.textMuted} />
@@ -627,403 +1038,3 @@ function UnauthenticatedState({ onSignIn }: { onSignIn: () => void }) {
     </View>
   );
 }
-
-// ── Styles ─────────────────────────────────────────────────────────────
-
-const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: colors.background
-  },
-  scroll: { flex: 1 },
-  content: {
-    padding: spacing.lg,
-    paddingBottom: 100
-  },
-  centerState: {
-    flex: 1,
-    paddingTop: 80,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: spacing.md
-  },
-
-  // Header
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: spacing.lg
-  },
-  screenTitle: {
-    fontSize: 28,
-    fontWeight: "800",
-    color: colors.text,
-    letterSpacing: -0.5
-  },
-  createBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xs,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.md,
-    backgroundColor: colors.accent
-  },
-  createBtnText: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: colors.surface
-  },
-
-  // Section block
-  sectionBlock: {
-    marginBottom: spacing.xl
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: colors.text,
-    marginBottom: spacing.md
-  },
-
-  // Category filter
-  filterScroll: {
-    marginBottom: spacing.md
-  },
-  filterScrollContent: {
-    gap: spacing.sm,
-    paddingRight: spacing.md
-  },
-  filterChip: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.md,
-    borderWidth: 1.5,
-    borderColor: colors.border,
-    backgroundColor: colors.surface
-  },
-  filterChipActive: {
-    borderColor: colors.accent,
-    backgroundColor: colors.accent + "15"
-  },
-  filterChipText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: colors.textMuted
-  },
-  filterChipTextActive: {
-    color: colors.accent
-  },
-
-  // Sort
-  sortRow: {
-    flexDirection: "row",
-    gap: spacing.xs,
-    marginBottom: spacing.md
-  },
-  sortBtn: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: 6,
-    borderRadius: radius.sm,
-    backgroundColor: "#F1F5F9"
-  },
-  sortBtnActive: {
-    backgroundColor: colors.accent
-  },
-  sortBtnText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: colors.textMuted
-  },
-  sortBtnTextActive: {
-    color: colors.surface
-  },
-
-  // Browse group list
-  groupList: {
-    gap: spacing.sm
-  },
-
-  // Discover card
-  discoverCard: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    padding: spacing.lg,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.md,
-    ...shadows.card
-  },
-  discoverThumb: {
-    width: 44,
-    height: 44,
-    borderRadius: radius.md,
-    alignItems: "center",
-    justifyContent: "center"
-  },
-  discoverThumbLetter: {
-    fontSize: 18,
-    fontWeight: "800",
-    color: "rgba(255,255,255,0.9)"
-  },
-  discoverInfo: {
-    flex: 1,
-    gap: 3
-  },
-  discoverName: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: colors.text
-  },
-  discoverMeta: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.xs,
-    alignItems: "center"
-  },
-  discoverCategory: {
-    fontSize: 11,
-    fontWeight: "700"
-  },
-  discoverMetaText: {
-    fontSize: 11,
-    color: colors.textMuted
-  },
-  discoverDesc: {
-    fontSize: 12,
-    color: colors.textMuted,
-    lineHeight: 16
-  },
-  joinBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 3,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.md,
-    borderWidth: 1.5,
-    borderColor: colors.accent
-  },
-  joinBtnJoined: {
-    borderColor: "#15803D",
-    backgroundColor: "#DCFCE7"
-  },
-  joinBtnText: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: colors.accent
-  },
-  joinBtnJoinedText: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: "#15803D"
-  },
-  joinBtnDisabled: {
-    opacity: 0.5
-  },
-
-  // Load more
-  loadMoreBtn: {
-    alignItems: "center",
-    paddingVertical: spacing.md
-  },
-  loadMoreText: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: colors.accent
-  },
-
-  // My groups list
-  listCard: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    overflow: "hidden",
-    ...shadows.card
-  },
-  groupRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.lg,
-    gap: spacing.sm
-  },
-  groupRowBorder: {
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border
-  },
-  groupRowLeft: {
-    flex: 1,
-    gap: 3
-  },
-  groupName: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: colors.text
-  },
-  groupMeta: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xs,
-    marginTop: 2
-  },
-  groupMetaText: {
-    fontSize: 12,
-    color: colors.textMuted
-  },
-  groupMetaSep: {
-    fontSize: 12,
-    color: colors.border
-  },
-
-  // Join by code
-  joinCodeCard: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    padding: spacing.xl,
-    marginBottom: spacing.md,
-    ...shadows.card
-  },
-  sectionLabel: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: colors.textMuted,
-    textTransform: "uppercase",
-    letterSpacing: 0.8,
-    marginBottom: spacing.sm
-  },
-  joinCodeRow: {
-    flexDirection: "row",
-    gap: spacing.sm
-  },
-  joinCodeInput: {
-    flex: 1,
-    height: 44,
-    paddingHorizontal: spacing.md,
-    borderRadius: radius.md,
-    borderWidth: 1.5,
-    borderColor: colors.border,
-    backgroundColor: colors.background,
-    fontSize: 15,
-    fontWeight: "700",
-    color: colors.text,
-    letterSpacing: 1
-  },
-  joinCodeBtn: {
-    width: 72,
-    height: 44,
-    borderRadius: radius.md,
-    backgroundColor: colors.accent,
-    alignItems: "center",
-    justifyContent: "center"
-  },
-  joinCodeBtnText: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: colors.surface
-  },
-
-  // Loader
-  loaderBox: {
-    alignItems: "center",
-    paddingVertical: spacing.xl
-  },
-
-  // Error card
-  errorCard: {
-    backgroundColor: "#FEF2F2",
-    borderRadius: radius.lg,
-    padding: spacing.xl,
-    borderWidth: 1,
-    borderColor: "#FECACA"
-  },
-  errorText: {
-    fontSize: 14,
-    color: "#DC2626",
-    lineHeight: 20
-  },
-  retryBtn: {
-    marginTop: spacing.md,
-    alignSelf: "flex-start",
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.md,
-    backgroundColor: colors.accent
-  },
-  retryLabel: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: colors.surface
-  },
-
-  // Empty state card
-  emptyCard: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    padding: spacing.xl,
-    alignItems: "center",
-    gap: spacing.sm,
-    ...shadows.card
-  },
-  emptyTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: colors.text,
-    textAlign: "center",
-    marginTop: spacing.xs
-  },
-  emptySubtitle: {
-    fontSize: 14,
-    color: colors.textMuted,
-    textAlign: "center",
-    lineHeight: 20
-  },
-
-  // Unauthenticated
-  signInBtn: {
-    marginTop: spacing.sm,
-    paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.md,
-    borderRadius: radius.md,
-    backgroundColor: colors.accent
-  },
-  signInBtnText: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: colors.surface
-  },
-
-  // S56: Pending requests row
-  pendingRequestsRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm,
-    backgroundColor: "#DBEAFE",
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    marginBottom: spacing.md
-  },
-  pendingRequestsText: {
-    flex: 1,
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#1D4ED8"
-  },
-
-  // S56: Request-to-join button on discover card
-  joinBtnRTJ: {
-    borderColor: "#1D4ED8",
-    backgroundColor: "#EFF6FF"
-  },
-  joinBtnRTJText: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: "#1D4ED8"
-  },
-
-  // Misc
-  btnDisabled: {
-    opacity: 0.5
-  }
-});

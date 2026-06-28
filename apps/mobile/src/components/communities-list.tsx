@@ -11,7 +11,8 @@ import { useRouter } from "expo-router";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import type { ApiDiscoverGroup } from "@predict-future/types";
-import { colors, radius, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
+import { useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 import { trackExploreEvent } from "@/lib/analytics";
 
@@ -42,6 +43,8 @@ type Props = {
 
 export function CommunitiesList({ groups, limit = 5 }: Props) {
   const router = useRouter();
+  const styles = useThemedStyles(makeStyles);
+
   if (groups.length === 0) return null;
   const visible = groups.slice(0, limit);
 
@@ -95,13 +98,13 @@ export function CommunitiesList({ groups, limit = 5 }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   container: {
     marginHorizontal: spacing.lg,
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
     overflow: "hidden" as const,
   },
   row: {
@@ -111,10 +114,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     gap: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
+    borderBottomColor: t.colors.border,
   },
   rowPressed: {
-    backgroundColor: colors.surfaceMuted ?? "#f1f5f9",
+    backgroundColor: t.colors.surfaceMuted,
   },
   avatar: {
     width: 32,
@@ -140,7 +143,7 @@ const styles = StyleSheet.create({
   name: {
     fontSize: 14,
     fontWeight: "600" as const,
-    color: colors.text,
+    color: t.colors.text,
     flexShrink: 1,
   },
   // S59-T5: "Featured" editorial pill
@@ -158,14 +161,14 @@ const styles = StyleSheet.create({
   },
   meta: {
     fontSize: 11,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     marginTop: 1,
   },
   joinChip: {
     paddingVertical: 5,
     paddingHorizontal: 10,
     borderRadius: 999,
-    backgroundColor: colors.accent,
+    backgroundColor: t.colors.accent,
   },
   joinChipText: {
     fontSize: 11,

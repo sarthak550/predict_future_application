@@ -14,7 +14,8 @@ import { useRouter } from "expo-router";
 import { Image, Pressable, StyleSheet, Text, View } from "react-native";
 
 import type { ApiDiscoverGroup } from "@predict-future/types";
-import { colors, radius, shadows, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 import { trackExploreEvent } from "@/lib/analytics";
 
@@ -49,6 +50,8 @@ interface Props {
 
 export function CommunitySpotlightCard({ group }: Props) {
   const router = useRouter();
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
 
   const teaserLine =
     group.description && group.description.length > 0
@@ -166,14 +169,14 @@ export function CommunitySpotlightCard({ group }: Props) {
 
 const CARD_HEIGHT = 200;
 
-const styles = StyleSheet.create({
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   container: {
     marginHorizontal: spacing.md,
     marginBottom: spacing.sm,
     height: CARD_HEIGHT,
     borderRadius: radius.lg,
     overflow: "hidden",
-    ...shadows.card,
+    ...t.shadows.card,
   },
   coverImage: {
     ...StyleSheet.absoluteFillObject,
@@ -274,7 +277,7 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
   ctaText: {
-    color: colors.accent,
+    color: t.colors.accent,
     fontSize: 13,
     fontWeight: "700",
   },

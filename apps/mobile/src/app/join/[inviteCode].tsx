@@ -8,10 +8,11 @@ import {
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { colors, radius, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
 
 import { mobileApi } from "@/lib/api";
 import { useSession } from "@/providers/session-provider";
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 type GroupPreview = {
   id: string;
@@ -20,10 +21,161 @@ type GroupPreview = {
   memberCount: number;
 };
 
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
+  screen: {
+    flex: 1,
+    backgroundColor: t.colors.background,
+  },
+  center: {
+    alignItems: "center",
+    justifyContent: "center",
+    padding: spacing.xl,
+  },
+  loadingText: {
+    marginTop: spacing.md,
+    fontSize: 14,
+    color: t.colors.textMuted,
+  },
+  content: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: spacing.xl,
+    paddingBottom: 80,
+  },
+  groupIcon: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: t.colors.surface,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: spacing.lg,
+    borderWidth: 2,
+    borderColor: t.colors.accent + "33",
+  },
+  inviteLabel: {
+    fontSize: 14,
+    color: t.colors.textMuted,
+    fontWeight: "500",
+    letterSpacing: 0.3,
+    marginBottom: spacing.sm,
+  },
+  groupName: {
+    fontSize: 28,
+    fontWeight: "800",
+    color: t.colors.text,
+    textAlign: "center",
+    lineHeight: 34,
+    marginBottom: spacing.md,
+  },
+  groupDescription: {
+    fontSize: 15,
+    color: t.colors.textMuted,
+    textAlign: "center",
+    lineHeight: 22,
+    marginBottom: spacing.md,
+    maxWidth: 300,
+  },
+  memberCountRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    marginBottom: spacing.xl,
+    backgroundColor: t.colors.surface,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.pill,
+  },
+  memberCountText: {
+    fontSize: 13,
+    color: t.colors.textMuted,
+    fontWeight: "500",
+  },
+  // Error banner uses directional red — intentionally hardcoded
+  joinErrorBanner: {
+    backgroundColor: "#FFF1F2",
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+    width: "100%",
+    maxWidth: 340,
+  },
+  joinErrorText: {
+    fontSize: 13,
+    color: "#DC2626",
+    textAlign: "center",
+    lineHeight: 18,
+  },
+  joinBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.sm,
+    backgroundColor: t.colors.accent,
+    paddingVertical: spacing.lg,
+    paddingHorizontal: spacing.xl * 2,
+    borderRadius: radius.pill,
+    width: "100%",
+    maxWidth: 340,
+    marginBottom: spacing.md,
+  },
+  joinBtnDisabled: {
+    opacity: 0.6,
+  },
+  joinBtnText: {
+    color: "#FFFFFF",
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  cancelBtn: {
+    paddingVertical: spacing.md,
+  },
+  cancelBtnText: {
+    fontSize: 14,
+    color: t.colors.textMuted,
+    fontWeight: "500",
+  },
+  errorCard: {
+    backgroundColor: t.colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.xl,
+    alignItems: "center",
+    maxWidth: 320,
+    gap: spacing.md,
+  },
+  errorTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: t.colors.text,
+    textAlign: "center",
+  },
+  errorBody: {
+    fontSize: 14,
+    color: t.colors.textMuted,
+    textAlign: "center",
+    lineHeight: 20,
+  },
+  backBtn: {
+    backgroundColor: t.colors.accent,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
+    borderRadius: radius.pill,
+    marginTop: spacing.sm,
+  },
+  backBtnText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+});
+
 export default function JoinGroupScreen() {
   const { inviteCode } = useLocalSearchParams<{ inviteCode: string }>();
   const router = useRouter();
   const { status: sessionStatus } = useSession();
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
 
   const [preview, setPreview] = useState<GroupPreview | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -170,151 +322,3 @@ export default function JoinGroupScreen() {
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  center: {
-    alignItems: "center",
-    justifyContent: "center",
-    padding: spacing.xl,
-  },
-  loadingText: {
-    marginTop: spacing.md,
-    fontSize: 14,
-    color: colors.textMuted,
-  },
-  content: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    padding: spacing.xl,
-    paddingBottom: 80,
-  },
-  groupIcon: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: colors.surface,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: spacing.lg,
-    borderWidth: 2,
-    borderColor: colors.accent + "33",
-  },
-  inviteLabel: {
-    fontSize: 14,
-    color: colors.textMuted,
-    fontWeight: "500",
-    letterSpacing: 0.3,
-    marginBottom: spacing.sm,
-  },
-  groupName: {
-    fontSize: 28,
-    fontWeight: "800",
-    color: colors.text,
-    textAlign: "center",
-    lineHeight: 34,
-    marginBottom: spacing.md,
-  },
-  groupDescription: {
-    fontSize: 15,
-    color: colors.textMuted,
-    textAlign: "center",
-    lineHeight: 22,
-    marginBottom: spacing.md,
-    maxWidth: 300,
-  },
-  memberCountRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    marginBottom: spacing.xl,
-    backgroundColor: colors.surface,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.pill,
-  },
-  memberCountText: {
-    fontSize: 13,
-    color: colors.textMuted,
-    fontWeight: "500",
-  },
-  joinErrorBanner: {
-    backgroundColor: "#FFF1F2",
-    borderRadius: radius.md,
-    padding: spacing.md,
-    marginBottom: spacing.md,
-    width: "100%",
-    maxWidth: 340,
-  },
-  joinErrorText: {
-    fontSize: 13,
-    color: "#DC2626",
-    textAlign: "center",
-    lineHeight: 18,
-  },
-  joinBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: spacing.sm,
-    backgroundColor: colors.accent,
-    paddingVertical: spacing.lg,
-    paddingHorizontal: spacing.xl * 2,
-    borderRadius: radius.pill,
-    width: "100%",
-    maxWidth: 340,
-    marginBottom: spacing.md,
-  },
-  joinBtnDisabled: {
-    opacity: 0.6,
-  },
-  joinBtnText: {
-    color: "#FFFFFF",
-    fontSize: 16,
-    fontWeight: "700",
-  },
-  cancelBtn: {
-    paddingVertical: spacing.md,
-  },
-  cancelBtnText: {
-    fontSize: 14,
-    color: colors.textMuted,
-    fontWeight: "500",
-  },
-  errorCard: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    padding: spacing.xl,
-    alignItems: "center",
-    maxWidth: 320,
-    gap: spacing.md,
-  },
-  errorTitle: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: colors.text,
-    textAlign: "center",
-  },
-  errorBody: {
-    fontSize: 14,
-    color: colors.textMuted,
-    textAlign: "center",
-    lineHeight: 20,
-  },
-  backBtn: {
-    backgroundColor: colors.accent,
-    paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.md,
-    borderRadius: radius.pill,
-    marginTop: spacing.sm,
-  },
-  backBtnText: {
-    color: "#FFFFFF",
-    fontSize: 14,
-    fontWeight: "700",
-  },
-});

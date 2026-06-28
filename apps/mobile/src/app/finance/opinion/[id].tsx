@@ -28,8 +28,9 @@ import type {
 
 import { mobileApi } from "@/lib/api";
 import { useApiQuery } from "@/hooks/useApiQuery";
-import { colors, radius, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
 import { formatRelativeTime } from "@predict-future/utils";
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -65,6 +66,206 @@ function implCount(tallies: ApiExpertOpinionTallies, choice: ApiImplicationChoic
   }
 }
 
+// ─── Styles ───────────────────────────────────────────────────────────────────
+
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
+  screen: {
+    flex: 1,
+    backgroundColor: t.colors.background,
+  },
+  center: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: t.colors.background,
+    padding: spacing.lg,
+  },
+  errorText: { color: t.colors.textMuted, marginBottom: spacing.md, textAlign: "center" },
+  retryBtn: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    backgroundColor: t.colors.accent,
+    borderRadius: radius.md,
+  },
+  retryBtnText: { color: "#fff", fontWeight: "600" },
+
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: spacing.lg,
+    gap: spacing.md,
+  },
+  avatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: t.colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarText: { color: t.colors.textMuted, fontSize: 18, fontWeight: "700" },
+  expertName: { fontSize: 16, fontWeight: "700", color: t.colors.text },
+  expertOrg: { fontSize: 13, color: t.colors.textMuted, marginTop: 1 },
+  metaLine: { fontSize: 12, color: t.colors.textMuted, marginTop: 3 },
+  dirBadge: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    borderRadius: radius.sm,
+  },
+  dirBadgeText: { fontSize: 11, fontWeight: "700", letterSpacing: 0.5 },
+
+  headline: {
+    fontSize: 22,
+    fontWeight: "700",
+    color: t.colors.text,
+    paddingHorizontal: spacing.lg,
+    lineHeight: 28,
+  },
+  instrumentRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: spacing.lg,
+    marginTop: spacing.sm,
+  },
+  instrumentText: { fontSize: 13, color: t.colors.textMuted },
+
+  quoteCard: {
+    margin: spacing.lg,
+    padding: spacing.lg,
+    backgroundColor: t.colors.surfaceMuted,
+    borderRadius: radius.md,
+    borderLeftWidth: 3,
+    borderLeftColor: t.colors.accent,
+  },
+  quoteText: { fontSize: 15, color: t.colors.text, lineHeight: 22 },
+
+  resolutionCard: {
+    marginHorizontal: spacing.lg,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    marginBottom: spacing.md,
+  },
+  resolutionLabel: { fontSize: 14, fontWeight: "700", letterSpacing: 0.5 },
+  resolutionWhyLabel: {
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.6,
+    marginTop: spacing.sm,
+    color: t.colors.textMuted,
+  },
+  resolutionNote: { fontSize: 13, color: t.colors.text, marginTop: 2, lineHeight: 18 },
+
+  sourceBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+  },
+  sourceBtnText: { color: t.colors.accent, fontSize: 13, fontWeight: "600" },
+
+  clusterChip: {
+    alignSelf: "flex-start",
+    marginHorizontal: spacing.lg,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    backgroundColor: "#eef2ff",
+    borderRadius: radius.pill,
+    marginTop: spacing.sm,
+  },
+  clusterChipText: { fontSize: 12, color: "#4338ca", fontWeight: "600" },
+
+  pollSection: {
+    margin: spacing.lg,
+    marginTop: spacing.xl,
+    padding: spacing.lg,
+    backgroundColor: t.colors.surface,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: t.colors.border,
+  },
+  pollTitle: { fontSize: 16, fontWeight: "700", color: t.colors.text },
+  pollSubtitle: { fontSize: 12, color: t.colors.textMuted, marginTop: 2, marginBottom: spacing.md },
+  votingClosedBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: spacing.sm,
+    marginBottom: 2,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    backgroundColor: t.colors.surfaceMuted,
+    borderRadius: radius.sm,
+    alignSelf: "flex-start",
+  },
+  votingClosedText: {
+    fontSize: 11,
+    color: t.colors.textMuted,
+    fontWeight: "600",
+  },
+  optionsCol: { gap: spacing.sm },
+  optionBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: t.colors.border,
+    backgroundColor: t.colors.surface,
+    overflow: "hidden",
+    position: "relative",
+  },
+  optionFill: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    bottom: 0,
+  },
+  optionLabel: { fontSize: 14, color: t.colors.text, zIndex: 1 },
+  optionPct: { fontSize: 13, color: t.colors.textMuted, fontWeight: "600", zIndex: 1 },
+
+  // Lock CTA + locked pill
+  lockBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    marginTop: spacing.md,
+    paddingVertical: spacing.sm + 2,
+    backgroundColor: "#4338ca",
+    borderRadius: radius.md,
+  },
+  lockBtnText: { color: "#fff", fontSize: 14, fontWeight: "700" },
+  lockedPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 6,
+    marginTop: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    backgroundColor: "#eef2ff",
+    borderRadius: radius.pill,
+  },
+  lockedPillText: { color: "#4338ca", fontSize: 12, fontWeight: "700" },
+  lockHint: {
+    fontSize: 11,
+    color: t.colors.textMuted,
+    marginTop: 8,
+    lineHeight: 15,
+  },
+
+  errorInline: {
+    color: "#b91c1c",
+    fontSize: 13,
+    paddingHorizontal: spacing.lg,
+    marginTop: spacing.sm,
+  },
+});
+
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function OpinionDetailScreen() {
@@ -72,6 +273,8 @@ export default function OpinionDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const opinionId = typeof id === "string" ? id : "";
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
 
   const opinionFetcher = useCallback(() => mobileApi.getFinanceOpinion(opinionId), [opinionId]);
   const opinionQuery = useApiQuery<ApiFinanceOpinionDetail>(opinionFetcher, [opinionId], {
@@ -276,7 +479,7 @@ export default function OpinionDetailScreen() {
         <Text style={styles.pollTitle}>Do you agree with this call?</Text>
         {isResolved && opinion.resolvedAt && (
           <View style={styles.votingClosedBanner}>
-            <Feather name="lock" size={12} color="#64748b" />
+            <Feather name="lock" size={12} color={colors.textMuted} />
             <Text style={styles.votingClosedText}>
               Voting closed on{" "}
               {new Date(opinion.resolvedAt).toLocaleDateString("en-IN", {
@@ -377,203 +580,3 @@ export default function OpinionDetailScreen() {
     </ScrollView>
   );
 }
-
-// ─── Styles ───────────────────────────────────────────────────────────────────
-
-const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  center: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.background,
-    padding: spacing.lg,
-  },
-  errorText: { color: colors.textMuted, marginBottom: spacing.md, textAlign: "center" },
-  retryBtn: {
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    backgroundColor: colors.accent,
-    borderRadius: radius.md,
-  },
-  retryBtnText: { color: "#fff", fontWeight: "600" },
-
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: spacing.lg,
-    gap: spacing.md,
-  },
-  avatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: "#e5e7eb",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  avatarText: { color: "#4b5563", fontSize: 18, fontWeight: "700" },
-  expertName: { fontSize: 16, fontWeight: "700", color: colors.text },
-  expertOrg: { fontSize: 13, color: colors.textMuted, marginTop: 1 },
-  metaLine: { fontSize: 12, color: colors.textMuted, marginTop: 3 },
-  dirBadge: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
-    borderRadius: radius.sm,
-  },
-  dirBadgeText: { fontSize: 11, fontWeight: "700", letterSpacing: 0.5 },
-
-  headline: {
-    fontSize: 22,
-    fontWeight: "700",
-    color: colors.text,
-    paddingHorizontal: spacing.lg,
-    lineHeight: 28,
-  },
-  instrumentRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: spacing.lg,
-    marginTop: spacing.sm,
-  },
-  instrumentText: { fontSize: 13, color: colors.textMuted },
-
-  quoteCard: {
-    margin: spacing.lg,
-    padding: spacing.lg,
-    backgroundColor: "#f9fafb",
-    borderRadius: radius.md,
-    borderLeftWidth: 3,
-    borderLeftColor: colors.accent,
-  },
-  quoteText: { fontSize: 15, color: colors.text, lineHeight: 22 },
-
-  resolutionCard: {
-    marginHorizontal: spacing.lg,
-    padding: spacing.md,
-    borderRadius: radius.md,
-    marginBottom: spacing.md,
-  },
-  resolutionLabel: { fontSize: 14, fontWeight: "700", letterSpacing: 0.5 },
-  resolutionWhyLabel: {
-    fontSize: 10,
-    fontWeight: "800",
-    letterSpacing: 0.6,
-    marginTop: spacing.sm,
-    color: "#4b5563",
-  },
-  resolutionNote: { fontSize: 13, color: colors.text, marginTop: 2, lineHeight: 18 },
-
-  sourceBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-  },
-  sourceBtnText: { color: colors.accent, fontSize: 13, fontWeight: "600" },
-
-  clusterChip: {
-    alignSelf: "flex-start",
-    marginHorizontal: spacing.lg,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 6,
-    backgroundColor: "#eef2ff",
-    borderRadius: radius.pill,
-    marginTop: spacing.sm,
-  },
-  clusterChipText: { fontSize: 12, color: "#4338ca", fontWeight: "600" },
-
-  pollSection: {
-    margin: spacing.lg,
-    marginTop: spacing.xl,
-    padding: spacing.lg,
-    backgroundColor: "#fff",
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-  },
-  pollTitle: { fontSize: 16, fontWeight: "700", color: colors.text },
-  pollSubtitle: { fontSize: 12, color: colors.textMuted, marginTop: 2, marginBottom: spacing.md },
-  votingClosedBanner: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginTop: spacing.sm,
-    marginBottom: 2,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 6,
-    backgroundColor: "#f1f5f9",
-    borderRadius: radius.sm,
-    alignSelf: "flex-start",
-  },
-  votingClosedText: {
-    fontSize: 11,
-    color: "#475569",
-    fontWeight: "600",
-  },
-  optionsCol: { gap: spacing.sm },
-  optionBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    backgroundColor: "#fff",
-    overflow: "hidden",
-    position: "relative",
-  },
-  optionFill: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    bottom: 0,
-  },
-  optionLabel: { fontSize: 14, color: colors.text, zIndex: 1 },
-  optionPct: { fontSize: 13, color: colors.textMuted, fontWeight: "600", zIndex: 1 },
-
-  // Lock CTA + locked pill
-  lockBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    marginTop: spacing.md,
-    paddingVertical: spacing.sm + 2,
-    backgroundColor: "#4338ca",
-    borderRadius: radius.md,
-  },
-  lockBtnText: { color: "#fff", fontSize: 14, fontWeight: "700" },
-  lockedPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    alignSelf: "flex-start",
-    gap: 6,
-    marginTop: spacing.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 6,
-    backgroundColor: "#eef2ff",
-    borderRadius: radius.pill,
-  },
-  lockedPillText: { color: "#4338ca", fontSize: 12, fontWeight: "700" },
-  lockHint: {
-    fontSize: 11,
-    color: colors.textMuted,
-    marginTop: 8,
-    lineHeight: 15,
-  },
-
-  errorInline: {
-    color: "#b91c1c",
-    fontSize: 13,
-    paddingHorizontal: spacing.lg,
-    marginTop: spacing.sm,
-  },
-});

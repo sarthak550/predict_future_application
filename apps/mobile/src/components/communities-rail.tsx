@@ -24,7 +24,8 @@ import {
 } from "react-native";
 
 import type { ApiDiscoverGroup } from "@predict-future/types";
-import { colors, radius, shadows, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
+import { useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 import { trackExploreEvent } from "@/lib/analytics";
 
@@ -59,6 +60,7 @@ interface GroupCardProps {
 
 function CompactGroupCard({ group }: GroupCardProps) {
   const router = useRouter();
+  const styles = useThemedStyles(makeStyles);
 
   function handlePress() {
     trackExploreEvent("explore_communities_rail_tapped", {
@@ -141,6 +143,8 @@ interface Props {
 }
 
 export function CommunitiesRail({ groups }: Props) {
+  const styles = useThemedStyles(makeStyles);
+
   if (groups.length === 0) return null;
 
   return (
@@ -164,14 +168,14 @@ export function CommunitiesRail({ groups }: Props) {
 const CARD_WIDTH = 140;
 const CARD_HEIGHT = 160;
 
-const styles = StyleSheet.create({
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   container: {
     marginBottom: spacing.sm,
   },
   sectionHeader: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#0F172A",
+    color: t.colors.text,
     marginHorizontal: spacing.md,
     marginBottom: spacing.sm,
   },
@@ -185,7 +189,7 @@ const styles = StyleSheet.create({
     height: CARD_HEIGHT,
     borderRadius: radius.md,
     overflow: "hidden",
-    ...shadows.card,
+    ...t.shadows.card,
   },
   cardCover: {
     ...StyleSheet.absoluteFillObject,

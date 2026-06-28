@@ -25,13 +25,14 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
-import { colors, radius, shadows, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
 import { formatRelativeTime } from "@predict-future/utils";
 import type { ApiGroupJoinRequestInboxItem } from "@predict-future/types";
 
 import { mobileApi } from "@/lib/api";
 import { trackGroupRequestEvent } from "@/lib/analytics";
 import { useSession } from "@/providers/session-provider";
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 const MAX_SELECTION = 50;
 
@@ -49,6 +50,8 @@ export default function GroupRequestsScreen() {
   const groupId = normalizeParam(params.id);
 
   const { session } = useSession();
+  const styles = useThemedStyles(makeStyles);
+  const { colors } = useTheme();
 
   const [requests, setRequests] = useState<ApiGroupJoinRequestInboxItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -552,10 +555,10 @@ export default function GroupRequestsScreen() {
 
 // ── Styles ─────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: colors.background
+    backgroundColor: t.colors.background
   },
   listContent: {
     padding: spacing.md,
@@ -571,18 +574,18 @@ const styles = StyleSheet.create({
   },
   accessDeniedText: {
     fontSize: 14,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     textAlign: "center",
     maxWidth: 280
   },
   errorText: {
     fontSize: 14,
-    color: colors.danger,
+    color: t.colors.danger,
     textAlign: "center"
   },
   emptyText: {
     fontSize: 14,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     fontStyle: "italic"
   },
 
@@ -590,22 +593,22 @@ const styles = StyleSheet.create({
   requestRow: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderRadius: radius.md,
     padding: spacing.md,
     marginBottom: spacing.xs,
     gap: spacing.md,
-    ...shadows.card
+    ...t.shadows.card
   },
   requestRowSelected: {
     borderWidth: 2,
-    borderColor: colors.accent,
+    borderColor: t.colors.accent,
   },
   avatar: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: colors.accent + "20",
+    backgroundColor: t.colors.accent + "20",
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0
@@ -613,7 +616,7 @@ const styles = StyleSheet.create({
   avatarLetter: {
     fontSize: 16,
     fontWeight: "700",
-    color: colors.accent
+    color: t.colors.accent
   },
   // S59-T4: Checkbox in select mode
   checkbox: {
@@ -621,14 +624,14 @@ const styles = StyleSheet.create({
     height: 24,
     borderRadius: 12,
     borderWidth: 2,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
   },
   checkboxSelected: {
-    backgroundColor: colors.accent,
-    borderColor: colors.accent,
+    backgroundColor: t.colors.accent,
+    borderColor: t.colors.accent,
   },
   requestInfo: {
     flex: 1,
@@ -637,11 +640,11 @@ const styles = StyleSheet.create({
   requestUsername: {
     fontSize: 14,
     fontWeight: "700",
-    color: colors.text
+    color: t.colors.text
   },
   requestedAt: {
     fontSize: 11,
-    color: colors.textMuted
+    color: t.colors.textMuted
   },
   actionBtns: {
     flexDirection: "row",
@@ -659,7 +662,7 @@ const styles = StyleSheet.create({
     opacity: 0.5
   },
   approveBtn: {
-    backgroundColor: colors.accent
+    backgroundColor: t.colors.accent
   },
   approveBtnText: {
     fontSize: 13,
@@ -672,29 +675,29 @@ const styles = StyleSheet.create({
   rejectBtnText: {
     fontSize: 13,
     fontWeight: "700",
-    color: colors.danger
+    color: t.colors.danger
   },
 
   // Reject sheet
   rejectSheet: {
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     padding: spacing.xl,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
+    borderBottomColor: t.colors.border,
     gap: spacing.md
   },
   rejectSheetTitle: {
     fontSize: 15,
     fontWeight: "700",
-    color: colors.text
+    color: t.colors.text
   },
   rejectNoteInput: {
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
     borderRadius: radius.md,
     padding: spacing.md,
     fontSize: 14,
-    color: colors.text,
+    color: t.colors.text,
     minHeight: 72,
     textAlignVertical: "top"
   },
@@ -710,17 +713,17 @@ const styles = StyleSheet.create({
     justifyContent: "center"
   },
   rejectSheetCancelBtn: {
-    backgroundColor: colors.background,
+    backgroundColor: t.colors.background,
     borderWidth: 1,
-    borderColor: colors.border
+    borderColor: t.colors.border
   },
   rejectSheetCancelText: {
     fontSize: 14,
     fontWeight: "600",
-    color: colors.text
+    color: t.colors.text
   },
   rejectSheetConfirmBtn: {
-    backgroundColor: colors.danger
+    backgroundColor: t.colors.danger
   },
   rejectSheetConfirmText: {
     fontSize: 14,
@@ -736,7 +739,7 @@ const styles = StyleSheet.create({
   loadMoreText: {
     fontSize: 14,
     fontWeight: "600",
-    color: colors.accent
+    color: t.colors.accent
   },
 
   // Retry
@@ -744,19 +747,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xl,
     paddingVertical: spacing.md,
     borderRadius: radius.md,
-    backgroundColor: colors.accent
+    backgroundColor: t.colors.accent
   },
   retryLabel: {
     fontSize: 14,
     fontWeight: "700",
-    color: colors.surface
+    color: t.colors.surface
   },
 
   // S59-T4: Multi-select header cancel
   cancelSelectText: {
     fontSize: 14,
     fontWeight: "600",
-    color: colors.accent,
+    color: t.colors.accent,
   },
 
   // S59-T4: Bulk footer action bar
@@ -765,18 +768,18 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
+    borderTopColor: t.colors.border,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
     paddingBottom: Platform.OS === "ios" ? 28 : spacing.md,
     gap: spacing.sm,
-    ...shadows.card,
+    ...t.shadows.card,
   },
   bulkSelectionCount: {
     fontSize: 12,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     textAlign: "center",
   },
   bulkActions: {
@@ -791,7 +794,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   bulkApproveBtn: {
-    backgroundColor: colors.accent,
+    backgroundColor: t.colors.accent,
   },
   bulkApproveBtnText: {
     fontSize: 14,
@@ -801,11 +804,11 @@ const styles = StyleSheet.create({
   bulkRejectBtn: {
     backgroundColor: "#FEE2E2",
     borderWidth: 1,
-    borderColor: colors.danger + "40",
+    borderColor: t.colors.danger + "40",
   },
   bulkRejectBtnText: {
     fontSize: 14,
     fontWeight: "700",
-    color: colors.danger,
+    color: t.colors.danger,
   },
 });

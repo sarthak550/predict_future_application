@@ -12,16 +12,169 @@ import {
 } from "react-native";
 
 import type { ApiDigestOpinion } from "@predict-future/types";
-import { colors, radius, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 import { useApiQuery } from "@/hooks/useApiQuery";
 import { mobileApi } from "@/lib/api";
 
 const MY_CALLS_FILTERS_KEY = "predict_future:my-calls-filters";
 
+// ─── Styles ────────────────────────────────────────────────────────────────────
+
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
+  scroll: { flex: 1, backgroundColor: t.colors.background },
+  scrollContent: { paddingBottom: spacing.xl ?? 32 },
+  centred: { alignItems: "center", paddingTop: 80 },
+  errorText: {
+    fontSize: 14,
+    color: t.colors.textMuted,
+    marginBottom: spacing.md,
+    textAlign: "center",
+    paddingHorizontal: spacing.lg,
+  },
+  retryBtn: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    backgroundColor: t.colors.accent,
+    borderRadius: radius.sm,
+  },
+  retryText: { fontSize: 14, fontWeight: "700", color: "#fff" },
+
+  summaryCard: {
+    margin: spacing.lg,
+    marginBottom: spacing.sm,
+    padding: spacing.md,
+    backgroundColor: t.colors.surface,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: t.colors.border,
+  },
+  summaryTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: t.colors.text,
+    marginBottom: spacing.md,
+  },
+  summaryStats: { flexDirection: "row", alignItems: "center", marginBottom: spacing.sm },
+  summaryBlock: { flex: 1, alignItems: "center" },
+  summaryDivider: { width: 1, height: 32, backgroundColor: t.colors.border },
+  summaryCount: { fontSize: 28, fontWeight: "800", lineHeight: 32 },
+  summaryLabel: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: t.colors.textMuted,
+    marginTop: 2,
+    letterSpacing: 0.5,
+  },
+  accuracyLine: { fontSize: 13, color: t.colors.textMuted, marginTop: spacing.sm, marginBottom: 6 },
+  accuracyPct: { fontWeight: "700", color: t.colors.text },
+  barTrack: {
+    flexDirection: "row",
+    height: 6,
+    borderRadius: 3,
+    overflow: "hidden",
+    backgroundColor: t.colors.surfaceMuted,
+  },
+  barFill: { height: 6 },
+
+  // Filter rows
+  filterSection: {
+    paddingHorizontal: spacing.lg,
+    marginBottom: spacing.sm,
+  },
+  filterRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: spacing.xs,
+    flexWrap: "wrap",
+  },
+  filterSpacer: { flex: 1, minWidth: 4 },
+  chip: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: t.colors.border,
+    backgroundColor: t.colors.surface,
+  },
+  chipActive: { backgroundColor: t.colors.text, borderColor: t.colors.text },
+  chipText: { fontSize: 12, fontWeight: "700" as const, color: t.colors.textMuted },
+  chipTextActive: { color: t.colors.surface },
+  timeBtn: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: t.colors.border,
+    backgroundColor: t.colors.surfaceMuted,
+  },
+  timeBtnActive: { backgroundColor: "#4338ca", borderColor: "#4338ca" },
+  timeBtnText: { fontSize: 11, fontWeight: "700" as const, color: t.colors.textMuted },
+  timeBtnTextActive: { color: "#fff" },
+
+  // List
+  listContainer: { paddingHorizontal: spacing.lg, paddingTop: spacing.sm },
+  listHeader: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: t.colors.textMuted,
+    marginBottom: spacing.sm,
+    letterSpacing: 0.3,
+    textTransform: "uppercase" as const,
+  },
+  row: {
+    backgroundColor: t.colors.surface,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: t.colors.border,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  rowTop: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 4,
+  },
+  expertName: { fontSize: 13, fontWeight: "700", color: t.colors.text, flex: 1, marginRight: 8 },
+  badgeRow: { flexDirection: "row", gap: 4 },
+  dirBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+  dirBadgeText: { fontSize: 10, fontWeight: "700", letterSpacing: 0.3 },
+  resBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+  resBadgeText: { fontSize: 10, fontWeight: "800", letterSpacing: 0.3 },
+  instrument: { fontSize: 13, fontWeight: "600", color: t.colors.text, marginBottom: 6 },
+  quote: { fontSize: 12, color: t.colors.textMuted, lineHeight: 17, marginBottom: 6 },
+  stanceRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  stanceText: { fontSize: 12, fontWeight: "600" },
+  resolvedDate: { fontSize: 11, color: t.colors.textSubtle },
+
+  // Empty state
+  emptyCard: {
+    margin: spacing.lg,
+    padding: spacing.lg,
+    backgroundColor: t.colors.surface,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: t.colors.border,
+    alignItems: "center",
+  },
+  emptyIcon: { fontSize: 36, marginBottom: spacing.sm },
+  emptyTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: t.colors.text,
+    marginBottom: spacing.sm,
+    textAlign: "center",
+  },
+  emptySubtitle: { fontSize: 13, color: t.colors.textMuted, lineHeight: 18, textAlign: "center" },
+});
+
 // ─── Direction badge ───────────────────────────────────────────────────────────
 
 function DirectionBadge({ direction }: { direction: string }) {
+  const styles = useThemedStyles(makeStyles);
   const cfg =
     direction === "BULLISH"
       ? { label: "BULLISH", color: "#16a34a", bg: "#dcfce7" }
@@ -43,6 +196,7 @@ function ResolutionBadge({
 }: {
   status: "PENDING" | "RESOLVED_HIT" | "RESOLVED_MISS";
 }) {
+  const styles = useThemedStyles(makeStyles);
   if (status === "PENDING") {
     return (
       <View style={[styles.resBadge, { backgroundColor: "#f3f4f6" }]}>
@@ -64,6 +218,7 @@ function ResolutionBadge({
 
 function OpinionRow({ item }: { item: ApiDigestOpinion }) {
   const router = useRouter();
+  const styles = useThemedStyles(makeStyles);
 
   const agreedLabel =
     item.userAgreed === true
@@ -145,6 +300,7 @@ function FilterChip({
   active: boolean;
   onPress: () => void;
 }) {
+  const styles = useThemedStyles(makeStyles);
   return (
     <Pressable
       onPress={onPress}
@@ -162,6 +318,8 @@ type ResultFilter = "all" | "correct" | "wrong";
 type TimeFilter = "all" | "week";
 
 export default function MyCallsScreen() {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const { data: digest, loading, error, refetch } = useApiQuery(
     () => mobileApi.getMyCallsDigest(),
     []
@@ -423,152 +581,3 @@ export default function MyCallsScreen() {
     </>
   );
 }
-
-const styles = StyleSheet.create({
-  scroll: { flex: 1, backgroundColor: colors.background },
-  scrollContent: { paddingBottom: spacing.xl ?? 32 },
-  centred: { alignItems: "center", paddingTop: 80 },
-  errorText: {
-    fontSize: 14,
-    color: "#6b7280",
-    marginBottom: spacing.md,
-    textAlign: "center",
-    paddingHorizontal: spacing.lg,
-  },
-  retryBtn: {
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    backgroundColor: colors.accent,
-    borderRadius: radius.sm,
-  },
-  retryText: { fontSize: 14, fontWeight: "700", color: "#fff" },
-
-  summaryCard: {
-    margin: spacing.lg,
-    marginBottom: spacing.sm,
-    padding: spacing.md,
-    backgroundColor: "#fff",
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-  },
-  summaryTitle: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: "#111827",
-    marginBottom: spacing.md,
-  },
-  summaryStats: { flexDirection: "row", alignItems: "center", marginBottom: spacing.sm },
-  summaryBlock: { flex: 1, alignItems: "center" },
-  summaryDivider: { width: 1, height: 32, backgroundColor: "#e5e7eb" },
-  summaryCount: { fontSize: 28, fontWeight: "800", lineHeight: 32 },
-  summaryLabel: {
-    fontSize: 11,
-    fontWeight: "600",
-    color: "#6b7280",
-    marginTop: 2,
-    letterSpacing: 0.5,
-  },
-  accuracyLine: { fontSize: 13, color: "#4b5563", marginTop: spacing.sm, marginBottom: 6 },
-  accuracyPct: { fontWeight: "700", color: "#111827" },
-  barTrack: {
-    flexDirection: "row",
-    height: 6,
-    borderRadius: 3,
-    overflow: "hidden",
-    backgroundColor: "#f3f4f6",
-  },
-  barFill: { height: 6 },
-
-  // Filter rows
-  filterSection: {
-    paddingHorizontal: spacing.lg,
-    marginBottom: spacing.sm,
-  },
-  filterRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginTop: spacing.xs,
-    flexWrap: "wrap",
-  },
-  filterSpacer: { flex: 1, minWidth: 4 },
-  chip: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: 6,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-    backgroundColor: "#fff",
-  },
-  chipActive: { backgroundColor: "#0f172a", borderColor: "#0f172a" },
-  chipText: { fontSize: 12, fontWeight: "700" as const, color: "#475569" },
-  chipTextActive: { color: "#fff" },
-  timeBtn: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: 6,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "#cbd5e1",
-    backgroundColor: "#f8fafc",
-  },
-  timeBtnActive: { backgroundColor: "#4338ca", borderColor: "#4338ca" },
-  timeBtnText: { fontSize: 11, fontWeight: "700" as const, color: "#334155" },
-  timeBtnTextActive: { color: "#fff" },
-
-  // List
-  listContainer: { paddingHorizontal: spacing.lg, paddingTop: spacing.sm },
-  listHeader: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#6b7280",
-    marginBottom: spacing.sm,
-    letterSpacing: 0.3,
-    textTransform: "uppercase" as const,
-  },
-  row: {
-    backgroundColor: "#fff",
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    padding: spacing.md,
-    marginBottom: spacing.sm,
-  },
-  rowTop: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 4,
-  },
-  expertName: { fontSize: 13, fontWeight: "700", color: "#111827", flex: 1, marginRight: 8 },
-  badgeRow: { flexDirection: "row", gap: 4 },
-  dirBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
-  dirBadgeText: { fontSize: 10, fontWeight: "700", letterSpacing: 0.3 },
-  resBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
-  resBadgeText: { fontSize: 10, fontWeight: "800", letterSpacing: 0.3 },
-  instrument: { fontSize: 13, fontWeight: "600", color: "#374151", marginBottom: 6 },
-  quote: { fontSize: 12, color: "#4b5563", lineHeight: 17, marginBottom: 6 },
-  stanceRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  stanceText: { fontSize: 12, fontWeight: "600" },
-  resolvedDate: { fontSize: 11, color: "#9ca3af" },
-
-  // Empty state
-  emptyCard: {
-    margin: spacing.lg,
-    padding: spacing.lg,
-    backgroundColor: "#fff",
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    alignItems: "center",
-  },
-  emptyIcon: { fontSize: 36, marginBottom: spacing.sm },
-  emptyTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#111827",
-    marginBottom: spacing.sm,
-    textAlign: "center",
-  },
-  emptySubtitle: { fontSize: 13, color: "#6b7280", lineHeight: 18, textAlign: "center" },
-});

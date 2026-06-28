@@ -13,7 +13,8 @@ import {
 
 import type { ApiStory } from "@predict-future/types";
 import { formatRelativeTime } from "@predict-future/utils";
-import { colors, radius, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 import { mobileApi } from "@/lib/api";
 import { withRetry } from "@/lib/retry";
@@ -22,10 +23,11 @@ import { ExpertOpinionCard } from "@/components/expert-opinion-card";
 // ── Skeleton placeholder ──────────────────────────────────────────────────────
 
 function SkeletonBlock({ width, height, style }: { width: string | number; height: number; style?: object }) {
+  const { colors } = useTheme();
   return (
     <View
       style={[
-        { width, height, backgroundColor: "#E5E7EB", borderRadius: 6 },
+        { width, height, backgroundColor: colors.border, borderRadius: 6 },
         style,
       ]}
     />
@@ -33,9 +35,11 @@ function SkeletonBlock({ width, height, style }: { width: string | number; heigh
 }
 
 function StorySkeleton() {
+  const styles = useThemedStyles(makeStyles);
+  const { colors } = useTheme();
   return (
     <View style={styles.container}>
-      <View style={{ height: 220, backgroundColor: "#E5E7EB" }} />
+      <View style={{ height: 220, backgroundColor: colors.border }} />
       <View style={styles.contentPad}>
         <SkeletonBlock width={80} height={18} style={{ marginBottom: 12 }} />
         <SkeletonBlock width="90%" height={28} style={{ marginBottom: 8 }} />
@@ -50,8 +54,139 @@ function StorySkeleton() {
 
 // ── Main screen ───────────────────────────────────────────────────────────────
 
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: t.colors.background,
+  },
+  scrollContent: {
+    flexGrow: 1,
+  },
+  contentPad: {
+    padding: spacing.xl,
+  },
+  heroImage: {
+    width: "100%",
+    height: 240,
+  },
+  heroPlaceholder: {
+    width: "100%",
+    height: 160,
+    backgroundColor: t.colors.surfaceMuted,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  placeholderEmoji: {
+    fontSize: 52,
+  },
+  categoryChip: {
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1,
+    textTransform: "uppercase",
+    color: t.colors.accent,
+    backgroundColor: t.colors.surfaceMuted,
+    alignSelf: "flex-start",
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: radius.pill,
+    overflow: "hidden",
+    marginBottom: spacing.md,
+  },
+  headline: {
+    fontSize: 22,
+    lineHeight: 30,
+    fontWeight: "800",
+    color: t.colors.text,
+    marginBottom: spacing.md,
+  },
+  metaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: spacing.lg,
+    paddingBottom: spacing.lg,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: t.colors.border,
+  },
+  sourceName: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: t.colors.text,
+  },
+  readMore: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: t.colors.accent,
+  },
+  publishedAt: {
+    fontSize: 12,
+    color: t.colors.textMuted,
+  },
+  summary: {
+    fontSize: 16,
+    lineHeight: 26,
+    color: t.colors.text,
+  },
+  expertSection: {
+    marginTop: spacing.lg,
+  },
+  expertSectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: spacing.xl,
+    marginBottom: spacing.md,
+  },
+  expertSectionTitle: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: t.colors.text,
+  },
+  expertSectionCount: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: t.colors.textMuted,
+  },
+  errorContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: spacing.xl,
+    gap: spacing.md,
+  },
+  errorEmoji: {
+    fontSize: 48,
+  },
+  errorTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: t.colors.text,
+    textAlign: "center",
+  },
+  errorSubtitle: {
+    fontSize: 14,
+    color: t.colors.textMuted,
+    textAlign: "center",
+    lineHeight: 22,
+  },
+  retryButton: {
+    marginTop: spacing.sm,
+    paddingVertical: 10,
+    paddingHorizontal: 24,
+    borderRadius: radius.md,
+    backgroundColor: t.colors.accent,
+  },
+  retryButtonText: {
+    color: "#fff",
+    fontSize: 15,
+    fontWeight: "700",
+  },
+});
+
 export default function StoryScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const styles = useThemedStyles(makeStyles);
   const [story, setStory] = useState<ApiStory | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -223,133 +358,3 @@ export default function StoryScreen() {
     </>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  scrollContent: {
-    flexGrow: 1,
-  },
-  contentPad: {
-    padding: spacing.xl,
-  },
-  heroImage: {
-    width: "100%",
-    height: 240,
-  },
-  heroPlaceholder: {
-    width: "100%",
-    height: 160,
-    backgroundColor: "#E0E7FF",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  placeholderEmoji: {
-    fontSize: 52,
-  },
-  categoryChip: {
-    fontSize: 11,
-    fontWeight: "800",
-    letterSpacing: 1,
-    textTransform: "uppercase",
-    color: colors.accent,
-    backgroundColor: "#EFF6FF",
-    alignSelf: "flex-start",
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-    borderRadius: radius.pill,
-    overflow: "hidden",
-    marginBottom: spacing.md,
-  },
-  headline: {
-    fontSize: 22,
-    lineHeight: 30,
-    fontWeight: "800",
-    color: colors.text,
-    marginBottom: spacing.md,
-  },
-  metaRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginBottom: spacing.lg,
-    paddingBottom: spacing.lg,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border ?? "#E5E7EB",
-  },
-  sourceName: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: colors.text,
-  },
-  readMore: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: colors.accent,
-  },
-  publishedAt: {
-    fontSize: 12,
-    color: colors.textMuted,
-  },
-  summary: {
-    fontSize: 16,
-    lineHeight: 26,
-    color: colors.text,
-  },
-  expertSection: {
-    marginTop: spacing.lg,
-  },
-  expertSectionHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: spacing.xl,
-    marginBottom: spacing.md,
-  },
-  expertSectionTitle: {
-    fontSize: 16,
-    fontWeight: "800",
-    color: colors.text,
-  },
-  expertSectionCount: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: colors.textMuted,
-  },
-  errorContainer: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    padding: spacing.xl,
-    gap: spacing.md,
-  },
-  errorEmoji: {
-    fontSize: 48,
-  },
-  errorTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: colors.text,
-    textAlign: "center",
-  },
-  errorSubtitle: {
-    fontSize: 14,
-    color: colors.textMuted,
-    textAlign: "center",
-    lineHeight: 22,
-  },
-  retryButton: {
-    marginTop: spacing.sm,
-    paddingVertical: 10,
-    paddingHorizontal: 24,
-    borderRadius: radius.md,
-    backgroundColor: colors.accent,
-  },
-  retryButtonText: {
-    color: "#fff",
-    fontSize: 15,
-    fontWeight: "700",
-  },
-});

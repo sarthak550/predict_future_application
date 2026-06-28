@@ -2,7 +2,8 @@ import { useRouter } from "expo-router";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import type { ApiExpertOpinionItem } from "@predict-future/types";
-import { colors, radius, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
+import { useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 import { ExpertOpinionRow } from "@/components/news-feed-card";
 import { ExpertOpinionPostCard } from "@/components/expert-opinion-post-card";
@@ -35,6 +36,7 @@ function getSourceDomain(url: string): string {
 
 export function ExpertOpinionCard({ opinions, storyHeadline, storyId, articlePublishedAt, followedExpertIds, onFollowToggle }: Props) {
   const router = useRouter();
+  const styles = useThemedStyles(makeStyles);
 
   if (opinions.length === 0) return null;
 
@@ -92,40 +94,40 @@ export function ExpertOpinionCard({ opinions, storyHeadline, storyId, articlePub
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   card: {
     marginHorizontal: spacing.lg,
     marginBottom: spacing.lg,
     padding: spacing.md,
     borderRadius: radius.md,
-    backgroundColor: "#fff",
+    backgroundColor: t.colors.surface,
     borderWidth: 1,
-    borderColor: "#E5E7EB",
+    borderColor: t.colors.border,
   },
   takeDivider: {
     height: StyleSheet.hairlineWidth,
-    backgroundColor: "#E5E7EB",
+    backgroundColor: t.colors.border,
     marginVertical: spacing.md,
   },
   storyContext: {
     marginTop: spacing.sm,
     paddingTop: spacing.sm,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "#E5E7EB",
+    borderTopColor: t.colors.border,
   },
   storyRow: {
     fontSize: 12,
-    color: colors.textMuted ?? "#6b7280",
+    color: t.colors.textMuted,
     lineHeight: 16,
   },
   storySource: {
     fontWeight: "600",
-    color: colors.textMuted ?? "#6b7280",
+    color: t.colors.textMuted,
   },
   storySeparator: {
-    color: colors.textMuted ?? "#6b7280",
+    color: t.colors.textMuted,
   },
   storyHeadline: {
-    color: colors.textMuted ?? "#6b7280",
+    color: t.colors.textMuted,
   },
 });

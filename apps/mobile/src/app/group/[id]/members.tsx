@@ -13,11 +13,12 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
-import { colors, radius, shadows, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
 import { formatRelativeTime } from "@predict-future/utils";
 
 import { mobileApi } from "@/lib/api";
 import { useSession } from "@/providers/session-provider";
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 import type { ApiGroupMember } from "@predict-future/types";
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -35,6 +36,8 @@ export default function GroupMembersScreen() {
   const modeParam = normalizeParam(params.mode);
   const router = useRouter();
   const { session } = useSession();
+  const styles = useThemedStyles(makeStyles);
+  const { colors } = useTheme();
 
   const [members, setMembers] = useState<ApiGroupMember[]>([]);
   const [loading, setLoading] = useState(true);
@@ -234,7 +237,6 @@ export default function GroupMembersScreen() {
 
   function showMemberActions(member: ApiGroupMember) {
     const isBanned = member.bannedAt != null;
-    const isOwner = member.role === "OWNER";
 
     const options = isBanned
       ? ["Unban", "Cancel"]
@@ -461,6 +463,8 @@ export default function GroupMembersScreen() {
 // ── Role Badge ────────────────────────────────────────────────────────
 
 function RoleBadge({ role }: { role: string }) {
+  const styles = useThemedStyles(makeStyles);
+  const { colors } = useTheme();
   if (role === "MEMBER") return null;
   const config =
     role === "OWNER"
@@ -477,10 +481,10 @@ function RoleBadge({ role }: { role: string }) {
 
 // ── Styles ─────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: colors.background
+    backgroundColor: t.colors.background
   },
   listContent: {
     padding: spacing.md,
@@ -494,13 +498,13 @@ const styles = StyleSheet.create({
     gap: spacing.md
   },
   errorText: {
-    color: colors.danger,
+    color: t.colors.danger,
     fontSize: 14,
     textAlign: "center"
   },
   emptyText: {
     fontSize: 14,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     fontStyle: "italic"
   },
 
@@ -508,12 +512,12 @@ const styles = StyleSheet.create({
   memberRow: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderRadius: radius.md,
     padding: spacing.md,
     marginBottom: spacing.xs,
     gap: spacing.md,
-    ...shadows.card
+    ...t.shadows.card
   },
   memberRowBanned: {
     opacity: 0.6
@@ -542,14 +546,14 @@ const styles = StyleSheet.create({
   memberUsername: {
     fontSize: 14,
     fontWeight: "700",
-    color: colors.text
+    color: t.colors.text
   },
   memberUsernameMuted: {
-    color: colors.textMuted
+    color: t.colors.textMuted
   },
   joinedAt: {
     fontSize: 11,
-    color: colors.textMuted
+    color: t.colors.textMuted
   },
   roleBadge: {
     paddingHorizontal: 6,
@@ -587,7 +591,7 @@ const styles = StyleSheet.create({
   loadMoreText: {
     fontSize: 14,
     fontWeight: "600",
-    color: colors.accent
+    color: t.colors.accent
   },
 
   // Retry
@@ -595,12 +599,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xl,
     paddingVertical: spacing.md,
     borderRadius: radius.md,
-    backgroundColor: colors.accent
+    backgroundColor: t.colors.accent
   },
   retryLabel: {
     fontSize: 14,
     fontWeight: "700",
-    color: colors.surface
+    color: t.colors.surface
   },
 
   // S57: Transfer mode banner
@@ -608,16 +612,16 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    backgroundColor: colors.accent + "15",
+    backgroundColor: t.colors.accent + "15",
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     borderBottomWidth: 1,
-    borderBottomColor: colors.accent + "30"
+    borderBottomColor: t.colors.accent + "30"
   },
   transferBannerText: {
     fontSize: 13,
     fontWeight: "600",
-    color: colors.accent,
+    color: t.colors.accent,
     flex: 1
   },
   transferCancelBtn: {
@@ -627,7 +631,7 @@ const styles = StyleSheet.create({
   transferCancelText: {
     fontSize: 13,
     fontWeight: "600",
-    color: colors.textMuted
+    color: t.colors.textMuted
   },
 
   // S57: Make Owner button on each eligible member row
@@ -635,13 +639,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
     borderRadius: radius.sm,
-    backgroundColor: colors.accent,
+    backgroundColor: t.colors.accent,
     alignItems: "center",
     justifyContent: "center"
   },
   makeOwnerText: {
     fontSize: 12,
     fontWeight: "700",
-    color: colors.surface
+    color: t.colors.surface
   }
 });

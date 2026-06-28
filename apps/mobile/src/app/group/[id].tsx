@@ -13,13 +13,14 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
-import { colors, radius, shadows, spacing } from "@predict-future/ui-tokens";
+import { colors as staticColors, radius, spacing } from "@predict-future/ui-tokens";
 import { formatRelativeTime } from "@predict-future/utils";
 
 import { useApiQuery } from "@/hooks/useApiQuery";
 import { mobileApi } from "@/lib/api";
 import { trackGroupRequestEvent } from "@/lib/analytics";
 import { useSession } from "@/providers/session-provider";
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 import type { AppMarketCategory, GroupNotifLevel } from "@predict-future/types";
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -141,6 +142,8 @@ function resolveMemberStatus(
 export default function GroupDetailScreen() {
   const params = useLocalSearchParams<{ id: string | string[] }>();
   const groupId = normalizeParam(params.id);
+  const styles = useThemedStyles(makeStyles);
+  const { colors } = useTheme();
 
   const fetcher = useCallback(
     () => mobileApi.getGroupById(groupId as string),
@@ -201,6 +204,7 @@ function CoverBanner({
   coverImageUrl?: string | null;
   category?: string | null;
 }) {
+  const styles = useThemedStyles(makeStyles);
   if (coverImageUrl) {
     return (
       <Image
@@ -245,6 +249,8 @@ function JoinCTA({
   cancellingRequest: boolean;
 }) {
   const router = useRouter();
+  const styles = useThemedStyles(makeStyles);
+  const { colors } = useTheme();
 
   if (memberStatus === "owner" || memberStatus === "admin") {
     return null;
@@ -397,6 +403,8 @@ function GroupBody({
   const router = useRouter();
   const { session } = useSession();
   const userId = session?.userId ?? null;
+  const styles = useThemedStyles(makeStyles);
+  const { colors } = useTheme();
 
   const [joining, setJoining] = useState(false);
   const [requestingJoin, setRequestingJoin] = useState(false);
@@ -946,6 +954,7 @@ const STATUS_BADGE: Record<string, { label: string; bg: string; text: string }> 
 };
 
 function MarketStatusBadge({ status }: { status: string }) {
+  const styles = useThemedStyles(makeStyles);
   const cfg = STATUS_BADGE[status] ?? { label: status, bg: "#F3F4F6", text: "#6B7280" };
   return (
     <View style={[styles.statusBadge, { backgroundColor: cfg.bg }]}>
@@ -956,10 +965,10 @@ function MarketStatusBadge({ status }: { status: string }) {
 
 // ── Styles ─────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: colors.background
+    backgroundColor: t.colors.background
   },
   bodyContainer: {
     flex: 1
@@ -978,7 +987,7 @@ const styles = StyleSheet.create({
     gap: spacing.md
   },
   errorText: {
-    color: colors.danger,
+    color: t.colors.danger,
     fontSize: 14,
     textAlign: "center"
   },
@@ -997,10 +1006,10 @@ const styles = StyleSheet.create({
 
   // Header card
   headerCard: {
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     padding: spacing.xl,
     marginBottom: spacing.sm,
-    ...shadows.card
+    ...t.shadows.card
   },
   headerTopRow: {
     flexDirection: "row",
@@ -1011,7 +1020,7 @@ const styles = StyleSheet.create({
   groupName: {
     fontSize: 24,
     fontWeight: "800",
-    color: colors.text,
+    color: t.colors.text,
     flex: 1,
     lineHeight: 30
   },
@@ -1026,7 +1035,7 @@ const styles = StyleSheet.create({
     minWidth: 16,
     height: 16,
     borderRadius: 8,
-    backgroundColor: colors.danger,
+    backgroundColor: t.colors.danger,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 3
@@ -1061,10 +1070,10 @@ const styles = StyleSheet.create({
   pillTextOpen: { color: "#15803D" },
   pillRTJ: { backgroundColor: "#DBEAFE" },
   pillTextRTJ: { color: "#1D4ED8" },
-  pillInviteOnly: { backgroundColor: "#F3F4F6" },
-  pillTextInviteOnly: { color: "#6B7280" },
-  pillOwner: { backgroundColor: colors.accentSoft },
-  pillTextOwner: { color: colors.accent },
+  pillInviteOnly: { backgroundColor: t.colors.surfaceMuted },
+  pillTextInviteOnly: { color: t.colors.textMuted },
+  pillOwner: { backgroundColor: t.colors.accentSoft },
+  pillTextOwner: { color: t.colors.accent },
   pillAdmin: { backgroundColor: "#FEF3C7" },
   pillTextAdmin: { color: "#92400E" },
   pillMember: { backgroundColor: "#DCFCE7" },
@@ -1084,15 +1093,15 @@ const styles = StyleSheet.create({
   },
   statText: {
     fontSize: 13,
-    color: colors.textMuted
+    color: t.colors.textMuted
   },
   statSep: {
     fontSize: 13,
-    color: colors.border
+    color: t.colors.border
   },
   ownerText: {
     fontSize: 13,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     marginBottom: spacing.sm
   },
 
@@ -1104,7 +1113,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     marginBottom: spacing.sm,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
+    borderTopColor: t.colors.border,
   },
   notifPrefLeft: {
     flexDirection: "row",
@@ -1113,7 +1122,7 @@ const styles = StyleSheet.create({
   },
   notifPrefLabel: {
     fontSize: 14,
-    color: colors.text,
+    color: t.colors.text,
     fontWeight: "500",
   },
   notifPrefRight: {
@@ -1123,7 +1132,7 @@ const styles = StyleSheet.create({
   },
   notifPrefValue: {
     fontSize: 13,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     fontWeight: "500",
   },
 
@@ -1135,7 +1144,7 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     padding: spacing.md,
     borderRadius: radius.md,
-    backgroundColor: colors.accentSoft,
+    backgroundColor: t.colors.accentSoft,
     borderWidth: 1,
     borderColor: "#C7D2FE"
   },
@@ -1143,7 +1152,7 @@ const styles = StyleSheet.create({
   inviteLabel: {
     fontSize: 10,
     fontWeight: "700",
-    color: colors.accent,
+    color: t.colors.accent,
     textTransform: "uppercase",
     letterSpacing: 0.5
   },
@@ -1151,14 +1160,14 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontSize: 18,
     fontWeight: "800",
-    color: colors.accent,
+    color: t.colors.accent,
     letterSpacing: 2
   },
   copyBtn: {
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     borderRadius: radius.md,
-    backgroundColor: colors.accent
+    backgroundColor: t.colors.accent
   },
   copyBtnText: {
     fontSize: 13,
@@ -1168,15 +1177,15 @@ const styles = StyleSheet.create({
 
   // Generic card
   card: {
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     padding: spacing.xl,
     marginBottom: spacing.sm,
-    ...shadows.card
+    ...t.shadows.card
   },
   sectionTitle: {
     fontSize: 16,
     fontWeight: "700",
-    color: colors.text,
+    color: t.colors.text,
     marginBottom: spacing.md
   },
   sectionHeaderRow: {
@@ -1188,11 +1197,11 @@ const styles = StyleSheet.create({
   seeAllText: {
     fontSize: 13,
     fontWeight: "600",
-    color: colors.accent
+    color: t.colors.accent
   },
   emptyText: {
     fontSize: 14,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     fontStyle: "italic"
   },
 
@@ -1200,7 +1209,7 @@ const styles = StyleSheet.create({
   descriptionText: {
     fontSize: 15,
     lineHeight: 22,
-    color: colors.textMuted
+    color: t.colors.textMuted
   },
   expandBtn: {
     marginTop: spacing.sm
@@ -1208,7 +1217,7 @@ const styles = StyleSheet.create({
   expandBtnText: {
     fontSize: 13,
     fontWeight: "600",
-    color: colors.accent
+    color: t.colors.accent
   },
 
   // Markets
@@ -1220,7 +1229,7 @@ const styles = StyleSheet.create({
   },
   marketRowBorder: {
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border
+    borderTopColor: t.colors.border
   },
   marketRowLeft: {
     flex: 1,
@@ -1229,7 +1238,7 @@ const styles = StyleSheet.create({
   marketTitle: {
     fontSize: 14,
     fontWeight: "600",
-    color: colors.text,
+    color: t.colors.text,
     lineHeight: 20
   },
   marketMeta: {
@@ -1240,11 +1249,11 @@ const styles = StyleSheet.create({
   },
   marketCategory: {
     fontSize: 11,
-    color: colors.textMuted
+    color: t.colors.textMuted
   },
   marketMetaText: {
     fontSize: 11,
-    color: colors.textMuted
+    color: t.colors.textMuted
   },
   statusBadge: {
     paddingHorizontal: 6,
@@ -1263,37 +1272,37 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     gap: spacing.sm,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border
+    borderTopColor: t.colors.border
   },
   avatarPlaceholder: {
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: colors.accent + "20",
+    backgroundColor: t.colors.accent + "20",
     alignItems: "center",
     justifyContent: "center"
   },
   avatarLetter: {
     fontSize: 13,
     fontWeight: "700",
-    color: colors.accent
+    color: t.colors.accent
   },
   memberUsername: {
     fontSize: 14,
     fontWeight: "600",
-    color: colors.text,
+    color: t.colors.text,
     flex: 1
   },
   rolePill: {
     paddingHorizontal: 7,
     paddingVertical: 2,
     borderRadius: radius.sm,
-    backgroundColor: colors.accentSoft
+    backgroundColor: t.colors.accentSoft
   },
   rolePillText: {
     fontSize: 10,
     fontWeight: "700",
-    color: colors.accent,
+    color: t.colors.accent,
     letterSpacing: 0.3,
     textTransform: "uppercase"
   },
@@ -1303,12 +1312,12 @@ const styles = StyleSheet.create({
     marginTop: spacing.md,
     paddingTop: spacing.md,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border
+    borderTopColor: t.colors.border
   },
   manageBtnText: {
     fontSize: 14,
     fontWeight: "600",
-    color: colors.accent
+    color: t.colors.accent
   },
 
   // Sticky CTA bar
@@ -1319,11 +1328,11 @@ const styles = StyleSheet.create({
     right: 0,
     padding: spacing.xl,
     paddingBottom: 32,
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
+    borderTopColor: t.colors.border,
     gap: spacing.sm,
-    ...shadows.card
+    ...t.shadows.card
   },
   ctaBtn: {
     flexDirection: "row",
@@ -1331,25 +1340,25 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingVertical: 14,
     borderRadius: radius.md,
-    backgroundColor: colors.accent
+    backgroundColor: t.colors.accent
   },
   ctaBtnDisabled: {
-    backgroundColor: colors.border
+    backgroundColor: t.colors.border
   },
   ctaBtnMuted: {
-    backgroundColor: colors.background,
+    backgroundColor: t.colors.background,
     borderWidth: 1,
-    borderColor: colors.border
+    borderColor: t.colors.border
   },
   ctaBtnText: {
     fontSize: 16,
     fontWeight: "700",
-    color: colors.surface
+    color: t.colors.surface
   },
   ctaBtnTextMuted: {
     fontSize: 15,
     fontWeight: "600",
-    color: colors.textMuted
+    color: t.colors.textMuted
   },
   ctaBtnGhost: {
     alignItems: "center",
@@ -1358,11 +1367,11 @@ const styles = StyleSheet.create({
   ctaBtnGhostText: {
     fontSize: 14,
     fontWeight: "600",
-    color: colors.accent
+    color: t.colors.accent
   },
   decisionNote: {
     fontSize: 12,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     textAlign: "center",
     paddingHorizontal: spacing.md,
     fontStyle: "italic"
@@ -1373,11 +1382,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xl,
     paddingVertical: spacing.md,
     borderRadius: radius.md,
-    backgroundColor: colors.accent
+    backgroundColor: t.colors.accent
   },
   retryLabel: {
     fontSize: 14,
     fontWeight: "700",
-    color: colors.surface
+    color: t.colors.surface
   }
 });

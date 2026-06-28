@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { StyleSheet, Text, View } from "react-native";
 
-import { colors } from "@predict-future/ui-tokens";
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 /**
  * VerifiedBadge — small inline credential indicator for Verified Analysts.
@@ -14,6 +14,9 @@ import { colors } from "@predict-future/ui-tokens";
  * tight spaces such as comment rows or secondary stat lines.
  */
 export function VerifiedBadge({ compact = false }: { compact?: boolean }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   return (
     <View style={[styles.badge, compact && styles.badgeCompact]}>
       <Ionicons
@@ -28,7 +31,7 @@ export function VerifiedBadge({ compact = false }: { compact?: boolean }) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   badge: {
     flexDirection: "row",
     alignItems: "center",
@@ -41,7 +44,7 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 11,
     fontWeight: "600",
-    color: colors.accent as string,
+    color: t.colors.accent as string,
     letterSpacing: 0.2,
   },
 });
