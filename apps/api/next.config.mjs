@@ -8,10 +8,14 @@ const nextConfig = {
   // Self-contained server bundle for containerized hosting (AWS App Runner / Docker).
   // Emits apps/api/.next/standalone with a minimal node server + only the traced deps.
   output: "standalone",
-  // Trace from the MONOREPO ROOT so the standalone bundle includes the workspace
-  // packages (@predict-future/*) and hoisted node_modules. Without this, the bundle
-  // misses workspace deps and crashes at runtime.
-  outputFileTracingRoot: path.join(__dirname, "../../"),
+  experimental: {
+    // Trace from the MONOREPO ROOT so the standalone bundle includes the workspace
+    // packages (@predict-future/*) and hoisted node_modules. Without this, the bundle
+    // misses workspace deps and crashes at runtime.
+    // NOTE: in Next 14.x this lives under `experimental`; it only became a top-level
+    // key in Next 15 (top-level here triggers an "Unrecognized key" warning).
+    outputFileTracingRoot: path.join(__dirname, "../../"),
+  },
   eslint: {
     // Skip Next's ESLint pass during prod builds — TypeScript ESLint plugin
     // resolution conflicts with monorepo workspace setup on Vercel.

@@ -41,7 +41,6 @@ import type {
   ApiPhoneVerifyResponse,
   ApiPlacePositionResponse,
   ApiPlatformStats,
-  ApiPollListItem,
   ApiProbabilityHistory,
   ApiReferralInfo,
   ApiStory,
@@ -60,6 +59,13 @@ import type {
   ApiGroupCoverImageUpdate,
   ApiUserNotificationDefaults,
   GroupNotifLevel,
+  // Legacy Market-based news polls ("Predict Now")
+  ApiPollListItem,
+  // S62: new Poll model (free-vote predictions)
+  ApiPoll,
+  ApiPollDetail,
+  ApiPollPack,
+  AppPollStatus,
 } from "@predict-future/types";
 
 export type { ApiLeaderboardTimeWindow };
@@ -198,9 +204,6 @@ export function createApiClient(options: ApiClientOptions) {
     },
     getPublicMarkets(query?: PublicMarketsQuery) {
       return request<{ markets: ApiMarketSummary[]; nextCursor?: string | null; hasMore?: boolean }>("/api/markets/public", query);
-    },
-    getPolls(query?: { status?: "open" | "closed" | "all"; category?: AppMarketCategory }) {
-      return request<{ polls: ApiPollListItem[] }>("/api/polls", query, { auth: true });
     },
     getMarketById(marketId: string, query?: { userId?: string }) {
       return request<ApiMarketDetail & {
@@ -1321,8 +1324,67 @@ export function createApiClient(options: ApiClientOptions) {
         }
       );
     },
+
+    // ── S62: Poll model ───────────────────────────────────────────────────
+
+    /**
+     * List Poll-model polls.
+     * Public — no auth required.
+     *
+     * @param query.packId  - Restrict to polls sharing this packId.
+     * @param query.status  - "open" (default) | "closed" | "resolved" | "all"
+     */
+    getPolls(query?: { status?: "open" | "closed" | "all"; category?: AppMarketCategory }) {
+      // Legacy: Market-based news polls ("Predict Now"). Stays on Market until Phase 2.
+      return request<{ polls: ApiPollListItem[] }>("/api/polls", query, { auth: true });
+    },
+
+    /**
+     * List NEW Poll-model polls (RBI MPC packs etc.) — distinct from the legacy
+     * Market-based `getPolls` above. Mobile groups the result by `packId`.
+     */
+    getPollPacks(query?: { packId?: string; status?: "open" | "closed" | "resolved" | "all" }) {
+      return request<{ polls: ApiPoll[] }>("/api/polls/packs", query);
+    },
+
+    /**
+     * Fetch a single poll with per-option vote counts and (if authed) the
+     * caller's existing vote.
+     * Auth: optional.
+     */
+    getPoll(pollId: string) {
+      return request<{ poll: ApiPollDetail }>(`/api/polls/${pollId}`, undefined, {
+        auth: true,
+      });
+    },
+
+    /**
+     * Cast or update a free-vote prediction on a Poll.
+     * Auth: required.
+     *
+     * @param pollId   - The poll to vote on.
+     * @param optionId - The PollOption.id the user is selecting.
+     */
+    votePoll(pollId: string, optionId: string) {
+      return request<{
+        ok: boolean;
+        userVote: { optionId: string; lockedAt: string };
+        options: ApiPoll["options"];
+        totalVotes: number;
+      }>(
+        `/api/polls/${pollId}/vote`,
+        undefined,
+        {
+          method: "POST",
+          body: JSON.stringify({ optionId }),
+          auth: true,
+        }
+      );
+    },
   };
 }
+
+export type { ApiPoll, ApiPollDetail, ApiPollPack, AppPollStatus };
 
 function safeJsonParse(input: string) {
   try {

@@ -360,9 +360,10 @@ const MAX_FINANCE_EXTRACTIONS_PER_BATCH = 5;
  * is in the approved Indian finance source list. All others are skipped.
  */
 async function extractFinanceOpinionsInBackground(items: NormalizedNewsItem[]) {
-  const geminiKey = process.env.GEMINI_API_KEY;
-  if (!geminiKey) {
-    console.debug("[Finance AI] GEMINI_API_KEY not set — skipping expert opinion extraction");
+  // Extraction prefers Groq (then falls back to Gemini), so EITHER key enables it.
+  // (Previously gated on GEMINI_API_KEY only — a Groq-only deploy silently never extracted.)
+  if (!process.env.GROQ_API_KEY && !process.env.GEMINI_API_KEY) {
+    console.debug("[Finance AI] No AI key (GROQ_API_KEY/GEMINI_API_KEY) — skipping expert opinion extraction");
     return;
   }
 
@@ -614,14 +615,14 @@ export class RSSIngestionService {
     }
 
     // ---- Phase 3: Extract expert opinions for FINANCE stories from approved sources ----
-    // Cost guardrail: only runs when GEMINI_API_KEY is set AND at least one story is from
+    // Cost guardrail: only runs when an AI key is available AND at least one story is from
     // an approved Indian finance source (which may have been saved as FINANCE after tagging).
     // The background job queries the DB for actual FINANCE-categorized stories, so the pre-check
     // here just avoids spawning the coroutine when no finance sources were in this batch.
     const hasApprovedFinanceSourceStory = newStories.some((item) =>
       isApprovedFinanceSource(item.source_url)
     );
-    if (process.env.GEMINI_API_KEY && hasApprovedFinanceSourceStory) {
+    if (aiEnabled && hasApprovedFinanceSourceStory) {
       void extractFinanceOpinionsInBackground(newStories).catch((err) =>
         console.error("[Finance AI] background expert opinion extraction failed:", err)
       );

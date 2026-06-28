@@ -103,6 +103,8 @@ export async function GET() {
       _count: market._count,
       flagshipEventAt: market.flagshipEventAt?.toISOString() ?? null,
       flagshipEventType: market.flagshipEventType ?? null,
+      structuredData: market.structuredData ?? null,
+      eventClusterId: market.eventClusterId ?? null,
       crowdProbability,
       expertProbability,
       expertCount,

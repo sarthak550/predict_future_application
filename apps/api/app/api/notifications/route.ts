@@ -11,7 +11,9 @@ export async function GET(request: NextRequest) {
 
   const { searchParams } = new URL(request.url);
   const limitParam = searchParams.get("limit");
-  const take = limitParam ? Math.min(Number(limitParam), 100) : 20;
+  // Guard against NaN / non-positive: Number("abc") is NaN → take:NaN → Prisma throws (uncaught 500).
+  const parsedLimit = limitParam ? Number(limitParam) : NaN;
+  const take = Number.isInteger(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 100) : 20;
 
   const [notifications, unreadCount] = await Promise.all([
     prisma.notification.findMany({

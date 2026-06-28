@@ -38,3 +38,5 @@
 - [project_sprint57.md](project_sprint57.md) — S57 Member self-service: leave/transfer/archive routes, GroupServiceError, isArchived guard on detail route, mobile kebab + transfer picker — all 5 tickets COMPLETE
 - [project_sprint58.md](project_sprint58.md) — S58: GroupNotifLevel enum+model, pref-gated push helpers, 3 API routes, mobile notif rows, @vercel/blob cover upload, expo-image-picker, edit screen — all 8 tickets COMPLETE
 - [project_sprint59.md](project_sprint59.md) — S59: GroupModerationAction audit table, server notif defaults, group market push, bulk approve/reject, featured flag — all 6 tickets qa-review
+- [project_sprint61.md](project_sprint61.md) — S61 RBI Pulse backend: T0 create-pack, T3 resolve-pack, T4 structuredData reads, T6 ApiMpcPollPack type + groupFlagshipEventsIntoPacks helper — pure reuse, no schema migration
+- [project_sprint62.md](project_sprint62.md) — S62 T1: PollStatus enum + Poll/PollOption/PollVote models + additive UserStat poll fields; db push (shadow DB P3006 pattern)

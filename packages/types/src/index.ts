@@ -240,6 +240,11 @@ export type ApiMarketSummary = {
   /** One of: 'RBI' | 'BUDGET' | 'GST' | 'GLOBAL' | 'FED' | 'OTHER'. */
   flagshipEventType?: string | null;
   /**
+   * Arbitrary admin-authored metadata stored as JSON.
+   * For RBI MPC poll-packs: `{ emiImpactLine: string }`.
+   */
+  structuredData?: Record<string, unknown> | null;
+  /**
    * S55-T5: The group that hosts this market, if any. Non-null only on group-hosted (PRIVATE)
    * markets where the API includes the group relation. Used for the "Hosted by [Group]" chip
    * on MarketSummaryCard. Optional so existing callers that don't include the group relation
@@ -258,6 +263,13 @@ export type ApiFlagshipProbabilityMap = Record<string, number>;
 export type ApiFlagshipEvent = ApiMarketSummary & {
   flagshipEventAt: string;
   flagshipEventType: string;
+  /**
+   * Arbitrary admin-authored metadata stored as JSON on the market.
+   * For RBI MPC poll-packs this contains `{ emiImpactLine: string }`.
+   */
+  structuredData?: Record<string, unknown> | null;
+  /** FK to the MarketEventCluster this flagship market belongs to (if any). */
+  eventClusterId?: string | null;
   /** Crowd (all participants) probability map. Null if no positions yet. */
   crowdProbability: ApiFlagshipProbabilityMap | null;
   /** Expert-only probability map. Null if fewer than 3 expert participants. */
@@ -1596,4 +1608,151 @@ export type ApiF1SessionDetail = {
     status: "upcoming" | "live" | "finished";
   };
   drivers: ApiF1Driver[];
+};
+
+// ─── RBI MPC Poll-Pack (Sprint 61) ───────────────────────────────────────────
+
+/**
+ * A single MULTIPLE_CHOICE market that is part of an RBI MPC poll-pack.
+ * The `structuredData` field carries the static EMI-impact line authored by admin.
+ */
+export type ApiMpcPollMarket = ApiFlagshipEvent & {
+  structuredData: { emiImpactLine: string } | null;
+};
+
+/**
+ * An RBI MPC "poll-pack": one MarketEventCluster with exactly two MULTIPLE_CHOICE
+ * flagship markets — Q1 (Repo Rate) and Q2 (Stance).
+ *
+ * Produced by `groupFlagshipEventsIntoPacks()` from the flagship-events list.
+ */
+export type ApiMpcPollPack = {
+  /** The MarketEventCluster id shared by both markets. */
+  clusterId: string;
+  /** The flagshipEventAt date of the MPC meeting (ISO string). Both markets share the same date. */
+  meetingAt: string;
+  /**
+   * The two MULTIPLE_CHOICE markets in canonical order:
+   *   index 0 = Repo Rate question
+   *   index 1 = Stance question
+   * Mobile UI should render them in this order but must not hard-code the index.
+   */
+  markets: [ApiMpcPollMarket, ApiMpcPollMarket];
+};
+
+/**
+ * Group a list of flagship events into RBI MPC poll-packs.
+ *
+ * Rules:
+ *  - Only markets with `flagshipEventType === "RBI"` and a non-null `eventClusterId`
+ *    are eligible.
+ *  - Markets are grouped by their `eventClusterId`.
+ *  - A cluster must have exactly 2 eligible markets to form a valid pack; clusters
+ *    with 1 or 3+ markets are silently dropped (admin data-entry error).
+ *  - The two markets within a pack are sorted by their `title` so the order is
+ *    deterministic: "Repo Rate" sorts before "Stance" alphabetically.
+ *
+ * This function is pure and has no side-effects — it can be called safely in both
+ * the API layer and the mobile/web UI without any runtime dependencies.
+ *
+ * @param events - The full array of flagship events from GET /api/finance/flagship-events.
+ * @returns       Packs sorted by `meetingAt` ascending (nearest MPC first).
+ */
+export function groupFlagshipEventsIntoPacks(
+  events: ApiFlagshipEvent[]
+): ApiMpcPollPack[] {
+  // Collect only RBI MULTIPLE_CHOICE markets that belong to a cluster.
+  const eligible = events.filter(
+    (e): e is ApiMpcPollMarket & { eventClusterId: string } =>
+      e.flagshipEventType === "RBI" &&
+      e.marketType === "MULTIPLE_CHOICE" &&
+      typeof e.eventClusterId === "string" &&
+      e.eventClusterId.length > 0
+  );
+
+  // Group by clusterId.
+  const byCluster = new Map<string, typeof eligible>();
+  for (const market of eligible) {
+    const group = byCluster.get(market.eventClusterId) ?? [];
+    group.push(market);
+    byCluster.set(market.eventClusterId, group);
+  }
+
+  const packs: ApiMpcPollPack[] = [];
+  for (const [clusterId, clusterMarkets] of byCluster.entries()) {
+    // A valid pack has exactly 2 markets.
+    if (clusterMarkets.length !== 2) continue;
+
+    // Sort deterministically by title so Repo Rate always precedes Stance.
+    const sorted = [...clusterMarkets].sort((a, b) =>
+      a.title.localeCompare(b.title)
+    ) as [ApiMpcPollMarket, ApiMpcPollMarket];
+
+    packs.push({
+      clusterId,
+      meetingAt: sorted[0].flagshipEventAt,
+      markets: sorted,
+    });
+  }
+
+  // Sort packs by meeting date ascending (nearest first).
+  packs.sort((a, b) => a.meetingAt.localeCompare(b.meetingAt));
+
+  return packs;
+}
+
+// ─── S62: Poll model types ──────────────────────────────────────────────────
+
+export type AppPollStatus = "OPEN" | "CLOSED" | "RESOLVED";
+
+/** One selectable option in a Poll, including live vote count. */
+export type ApiPollOption = {
+  id: string;
+  label: string;
+  sortOrder: number;
+  voteCount: number;
+};
+
+/**
+ * A Poll as returned by GET /api/polls (list) and
+ * GET /api/polls/[pollId] (without the caller's vote).
+ * Suitable for rendering cards and carousels.
+ */
+export type ApiPoll = {
+  id: string;
+  question: string;
+  description: string | null;
+  category: AppMarketCategory;
+  status: AppPollStatus;
+  closeAt: string;
+  eventAt: string | null;
+  packId: string | null;
+  structuredData: Record<string, unknown> | null;
+  winningOptionId: string | null;
+  resolvedAt: string | null;
+  createdAt: string;
+  options: ApiPollOption[];
+  totalVotes: number;
+};
+
+/**
+ * Poll detail — extends ApiPoll with the authenticated caller's vote.
+ * Returned by GET /api/polls/[pollId].
+ */
+export type ApiPollDetail = ApiPoll & {
+  userVote: {
+    optionId: string;
+    lockedAt: string | null;
+    createdAt: string;
+  } | null;
+};
+
+/**
+ * A group of Polls that share a packId (one RBI MPC event = 3 polls: Repo / CRR / SLR).
+ * Returned by POST /api/admin/polls/rbi-mpc-pack (and reconstructible
+ * from GET /api/polls?packId=<packId>).
+ */
+export type ApiPollPack = {
+  packId: string;
+  polls: ApiPoll[];
 };

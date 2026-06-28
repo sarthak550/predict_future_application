@@ -24,7 +24,10 @@ export async function GET(request: Request) {
   const sort = searchParams.get("sort");
   const limitParam = searchParams.get("limit");
   const cursorParam = searchParams.get("cursor");
-  const limit = limitParam ? Math.max(1, Math.min(100, parseInt(limitParam, 10))) : DEFAULT_PAGE_SIZE;
+  // Guard against NaN: parseInt("abc") is NaN, which would propagate to take:NaN and
+  // make Prisma throw an uncaught 500 (this is a public route).
+  const parsedLimit = limitParam ? parseInt(limitParam, 10) : NaN;
+  const limit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(100, parsedLimit)) : DEFAULT_PAGE_SIZE;
 
   // Resolve viewer for both admin check and iSaved population.
   const viewerId = await getUserIdFromRequest(request).catch(() => null);

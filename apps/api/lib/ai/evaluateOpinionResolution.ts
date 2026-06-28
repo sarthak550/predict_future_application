@@ -264,7 +264,10 @@ async function callGemini<T>(
   // 404 fallback, and 1-hour primary-down cache.
   try {
     return await callGeminiAI<T>(systemPrompt, userMessage, {
-      maxOutputTokens: 512,
+      // gemini-2.5-flash is a "thinking" model — reasoning tokens count against the
+      // output budget, so 512 left too little for the JSON and truncated it
+      // ("Unterminated string"). 2048 gives headroom for thinking + the JSON verdict.
+      maxOutputTokens: 2048,
       temperature: 0.1,
     });
   } catch (err) {
@@ -297,18 +300,24 @@ async function aiCall<T>(
   if (groqKey) {
     const result = await callGroq<T>(groqKey, systemPrompt, userMessage, maxTokens);
     if (result !== null) return result;
-    // Only try Gemini if Groq was not rate-limited (a 429 from Groq won't be fixed by hitting Gemini).
-    if (!_lastCallRateLimited) {
-      console.warn("[evaluateOpinionResolution] Groq returned null — trying Gemini fallback");
+    // Groq failed (null / error / 429). Fall back to Gemini regardless — it is a SEPARATE
+    // provider with a SEPARATE quota, so a Groq 429 does NOT imply Gemini is throttled.
+    // (Previously a Groq 429 short-circuited here and skipped Gemini, throwing away the one
+    // fallback that still had quota — which stalled bulk preprocess/resolve runs.)
+    if (geminiKey) {
+      console.warn(
+        _lastCallRateLimited
+          ? "[evaluateOpinionResolution] Groq rate-limited — falling back to Gemini"
+          : "[evaluateOpinionResolution] Groq returned null — falling back to Gemini"
+      );
     }
   }
 
-  // If Groq was rate-limited, skip Gemini — it would just add another throttled call.
-  if (_lastCallRateLimited) {
-    return null;
-  }
-
   if (geminiKey) {
+    // Clear Groq's rate-limit flag so a SUCCESSFUL Gemini call reports
+    // wasLastCallRateLimited() === false (the call did complete). callGemini re-sets the
+    // flag itself if Gemini also 429s, so the both-throttled case still reports correctly.
+    _lastCallRateLimited = false;
     return callGemini<T>(geminiKey, systemPrompt, userMessage);
   }
 

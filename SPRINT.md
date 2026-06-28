@@ -2,8 +2,8 @@
 
 > Human-readable view of `.claude/sprint-board.json`. Auto-maintained by the CEO/CTO/QA agents — do not edit by hand.
 
-**Current sprint:** 59
-**Status:** Sprint 59 QA COMPLETE (6/6) — Audit table + group market push + bulk approve/reject + featured flag + AsyncStorage→User one-way migration. T2 false-FAILED on the SAME stale .next bundle gotcha as S54/S56/S58-T1 (FOURTH occurrence); discovered apps/api/package.json already has a `predev: prisma generate` hook — the gotcha recurs because we invoke `next dev` directly instead of `npm run dev`. Memory updated. Sprint 58 QA COMPLETE (8/8) — Per-group notification preferences + cover image upload pipeline. Production unlock for OPEN groups: GroupNotificationPreference model + GET/PATCH routes + centralized helper-level pref gate in group-request-push.ts (no inline call bypasses found). Cover image via Vercel Blob signed URLs with 5MB cap + hostname allowlist + OWNER/ADMIN-only token request. Mobile: gear-row on group profile + global default in Profile settings (AsyncStorage v1 — PASS-WITH-FOLLOWUP: consider User.defaultGroupNotificationLevel field in S59 for cross-device sync) + new group edit screen with expo-image-picker. T1 false-FAILED on runtime (stale .next bundle from prisma generate while dev server live — same operational gotcha as S54+S56; code is clean, dev-server restart unblocks). Sprint 57 QA COMPLETE (5/5) — Member self-service. Sprint 59 queued (GroupModerationAction audit table, featured flag, bulk approve/reject, group market creation push gated on S58 prefs, category landing pages). Sprint 56 QA COMPLETE (9/9) — REQUEST_TO_JOIN tier shipped. Sprint 55 QA COMPLETE (8/8 incl. T7/T8 amendments) — Markets → Explore + compact CommunitiesList in My Groups Discover + Hosted-by chip on every group-linked market. Sprint 56 queued (REQUEST_TO_JOIN + approval inbox), S57 queued (discovery polish + per-group notification prefs + cover upload). Sprint 54 QA COMPLETE (8/8) — Open Groups foundation: GroupVisibility enum + INVITE_ONLY/OPEN tiers, owner moderation routes (remove/ban/unban) with ban check on invite-code path, public discover route (OPEN-only), open-join route with ban+memberCap guards, full group profile + member management screens, visibility/category pickers in create flow. Pending dev-server restart + device smoke-test. Sprint 53 QA COMPLETE (6/6) — Create-tab fix bundle: draft persistence + schema version, strict resolveAt validation, dead StepResolution/ResolutionMode dropped, eligibility gate inlined on PUBLIC option (top HostEligibilityCard removed), duplicate MC options blocked, inline char-count hints. ~215 dead lines removed. Sprint 52 QA COMPLETE (4/4) — CombinedAnalystCard merge + See-all removal + tighter inter-card gap + Pulse pills redesign with question/crowd-%/urgency-tint. Sprint 51 COMPLETE (5/5). Sprint 50 COMPLETE (6/6 — Top 3 Analysts moved from Feed to Finance). Sprint 49 COMPLETE (9/9). Legal review on SEBI Research Analyst public naming still required before production deploy. Sprint 48 COMPLETE (F1 timing reliability — retry, cache downgrade, empty-state, client timeout). Sprint 47 COMPLETE (F1 detail modal — full driver grid with lap times, gaps, tire data). Sprint 46 COMPLETE (Sports poll trust fix — all 3 tickets passed QA). Sprint 45 COMPLETE (F1 race card). Sprint 44 COMPLETE (Finance instrument filter overhaul). Sprint 43 COMPLETE. Sprints 38–42 COMPLETE (security/correctness hardening, 54 tickets). Sprints 12, 25–34 COMPLETE.
+**Current sprint:** 62
+**Status:** Sprint 62 loaded — Poll/Market Separation Phase 1: new Poll/PollOption/PollVote schema, Poll admin create + list + vote + resolve APIs, per-user poll accuracy engine, shared Poll types, mobile re-platform of RBI MPC feature onto Poll model, demo Market cleanup script. Sprint 61 pending — RBI Pulse MPC poll-pack on Market model (will execute before S62 begins; T1 creates Market-based demo rows that S62-T8 then cleans up). Sprint 60 in progress — Scorecard integrity hardening + access control + perf + mobile reliability. Sprint 59 QA COMPLETE (6/6) — Audit table + group market push + bulk approve/reject + featured flag + AsyncStorage→User one-way migration. T2 false-FAILED on the SAME stale .next bundle gotcha as S54/S56/S58-T1 (FOURTH occurrence); discovered apps/api/package.json already has a `predev: prisma generate` hook — the gotcha recurs because we invoke `next dev` directly instead of `npm run dev`. Memory updated. Sprint 58 QA COMPLETE (8/8) — Per-group notification preferences + cover image upload pipeline. Sprint 57 QA COMPLETE (5/5) — Member self-service. Sprint 56 QA COMPLETE (9/9) — REQUEST_TO_JOIN tier shipped. Sprint 55 QA COMPLETE (8/8 incl. T7/T8 amendments) — Markets → Explore + compact CommunitiesList in My Groups Discover + Hosted-by chip on every group-linked market. Sprint 54 QA COMPLETE (8/8) — Open Groups foundation. Sprint 53 QA COMPLETE (6/6). Sprint 52 QA COMPLETE (4/4). Sprint 51 COMPLETE (5/5). Sprint 50 COMPLETE (6/6). Sprint 49 COMPLETE (9/9). Legal review on SEBI Research Analyst public naming still required before production deploy. Sprint 48 COMPLETE (F1 timing reliability). Sprint 47 COMPLETE (F1 detail modal). Sprint 46 COMPLETE (Sports poll trust fix). Sprint 45 COMPLETE (F1 race card). Sprint 44 COMPLETE (Finance instrument filter overhaul). Sprint 43 COMPLETE. Sprints 38–42 COMPLETE (security/correctness hardening, 54 tickets). Sprints 12, 25–34 COMPLETE.
 
 ---
 
@@ -849,4 +849,65 @@
 - INVITE_ONLY visibility check must fire BEFORE the group market push fan-out (no point pinging a small private group).
 - Featured-sort cursor format change in T5 — verify mobile pagination doesn't silently break.
 
-**S60 queued:** Category landing pages + audit-table archival policy.
+**S60 queued:** Scorecard integrity hardening + access control + perf + mobile reliability (see Sprint 60 below).
+
+---
+
+## Sprint 60
+
+**Theme:** Hardening + Cleanup — scorecard integrity, access control, perf, mobile reliability. Analyst scorecard correctness is Pillar A; these fixes prevent HIT/MISS corruption before scale.
+**Status:** IN PROGRESS
+
+| ID | Pri | Status | Title |
+|---|---|---|---|
+| S60-T1 | CRIT | pending | Fix preprocess script: anchor eligibleAt to analystCallAt not publishedAt |
+| S60-T2 | CRIT | pending | Fix three resolution edge cases: same-day window, long-term threshold on cached path, analystCallAt timezone floor |
+| S60-T3 | CRIT | pending | Replace in-memory AI daily cap with Redis INCR counter (extractExpertOpinions.ts) |
+| S60-T4 | HIGH | pending | Access control: block ADMIN from acting on peer ADMINs in ban and remove-member routes (OWNER-only gate) |
+| S60-T5 | HIGH | pending | Bound expert profile opinions query and cap profile streak vote scan |
+| S60-T6 | MED | pending | Feed: update voted item in place instead of full re-fetch on vote (eliminate scroll-to-top) |
+| S60-T7 | MED | pending | Make env.apiBaseUrl lazy to convert bundle-load crash into catchable runtime error |
+| S60-T8 | LOW | pending | Stabilize useApiQuery with useRef dep comparison to prevent infinite-refetch on unstable deps |
+
+**Sprint-level invariants:**
+- NO schema migrations in this sprint. All fixes are logic/query/infra only.
+- T1, T2, T3 touch the resolution pipeline — run DRY_RUN=true on both scripts after each change to verify no regressions before live DB writes.
+- T3 requires existing Upstash Redis client — confirm UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN are set in .env.local before CTO starts.
+- T4 product decision pre-locked: OWNER-only for admin-on-admin actions (consistent with platform-level hierarchy).
+
+---
+
+## Sprint 61
+
+**Theme:** RBI Pulse — interactive MPC prediction poll-packs in Today's Pulse. Users predict repo rate + stance for each RBI MPC meeting, see crowd consensus, and get scored on resolution. No schema migration required — reuses Market, MarketEventCluster, MarketOption, MultiChoicePosition, and the existing flagship-events pipeline.
+
+**Execution order:** T4 + T6 in parallel first, then T0, then T1 + T2 in parallel, then T3, then T5.
+
+**Founder decisions needed before CTO starts T0:** (1) Free votes vs staked points — recommendation: free votes (amount=0) matching existing flagship polls. (2) EMI line is admin-authored static text — confirm. (3) Push reminders are already handled by existing flagship-reminder cron — no new notification work needed.
+
+**Status:** PENDING
+
+| ID | Pri | Status | Title |
+|---|---|---|---|
+| S61-T0 | CRIT | pending | Admin API: POST /api/admin/rbi/mpc-pack — create MPC poll-pack (cluster + 2 markets in one tx) |
+| S61-T1 | CRIT | pending | Mobile: MPC Poll-Pack hero card in Today's Pulse flagship carousel |
+| S61-T2 | CRIT | pending | Mobile: Poll vote sheet — EMI impact line + post-vote 'You vs the crowd' consensus reveal |
+| S61-T3 | HIGH | pending | Admin API: POST /api/admin/rbi/mpc-pack/[clusterId]/resolve — mark official MPC outcome |
+| S61-T4 | HIGH | pending | API: Expose structuredData in flagship-events GET and market GET responses |
+| S61-T5 | MED | pending | Mobile: 'Next question' CTA on poll detail screen for two-question MPC pack |
+| S61-T6 | MED | pending | Shared types + client: ApiMpcPollPack type and groupFlagshipEventsIntoPacks utility |
+
+---
+
+## Sprint 62
+
+| ID | Pri | Status | Title |
+|---|---|---|---|
+| S62-T1 | CRIT | pending | Schema: Add Poll / PollOption / PollVote models (single migration) |
+| S62-T2 | CRIT | pending | Admin API: POST /api/admin/polls/rbi-mpc-pack — create Poll-based RBI MPC pack |
+| S62-T3 | CRIT | pending | Poll API: GET /api/polls, GET /api/polls/[pollId], POST /api/polls/[pollId]/vote |
+| S62-T4 | CRIT | pending | Admin API: POST /api/admin/polls/[pollId]/resolve — resolve Poll and update user accuracy |
+| S62-T5 | HIGH | pending | API lib: refreshPollAccuracy() — per-user Poll prediction accuracy tracker |
+| S62-T6 | HIGH | pending | Shared types: ApiPoll, ApiPollOption, ApiPollVote types + client methods |
+| S62-T7 | HIGH | pending | Mobile re-platform: wire finance/poll/[id].tsx and MpcPollPackCard onto Poll model |
+| S62-T8 | MED | pending | Data cleanup: DELETE or migrate Sprint 61 demo Market-based RBI rows |

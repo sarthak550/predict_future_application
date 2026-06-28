@@ -91,6 +91,8 @@ model User {
   stats                      UserStat?
   votes                      Vote[]
   wallet                     Wallet?
+  createdPolls               Poll[]                @relation("CreatedPolls")
+  pollVotes                  PollVote[]            @relation("PollVotes")
 }
 
 model LeaderboardSnapshot {
@@ -209,6 +211,10 @@ model UserStat {
   currentActiveHostedMarketsCount  Int       @default(0)
   reversalRate                     Float     @default(0)
   hostingSuspendedUntil            DateTime?
+  /// S62: Total free-vote poll predictions made by this user.
+  totalPollPredictions             Int       @default(0)
+  /// S62: Poll prediction accuracy tracked separately from market accuracy (0.0–1.0 fraction).
+  pollAccuracyScore                Float     @default(0)
   updatedAt                        DateTime  @updatedAt
   user                             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
@@ -992,6 +998,70 @@ model WeeklyDigestRun {
   pushCount   Int       @default(0)
 }
 
+/// S62: Lightweight free-vote poll — no stake/pool/bond fields.
+/// Used for RBI MPC packs and future news polls. Fully separate from Market.
+model Poll {
+  id             String         @id @default(cuid())
+  question       String
+  description    String?
+  category       MarketCategory
+  status         PollStatus     @default(OPEN)
+  closeAt        DateTime
+  resolvedAt     DateTime?
+  winningOptionId String?
+  structuredData Json?
+  /// Shared identifier grouping polls in the same pack (e.g., two RBI questions in one MPC pack).
+  packId         String?
+  /// The real-world event time this poll is tied to (e.g., RBI announcement time).
+  eventAt        DateTime?
+  /// Optional link to a Story for future news polls. Null in Phase 1.
+  storyId        String?        @unique
+  createdById    String
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  createdBy      User           @relation("CreatedPolls", fields: [createdById], references: [id])
+  options        PollOption[]
+  votes          PollVote[]
+
+  @@index([status, closeAt])
+  @@index([packId])
+  @@index([createdById, createdAt])
+  @@index([category, status])
+}
+
+/// S62: One selectable option in a lightweight Poll.
+model PollOption {
+  id        String     @id @default(cuid())
+  pollId    String
+  label     String
+  sortOrder Int
+  poll      Poll       @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  votes     PollVote[]
+
+  @@index([pollId])
+}
+
+/// S62: A user's free-vote prediction on a Poll. One prediction per user per poll.
+/// No stake or amount field — free-vote only.
+model PollVote {
+  id        String     @id @default(cuid())
+  pollId    String
+  optionId  String
+  userId    String
+  /// Null until the poll is resolved; set to true/false by the resolve flow.
+  isCorrect Boolean?
+  lockedAt  DateTime?
+  createdAt DateTime   @default(now())
+  poll      Poll       @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  option    PollOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  user      User       @relation("PollVotes", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([pollId, userId])
+  @@index([pollId])
+  @@index([userId])
+  @@index([optionId])
+}
+
 enum AnalystTier {
   ROOKIE
   ANALYST
@@ -1314,6 +1384,13 @@ enum GroupNotifLevel {
   MENTIONS_ONLY
   /// Suppress all group-scoped push notifications.
   NONE
+}
+
+/// S62: Status lifecycle for lightweight Poll model.
+enum PollStatus {
+  OPEN
+  CLOSED
+  RESOLVED
 }
 
 /// S58: Per-user, per-group notification preference.
