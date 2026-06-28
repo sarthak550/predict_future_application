@@ -57,11 +57,15 @@ const POS_BADGE_COLOURS: Record<number, string> = {
  * e.g. 83.456 → "1:23.456", 59.123 → "59.123"
  */
 function formatLapTime(seconds: number): string {
-  if (seconds < 60) {
-    return seconds.toFixed(3);
+  // Defensive: duration may arrive undefined/null or as a numeric string from the
+  // feed. Coerce and bail to a placeholder rather than crashing on .toFixed.
+  const s = typeof seconds === "number" ? seconds : Number(seconds);
+  if (!Number.isFinite(s)) return "—";
+  if (s < 60) {
+    return s.toFixed(3);
   }
-  const minutes = Math.floor(seconds / 60);
-  const remainder = seconds - minutes * 60;
+  const minutes = Math.floor(s / 60);
+  const remainder = s - minutes * 60;
   const secs = Math.floor(remainder);
   const ms = Math.round((remainder - secs) * 1000);
   return `${minutes}:${String(secs).padStart(2, "0")}.${String(ms).padStart(3, "0")}`;
@@ -69,7 +73,9 @@ function formatLapTime(seconds: number): string {
 
 function formatGap(seconds: number, position: number): string {
   if (position === 1) return "LEADER";
-  return `+${seconds.toFixed(3)}s`;
+  const s = typeof seconds === "number" ? seconds : Number(seconds);
+  if (!Number.isFinite(s)) return "—";
+  return `+${s.toFixed(3)}s`;
 }
 
 // ─── Session type helpers ─────────────────────────────────────────────────────
