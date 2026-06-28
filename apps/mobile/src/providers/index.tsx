@@ -3,6 +3,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { ErrorBoundary } from "@/components/error-boundary";
 import { SessionProvider } from "@/providers/session-provider";
+import { ThemeProvider } from "@/providers/theme-provider";
 import { WatchlistProvider } from "@/providers/watchlist-provider";
 
 /**
@@ -15,11 +16,13 @@ import { WatchlistProvider } from "@/providers/watchlist-provider";
 export function AppProviders({ children }: { children: React.ReactNode }) {
   return (
     <ErrorBoundary>
-      <SafeAreaProvider>
-        <SessionProvider>
-          <WatchlistProvider>{children}</WatchlistProvider>
-        </SessionProvider>
-      </SafeAreaProvider>
+      <ThemeProvider>
+        <SafeAreaProvider>
+          <SessionProvider>
+            <WatchlistProvider>{children}</WatchlistProvider>
+          </SessionProvider>
+        </SafeAreaProvider>
+      </ThemeProvider>
     </ErrorBoundary>
   );
 }

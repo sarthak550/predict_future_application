@@ -9,6 +9,7 @@ import { colors } from "@predict-future/ui-tokens";
 import { mobileApi } from "@/lib/api";
 import { AppProviders } from "@/providers";
 import { useSession } from "@/providers/session-provider";
+import { useTheme } from "@/providers/theme-provider";
 import { LeagueBanner } from "@/components/league-banner";
 
 /**
@@ -76,23 +77,41 @@ function PushTokenRegistrar() {
   return null;
 }
 
-export default function RootLayout() {
+/**
+ * The app shell — rendered INSIDE AppProviders so it can read the active theme.
+ * StatusBar icons, safe-area background and Stack content background all follow
+ * the light/dark toggle.
+ */
+function ThemedShell() {
+  const { colors: themeColors, isDark } = useTheme();
   return (
-    <AppProviders>
-      <PushTokenRegistrar />
-      <LeagueBanner />
-      <StatusBar style="dark" translucent={Platform.OS === "android"} backgroundColor="transparent" />
+    <>
+      <StatusBar
+        style={isDark ? "light" : "dark"}
+        translucent={Platform.OS === "android"}
+        backgroundColor="transparent"
+      />
       <SafeAreaView
-        style={styles.safeArea}
+        style={[styles.safeArea, { backgroundColor: themeColors.background }]}
         edges={Platform.OS === "android" ? ["top", "left", "right"] : ["left", "right"]}
       >
         <Stack
           screenOptions={{
             headerShown: false,
-            contentStyle: { backgroundColor: colors.background }
+            contentStyle: { backgroundColor: themeColors.background },
           }}
         />
       </SafeAreaView>
+    </>
+  );
+}
+
+export default function RootLayout() {
+  return (
+    <AppProviders>
+      <PushTokenRegistrar />
+      <LeagueBanner />
+      <ThemedShell />
     </AppProviders>
   );
 }

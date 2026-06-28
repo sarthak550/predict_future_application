@@ -3,7 +3,8 @@ import { Animated, StyleSheet, Text, View } from "react-native";
 
 import type { ApiNewsFeedItem } from "@predict-future/types";
 import { formatPercent } from "@predict-future/utils";
-import { colors, radius, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
+import { useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 type Props = {
   item: ApiNewsFeedItem;
@@ -22,6 +23,7 @@ const CATEGORY_BG: Record<string, { bg: string; accent: string; text: string }> 
 };
 
 export function InsightCard({ item, viewportHeight }: Props) {
+  const styles = useThemedStyles(makeStyles);
   const market = item.market;
   const poll = item.poll;
 
@@ -115,12 +117,12 @@ export function InsightCard({ item, viewportHeight }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   frame: {
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
     justifyContent: "center",
-    backgroundColor: colors.background,
+    backgroundColor: t.colors.background,
   },
   card: {
     flex: 1,

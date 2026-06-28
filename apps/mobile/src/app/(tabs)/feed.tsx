@@ -15,7 +15,7 @@ import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from "
 import { Ionicons } from "@expo/vector-icons";
 
 import type { ApiNewsFeedItem, AppAnalystTier, AppMarketCategory } from "@predict-future/types";
-import { colors, radius, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
 
 import {
   CategoryFilterBar,
@@ -29,6 +29,7 @@ import { SkeletonFeedCard } from "@/components/skeleton-feed-card";
 import { StreakBadge } from "@/components/streak-reminder";
 import { mobileApi } from "@/lib/api";
 import { useSession } from "@/providers/session-provider";
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 const FEED_PERSONALIZATION_KEY = "feed_personalization_mode";
 
@@ -79,6 +80,8 @@ function buildFeedItems(newsItems: ApiNewsFeedItem[]): NewsListItem[] {
 type PersonalizationMode = "for_you" | "all";
 
 export default function FeedScreen() {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const { height } = useWindowDimensions();
   const navigation = useNavigation();
   const router = useRouter();
@@ -601,8 +604,8 @@ function mergeUniqueItems(current: ApiNewsFeedItem[], next: ApiNewsFeedItem[]) {
   return merged;
 }
 
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.background },
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
+  screen: { flex: 1, backgroundColor: t.colors.background },
 
   // For You / All toggle
   personalizationRow: {
@@ -612,24 +615,24 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.lg,
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
   },
   personalizationPill: {
     paddingHorizontal: spacing.lg,
     paddingVertical: 6,
     borderRadius: radius.pill,
     borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.background,
+    borderColor: t.colors.border,
+    backgroundColor: t.colors.background,
   },
   personalizationPillActive: {
-    backgroundColor: colors.accent,
-    borderColor: colors.accent,
+    backgroundColor: t.colors.accent,
+    borderColor: t.colors.accent,
   },
   personalizationPillText: {
     fontSize: 13,
     fontWeight: "600",
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
   personalizationPillTextActive: {
     color: "#fff",
@@ -679,15 +682,15 @@ const styles = StyleSheet.create({
   tierNudgeText: {
     flex: 1,
     fontSize: 12,
-    color: colors.accent,
+    color: t.colors.accent,
     fontWeight: "600",
   },
 
   // Category bar — wraps the shared CategoryFilterBar
   categoryBar: {
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
+    borderBottomColor: t.colors.border,
     justifyContent: "center",
   },
 
@@ -699,13 +702,13 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     padding: 32,
   },
-  stateTitle: { fontSize: 24, fontWeight: "800", color: colors.text, letterSpacing: -0.5 },
+  stateTitle: { fontSize: 24, fontWeight: "800", color: t.colors.text, letterSpacing: -0.5 },
   stateText: {
     marginTop: spacing.md,
     fontSize: 15,
     lineHeight: 22,
     textAlign: "center",
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
   footer: { paddingVertical: spacing.lg },
   retry: {
@@ -713,9 +716,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
     borderRadius: radius.md,
-    backgroundColor: colors.accent,
+    backgroundColor: t.colors.accent,
   },
-  retryLabel: { color: colors.surface, fontWeight: "700", fontSize: 14 },
+  retryLabel: { color: t.colors.surface, fontWeight: "700", fontSize: 14 },
 
   // Swipe hint overlay
   swipeHintOverlay: {
@@ -728,13 +731,13 @@ const styles = StyleSheet.create({
   swipeHintOverlayText: {
     fontSize: 13,
     fontWeight: "600",
-    color: colors.textMuted,
-    backgroundColor: colors.surface,
+    color: t.colors.textMuted,
+    backgroundColor: t.colors.surface,
     paddingHorizontal: spacing.lg,
     paddingVertical: 7,
     borderRadius: radius.pill,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
   },
 });

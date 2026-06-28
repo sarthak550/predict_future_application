@@ -17,7 +17,8 @@ import { SnappedSlider as Slider } from "@/components/snapped-slider";
 
 import type { ApiExpertOpinionItem, ApiExpertOpinionTallies, ApiImplicationChoice, ApiNewsFeedItem } from "@predict-future/types";
 import { formatPercent, formatRelativeTime, freshnessColor } from "@predict-future/utils";
-import { colors, radius, shadows, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 import { mobileApi } from "@/lib/api";
 import { useWatchlist } from "@/providers/watchlist-provider";
@@ -534,6 +535,7 @@ function PollA({
 
 /** Single expert opinion row — renders avatar, name, quote, direction badge, footer, and polls. */
 function ResolutionStrip({ opinion, articlePublishedAt }: { opinion: ApiExpertOpinionItem; articlePublishedAt?: string }) {
+  const expertStyles = useThemedStyles(makeExpertStyles);
   const status = opinion?.resolutionStatus;
   if (status !== "RESOLVED_HIT" && status !== "RESOLVED_MISS") return null;
 
@@ -595,6 +597,8 @@ export function ExpertOpinionRow({
   onFollowToggle?: (expertId: string, currentlyFollowing: boolean) => void;
   articlePublishedAt?: string;
 }) {
+  const { colors } = useTheme();
+  const expertStyles = useThemedStyles(makeExpertStyles);
   const router = useRouter();
   const dirConfig = DIRECTION_CONFIG[opinion.direction] ?? DIRECTION_CONFIG.NEUTRAL;
   const initials = getExpertInitials(opinion.expertName, opinion.expertOrganization);
@@ -808,6 +812,7 @@ export function ExpertOpinionRow({
 
 /** Expert Take section — shows on FINANCE stories with expert opinions. */
 function ExpertTakeSection({ opinions }: { opinions: ApiExpertOpinionItem[] }) {
+  const expertStyles = useThemedStyles(makeExpertStyles);
   const [expanded, setExpanded] = useState(false);
 
   if (opinions.length === 0) return null;
@@ -853,6 +858,8 @@ type Props = {
 };
 
 export function NewsFeedCard({ item, viewportHeight, showHint, onVoted }: Props) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const router = useRouter();
   const market = item.market;
   const poll = item.poll;
@@ -1253,19 +1260,19 @@ const CATEGORY_EMOJI: Record<string, string> = {
   FINANCE: "📊",
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   frame: {
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
     justifyContent: "center",
-    backgroundColor: colors.background,
+    backgroundColor: t.colors.background,
   },
   card: {
     flex: 1,
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderRadius: radius.lg,
     overflow: "hidden",
-    ...shadows.card,
+    ...t.shadows.card,
   },
   scrollView: { flex: 1 },
   scrollContent: { flexGrow: 1 },
@@ -1286,7 +1293,7 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     letterSpacing: 1,
     textTransform: "uppercase",
-    color: colors.accent,
+    color: t.colors.accent,
     backgroundColor: "#EFF6FF",
     alignSelf: "flex-start",
     paddingHorizontal: 10,
@@ -1299,13 +1306,13 @@ const styles = StyleSheet.create({
     fontSize: 22,
     lineHeight: 28,
     fontWeight: "800",
-    color: colors.text,
+    color: t.colors.text,
   },
   summary: {
     marginTop: spacing.md,
     fontSize: 15,
     lineHeight: 23,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
   metaRow: {
     marginTop: spacing.lg,
@@ -1314,9 +1321,9 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingVertical: spacing.sm,
   },
-  source: { fontSize: 13, fontWeight: "700", color: colors.text },
-  readMore: { fontSize: 13, fontWeight: "600", color: colors.accent },
-  published: { fontSize: 12, color: colors.textMuted },
+  source: { fontSize: 13, fontWeight: "700", color: t.colors.text },
+  readMore: { fontSize: 13, fontWeight: "600", color: t.colors.accent },
+  published: { fontSize: 12, color: t.colors.textMuted },
 
   financeChip: {
     alignSelf: "flex-start",
@@ -1354,7 +1361,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 21,
     fontWeight: "700",
-    color: colors.text,
+    color: t.colors.text,
   },
   bookmarkBtn: {
     paddingTop: 2,
@@ -1369,14 +1376,14 @@ const styles = StyleSheet.create({
   progressFill: {
     height: "100%",
     borderRadius: radius.pill,
-    backgroundColor: colors.accent,
+    backgroundColor: t.colors.accent,
   },
   poolRow: {
     marginTop: 6,
     flexDirection: "row",
     justifyContent: "space-between",
   },
-  poolLabel: { fontSize: 12, fontWeight: "600", color: colors.textMuted },
+  poolLabel: { fontSize: 12, fontWeight: "600", color: t.colors.textMuted },
 
   // Binary vote buttons
   binaryVoteRow: {
@@ -1406,7 +1413,7 @@ const styles = StyleSheet.create({
   },
   yesBtnLabel: { fontSize: 12, fontWeight: "800", letterSpacing: 0.5, color: "#059669" },
   noBtnLabel: { fontSize: 12, fontWeight: "800", letterSpacing: 0.5, color: "#DC2626" },
-  btnPct: { fontSize: 20, fontWeight: "700", color: colors.text, marginTop: 2 },
+  btnPct: { fontSize: 20, fontWeight: "700", color: t.colors.text, marginTop: 2 },
   btnDisabled: { opacity: 0.5 },
 
   // Numeric vote
@@ -1424,15 +1431,15 @@ const styles = StyleSheet.create({
     borderColor: "#E2E8F0",
     paddingHorizontal: spacing.md,
     fontSize: 16,
-    color: colors.text,
+    color: t.colors.text,
     backgroundColor: "#fff",
   },
-  unitLabel: { fontSize: 13, fontWeight: "600", color: colors.textMuted },
+  unitLabel: { fontSize: 13, fontWeight: "600", color: t.colors.textMuted },
   submitBtn: {
     paddingHorizontal: spacing.lg,
     paddingVertical: 11,
     borderRadius: radius.md,
-    backgroundColor: colors.accent,
+    backgroundColor: t.colors.accent,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -1461,7 +1468,7 @@ const styles = StyleSheet.create({
   },
   liveLabelYes: { fontSize: 13, fontWeight: "700", color: "#059669" },
   liveLabelNo: { fontSize: 13, fontWeight: "700", color: "#DC2626" },
-  liveTotalVotes: { fontSize: 12, color: colors.textMuted },
+  liveTotalVotes: { fontSize: 12, color: t.colors.textMuted },
   yourVoteBadge: {
     flexDirection: "row",
     alignItems: "center",
@@ -1491,7 +1498,7 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
   },
   numericResultText: { fontSize: 13, fontWeight: "700", color: "#059669" },
-  crowdAvg: { fontSize: 12, color: colors.textMuted, marginLeft: "auto" },
+  crowdAvg: { fontSize: 12, color: t.colors.textMuted, marginLeft: "auto" },
 
   // Closed
   closedBanner: {
@@ -1504,7 +1511,7 @@ const styles = StyleSheet.create({
   closedText: { fontSize: 14, fontWeight: "700", color: "#6B7280" },
 
   errorText: { marginTop: spacing.sm, fontSize: 12, color: "#DC2626" },
-  link: { marginTop: spacing.md, fontSize: 14, fontWeight: "700", color: colors.accent },
+  link: { marginTop: spacing.md, fontSize: 14, fontWeight: "700", color: t.colors.accent },
 
   // Swipe hint
   swipeHint: {
@@ -1527,7 +1534,7 @@ const styles = StyleSheet.create({
 
 // ── Expert Take styles ──
 
-const expertStyles = StyleSheet.create({
+const makeExpertStyles = (t: ThemeContextValue) => StyleSheet.create({
   container: {
     marginTop: spacing.lg,
     padding: spacing.md,
@@ -1598,19 +1605,19 @@ const expertStyles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: radius.pill,
     borderWidth: 1,
-    borderColor: colors.accent,
+    borderColor: t.colors.accent,
     minWidth: 66,
     alignItems: "center",
     justifyContent: "center",
   },
   followPillActive: {
-    backgroundColor: colors.accent,
-    borderColor: colors.accent,
+    backgroundColor: t.colors.accent,
+    borderColor: t.colors.accent,
   },
   followPillText: {
     fontSize: 11,
     fontWeight: "700",
-    color: colors.accent,
+    color: t.colors.accent,
   },
   followPillTextActive: {
     color: "#fff",
@@ -1639,12 +1646,12 @@ const expertStyles = StyleSheet.create({
   expertName: {
     fontSize: 15,
     fontWeight: "600",
-    color: colors.text ?? "#1e1b4b",
+    color: t.colors.text ?? "#1e1b4b",
     flexShrink: 1,
   },
   expertOrg: {
     fontSize: 12,
-    color: colors.textMuted ?? "#6b7280",
+    color: t.colors.textMuted ?? "#6b7280",
   },
   calledAt: { fontSize: 11, color: "#9ca3af", marginTop: 2, fontWeight: "500" as const },
   verifiedBadge: {

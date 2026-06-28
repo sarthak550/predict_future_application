@@ -1,7 +1,8 @@
 import { useEffect, useRef } from "react";
 import { Animated, StyleSheet, View } from "react-native";
 
-import { colors, radius, shadows, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
+import { useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 type Props = {
   viewportHeight: number;
@@ -20,6 +21,7 @@ type Props = {
  *   - Poll panel bar  → market block at bottom
  */
 export function SkeletonFeedCard({ viewportHeight }: Props) {
+  const styles = useThemedStyles(makeStyles);
   // Shimmer: translucent white sweep left-to-right on a 1.2s loop
   const shimmerX = useRef(new Animated.Value(-1)).current;
 
@@ -91,115 +93,117 @@ export function SkeletonFeedCard({ viewportHeight }: Props) {
   );
 }
 
-const PLACEHOLDER = colors.border;      // grey rect color
-const SURFACE    = colors.surface;      // card background
+const makeStyles = (t: ThemeContextValue) => {
+  const PLACEHOLDER = t.colors.border;   // grey rect color
+  const SURFACE     = t.colors.surface;  // card background
 
-const styles = StyleSheet.create({
-  frame: {
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    justifyContent: "center",
-    backgroundColor: colors.background,
-  },
-  card: {
-    flex: 1,
-    backgroundColor: SURFACE,
-    borderRadius: radius.lg,
-    overflow: "hidden",
-    ...shadows.card,
-  },
+  return StyleSheet.create({
+    frame: {
+      paddingHorizontal: spacing.lg,
+      paddingVertical: spacing.sm,
+      justifyContent: "center",
+      backgroundColor: t.colors.background,
+    },
+    card: {
+      flex: 1,
+      backgroundColor: SURFACE,
+      borderRadius: radius.lg,
+      overflow: "hidden",
+      ...t.shadows.card,
+    },
 
-  // Hero image area (mirrors heroImage height=220 in NewsFeedCard)
-  heroRect: {
-    width: "100%",
-    height: 220,
-    backgroundColor: PLACEHOLDER,
-    opacity: 0.6,
-  },
+    // Hero image area (mirrors heroImage height=220 in NewsFeedCard)
+    heroRect: {
+      width: "100%",
+      height: 220,
+      backgroundColor: PLACEHOLDER,
+      opacity: 0.6,
+    },
 
-  body: {
-    flex: 1,
-    padding: spacing.xl,
-    justifyContent: "flex-start",
-  },
+    body: {
+      flex: 1,
+      padding: spacing.xl,
+      justifyContent: "flex-start",
+    },
 
-  // Category pill (small rounded chip)
-  categoryPill: {
-    width: 70,
-    height: 20,
-    borderRadius: radius.pill,
-    backgroundColor: PLACEHOLDER,
-    opacity: 0.5,
-  },
+    // Category pill (small rounded chip)
+    categoryPill: {
+      width: 70,
+      height: 20,
+      borderRadius: radius.pill,
+      backgroundColor: PLACEHOLDER,
+      opacity: 0.5,
+    },
 
-  // Headline + kicker bars
-  textBar: {
-    marginTop: spacing.md,
-    height: 16,
-    borderRadius: radius.sm ?? 4,
-    backgroundColor: PLACEHOLDER,
-    opacity: 0.5,
-  },
-  headlineBar: {
-    width: "90%",
-  },
-  kickerBar: {
-    width: "65%",
-    height: 14,
-    opacity: 0.4,
-  },
+    // Headline + kicker bars
+    textBar: {
+      marginTop: spacing.md,
+      height: 16,
+      borderRadius: radius.sm ?? 4,
+      backgroundColor: PLACEHOLDER,
+      opacity: 0.5,
+    },
+    headlineBar: {
+      width: "90%",
+    },
+    kickerBar: {
+      width: "65%",
+      height: 14,
+      opacity: 0.4,
+    },
 
-  // Meta row (source / read-more)
-  metaRowBar: {
-    marginTop: spacing.lg,
-    width: "50%",
-    height: 12,
-    borderRadius: radius.sm ?? 4,
-    backgroundColor: PLACEHOLDER,
-    opacity: 0.35,
-  },
+    // Meta row (source / read-more)
+    metaRowBar: {
+      marginTop: spacing.lg,
+      width: "50%",
+      height: 12,
+      borderRadius: radius.sm ?? 4,
+      backgroundColor: PLACEHOLDER,
+      opacity: 0.35,
+    },
 
-  // Poll panel (mirrors marketBlock)
-  pollPanel: {
-    marginTop: spacing.lg,
-    padding: spacing.lg,
-    borderRadius: radius.md,
-    backgroundColor: colors.background,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  pollTitleBar: {
-    width: "80%",
-    height: 14,
-    borderRadius: radius.sm ?? 4,
-    backgroundColor: PLACEHOLDER,
-    opacity: 0.5,
-  },
-  pollProgressBar: {
-    marginTop: spacing.md,
-    width: "100%",
-    height: 8,
-    borderRadius: radius.pill,
-    backgroundColor: PLACEHOLDER,
-    opacity: 0.4,
-  },
-  pollButtonRow: {
-    marginTop: spacing.md,
-    flexDirection: "row",
-  },
-  pollButton: {
-    flex: 1,
-    height: 44,
-    borderRadius: radius.md,
-    backgroundColor: PLACEHOLDER,
-    opacity: 0.3,
-  },
+    // Poll panel (mirrors marketBlock)
+    pollPanel: {
+      marginTop: spacing.lg,
+      padding: spacing.lg,
+      borderRadius: radius.md,
+      backgroundColor: t.colors.background,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+    },
+    pollTitleBar: {
+      width: "80%",
+      height: 14,
+      borderRadius: radius.sm ?? 4,
+      backgroundColor: PLACEHOLDER,
+      opacity: 0.5,
+    },
+    pollProgressBar: {
+      marginTop: spacing.md,
+      width: "100%",
+      height: 8,
+      borderRadius: radius.pill,
+      backgroundColor: PLACEHOLDER,
+      opacity: 0.4,
+    },
+    pollButtonRow: {
+      marginTop: spacing.md,
+      flexDirection: "row",
+    },
+    pollButton: {
+      flex: 1,
+      height: 44,
+      borderRadius: radius.md,
+      backgroundColor: PLACEHOLDER,
+      opacity: 0.3,
+    },
 
-  // Shimmer sweep — a semi-transparent gradient-like bar tilted slightly
-  shimmerOverlay: {
-    width: 120,
-    backgroundColor: "rgba(255, 255, 255, 0.22)",
-    // Skew slightly to simulate a sweep angle
-    transform: [{ skewX: "-20deg" }],
-  },
-});
+    // Shimmer sweep — a semi-transparent gradient-like bar tilted slightly
+    shimmerOverlay: {
+      width: 120,
+      backgroundColor: "rgba(255, 255, 255, 0.22)",
+      // Skew slightly to simulate a sweep angle
+      transform: [{ skewX: "-20deg" }],
+    },
+  });
+};

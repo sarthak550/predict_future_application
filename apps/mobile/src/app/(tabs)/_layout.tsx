@@ -3,11 +3,10 @@ import { StyleSheet } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
 
-import { colors, shadows } from "@predict-future/ui-tokens";
-
 import { OnboardingWalkthrough } from "@/components/onboarding-walkthrough";
 import { StreakReminder } from "@/components/streak-reminder";
 import { mobileApi } from "@/lib/api";
+import { useTheme } from "@/providers/theme-provider";
 
 function useNotificationBadge() {
   const [unreadCount, setUnreadCount] = useState<number>(0);
@@ -31,6 +30,7 @@ function useNotificationBadge() {
 export default function TabsLayout() {
   const notificationCount = useNotificationBadge();
   const profileBadge = notificationCount > 0 ? notificationCount : undefined;
+  const { colors, shadows } = useTheme();
 
   return (
     <>

@@ -20,6 +20,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { resetOnboarding } from "@/components/onboarding-walkthrough";
+import { ThemeToggleRow } from "@/components/theme-toggle";
 
 import type {
   ApiCategoryStat,
@@ -885,6 +886,10 @@ export default function ProfileScreen() {
             )}
             <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
           </Pressable>
+          <View style={styles.actionDivider} />
+          {/* Dark mode / appearance control */}
+          <ThemeToggleRow />
+          <View style={styles.actionDivider} />
           <ActionRow
             icon="help-circle-outline"
             label="Replay Tutorial"
