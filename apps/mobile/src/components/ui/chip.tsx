@@ -41,6 +41,6 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     color: t.colors.textMuted,
   },
   activeLabel: {
-    color: "#FFFFFF",
+    color: t.colors.background,
   },
 });

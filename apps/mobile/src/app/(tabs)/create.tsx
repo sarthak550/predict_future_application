@@ -2254,7 +2254,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   },
   pillActive: { backgroundColor: t.colors.text, borderColor: t.colors.text },
   pillText: { fontSize: 13, fontWeight: "600", color: t.colors.textMuted },
-  pillTextActive: { color: "#FFFFFF" },
+  pillTextActive: { color: t.colors.background },
 
   // Info box
   infoBox: {
@@ -2551,7 +2551,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     borderRadius: radius.pill,
     backgroundColor: t.colors.text,
   },
-  tagText: { color: "#FFF", fontSize: 11, fontWeight: "700", textTransform: "uppercase" },
+  tagText: { color: t.colors.background, fontSize: 11, fontWeight: "700", textTransform: "uppercase" },
   reviewTitle: { fontSize: 20, fontWeight: "700", color: t.colors.text, marginTop: spacing.sm },
   reviewDesc: { fontSize: 14, color: t.colors.textMuted, marginTop: spacing.sm, lineHeight: 20 },
   reviewDivider: { height: 1, backgroundColor: t.colors.border, marginVertical: spacing.lg },

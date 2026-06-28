@@ -998,7 +998,7 @@ const makeSubTabStyles = (t: ThemeContextValue) => StyleSheet.create({
     color: t.colors.textMuted,
   },
   pillLabelActive: {
-    color: "#FFFFFF",
+    color: t.colors.background,
   },
 });
 
@@ -1128,7 +1128,7 @@ const makeActivityTabStyles = (t: ThemeContextValue) => StyleSheet.create({
     color: t.colors.textMuted,
   },
   subPillLabelActive: {
-    color: "#FFFFFF",
+    color: t.colors.background,
   },
   sectionEmptyText: {
     fontSize: 13,
@@ -1905,7 +1905,9 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
 
   // ── Header ──
   headerCard: {
-    backgroundColor: t.colors.text,
+    // Inverted hero: dark slate in light mode. In dark mode colors.text flips to
+    // near-white, so pin it to an elevated dark surface instead (keeps white text legible).
+    backgroundColor: t.isDark ? t.colors.surfaceElevated : t.colors.text,
     paddingHorizontal: spacing.xl,
     paddingVertical: spacing.lg,
   },

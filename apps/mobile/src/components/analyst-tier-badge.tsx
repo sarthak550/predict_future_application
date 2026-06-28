@@ -1,6 +1,10 @@
 import { StyleSheet, Text, View } from "react-native";
 
 import type { AppAnalystTier } from "@predict-future/types";
+import {
+  useThemedStyles,
+  type ThemeContextValue,
+} from "@/providers/theme-provider";
 
 export type { AppAnalystTier };
 
@@ -36,6 +40,33 @@ const TIER_CONFIG: Record<
   },
 };
 
+const makeStyles = (t: ThemeContextValue) =>
+  StyleSheet.create({
+    chip: {
+      flexDirection: "row",
+      alignItems: "center",
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderRadius: 4,
+      alignSelf: "flex-start",
+    },
+    chipRookie: {
+      backgroundColor: t.colors.surfaceMuted,
+    },
+    label: {
+      fontSize: 11,
+      fontWeight: "600",
+      letterSpacing: 0.2,
+    },
+    labelRookie: {
+      color: t.colors.textMuted,
+    },
+    star: {
+      fontSize: 10,
+      lineHeight: 14,
+    },
+  });
+
 /**
  * Renders a compact colored text chip representing the analyst's tier.
  *
@@ -48,6 +79,8 @@ export function AnalystTierBadge({
   tier,
   surface = "public",
 }: AnalystTierBadgeProps): JSX.Element | null {
+  const styles = useThemedStyles(makeStyles);
+
   if (!tier) return null;
 
   // Apply surface-based suppression
@@ -77,29 +110,3 @@ export function AnalystTierBadge({
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  chip: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-    alignSelf: "flex-start",
-  },
-  chipRookie: {
-    backgroundColor: "#F3F4F6",
-  },
-  label: {
-    fontSize: 11,
-    fontWeight: "600",
-    letterSpacing: 0.2,
-  },
-  labelRookie: {
-    color: "#6B7280",
-  },
-  star: {
-    fontSize: 10,
-    lineHeight: 14,
-  },
-});

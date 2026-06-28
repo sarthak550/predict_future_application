@@ -2870,7 +2870,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     backgroundColor: t.colors.primary,
     marginLeft: -8,
     borderWidth: 2,
-    borderColor: "#fff",
+    borderColor: t.colors.background,
   },
   rangeLabels: {
     marginTop: 6,
@@ -3130,7 +3130,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     color: t.colors.text,
   },
   presetTextActive: {
-    color: "#fff",
+    color: t.colors.background,
   },
   estimatedReturnRow: {
     flexDirection: "row",
@@ -3523,7 +3523,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   commentPostText: {
     fontSize: 14,
     fontWeight: "700",
-    color: "#fff",
+    color: t.colors.background,
   },
   commentsClosedNote: {
     marginTop: spacing.md,
@@ -3645,7 +3645,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   predictBtnText: {
     fontSize: 15,
     fontWeight: "800",
-    color: "#fff",
+    color: t.colors.background,
   },
 
   // ── Sticky poll bar ──
@@ -3881,7 +3881,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   payoffBtnShareText: {
     fontSize: 15,
     fontWeight: "800",
-    color: "#fff",
+    color: t.colors.background,
   },
   payoffBtnClose: {
     backgroundColor: t.colors.surfaceMuted,

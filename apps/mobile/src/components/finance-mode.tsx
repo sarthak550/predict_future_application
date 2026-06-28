@@ -1358,7 +1358,7 @@ const makeDigestStyles = (t: ThemeContextValue) => StyleSheet.create({
   },
   toggleBtnActive: { backgroundColor: t.colors.text, borderColor: t.colors.text },
   toggleText: { fontSize: 12, fontWeight: "700" as const, color: t.colors.textMuted },
-  toggleTextActive: { color: "#fff" },
+  toggleTextActive: { color: t.colors.background },
   // S51-T5: explicit collapse button — sits at the right end of the toggle row
   collapseBtn: {
     paddingVertical: 7,
@@ -1480,7 +1480,7 @@ const makeControlsStyles = (t: ThemeContextValue) => StyleSheet.create({
   },
   tabActive: { backgroundColor: t.colors.text, borderColor: t.colors.text },
   tabText: { fontSize: 13, fontWeight: "700" as const, color: t.colors.textMuted },
-  tabTextActive: { color: "#fff" },
+  tabTextActive: { color: t.colors.background },
   // Sort chip lives inside the chip row (after the S38-v2 cramping fix that
   // moved it out of the tabs row).
   sortChip: {
@@ -1579,7 +1579,7 @@ const makeLensStyles = (t: ThemeContextValue) => StyleSheet.create({
     borderColor: t.colors.text,
   },
   pillText: { fontSize: 12, fontWeight: "600" as const, color: t.colors.textMuted },
-  pillTextActive: { color: "#fff" },
+  pillTextActive: { color: t.colors.background },
 });
 
 export function FinanceMode({
