@@ -99,9 +99,9 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     borderColor: t.colors.border,
     backgroundColor: t.colors.surface,
   },
-  chipActive: { backgroundColor: t.colors.text, borderColor: t.colors.text },
+  chipActive: { backgroundColor: t.colors.accent, borderColor: t.colors.accent },
   chipText: { fontSize: 12, fontWeight: "700" as const, color: t.colors.textMuted },
-  chipTextActive: { color: t.colors.surface },
+  chipTextActive: { color: "#FFFFFF" },
   timeBtn: {
     paddingHorizontal: spacing.md,
     paddingVertical: 6,

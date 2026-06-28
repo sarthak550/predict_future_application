@@ -1085,9 +1085,9 @@ const makePollStyles = (t: ThemeContextValue) => StyleSheet.create({
     borderRadius: radius.pill,
     backgroundColor: t.colors.surfaceMuted,
   },
-  filterChipActive: { backgroundColor: t.colors.text },
+  filterChipActive: { backgroundColor: t.colors.accent },
   filterChipText: { fontSize: 13, fontWeight: "600", color: t.colors.textMuted },
-  filterChipTextActive: { color: t.colors.background },
+  filterChipTextActive: { color: "#FFFFFF" },
   listContent: { paddingHorizontal: spacing.xl, paddingBottom: 100, gap: spacing.md },
   footerSpinner: { paddingVertical: spacing.xl, alignItems: "center" },
   card: {

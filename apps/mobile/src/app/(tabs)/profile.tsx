@@ -990,7 +990,7 @@ const makeSubTabStyles = (t: ThemeContextValue) => StyleSheet.create({
     borderRadius: radius.md,
   },
   pillActive: {
-    backgroundColor: t.colors.text,
+    backgroundColor: t.colors.accent,
   },
   pillLabel: {
     fontSize: 13,
@@ -998,7 +998,7 @@ const makeSubTabStyles = (t: ThemeContextValue) => StyleSheet.create({
     color: t.colors.textMuted,
   },
   pillLabelActive: {
-    color: t.colors.background,
+    color: "#FFFFFF",
   },
 });
 
@@ -1120,7 +1120,7 @@ const makeActivityTabStyles = (t: ThemeContextValue) => StyleSheet.create({
     borderRadius: radius.sm,
   },
   subPillActive: {
-    backgroundColor: t.colors.text,
+    backgroundColor: t.colors.accent,
   },
   subPillLabel: {
     fontSize: 12,
@@ -1128,7 +1128,7 @@ const makeActivityTabStyles = (t: ThemeContextValue) => StyleSheet.create({
     color: t.colors.textMuted,
   },
   subPillLabelActive: {
-    color: t.colors.background,
+    color: "#FFFFFF",
   },
   sectionEmptyText: {
     fontSize: 13,

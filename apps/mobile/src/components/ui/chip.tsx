@@ -32,8 +32,8 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     borderColor: t.colors.border,
   },
   active: {
-    backgroundColor: t.colors.text,
-    borderColor: t.colors.text,
+    backgroundColor: t.colors.accent,
+    borderColor: t.colors.accent,
   },
   label: {
     fontSize: 14,
@@ -41,6 +41,6 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     color: t.colors.textMuted,
   },
   activeLabel: {
-    color: t.colors.background,
+    color: "#FFFFFF",
   },
 });

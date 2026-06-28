@@ -145,9 +145,9 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     borderWidth: 1,
     borderColor: t.colors.border,
   },
-  tabActive: { backgroundColor: t.colors.text, borderColor: t.colors.text },
+  tabActive: { backgroundColor: t.colors.accent, borderColor: t.colors.accent },
   tabLabel: { fontSize: 14, fontWeight: "600", color: t.colors.textMuted },
-  tabLabelActive: { color: t.colors.background },
+  tabLabelActive: { color: "#FFFFFF" },
 
   countLabel: {
     fontSize: 12,

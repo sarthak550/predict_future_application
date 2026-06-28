@@ -2252,9 +2252,9 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     borderWidth: 1,
     borderColor: t.colors.border,
   },
-  pillActive: { backgroundColor: t.colors.text, borderColor: t.colors.text },
+  pillActive: { backgroundColor: t.colors.accent, borderColor: t.colors.accent },
   pillText: { fontSize: 13, fontWeight: "600", color: t.colors.textMuted },
-  pillTextActive: { color: t.colors.background },
+  pillTextActive: { color: "#FFFFFF" },
 
   // Info box
   infoBox: {

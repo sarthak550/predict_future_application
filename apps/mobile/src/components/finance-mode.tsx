@@ -1478,9 +1478,9 @@ const makeControlsStyles = (t: ThemeContextValue) => StyleSheet.create({
     backgroundColor: t.colors.surface,
     alignItems: "center" as const,
   },
-  tabActive: { backgroundColor: t.colors.text, borderColor: t.colors.text },
+  tabActive: { backgroundColor: t.colors.accent, borderColor: t.colors.accent },
   tabText: { fontSize: 13, fontWeight: "700" as const, color: t.colors.textMuted },
-  tabTextActive: { color: t.colors.background },
+  tabTextActive: { color: "#FFFFFF" },
   // Sort chip lives inside the chip row (after the S38-v2 cramping fix that
   // moved it out of the tabs row).
   sortChip: {
@@ -1575,11 +1575,11 @@ const makeLensStyles = (t: ThemeContextValue) => StyleSheet.create({
     backgroundColor: t.colors.surface,
   },
   pillActive: {
-    backgroundColor: t.colors.text,
-    borderColor: t.colors.text,
+    backgroundColor: t.colors.accent,
+    borderColor: t.colors.accent,
   },
   pillText: { fontSize: 12, fontWeight: "600" as const, color: t.colors.textMuted },
-  pillTextActive: { color: t.colors.background },
+  pillTextActive: { color: "#FFFFFF" },
 });
 
 export function FinanceMode({

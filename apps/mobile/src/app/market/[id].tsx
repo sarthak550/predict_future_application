@@ -3122,7 +3122,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     backgroundColor: t.colors.surfaceMuted,
   },
   presetPillActive: {
-    backgroundColor: t.colors.primary,
+    backgroundColor: t.colors.accent,
   },
   presetText: {
     fontSize: 14,
@@ -3130,7 +3130,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     color: t.colors.text,
   },
   presetTextActive: {
-    color: t.colors.background,
+    color: "#FFFFFF",
   },
   estimatedReturnRow: {
     flexDirection: "row",
@@ -4096,8 +4096,8 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     borderColor: t.colors.border,
   },
   probChartRangePillActive: {
-    backgroundColor: t.colors.text,
-    borderColor: t.colors.text,
+    backgroundColor: t.colors.accent,
+    borderColor: t.colors.accent,
   },
   probChartRangeText: {
     fontSize: 11,
@@ -4105,7 +4105,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     color: t.colors.textMuted,
   },
   probChartRangeTextActive: {
-    color: t.colors.surface,
+    color: "#FFFFFF",
   },
   probChartFinalBadge: {
     flexDirection: "row",

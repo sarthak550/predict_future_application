@@ -1598,9 +1598,9 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     borderRadius: radius.pill, borderWidth: 1, borderColor: t.colors.border,
     backgroundColor: t.colors.surface,
   },
-  leagueChipActive: { backgroundColor: t.colors.text, borderColor: t.colors.text },
+  leagueChipActive: { backgroundColor: t.colors.accent, borderColor: t.colors.accent },
   leagueChipText: { fontSize: 12, fontWeight: "700", color: t.colors.text },
-  leagueChipTextActive: { color: t.colors.surface },
+  leagueChipTextActive: { color: "#FFFFFF" },
   chipLiveDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: "#ef4444" },
 
   // Loading / empty
