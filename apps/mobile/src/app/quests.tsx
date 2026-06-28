@@ -12,11 +12,12 @@ import {
 } from "react-native";
 
 import type { ApiDailyQuestEntry, ApiDailyQuests } from "@predict-future/types";
-import { colors, radius, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
 
 import { useApiQuery } from "@/hooks/useApiQuery";
 import { mobileApi } from "@/lib/api";
 import { useSession } from "@/providers/session-provider";
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 // ── Quest type display labels ─────────────────────────────────────────────────
 
@@ -31,9 +32,193 @@ function getQuestLabel(questType: string): string {
   return QUEST_LABELS[questType] ?? questType;
 }
 
+// ── Styles ────────────────────────────────────────────────────────────────────
+
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
+  screen: {
+    flex: 1,
+    backgroundColor: t.colors.background,
+  },
+  center: {
+    alignItems: "center",
+    justifyContent: "center",
+    padding: spacing.xl,
+  },
+  scrollContent: {
+    padding: spacing.xl,
+    gap: spacing.md,
+    paddingBottom: spacing.xl * 2,
+  },
+
+  // Summary banner
+  summaryCard: {
+    backgroundColor: t.colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    marginBottom: spacing.sm,
+    gap: spacing.sm,
+  },
+  dateHeader: {
+    fontSize: 12,
+    color: t.colors.textMuted,
+    fontWeight: "500",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  summaryRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+  },
+  summaryText: {
+    flex: 1,
+  },
+  summaryTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: t.colors.text,
+  },
+  summarySubtitle: {
+    fontSize: 13,
+    color: t.colors.textMuted,
+    marginTop: 2,
+  },
+  // Intentional green earned badge — directional status color, keep static
+  earnedBadge: {
+    backgroundColor: "#ECFDF5",
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 5,
+  },
+  earnedBadgeText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#059669",
+  },
+  // Intentional orange streak banner — status color, keep static
+  streakBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#FFF7ED",
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+    alignSelf: "flex-start",
+  },
+  streakBannerText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#EA580C",
+  },
+
+  // Quest list
+  questList: {
+    gap: spacing.md,
+  },
+  questCard: {
+    backgroundColor: t.colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    gap: spacing.sm,
+  },
+  questCardDone: {
+    borderWidth: 1,
+    borderColor: "#22C55E22",
+  },
+  questCardHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: spacing.sm,
+  },
+  questLabel: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: "600",
+    color: t.colors.text,
+    lineHeight: 20,
+  },
+  // Intentional blue reward pill — brand hue, keep static
+  rewardPill: {
+    backgroundColor: "#EFF6FF",
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 3,
+  },
+  rewardPillText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#1D4ED8",
+  },
+
+  // Progress bar
+  progressTrack: {
+    height: 6,
+    backgroundColor: t.colors.border,
+    borderRadius: 3,
+    overflow: "hidden",
+  },
+  progressFill: {
+    height: 6,
+    borderRadius: 3,
+  },
+
+  questCardFooter: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  progressLabel: {
+    fontSize: 12,
+    color: t.colors.textMuted,
+  },
+  rewardEarned: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#059669",
+  },
+
+  // Empty / error states
+  emptyState: {
+    alignItems: "center",
+    paddingVertical: spacing.xl * 2,
+    gap: spacing.sm,
+  },
+  emptyText: {
+    fontSize: 15,
+    color: t.colors.textMuted,
+    textAlign: "center",
+  },
+  emptyHint: {
+    fontSize: 13,
+    color: t.colors.textMuted,
+    textAlign: "center",
+  },
+  errorText: {
+    fontSize: 14,
+    color: t.colors.danger,
+    textAlign: "center",
+    marginBottom: spacing.md,
+  },
+  retryBtn: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    backgroundColor: t.colors.accent,
+    borderRadius: radius.md,
+  },
+  retryLabel: {
+    color: "#FFFFFF",
+    fontWeight: "600",
+    fontSize: 14,
+  },
+});
+
 // ── QuestCard ─────────────────────────────────────────────────────────────────
 
 function QuestCard({ quest }: { quest: ApiDailyQuestEntry }) {
+  const styles = useThemedStyles(makeStyles);
+  const { colors } = useTheme();
   const progressPercent =
     quest.goal > 0 ? Math.min(1, quest.progress / quest.goal) : 0;
 
@@ -83,6 +268,8 @@ function QuestCard({ quest }: { quest: ApiDailyQuestEntry }) {
 
 export default function QuestsScreen() {
   const { status: authStatus, session } = useSession();
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const enabled = authStatus === "authenticated" && Boolean(session?.userId);
 
   const fetcher = useCallback(() => mobileApi.getQuestsToday(), []);
@@ -204,182 +391,3 @@ export default function QuestsScreen() {
     </View>
   );
 }
-
-// ── Styles ────────────────────────────────────────────────────────────────────
-
-const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  center: {
-    alignItems: "center",
-    justifyContent: "center",
-    padding: spacing.xl,
-  },
-  scrollContent: {
-    padding: spacing.xl,
-    gap: spacing.md,
-    paddingBottom: spacing.xl * 2,
-  },
-
-  // Summary banner
-  summaryCard: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    padding: spacing.lg,
-    marginBottom: spacing.sm,
-    gap: spacing.sm,
-  },
-  dateHeader: {
-    fontSize: 12,
-    color: colors.textMuted,
-    fontWeight: "500",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-  },
-  summaryRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.md,
-  },
-  summaryText: {
-    flex: 1,
-  },
-  summaryTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: colors.text,
-  },
-  summarySubtitle: {
-    fontSize: 13,
-    color: colors.textMuted,
-    marginTop: 2,
-  },
-  earnedBadge: {
-    backgroundColor: "#ECFDF5",
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 5,
-  },
-  earnedBadgeText: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: "#059669",
-  },
-  streakBanner: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    backgroundColor: "#FFF7ED",
-    borderRadius: radius.sm,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 5,
-    alignSelf: "flex-start",
-  },
-  streakBannerText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#EA580C",
-  },
-
-  // Quest list
-  questList: {
-    gap: spacing.md,
-  },
-  questCard: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    padding: spacing.lg,
-    gap: spacing.sm,
-  },
-  questCardDone: {
-    borderWidth: 1,
-    borderColor: "#22C55E22",
-  },
-  questCardHeader: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: spacing.sm,
-  },
-  questLabel: {
-    flex: 1,
-    fontSize: 14,
-    fontWeight: "600",
-    color: colors.text,
-    lineHeight: 20,
-  },
-  rewardPill: {
-    backgroundColor: "#EFF6FF",
-    borderRadius: radius.sm,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 3,
-  },
-  rewardPillText: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#1D4ED8",
-  },
-
-  // Progress bar
-  progressTrack: {
-    height: 6,
-    backgroundColor: colors.border,
-    borderRadius: 3,
-    overflow: "hidden",
-  },
-  progressFill: {
-    height: 6,
-    borderRadius: 3,
-  },
-
-  questCardFooter: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  progressLabel: {
-    fontSize: 12,
-    color: colors.textMuted,
-  },
-  rewardEarned: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#059669",
-  },
-
-  // Empty / error states
-  emptyState: {
-    alignItems: "center",
-    paddingVertical: spacing.xl * 2,
-    gap: spacing.sm,
-  },
-  emptyText: {
-    fontSize: 15,
-    color: colors.textMuted,
-    textAlign: "center",
-  },
-  emptyHint: {
-    fontSize: 13,
-    color: colors.textMuted,
-    textAlign: "center",
-  },
-  errorText: {
-    fontSize: 14,
-    color: colors.danger,
-    textAlign: "center",
-    marginBottom: spacing.md,
-  },
-  retryBtn: {
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    backgroundColor: colors.accent,
-    borderRadius: radius.md,
-  },
-  retryLabel: {
-    color: "#FFFFFF",
-    fontWeight: "600",
-    fontSize: 14,
-  },
-});

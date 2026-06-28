@@ -11,17 +11,126 @@ import {
 } from "react-native";
 
 import type { ApiCategoryTopEntry, ApiCategoryTopResponse, AppMarketCategory } from "@predict-future/types";
-import { colors, radius, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
 
 import { useApiQuery } from "@/hooks/useApiQuery";
 import { mobileApi } from "@/lib/api";
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
+
+// ── Styles ────────────────────────────────────────────────────────────────────
+
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
+  list: { flex: 1, backgroundColor: t.colors.background },
+  listContent: {
+    padding: spacing.lg,
+    paddingBottom: spacing["2xl"],
+  },
+  center: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: spacing.xl,
+    backgroundColor: t.colors.background,
+  },
+
+  subtitle: {
+    fontSize: 13,
+    color: t.colors.textMuted,
+    marginBottom: spacing.md,
+    lineHeight: 18,
+  },
+
+  // Row
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: t.colors.surface,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    gap: spacing.md,
+  },
+  rowMain: { flex: 1 },
+  username: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: t.colors.text,
+  },
+  followerLine: {
+    fontSize: 11,
+    color: t.colors.textMuted,
+    opacity: 0.7,
+    marginTop: 1,
+  },
+  predictions: {
+    fontSize: 12,
+    color: t.colors.textMuted,
+    marginTop: 2,
+  },
+  accuracy: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: t.colors.accent,
+  },
+
+  // Rank badge
+  rankBadge: {
+    width: 44,
+    height: 28,
+    borderRadius: radius.sm,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  rankText: {
+    fontSize: 12,
+    fontWeight: "700",
+  },
+
+  separator: {
+    height: spacing.sm,
+  },
+
+  // Error / empty
+  errorText: {
+    fontSize: 15,
+    color: t.colors.textMuted,
+    textAlign: "center",
+  },
+  retryBtn: {
+    marginTop: spacing.lg,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: t.colors.accent,
+  },
+  retryLabel: {
+    color: "#FFFFFF",
+    fontWeight: "700",
+    fontSize: 14,
+  },
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: t.colors.text,
+    textAlign: "center",
+  },
+  emptyBody: {
+    fontSize: 14,
+    color: t.colors.textMuted,
+    textAlign: "center",
+    marginTop: spacing.sm,
+    lineHeight: 20,
+  },
+});
 
 // ── Rank badge ────────────────────────────────────────────────────────────────
 
 function RankBadge({ rank }: { rank: number }) {
+  const styles = useThemedStyles(makeStyles);
+  const { colors } = useTheme();
   const isTop3 = rank <= 3;
-  const bg = rank === 1 ? "#FDE68A" : rank === 2 ? "#E2E8F0" : rank === 3 ? "#FED7AA" : colors.border as string;
-  const color = rank === 1 ? "#92400E" : rank === 2 ? "#475569" : rank === 3 ? "#9A3412" : colors.textMuted as string;
+  // Medal backgrounds for top 3 — intentional award colors, keep static
+  const bg = rank === 1 ? "#FDE68A" : rank === 2 ? "#E2E8F0" : rank === 3 ? "#FED7AA" : colors.border;
+  const color = rank === 1 ? "#92400E" : rank === 2 ? "#475569" : rank === 3 ? "#9A3412" : colors.textMuted;
 
   return (
     <View style={[styles.rankBadge, { backgroundColor: bg }]}>
@@ -41,6 +150,7 @@ function formatFollowerCount(count: number): string {
 // ── List row ──────────────────────────────────────────────────────────────────
 
 function EntryRow({ entry }: { entry: ApiCategoryTopEntry }) {
+  const styles = useThemedStyles(makeStyles);
   return (
     <View style={styles.row}>
       <RankBadge rank={entry.rank} />
@@ -58,6 +168,8 @@ function EntryRow({ entry }: { entry: ApiCategoryTopEntry }) {
 
 export default function CategoryLeaderboardScreen() {
   const { category } = useLocalSearchParams<{ category: string }>();
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
 
   const fetcher = useCallback(
     () =>
@@ -132,108 +244,3 @@ export default function CategoryLeaderboardScreen() {
     </>
   );
 }
-
-// ── Styles ────────────────────────────────────────────────────────────────────
-
-const styles = StyleSheet.create({
-  list: { flex: 1, backgroundColor: colors.background as string },
-  listContent: {
-    padding: spacing.lg,
-    paddingBottom: spacing["2xl"],
-  },
-  center: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    padding: spacing.xl,
-    backgroundColor: colors.background as string,
-  },
-
-  subtitle: {
-    fontSize: 13,
-    color: colors.textMuted as string,
-    marginBottom: spacing.md,
-    lineHeight: 18,
-  },
-
-  // Row
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: colors.surface as string,
-    borderRadius: radius.md,
-    padding: spacing.md,
-    gap: spacing.md,
-  },
-  rowMain: { flex: 1 },
-  username: {
-    fontSize: 15,
-    fontWeight: "600",
-    color: colors.text as string,
-  },
-  followerLine: {
-    fontSize: 11,
-    color: colors.textMuted as string,
-    opacity: 0.7,
-    marginTop: 1,
-  },
-  predictions: {
-    fontSize: 12,
-    color: colors.textMuted as string,
-    marginTop: 2,
-  },
-  accuracy: {
-    fontSize: 18,
-    fontWeight: "800",
-    color: colors.accent as string,
-  },
-
-  // Rank badge
-  rankBadge: {
-    width: 44,
-    height: 28,
-    borderRadius: radius.sm,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  rankText: {
-    fontSize: 12,
-    fontWeight: "700",
-  },
-
-  separator: {
-    height: spacing.sm,
-  },
-
-  // Error / empty
-  errorText: {
-    fontSize: 15,
-    color: colors.textMuted as string,
-    textAlign: "center",
-  },
-  retryBtn: {
-    marginTop: spacing.lg,
-    paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.md,
-    borderRadius: radius.md,
-    backgroundColor: colors.accent as string,
-  },
-  retryLabel: {
-    color: "#FFFFFF",
-    fontWeight: "700",
-    fontSize: 14,
-  },
-  emptyTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: colors.text as string,
-    textAlign: "center",
-  },
-  emptyBody: {
-    fontSize: 14,
-    color: colors.textMuted as string,
-    textAlign: "center",
-    marginTop: spacing.sm,
-    lineHeight: 20,
-  },
-});

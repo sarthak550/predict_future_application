@@ -29,7 +29,8 @@ import {
   View,
 } from "react-native";
 
-import { colors, radius, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
+import { useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -85,10 +86,131 @@ const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 const TAB_BAR_HEIGHT = 72;
 const TAB_WIDTH = SCREEN_WIDTH / TAB_COUNT;
 
+// ── Styles factory ────────────────────────────────────────────────────────────
+
+const makeWalkStyles = (t: ThemeContextValue) => StyleSheet.create({
+  overlay: {
+    flex: 1,
+    // Intentional dark overlay — keep static
+    backgroundColor: "rgba(0,0,0,0.72)",
+  },
+  spotlight: {
+    position: "absolute",
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    // Intentional translucent white highlight on dark overlay — keep static
+    backgroundColor: "rgba(255,255,255,0.15)",
+    borderWidth: 2,
+    borderColor: "rgba(255,255,255,0.5)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  spotlightEmoji: {
+    fontSize: 22,
+  },
+  card: {
+    position: "absolute",
+    left: spacing.xl,
+    right: spacing.xl,
+    backgroundColor: t.colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.xl,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.3,
+    shadowRadius: 20,
+    elevation: 12,
+  },
+  cardTop: {
+    top: 120,
+  },
+  cardMid: {
+    top: SCREEN_HEIGHT * 0.3,
+  },
+  stepRow: {
+    flexDirection: "row",
+    gap: 6,
+    marginBottom: spacing.md,
+  },
+  stepDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: t.colors.border,
+  },
+  stepDotActive: {
+    backgroundColor: t.colors.accent,
+    width: 20,
+  },
+  cardTitle: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: t.colors.text,
+    marginBottom: spacing.sm,
+  },
+  cardBody: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: t.colors.textMuted,
+    marginBottom: spacing.lg,
+  },
+  arrowDown: {
+    width: 0,
+    height: 0,
+    alignSelf: "center",
+    borderLeftWidth: 10,
+    borderRightWidth: 10,
+    borderTopWidth: 14,
+    borderLeftColor: "transparent",
+    borderRightColor: "transparent",
+    borderTopColor: t.colors.accent,
+    marginBottom: spacing.md,
+  },
+  arrowDownFromCard: {
+    width: 0,
+    height: 0,
+    alignSelf: "center",
+    borderLeftWidth: 10,
+    borderRightWidth: 10,
+    borderTopWidth: 14,
+    borderLeftColor: "transparent",
+    borderRightColor: "transparent",
+    borderTopColor: t.colors.border,
+    marginBottom: spacing.md,
+  },
+  actionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  skipBtn: {
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+  },
+  skipText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: t.colors.textMuted,
+  },
+  nextBtn: {
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.xl,
+    backgroundColor: t.colors.accent,
+    borderRadius: radius.pill,
+  },
+  nextText: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#FFFFFF",
+  },
+});
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function OnboardingWalkthrough() {
   const router = useRouter();
+  const walkStyles = useThemedStyles(makeWalkStyles);
   const [visible, setVisible] = useState(false);
   const [stepIdx, setStepIdx] = useState(0);
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -257,121 +379,3 @@ export function OnboardingWalkthrough() {
     </Modal>
   );
 }
-
-// ── Styles ────────────────────────────────────────────────────────────────────
-
-const walkStyles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.72)",
-  },
-  spotlight: {
-    position: "absolute",
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: "rgba(255,255,255,0.15)",
-    borderWidth: 2,
-    borderColor: "rgba(255,255,255,0.5)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  spotlightEmoji: {
-    fontSize: 22,
-  },
-  card: {
-    position: "absolute",
-    left: spacing.xl,
-    right: spacing.xl,
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    padding: spacing.xl,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.3,
-    shadowRadius: 20,
-    elevation: 12,
-  },
-  cardTop: {
-    top: 120,
-  },
-  cardMid: {
-    top: SCREEN_HEIGHT * 0.3,
-  },
-  stepRow: {
-    flexDirection: "row",
-    gap: 6,
-    marginBottom: spacing.md,
-  },
-  stepDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: colors.border,
-  },
-  stepDotActive: {
-    backgroundColor: colors.accent,
-    width: 20,
-  },
-  cardTitle: {
-    fontSize: 20,
-    fontWeight: "800",
-    color: colors.text,
-    marginBottom: spacing.sm,
-  },
-  cardBody: {
-    fontSize: 15,
-    lineHeight: 22,
-    color: colors.textMuted,
-    marginBottom: spacing.lg,
-  },
-  arrowDown: {
-    width: 0,
-    height: 0,
-    alignSelf: "center",
-    borderLeftWidth: 10,
-    borderRightWidth: 10,
-    borderTopWidth: 14,
-    borderLeftColor: "transparent",
-    borderRightColor: "transparent",
-    borderTopColor: colors.accent,
-    marginBottom: spacing.md,
-  },
-  arrowDownFromCard: {
-    width: 0,
-    height: 0,
-    alignSelf: "center",
-    borderLeftWidth: 10,
-    borderRightWidth: 10,
-    borderTopWidth: 14,
-    borderLeftColor: "transparent",
-    borderRightColor: "transparent",
-    borderTopColor: colors.border,
-    marginBottom: spacing.md,
-  },
-  actionRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  skipBtn: {
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-  },
-  skipText: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: colors.textMuted,
-  },
-  nextBtn: {
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.xl,
-    backgroundColor: colors.accent,
-    borderRadius: radius.pill,
-  },
-  nextText: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: "#FFFFFF",
-  },
-});

@@ -18,9 +18,10 @@ import {
 } from "react-native";
 
 import type { ApiPlatformStats } from "@predict-future/types";
-import { colors, radius, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
 
 import { mobileApi } from "@/lib/api";
+import { useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -29,9 +30,38 @@ type LoadState =
   | { status: "ready"; data: ApiPlatformStats }
   | { status: "error" };
 
+// ── Styles ─────────────────────────────────────────────────────────────────────
+
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
+  pill: {
+    alignSelf: "center",
+    backgroundColor: t.colors.surfaceMuted,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    marginVertical: spacing.xs,
+    maxWidth: "90%",
+    borderWidth: 1,
+    borderColor: t.colors.border,
+  },
+  text: {
+    color: t.colors.textMuted,
+    fontSize: 12,
+    fontWeight: "500",
+    textAlign: "center",
+  },
+  skeletonBar: {
+    height: 12,
+    width: 200,
+    borderRadius: radius.sm,
+    backgroundColor: t.colors.border,
+  },
+});
+
 // ── Skeleton ───────────────────────────────────────────────────────────────────
 
 function SkeletonPill() {
+  const styles = useThemedStyles(makeStyles);
   return (
     <View style={styles.pill}>
       <View style={styles.skeletonBar} />
@@ -42,6 +72,7 @@ function SkeletonPill() {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function PlatformTrustBanner() {
+  const styles = useThemedStyles(makeStyles);
   const [state, setState] = useState<LoadState>({ status: "loading" });
 
   useEffect(() => {
@@ -90,31 +121,3 @@ export function PlatformTrustBanner() {
     </View>
   );
 }
-
-// ── Styles ─────────────────────────────────────────────────────────────────────
-
-const styles = StyleSheet.create({
-  pill: {
-    alignSelf: "center",
-    backgroundColor: colors.surfaceMuted,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-    marginVertical: spacing.xs,
-    maxWidth: "90%",
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  text: {
-    color: colors.textMuted,
-    fontSize: 12,
-    fontWeight: "500",
-    textAlign: "center",
-  },
-  skeletonBar: {
-    height: 12,
-    width: 200,
-    borderRadius: radius.sm,
-    backgroundColor: colors.border,
-  },
-});

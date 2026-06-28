@@ -25,11 +25,12 @@ import {
 } from "react-native";
 
 import type { ApiLeagueTierStandingEntry, AppLeagueTier } from "@predict-future/types";
-import { colors, radius, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
 
 import { TIER_COLORS } from "@/app/leagues";
 import { mobileApi } from "@/lib/api";
 import { useSession } from "@/providers/session-provider";
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -42,6 +43,115 @@ function formatMonth(month: string): string {
   const idx = parseInt(m!, 10) - 1;
   return `${months[idx] ?? m} ${year}`;
 }
+
+// ── Styles ────────────────────────────────────────────────────────────────────
+
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
+  screen: { flex: 1, backgroundColor: t.colors.background },
+  center: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: spacing.xl,
+  },
+  listContent: { paddingBottom: 40 },
+
+  errorText: { fontSize: 14, color: t.colors.danger, textAlign: "center" },
+  retryBtn: {
+    marginTop: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: t.colors.accent,
+  },
+  retryLabel: { color: "#FFFFFF", fontWeight: "700", fontSize: 14 },
+
+  // ── Header band ──
+  headerBand: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    marginBottom: spacing.xs,
+  },
+  headerTierText: {
+    fontSize: 18,
+    fontWeight: "800",
+    // Intentional white text on tier-colored band — keep static
+    color: "#FFFFFF",
+    letterSpacing: 0.5,
+  },
+  headerMonthText: {
+    fontSize: 13,
+    fontWeight: "600",
+    // Intentional semi-transparent white on tier-colored band — keep static
+    color: "rgba(255,255,255,0.8)",
+    marginTop: 2,
+  },
+
+  // ── Rows ──
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm + 2,
+    backgroundColor: t.colors.surface,
+    gap: spacing.md,
+  },
+  rowMe: {
+    backgroundColor: t.colors.accent + "18",
+  },
+  rankBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: t.colors.background,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: t.colors.border,
+  },
+  rankText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: t.colors.textMuted,
+  },
+  rankTextMe: {
+    color: t.colors.accent,
+  },
+  usernameText: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: "600",
+    color: t.colors.text,
+  },
+  usernameTextMe: {
+    color: t.colors.accent,
+  },
+  pointsText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: t.colors.textMuted,
+  },
+  pointsTextMe: {
+    color: t.colors.accent,
+  },
+  separator: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: t.colors.border,
+    marginHorizontal: spacing.lg,
+  },
+
+  // ── Footer ──
+  footerRow: {
+    paddingVertical: spacing.lg,
+    alignItems: "center",
+  },
+  endText: {
+    textAlign: "center",
+    paddingVertical: spacing.lg,
+    fontSize: 12,
+    color: t.colors.textMuted,
+  },
+});
 
 // ── Screen ────────────────────────────────────────────────────────────────────
 
@@ -56,6 +166,8 @@ export default function LeagueStandingsScreen() {
   const month = monthParam ?? "";
 
   const { session } = useSession();
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const username = session?.username ?? null;
 
   const [entries, setEntries] = useState<ApiLeagueTierStandingEntry[]>([]);
@@ -240,110 +352,3 @@ export default function LeagueStandingsScreen() {
     </View>
   );
 }
-
-// ── Styles ────────────────────────────────────────────────────────────────────
-
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.background },
-  center: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    padding: spacing.xl,
-  },
-  listContent: { paddingBottom: 40 },
-
-  errorText: { fontSize: 14, color: colors.danger, textAlign: "center" },
-  retryBtn: {
-    marginTop: spacing.lg,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.md,
-    backgroundColor: colors.accent,
-  },
-  retryLabel: { color: "#FFFFFF", fontWeight: "700", fontSize: 14 },
-
-  // ── Header band ──
-  headerBand: {
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    marginBottom: spacing.xs,
-  },
-  headerTierText: {
-    fontSize: 18,
-    fontWeight: "800",
-    color: "#FFFFFF",
-    letterSpacing: 0.5,
-  },
-  headerMonthText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "rgba(255,255,255,0.8)",
-    marginTop: 2,
-  },
-
-  // ── Rows ──
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm + 2,
-    backgroundColor: colors.surface,
-    gap: spacing.md,
-  },
-  rowMe: {
-    backgroundColor: colors.accent + "18",
-  },
-  rankBadge: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: colors.background,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-  },
-  rankText: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: colors.textMuted,
-  },
-  rankTextMe: {
-    color: colors.accent,
-  },
-  usernameText: {
-    flex: 1,
-    fontSize: 14,
-    fontWeight: "600",
-    color: colors.text,
-  },
-  usernameTextMe: {
-    color: colors.accent,
-  },
-  pointsText: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: colors.textMuted,
-  },
-  pointsTextMe: {
-    color: colors.accent,
-  },
-  separator: {
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: colors.border,
-    marginHorizontal: spacing.lg,
-  },
-
-  // ── Footer ──
-  footerRow: {
-    paddingVertical: spacing.lg,
-    alignItems: "center",
-  },
-  endText: {
-    textAlign: "center",
-    paddingVertical: spacing.lg,
-    fontSize: 12,
-    color: colors.textMuted,
-  },
-});

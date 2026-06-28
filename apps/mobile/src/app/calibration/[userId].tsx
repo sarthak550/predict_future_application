@@ -11,13 +11,15 @@ import {
 } from "react-native";
 
 import type { ApiCalibrationCategoryBreakdown, ApiUserCalibration, AppMarketCategory } from "@predict-future/types";
-import { colors, radius, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
 
 import { useApiQuery } from "@/hooks/useApiQuery";
 import { mobileApi } from "@/lib/api";
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 // ── Category colour helpers ───────────────────────────────────────────────────
 
+// Intentional category accent map — directional brand hues, keep static
 const CATEGORY_ACCENT: Record<string, string> = {
   GENERAL: "#6366F1",
   SPORTS: "#EF4444",
@@ -34,9 +36,171 @@ function categoryColor(cat: string): string {
   return CATEGORY_ACCENT[cat] ?? "#64748B";
 }
 
+// ── Styles ────────────────────────────────────────────────────────────────────
+
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
+  screen: { flex: 1, backgroundColor: t.colors.background },
+  scrollContent: {
+    padding: spacing.xl,
+    paddingBottom: spacing["2xl"],
+    gap: spacing.lg,
+  },
+  center: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: spacing.xl,
+    backgroundColor: t.colors.background,
+  },
+
+  // Overall accuracy header
+  overallCard: {
+    backgroundColor: t.colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.xl,
+    alignItems: "center",
+  },
+  overallPct: {
+    fontSize: 56,
+    fontWeight: "800",
+    color: t.colors.accent,
+    lineHeight: 64,
+  },
+  overallLabel: {
+    fontSize: 13,
+    color: t.colors.textMuted,
+    fontWeight: "600",
+    marginTop: spacing.xs,
+    marginBottom: spacing.lg,
+  },
+  statsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    width: "100%",
+  },
+  statItem: { flex: 1, alignItems: "center" },
+  statValue: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: t.colors.text,
+  },
+  statLabel: {
+    fontSize: 11,
+    color: t.colors.textMuted,
+    marginTop: 2,
+  },
+  statDivider: {
+    width: 1,
+    height: 32,
+    backgroundColor: t.colors.border,
+  },
+
+  // Category bar chart card
+  barsCard: {
+    backgroundColor: t.colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    gap: spacing.md,
+  },
+  sectionTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: t.colors.text,
+    marginBottom: spacing.xs,
+  },
+  catRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  catLabel: {
+    width: 80,
+    fontSize: 12,
+    fontWeight: "600",
+    color: t.colors.textMuted,
+  },
+  barTrack: {
+    flex: 1,
+    height: 8,
+    backgroundColor: t.colors.border,
+    borderRadius: 4,
+    overflow: "hidden",
+  },
+  barFill: {
+    height: "100%",
+    borderRadius: 4,
+  },
+  catPct: {
+    width: 38,
+    fontSize: 12,
+    fontWeight: "700",
+    textAlign: "right",
+  },
+
+  // Category leaderboard links
+  linksCard: {
+    backgroundColor: t.colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+  },
+  linkRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: t.colors.border,
+  },
+  linkRowPressed: { opacity: 0.6 },
+  linkText: {
+    fontSize: 14,
+    color: t.colors.accent,
+    fontWeight: "500",
+    flex: 1,
+  },
+  linkChevron: {
+    fontSize: 18,
+    color: t.colors.textMuted,
+    marginLeft: spacing.sm,
+  },
+
+  // Error / empty
+  errorText: {
+    fontSize: 15,
+    color: t.colors.textMuted,
+    textAlign: "center",
+  },
+  retryBtn: {
+    marginTop: spacing.lg,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: t.colors.accent,
+  },
+  retryLabel: {
+    color: "#FFFFFF",
+    fontWeight: "700",
+    fontSize: 14,
+  },
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: t.colors.text,
+    textAlign: "center",
+  },
+  emptyBody: {
+    fontSize: 14,
+    color: t.colors.textMuted,
+    textAlign: "center",
+    marginTop: spacing.sm,
+    lineHeight: 20,
+  },
+});
+
 // ── Sub-components ────────────────────────────────────────────────────────────
 
 function OverallHeader({ calibration }: { calibration: ApiUserCalibration }) {
+  const styles = useThemedStyles(makeStyles);
   const { overallAccuracy, totalPredictions, totalWins, bestStreak } = calibration;
 
   return (
@@ -64,6 +228,7 @@ function OverallHeader({ calibration }: { calibration: ApiUserCalibration }) {
 }
 
 function CategoryBar({ entry }: { entry: ApiCalibrationCategoryBreakdown }) {
+  const styles = useThemedStyles(makeStyles);
   const pct = Math.min(100, Math.max(0, entry.accuracyScore));
   const accent = categoryColor(entry.category);
 
@@ -94,6 +259,7 @@ function CategoryLinks({
   breakdown: ApiCalibrationCategoryBreakdown[];
   router: ReturnType<typeof useRouter>;
 }) {
+  const styles = useThemedStyles(makeStyles);
   // Only show links for categories where the user has >= 5 predictions.
   const qualified = breakdown.filter((b) => b.totalPredictions >= 5);
   if (qualified.length === 0) return null;
@@ -129,6 +295,8 @@ function CategoryLinks({
 export default function CalibrationScreen() {
   const { userId } = useLocalSearchParams<{ userId: string }>();
   const router = useRouter();
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
 
   const fetcher = useCallback(
     () => mobileApi.getUserCalibration(userId),
@@ -209,164 +377,3 @@ export default function CalibrationScreen() {
     </>
   );
 }
-
-// ── Styles ────────────────────────────────────────────────────────────────────
-
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.background as string },
-  scrollContent: {
-    padding: spacing.xl,
-    paddingBottom: spacing["2xl"],
-    gap: spacing.lg,
-  },
-  center: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    padding: spacing.xl,
-    backgroundColor: colors.background as string,
-  },
-
-  // Overall accuracy header
-  overallCard: {
-    backgroundColor: colors.surface as string,
-    borderRadius: radius.lg,
-    padding: spacing.xl,
-    alignItems: "center",
-  },
-  overallPct: {
-    fontSize: 56,
-    fontWeight: "800",
-    color: colors.accent as string,
-    lineHeight: 64,
-  },
-  overallLabel: {
-    fontSize: 13,
-    color: colors.textMuted as string,
-    fontWeight: "600",
-    marginTop: spacing.xs,
-    marginBottom: spacing.lg,
-  },
-  statsRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    width: "100%",
-  },
-  statItem: { flex: 1, alignItems: "center" },
-  statValue: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: colors.text as string,
-  },
-  statLabel: {
-    fontSize: 11,
-    color: colors.textMuted as string,
-    marginTop: 2,
-  },
-  statDivider: {
-    width: 1,
-    height: 32,
-    backgroundColor: colors.border as string,
-  },
-
-  // Category bar chart card
-  barsCard: {
-    backgroundColor: colors.surface as string,
-    borderRadius: radius.lg,
-    padding: spacing.lg,
-    gap: spacing.md,
-  },
-  sectionTitle: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: colors.text as string,
-    marginBottom: spacing.xs,
-  },
-  catRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm,
-  },
-  catLabel: {
-    width: 80,
-    fontSize: 12,
-    fontWeight: "600",
-    color: colors.textMuted as string,
-  },
-  barTrack: {
-    flex: 1,
-    height: 8,
-    backgroundColor: colors.border as string,
-    borderRadius: 4,
-    overflow: "hidden",
-  },
-  barFill: {
-    height: "100%",
-    borderRadius: 4,
-  },
-  catPct: {
-    width: 38,
-    fontSize: 12,
-    fontWeight: "700",
-    textAlign: "right",
-  },
-
-  // Category leaderboard links
-  linksCard: {
-    backgroundColor: colors.surface as string,
-    borderRadius: radius.lg,
-    padding: spacing.lg,
-  },
-  linkRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: spacing.md,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border as string,
-  },
-  linkRowPressed: { opacity: 0.6 },
-  linkText: {
-    fontSize: 14,
-    color: colors.accent as string,
-    fontWeight: "500",
-    flex: 1,
-  },
-  linkChevron: {
-    fontSize: 18,
-    color: colors.textMuted as string,
-    marginLeft: spacing.sm,
-  },
-
-  // Error / empty
-  errorText: {
-    fontSize: 15,
-    color: colors.textMuted as string,
-    textAlign: "center",
-  },
-  retryBtn: {
-    marginTop: spacing.lg,
-    paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.md,
-    borderRadius: radius.md,
-    backgroundColor: colors.accent as string,
-  },
-  retryLabel: {
-    color: "#FFFFFF",
-    fontWeight: "700",
-    fontSize: 14,
-  },
-  emptyTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: colors.text as string,
-    textAlign: "center",
-  },
-  emptyBody: {
-    fontSize: 14,
-    color: colors.textMuted as string,
-    textAlign: "center",
-    marginTop: spacing.sm,
-    lineHeight: 20,
-  },
-});

@@ -16,6 +16,10 @@ type State = {
  * Top-level error boundary. React Native will otherwise surface a red-box in dev
  * and a blank screen in prod when a render throws. This gives users a
  * recoverable "try again" state without restarting the app.
+ *
+ * NOTE: This is a React class component and cannot use hooks. Styles are kept
+ * static (light-mode tokens) — this is an acceptable trade-off for an error
+ * fallback screen that renders only on catastrophic failures.
  */
 export class ErrorBoundary extends React.Component<Props, State> {
   state: State = { error: null };
@@ -56,6 +60,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
   }
 }
 
+// Styles are intentionally static (class component cannot use hooks).
 const styles = StyleSheet.create({
   container: {
     flex: 1,

@@ -16,10 +16,11 @@ import type {
   ApiLeagueTierStandingEntry,
   AppLeagueTier,
 } from "@predict-future/types";
-import { colors, radius, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
 
 import { mobileApi } from "@/lib/api";
 import { useSession } from "@/providers/session-provider";
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 // ── Tier display config ───────────────────────────────────────────────────────
 
@@ -62,10 +63,11 @@ function zoneLabel(zone: Zone): string {
   return "Stable";
 }
 
-function zoneColor(zone: Zone): string {
+/** Zone color — directional greens/reds and textMuted (passed in) kept semantic. */
+function zoneColor(zone: Zone, textMuted: string): string {
   if (zone === "promotion") return "#22C55E";
   if (zone === "relegation") return "#EF4444";
-  return colors.textMuted;
+  return textMuted;
 }
 
 // ── Month label ───────────────────────────────────────────────────────────────
@@ -81,11 +83,232 @@ function formatMonth(month: string): string {
   return `${months[idx] ?? m} ${year}`;
 }
 
+// ── Styles ────────────────────────────────────────────────────────────────────
+
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
+  screen: { flex: 1, backgroundColor: t.colors.background },
+  center: { flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.xl },
+  listContent: { paddingBottom: 40 },
+
+  errorText: { fontSize: 14, color: t.colors.danger, textAlign: "center" },
+  retryBtn: {
+    marginTop: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: t.colors.accent,
+  },
+  retryLabel: { color: "#FFFFFF", fontWeight: "700", fontSize: 14 },
+
+  // ── Hero card ──
+  heroCard: {
+    margin: spacing.md,
+    marginBottom: 0,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+  },
+  heroTier: {
+    fontSize: 32,
+    fontWeight: "800",
+    letterSpacing: 1,
+  },
+  heroMonth: {
+    fontSize: 14,
+    fontWeight: "600",
+    marginTop: 4,
+  },
+  heroStats: {
+    flexDirection: "row",
+    marginTop: spacing.lg,
+    // Intentional semi-transparent dark strip on a tier-colored background — keep static
+    backgroundColor: "rgba(0,0,0,0.12)",
+    borderRadius: radius.md,
+    overflow: "hidden",
+  },
+  heroStat: {
+    flex: 1,
+    alignItems: "center",
+    paddingVertical: spacing.md,
+  },
+  heroStatValue: {
+    fontSize: 24,
+    fontWeight: "800",
+  },
+  heroStatLabel: {
+    fontSize: 10,
+    fontWeight: "600",
+    marginTop: 2,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  heroStatDivider: {
+    width: StyleSheet.hairlineWidth,
+    // Intentional white divider on a tier-colored background — keep static
+    backgroundColor: "rgba(255,255,255,0.3)",
+    marginVertical: spacing.sm,
+  },
+
+  // ── Generic card ──
+  card: {
+    margin: spacing.md,
+    marginBottom: 0,
+    padding: spacing.lg,
+    backgroundColor: t.colors.surface,
+    borderRadius: radius.lg,
+  },
+  cardTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: t.colors.text,
+    marginBottom: spacing.md,
+  },
+  standingsHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  viewFullLink: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: t.colors.accent,
+    marginBottom: spacing.md,
+  },
+
+  // ── Zone bar ──
+  zoneLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  zoneDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  zoneLabel: {
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  zoneBarOuter: {
+    flexDirection: "row",
+    height: 12,
+    borderRadius: radius.pill,
+    overflow: "visible",
+    position: "relative",
+  },
+  zoneBarSegment: {
+    flex: 1,
+  },
+  // Directional zone colors — kept static (green promotion, neutral border, red relegation)
+  zoneBarPromotion: {
+    backgroundColor: "#22C55E",
+    borderTopLeftRadius: radius.pill,
+    borderBottomLeftRadius: radius.pill,
+  },
+  zoneBarSafe: {
+    backgroundColor: t.colors.border,
+  },
+  zoneBarRelegation: {
+    backgroundColor: "#EF4444",
+    borderTopRightRadius: radius.pill,
+    borderBottomRightRadius: radius.pill,
+  },
+  zonePinWrapper: {
+    position: "absolute",
+    top: -4,
+    marginLeft: -10,
+  },
+  zonePin: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: t.colors.background,
+    borderWidth: 3,
+  },
+  zoneLegend: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: spacing.sm,
+  },
+  zoneLegendText: {
+    fontSize: 10,
+    fontWeight: "600",
+  },
+
+  // ── Standing rows ──
+  standingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm + 2,
+    backgroundColor: t.colors.surface,
+    gap: spacing.md,
+  },
+  standingRowMe: {
+    backgroundColor: t.colors.accent + "18",
+  },
+  rankBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: t.colors.background,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: t.colors.border,
+  },
+  rankBadgeText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: t.colors.textMuted,
+  },
+  rankBadgeTextMe: {
+    color: t.colors.accent,
+  },
+  standingUsername: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: "600",
+    color: t.colors.text,
+  },
+  standingUsernameMe: {
+    color: t.colors.accent,
+  },
+  standingPoints: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: t.colors.textMuted,
+  },
+  standingPointsMe: {
+    color: t.colors.accent,
+  },
+  separator: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: t.colors.border,
+    marginHorizontal: spacing.lg,
+  },
+
+  // ── Footer ──
+  loadMoreRow: {
+    paddingVertical: spacing.lg,
+    alignItems: "center",
+  },
+  endOfList: {
+    textAlign: "center",
+    paddingVertical: spacing.lg,
+    fontSize: 12,
+    color: t.colors.textMuted,
+  },
+});
+
 // ── Main screen ───────────────────────────────────────────────────────────────
 
 export default function LeaguesScreen() {
   const router = useRouter();
   const { session, status: sessionStatus } = useSession();
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const userId = session?.userId ?? null;
   const username = session?.username ?? null;
 
@@ -250,6 +473,7 @@ export default function LeaguesScreen() {
   }
 
   function renderListHeader() {
+    const currentZoneColor = zoneColor(zone, colors.textMuted);
     return (
       <>
         {/* ── Tier hero card ── */}
@@ -290,8 +514,8 @@ export default function LeaguesScreen() {
 
           {/* Zone label */}
           <View style={[styles.zoneLabelRow]}>
-            <View style={[styles.zoneDot, { backgroundColor: zoneColor(zone) }]} />
-            <Text style={[styles.zoneLabel, { color: zoneColor(zone) }]}>
+            <View style={[styles.zoneDot, { backgroundColor: currentZoneColor }]} />
+            <Text style={[styles.zoneLabel, { color: currentZoneColor }]}>
               {zoneLabel(zone)}
             </Text>
           </View>
@@ -389,219 +613,3 @@ export default function LeaguesScreen() {
     </View>
   );
 }
-
-// ── Styles ────────────────────────────────────────────────────────────────────
-
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.background },
-  center: { flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.xl },
-  listContent: { paddingBottom: 40 },
-
-  errorText: { fontSize: 14, color: colors.danger, textAlign: "center" },
-  retryBtn: {
-    marginTop: spacing.lg,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.md,
-    backgroundColor: colors.accent,
-  },
-  retryLabel: { color: "#FFFFFF", fontWeight: "700", fontSize: 14 },
-
-  // ── Hero card ──
-  heroCard: {
-    margin: spacing.md,
-    marginBottom: 0,
-    borderRadius: radius.lg,
-    padding: spacing.lg,
-  },
-  heroTier: {
-    fontSize: 32,
-    fontWeight: "800",
-    letterSpacing: 1,
-  },
-  heroMonth: {
-    fontSize: 14,
-    fontWeight: "600",
-    marginTop: 4,
-  },
-  heroStats: {
-    flexDirection: "row",
-    marginTop: spacing.lg,
-    backgroundColor: "rgba(0,0,0,0.12)",
-    borderRadius: radius.md,
-    overflow: "hidden",
-  },
-  heroStat: {
-    flex: 1,
-    alignItems: "center",
-    paddingVertical: spacing.md,
-  },
-  heroStatValue: {
-    fontSize: 24,
-    fontWeight: "800",
-  },
-  heroStatLabel: {
-    fontSize: 10,
-    fontWeight: "600",
-    marginTop: 2,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-  },
-  heroStatDivider: {
-    width: StyleSheet.hairlineWidth,
-    backgroundColor: "rgba(255,255,255,0.3)",
-    marginVertical: spacing.sm,
-  },
-
-  // ── Generic card ──
-  card: {
-    margin: spacing.md,
-    marginBottom: 0,
-    padding: spacing.lg,
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-  },
-  cardTitle: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: colors.text,
-    marginBottom: spacing.md,
-  },
-  standingsHeaderRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  viewFullLink: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: colors.accent,
-    marginBottom: spacing.md,
-  },
-
-  // ── Zone bar ──
-  zoneLabelRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm,
-    marginBottom: spacing.md,
-  },
-  zoneDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  zoneLabel: {
-    fontSize: 13,
-    fontWeight: "600",
-  },
-  zoneBarOuter: {
-    flexDirection: "row",
-    height: 12,
-    borderRadius: radius.pill,
-    overflow: "visible",
-    position: "relative",
-  },
-  zoneBarSegment: {
-    flex: 1,
-  },
-  zoneBarPromotion: {
-    backgroundColor: "#22C55E",
-    borderTopLeftRadius: radius.pill,
-    borderBottomLeftRadius: radius.pill,
-  },
-  zoneBarSafe: {
-    backgroundColor: colors.border,
-  },
-  zoneBarRelegation: {
-    backgroundColor: "#EF4444",
-    borderTopRightRadius: radius.pill,
-    borderBottomRightRadius: radius.pill,
-  },
-  zonePinWrapper: {
-    position: "absolute",
-    top: -4,
-    marginLeft: -10,
-  },
-  zonePin: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: colors.background,
-    borderWidth: 3,
-  },
-  zoneLegend: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginTop: spacing.sm,
-  },
-  zoneLegendText: {
-    fontSize: 10,
-    fontWeight: "600",
-  },
-
-  // ── Standing rows ──
-  standingRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm + 2,
-    backgroundColor: colors.surface,
-    gap: spacing.md,
-  },
-  standingRowMe: {
-    backgroundColor: colors.accent + "18",
-  },
-  rankBadge: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: colors.background,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-  },
-  rankBadgeText: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: colors.textMuted,
-  },
-  rankBadgeTextMe: {
-    color: colors.accent,
-  },
-  standingUsername: {
-    flex: 1,
-    fontSize: 14,
-    fontWeight: "600",
-    color: colors.text,
-  },
-  standingUsernameMe: {
-    color: colors.accent,
-  },
-  standingPoints: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: colors.textMuted,
-  },
-  standingPointsMe: {
-    color: colors.accent,
-  },
-  separator: {
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: colors.border,
-    marginHorizontal: spacing.lg,
-  },
-
-  // ── Footer ──
-  loadMoreRow: {
-    paddingVertical: spacing.lg,
-    alignItems: "center",
-  },
-  endOfList: {
-    textAlign: "center",
-    paddingVertical: spacing.lg,
-    fontSize: 12,
-    color: colors.textMuted,
-  },
-});
