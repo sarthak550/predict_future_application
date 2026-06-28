@@ -14,7 +14,14 @@ import { LinearGradient } from "expo-linear-gradient";
 import { type ReactNode } from "react";
 import { type StyleProp, type ViewStyle } from "react-native";
 
-import { brandGradient, pillarAGradient } from "@predict-future/ui-tokens";
+import {
+  brandGradient,
+  darkBrandGradient,
+  darkPillarAGradient,
+  pillarAGradient,
+} from "@predict-future/ui-tokens";
+
+import { useTheme } from "@/providers/theme-provider";
 
 type BrandGradientProps = {
   variant?: "brand" | "pillarA";
@@ -23,25 +30,24 @@ type BrandGradientProps = {
 };
 
 export function BrandGradient({ variant = "brand", style, children }: BrandGradientProps) {
+  const { isDark } = useTheme();
+
   if (variant === "pillarA") {
+    const g = isDark ? darkPillarAGradient : pillarAGradient;
     return (
-      <LinearGradient
-        colors={pillarAGradient.stops}
-        start={pillarAGradient.start}
-        end={pillarAGradient.end}
-        style={style}
-      >
+      <LinearGradient colors={g.stops} start={g.start} end={g.end} style={style}>
         {children}
       </LinearGradient>
     );
   }
 
+  const g = isDark ? darkBrandGradient : brandGradient;
   return (
     <LinearGradient
-      colors={brandGradient.stops}
-      locations={brandGradient.locations}
-      start={brandGradient.start}
-      end={brandGradient.end}
+      colors={g.stops}
+      locations={g.locations}
+      start={g.start}
+      end={g.end}
       style={style}
     >
       {children}

@@ -42,7 +42,8 @@ import type {
   AppAnalystTier,
 } from "@predict-future/types";
 import { formatRelativeTime, freshnessColor } from "@predict-future/utils";
-import { colors, radius, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 import { SnappedSlider as Slider } from "@/components/snapped-slider";
 import { trackVoteEvent } from "@/lib/analytics";
 import { mobileApi } from "@/lib/api";
@@ -316,6 +317,7 @@ function PollA({
   loadingTallies: boolean;
   onVoted: (tallies: ApiExpertOpinionTallies) => void;
 }) {
+  const pollStyles = useThemedStyles(makePollStyles);
   const [voting, setVoting] = useState(false);
   const [pendingBucket, setPendingBucket] = useState<number>(2);
   const [localChoice, setLocalChoice] = useState<ApiImplicationChoice | null>(
@@ -656,7 +658,7 @@ function PollA({
   );
 }
 
-const pollStyles = StyleSheet.create({
+const makePollStyles = (t: ThemeContextValue) => StyleSheet.create({
   section: {
     paddingTop: spacing.sm,
     borderTopWidth: StyleSheet.hairlineWidth,
@@ -698,7 +700,7 @@ const pollStyles = StyleSheet.create({
     textAlign: "center",
   },
   submitVoteBtn: {
-    backgroundColor: colors.accent ?? "#4338ca",
+    backgroundColor: t.colors.accent,
     borderRadius: radius.sm,
     paddingVertical: 10,
     alignItems: "center",
@@ -912,6 +914,8 @@ export function ExpertOpinionPostCard({
   onFollowToggle,
 }: ExpertOpinionPostCardProps) {
   const router = useRouter();
+  const styles = useThemedStyles(makeCardStyles);
+  const { colors } = useTheme();
 
   // ── Tallies state ──
   const [tallies, setTallies] = useState<ApiExpertOpinionTallies | null>(null);
@@ -1328,7 +1332,7 @@ export function ExpertOpinionPostCard({
 
 // ─── Styles ────────────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
+const makeCardStyles = (t: ThemeContextValue) => StyleSheet.create({
   card: {
     marginHorizontal: spacing.lg,
     marginBottom: spacing.lg,
@@ -1477,7 +1481,7 @@ const styles = StyleSheet.create({
   // Follow pill
   followPill: {
     borderWidth: 1.5,
-    borderColor: colors.accent ?? "#4338ca",
+    borderColor: t.colors.accent,
     borderRadius: 20,
     paddingHorizontal: 12,
     paddingVertical: 5,
@@ -1486,13 +1490,13 @@ const styles = StyleSheet.create({
     minWidth: 72,
   },
   followPillActive: {
-    backgroundColor: colors.accent ?? "#4338ca",
-    borderColor: colors.accent ?? "#4338ca",
+    backgroundColor: t.colors.accent,
+    borderColor: t.colors.accent,
   },
   followPillText: {
     fontSize: 12,
     fontWeight: "700",
-    color: colors.accent ?? "#4338ca",
+    color: t.colors.accent,
   },
   followPillTextActive: {
     color: "#fff",
@@ -1549,7 +1553,7 @@ const styles = StyleSheet.create({
   },
   moreLink: {
     fontSize: 13,
-    color: colors.accent ?? "#4338ca",
+    color: t.colors.accent,
     fontWeight: "600",
     marginBottom: 6,
   },
@@ -1567,7 +1571,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   sourceLink: {
-    color: colors.accent ?? "#4338ca",
+    color: t.colors.accent,
     fontWeight: "600",
   },
 

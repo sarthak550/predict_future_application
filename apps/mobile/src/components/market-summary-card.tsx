@@ -5,8 +5,9 @@ import { Linking, Pressable, Share, StyleSheet, Text, View } from "react-native"
 
 import type { ApiMarketSummary } from "@predict-future/types";
 import { formatPercent, formatPoints, formatRelativeTime } from "@predict-future/utils";
-import { colors, radius, shadows, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
 
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 import { mobileApi } from "@/lib/api";
 
 type Props = {
@@ -28,6 +29,8 @@ async function shareMarket(item: ApiMarketSummary) {
 
 export function MarketSummaryCard({ item, onSaveToggled, compact = false }: Props) {
   const router = useRouter();
+  const styles = useThemedStyles(makeStyles);
+  const { colors } = useTheme();
   const [isSaved, setIsSaved] = useState(item.iSaved ?? false);
   const [savingInFlight, setSavingInFlight] = useState(false);
   const trust = item.creator?.stats?.hostTrustScore;
@@ -227,12 +230,12 @@ export function MarketSummaryCard({ item, onSaveToggled, compact = false }: Prop
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   card: {
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderRadius: radius.lg,
     padding: spacing.lg,
-    ...shadows.card,
+    ...t.shadows.card,
   },
   cardPressed: {
     opacity: 0.85,
@@ -257,12 +260,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: radius.sm,
-    backgroundColor: colors.pillarBSoft,
+    backgroundColor: t.colors.pillarBSoft,
   },
   shareBtnText: {
     fontSize: 11,
     fontWeight: "700",
-    color: colors.pillarBDeep,
+    color: t.colors.pillarBDeep,
   },
   badge: {
     paddingHorizontal: 8,
@@ -292,20 +295,20 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     letterSpacing: 0.5,
     textTransform: "uppercase",
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
   title: {
     marginTop: spacing.md,
     fontSize: 18,
     fontWeight: "700",
     lineHeight: 24,
-    color: colors.text,
+    color: t.colors.text,
   },
   description: {
     marginTop: spacing.xs,
     fontSize: 14,
     lineHeight: 20,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
   manifoldBlock: {
     marginTop: spacing.xs,
@@ -337,7 +340,7 @@ const styles = StyleSheet.create({
   numericLabel: {
     fontSize: 12,
     fontWeight: "600",
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     textTransform: "uppercase",
     letterSpacing: 0.5,
   },
@@ -350,11 +353,11 @@ const styles = StyleSheet.create({
   numericValue: {
     fontSize: 22,
     fontWeight: "800",
-    color: colors.primary,
+    color: t.colors.primary,
   },
   numericGuesses: {
     fontSize: 12,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
   rangeTrack: {
     marginTop: spacing.sm,
@@ -370,7 +373,7 @@ const styles = StyleSheet.create({
     width: 12,
     height: 12,
     borderRadius: 6,
-    backgroundColor: colors.primary,
+    backgroundColor: t.colors.primary,
     marginLeft: -6,
   },
   rangeLabels: {
@@ -380,7 +383,7 @@ const styles = StyleSheet.create({
   },
   rangeLabel: {
     fontSize: 11,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
   probabilitySection: {
     marginTop: spacing.lg,
@@ -388,13 +391,13 @@ const styles = StyleSheet.create({
   progressTrack: {
     height: 8,
     borderRadius: radius.pill,
-    backgroundColor: colors.dangerSoft,
+    backgroundColor: t.colors.dangerSoft,
     overflow: "hidden",
   },
   progressFill: {
     height: "100%",
     borderRadius: radius.pill,
-    backgroundColor: colors.success,
+    backgroundColor: t.colors.success,
   },
   probRow: {
     marginTop: 6,
@@ -404,12 +407,12 @@ const styles = StyleSheet.create({
   probYes: {
     fontSize: 13,
     fontWeight: "700",
-    color: colors.success,
+    color: t.colors.success,
   },
   probNo: {
     fontSize: 13,
     fontWeight: "700",
-    color: colors.danger,
+    color: t.colors.danger,
   },
   outcomeRow: {
     marginTop: spacing.lg,
@@ -444,11 +447,11 @@ const styles = StyleSheet.create({
   metricValue: {
     fontSize: 14,
     fontWeight: "700",
-    color: colors.text,
+    color: t.colors.text,
   },
   metricLabel: {
     fontSize: 11,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     marginTop: 2,
   },
   // S55-T5: "Hosted by [Group]" chip
@@ -472,12 +475,12 @@ const styles = StyleSheet.create({
     marginTop: spacing.md,
     fontSize: 13,
     fontWeight: "600",
-    color: colors.pillarBDeep,
+    color: t.colors.pillarBDeep,
   },
   sourceAttribution: {
     marginTop: spacing.sm,
     fontSize: 11,
     fontWeight: "500",
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
 });

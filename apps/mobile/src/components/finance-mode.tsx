@@ -29,7 +29,8 @@ import type {
   ApiUserProfile,
   ApiVerifiedCall,
 } from "@predict-future/types";
-import { colors, radius, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 import { formatRelativeTime, freshnessColor } from "@predict-future/utils";
 
 import { ApiClientError } from "@predict-future/api-client";
@@ -680,6 +681,7 @@ function PulseRibbon({
   rbiRates?: RbiCurrentRates | null;
 }) {
   const router = useRouter();
+  const pulseStyles = useThemedStyles(makePulseStyles);
 
   // S51-T2: Collapsed by default; state persisted per-device (no userId in scope).
   const [collapsed, setCollapsed] = useState(true);
@@ -906,6 +908,7 @@ function PulseSheet({
   title: string;
   children: React.ReactNode;
 }) {
+  const pulseStyles = useThemedStyles(makePulseStyles);
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={pulseStyles.sheetBackdrop} onPress={onClose} />
@@ -925,7 +928,7 @@ function PulseSheet({
   );
 }
 
-const pulseStyles = StyleSheet.create({
+const makePulseStyles = (t: ThemeContextValue) => StyleSheet.create({
   // S51-T4: card chrome matching CombinedAnalystCard so PulseRibbon reads as a
   // discrete card, not a section divider. Values copied from that card's chrome.
   // S52-T3: marginTop tightened from sm to xs for uniform 8px inter-card gap.
@@ -933,10 +936,10 @@ const pulseStyles = StyleSheet.create({
     marginHorizontal: spacing.lg,
     marginTop: spacing.xs,
     marginBottom: spacing.xs,
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
     overflow: "hidden",
   },
   // S51-T4: headingRow is the Pressable that wraps both the label+chevron row
@@ -955,17 +958,17 @@ const pulseStyles = StyleSheet.create({
   heading: {
     fontSize: 13,
     fontWeight: "500" as const,
-    color: colors.text,
+    color: t.colors.text,
     letterSpacing: 0,
   },
   collapseChevron: {
     fontSize: 12,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
   // Preview line shown only in collapsed state below the label row.
   previewLine: {
     fontSize: 12,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     marginTop: 4,
   },
   // S52: Vertical stack container replacing horizontal ScrollView
@@ -1086,7 +1089,7 @@ const pulseStyles = StyleSheet.create({
   sheetHandle: { width: 40, height: 4, borderRadius: 2, backgroundColor: "#d1d5db", alignSelf: "center", marginBottom: spacing.md },
   sheetHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.md, paddingHorizontal: 4 },
   sheetTitle: { fontSize: 17, fontWeight: "800", color: "#111827" },
-  sheetClose: { fontSize: 14, fontWeight: "700", color: colors.accent },
+  sheetClose: { fontSize: 14, fontWeight: "700", color: t.colors.accent },
 });
 
 
@@ -1105,6 +1108,7 @@ function WeekToggleCard({
   sentiment: ApiFinanceExpertSentiment | null;
   onPressCalls: () => void;
 }) {
+  const digestStyles = useThemedStyles(makeDigestStyles);
   const hasCalls = digest !== null && (digest.hits + digest.misses + digest.pending) > 0;
   const hasSentiment = sentiment !== null && sentiment.totalCount > 0;
 
@@ -1236,6 +1240,7 @@ function WeekToggleCard({
 }
 
 function WeekCallsBody({ digest }: { digest: ApiMyCallsDigest }) {
+  const digestStyles = useThemedStyles(makeDigestStyles);
   const total = digest.hits + digest.misses;
   const correctPct = total > 0 ? Math.round((digest.hits / total) * 100) : 0;
   // S38: HIT/MISS were misleading for user stats — those are RESOLUTION
@@ -1276,6 +1281,7 @@ function WeekCallsBody({ digest }: { digest: ApiMyCallsDigest }) {
 }
 
 function SentimentBody({ sentiment }: { sentiment: ApiFinanceExpertSentiment }) {
+  const digestStyles = useThemedStyles(makeDigestStyles);
   const bullPct = Math.round(sentiment.bullishPercent);
   const bearPct = Math.round(sentiment.bearishPercent);
   const neutPct = Math.round(sentiment.neutralPercent);
@@ -1315,7 +1321,7 @@ function SentimentBody({ sentiment }: { sentiment: ApiFinanceExpertSentiment }) 
   );
 }
 
-const digestStyles = StyleSheet.create({
+const makeDigestStyles = (t: ThemeContextValue) => StyleSheet.create({
   card: {
     marginHorizontal: spacing.lg,
     // S38: tightened margins above/below per user request — the card was
@@ -1355,7 +1361,7 @@ const digestStyles = StyleSheet.create({
   },
   collapseBtnText: {
     fontSize: 14,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     lineHeight: 18,
   },
   emptyText: {
@@ -1435,7 +1441,7 @@ const digestStyles = StyleSheet.create({
 });
 
 // S38 — new filter UX: Show tabs + Sort dropdown + active-filter chip strip.
-const controlsStyles = StyleSheet.create({
+const makeControlsStyles = (t: ThemeContextValue) => StyleSheet.create({
   headerRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -1498,8 +1504,8 @@ const controlsStyles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#c7d2fe",
   },
-  filterChipText: { fontSize: 11, fontWeight: "700" as const, color: colors.accentDeep },
-  filterChipX: { fontSize: 14, color: colors.accent, marginLeft: 2, lineHeight: 14 },
+  filterChipText: { fontSize: 11, fontWeight: "700" as const, color: t.colors.accentDeep },
+  filterChipX: { fontSize: 14, color: t.colors.accent, marginLeft: 2, lineHeight: 14 },
   addFilterChip: {
     flexDirection: "row",
     alignItems: "center",
@@ -1574,6 +1580,9 @@ export function FinanceMode({
   /** When provided (e.g. via deep-link from opinion detail cluster chip), pre-applies cluster filter. */
   initialClusterId?: string | null;
 }) {
+  const financeStyles = useThemedStyles(makeFinanceStyles);
+  const controlsStyles = useThemedStyles(makeControlsStyles);
+  const { colors } = useTheme();
   const [data, setData] = useState<ApiFinanceMarketsResponse | null>(null);
   const [analystSentiment, setAnalystSentiment] = useState<ApiFinanceExpertSentiment | null>(null);
   const [flagshipEvents, setFlagshipEvents] = useState<ApiFlagshipEvent[]>([]);
@@ -3180,7 +3189,7 @@ export function FinanceMode({
   );
 }
 
-const financeStyles = StyleSheet.create({
+const makeFinanceStyles = (t: ThemeContextValue) => StyleSheet.create({
   scroll: { flex: 1 },
   scrollContent: { paddingBottom: 40 },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
@@ -3190,7 +3199,7 @@ const financeStyles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
     borderRadius: radius.md,
-    backgroundColor: colors.accent,
+    backgroundColor: t.colors.accent,
   },
   retryBtnText: { color: "#FFFFFF", fontWeight: "700", fontSize: 14 },
   verifiedCard: {
@@ -3198,10 +3207,10 @@ const financeStyles = StyleSheet.create({
     gap: spacing.sm,
     padding: spacing.md,
     marginBottom: spacing.sm,
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
   },
   verifiedBadge: {
     paddingHorizontal: 6,
@@ -3213,12 +3222,12 @@ const financeStyles = StyleSheet.create({
   },
   verifiedBadgeText: { fontSize: 10, fontWeight: "800", color: "#fff" },
   verifiedCardBody: { flex: 1, gap: 2 },
-  verifiedExpert: { fontSize: 12, fontWeight: "700", color: colors.text },
+  verifiedExpert: { fontSize: 12, fontWeight: "700", color: t.colors.text },
   verifiedInstrument: { fontSize: 11, fontWeight: "600" },
-  verifiedQuote: { fontSize: 12, color: colors.textMuted, lineHeight: 16 },
+  verifiedQuote: { fontSize: 12, color: t.colors.textMuted, lineHeight: 16 },
   verifiedNote: { fontSize: 11, fontWeight: "600", fontStyle: "italic" as const },
-  verifiedDates: { fontSize: 10, color: colors.textMuted, marginTop: 3 },
-  verifiedStory: { fontSize: 11, color: colors.textMuted, marginTop: 2 },
+  verifiedDates: { fontSize: 10, color: t.colors.textMuted, marginTop: 3 },
+  verifiedStory: { fontSize: 11, color: t.colors.textMuted, marginTop: 2 },
   expertLinksRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -3236,7 +3245,7 @@ const financeStyles = StyleSheet.create({
   crossTabLinkText: {
     fontSize: 12,
     fontWeight: "700",
-    color: colors.accent,
+    color: t.colors.accent,
   },
   heroHeader: {
     marginHorizontal: spacing.lg,
@@ -3263,7 +3272,7 @@ const financeStyles = StyleSheet.create({
   heroNewsLinkText: {
     fontSize: 12,
     fontWeight: "700",
-    color: colors.accent,
+    color: t.colors.accent,
   },
   // Direction filter chips
   directionChipsScroll: {
@@ -3280,8 +3289,8 @@ const financeStyles = StyleSheet.create({
     borderColor: "#E5E7EB",
   },
   directionChipActive: {
-    backgroundColor: colors.accent,
-    borderColor: colors.accent,
+    backgroundColor: t.colors.accent,
+    borderColor: t.colors.accent,
   },
   directionChipText: {
     fontSize: 12,
@@ -3303,14 +3312,14 @@ const financeStyles = StyleSheet.create({
   },
   noMoreText: {
     fontSize: 12,
-    color: colors.textMuted ?? "#6b7280",
+    color: t.colors.textMuted ?? "#6b7280",
     fontStyle: "italic",
   },
   emptyState: {
     marginHorizontal: spacing.lg,
     paddingVertical: spacing.md,
   },
-  emptyText: { fontSize: 13, color: colors.textMuted ?? "#6b7280", fontStyle: "italic" },
+  emptyText: { fontSize: 13, color: t.colors.textMuted ?? "#6b7280", fontStyle: "italic" },
   expertEmptyCard: {
     marginHorizontal: spacing.lg,
     marginBottom: spacing.lg,
@@ -3325,12 +3334,12 @@ const financeStyles = StyleSheet.create({
   expertEmptyTitle: {
     fontSize: 16,
     fontWeight: "700",
-    color: colors.text ?? "#111827",
+    color: t.colors.text ?? "#111827",
     marginBottom: 6,
   },
   expertEmptySubtitle: {
     fontSize: 13,
-    color: colors.textMuted ?? "#6b7280",
+    color: t.colors.textMuted ?? "#6b7280",
     textAlign: "center",
     lineHeight: 18,
     marginBottom: spacing.md,
@@ -3368,8 +3377,8 @@ const financeStyles = StyleSheet.create({
   },
   clusterEmoji: { fontSize: 20 },
   clusterHeaderText: { flex: 1 },
-  clusterName: { fontSize: 14, fontWeight: "800", color: colors.text ?? "#111827" },
-  clusterDateRange: { fontSize: 11, color: colors.textMuted ?? "#6b7280", marginTop: 1 },
+  clusterName: { fontSize: 14, fontWeight: "800", color: t.colors.text ?? "#111827" },
+  clusterDateRange: { fontSize: 11, color: t.colors.textMuted ?? "#6b7280", marginTop: 1 },
   clusterScroll: { paddingLeft: spacing.lg },
   // S38: new cluster sheet styles — description + data point grid
   clusterDescription: {
@@ -3432,7 +3441,7 @@ const financeStyles = StyleSheet.create({
   },
   dataPanelLabel: {
     fontSize: 12,
-    color: colors.textMuted ?? "#6b7280",
+    color: t.colors.textMuted ?? "#6b7280",
     flex: 1,
     marginRight: spacing.sm,
   },
@@ -3443,17 +3452,17 @@ const financeStyles = StyleSheet.create({
   dataPanelValue: {
     fontSize: 13,
     fontWeight: "700",
-    color: colors.text ?? "#111827",
+    color: t.colors.text ?? "#111827",
     textAlign: "right",
   },
   dataPanelDate: {
     fontSize: 10,
-    color: colors.textMuted ?? "#6b7280",
+    color: t.colors.textMuted ?? "#6b7280",
     marginTop: 2,
   },
   dataPanelSubtext: {
     fontSize: 10,
-    color: colors.textMuted ?? "#6b7280",
+    color: t.colors.textMuted ?? "#6b7280",
     fontStyle: "italic",
     marginTop: 2,
   },
@@ -3467,22 +3476,22 @@ const financeStyles = StyleSheet.create({
   expertTakesLink: {
     fontSize: 12,
     fontWeight: "700",
-    color: colors.accent,
+    color: t.colors.accent,
   },
   expertTakesMuted: {
     fontSize: 12,
-    color: colors.textMuted ?? "#6b7280",
+    color: t.colors.textMuted ?? "#6b7280",
   },
   sectionHeader: {
     fontSize: 14,
     fontWeight: "800",
-    color: colors.text ?? "#111827",
+    color: t.colors.text ?? "#111827",
     marginHorizontal: spacing.lg,
     marginBottom: spacing.sm,
   },
   sectionSubheader: {
     fontSize: 11,
-    color: colors.textMuted ?? "#6b7280",
+    color: t.colors.textMuted ?? "#6b7280",
     marginHorizontal: spacing.lg,
     marginBottom: spacing.sm,
     marginTop: -2,
@@ -3512,10 +3521,10 @@ const financeStyles = StyleSheet.create({
   toggleBtnText: {
     fontSize: 12,
     fontWeight: "600",
-    color: colors.textMuted ?? "#6b7280",
+    color: t.colors.textMuted ?? "#6b7280",
   },
   toggleBtnTextActive: {
-    color: colors.text ?? "#111827",
+    color: t.colors.text ?? "#111827",
     fontWeight: "700",
   },
   unclusteredSection: { marginTop: spacing.sm },

@@ -19,7 +19,8 @@ import type {
   ApiLeaderboardTimeWindow,
   AppMarketCategory,
 } from "@predict-future/types";
-import { colors, radius, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 import { useApiQuery } from "@/hooks/useApiQuery";
 import { mobileApi } from "@/lib/api";
@@ -46,8 +47,12 @@ const MEDAL_COLORS: Record<number, { bg: string; text: string }> = {
   3: { bg: "#B45309", text: "#FFFFFF" },
 };
 
-function getRankStyle(rank: number): { bg: string; text: string } {
-  return MEDAL_COLORS[rank] ?? { bg: colors.surface, text: colors.textMuted as string };
+function getRankStyle(
+  rank: number,
+  surfaceColor: string,
+  mutedColor: string
+): { bg: string; text: string } {
+  return MEDAL_COLORS[rank] ?? { bg: surfaceColor, text: mutedColor };
 }
 
 function formatAccuracy(score: number): string {
@@ -92,9 +97,209 @@ function getSubtitle(
   return "All-time rankings";
 }
 
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
+  // S12-T3: outer container — flex: 1 so fixedHeader + FlatList fill the screen
+  screen: { flex: 1, backgroundColor: t.colors.background },
+  // S12-T3: fixed controls section (not inside FlatList)
+  fixedHeader: {
+    backgroundColor: t.colors.background,
+  },
+  // Padded wrapper for controls below GradientHeader (which owns its own horizontal padding)
+  controlsPanel: {
+    paddingHorizontal: spacing.xl,
+    backgroundColor: t.colors.background,
+  },
+
+  // Time-window selector
+  timeWindowRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    paddingTop: spacing.lg,
+  },
+  timeWindowPill: {
+    flex: 1,
+    alignItems: "center",
+    paddingVertical: spacing.sm,
+    borderRadius: radius.pill,
+    backgroundColor: t.colors.surface,
+    borderWidth: 1,
+    borderColor: t.colors.border,
+  },
+  timeWindowPillActive: {
+    backgroundColor: t.colors.accent,
+    borderColor: t.colors.accent,
+  },
+  timeWindowLabel: { fontSize: 13, fontWeight: "600", color: t.colors.textMuted },
+  timeWindowLabelActive: { color: "#FFFFFF" },
+
+  // Category chips
+  tabs: {
+    paddingVertical: spacing.lg,
+    gap: spacing.sm,
+  },
+  tab: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderRadius: radius.pill,
+    backgroundColor: t.colors.surface,
+    borderWidth: 1,
+    borderColor: t.colors.border,
+  },
+  tabActive: { backgroundColor: t.colors.text, borderColor: t.colors.text },
+  tabLabel: { fontSize: 14, fontWeight: "600", color: t.colors.textMuted },
+  tabLabelActive: { color: "#FFFFFF" },
+
+  countLabel: {
+    fontSize: 12,
+    color: t.colors.textMuted,
+    marginBottom: spacing.sm,
+  },
+
+  // S12-T3: FlatList takes remaining space
+  list: { flex: 1 },
+  listContent: {
+    paddingHorizontal: spacing.xl,
+    paddingBottom: spacing["2xl"],
+    gap: spacing.sm,
+  },
+
+  // Leaderboard rows
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: spacing.lg,
+    backgroundColor: t.colors.surface,
+    borderRadius: radius.md,
+    gap: spacing.md,
+  },
+  rowHighlight: {
+    backgroundColor: "#EEF2FF",
+    borderWidth: 1,
+    borderColor: t.colors.accent,
+  },
+  rowPressed: { opacity: 0.7 },
+  rankPill: {
+    minWidth: 44,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.pill,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  rankText: { fontSize: 13, fontWeight: "700" },
+
+  // S12-T4: delta badge
+  deltaBadge: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+  },
+  deltaBadgeUp: { backgroundColor: "#D1FAE5" },
+  deltaBadgeDown: { backgroundColor: "#FEE2E2" },
+  deltaBadgeText: { fontSize: 11, fontWeight: "700" },
+  deltaBadgeTextUp: { color: "#065F46" },
+  deltaBadgeTextDown: { color: "#991B1B" },
+
+  userInfo: { flex: 1 },
+  usernameRow: { flexDirection: "row", alignItems: "center" },
+  username: { fontSize: 15, fontWeight: "600", color: t.colors.text },
+  youLabel: { fontSize: 13, fontWeight: "600", color: t.colors.accent },
+  followerLine: {
+    fontSize: 11,
+    color: t.colors.textMuted,
+    opacity: 0.7,
+    marginTop: 1,
+  },
+  statsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 3,
+    flexWrap: "wrap",
+  },
+  statLabel: { fontSize: 12, color: t.colors.textMuted },
+  statValue: { fontSize: 12, color: t.colors.textMuted, fontWeight: "600" },
+  statSpacer: { fontSize: 12, color: t.colors.textMuted },
+  chevron: {
+    fontSize: 20,
+    color: t.colors.textMuted,
+    lineHeight: 22,
+  },
+
+  // Your Rank sticky card (S12-T3)
+  rankCard: {
+    backgroundColor: "#EEF2FF",
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: t.colors.accent,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    marginBottom: spacing.sm,
+    gap: spacing.xs,
+  },
+  rankCardTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: t.colors.accent,
+  },
+  rankCardTarget: {
+    fontSize: 13,
+    color: t.colors.textMuted,
+  },
+  rankCardUnranked: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: t.colors.textMuted,
+  },
+
+  // CTA button — shared between YourRankCard and EmptyState
+  ctaButton: {
+    marginTop: spacing.sm,
+    alignSelf: "flex-start",
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: t.colors.accent,
+  },
+  ctaButtonLabel: {
+    color: "#FFFFFF",
+    fontWeight: "700",
+    fontSize: 13,
+  },
+
+  // Empty state
+  emptyContainer: {
+    alignItems: "center",
+    paddingVertical: spacing.xl,
+    gap: spacing.sm,
+  },
+  emptyText: {
+    textAlign: "center",
+    color: t.colors.textMuted,
+    fontSize: 14,
+  },
+
+  center: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: spacing.xl,
+  },
+  errorText: { color: t.colors.danger, fontSize: 14 },
+  retry: {
+    marginTop: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: t.colors.accent,
+  },
+  retryLabel: { color: "#FFFFFF", fontWeight: "700", fontSize: 14 },
+});
+
 export default function LeaderboardScreen() {
   const router = useRouter();
   const { session } = useSession();
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const [category, setCategory] = useState<AppMarketCategory | undefined>(undefined);
   const [timeWindow, setTimeWindow] = useState<ApiLeaderboardTimeWindow>("week");
 
@@ -237,7 +442,7 @@ export default function LeaderboardScreen() {
         renderItem={({ item, index }) => {
           const rank = index + 1;
           const isMe = currentUsername != null && item.username === currentUsername;
-          const rankStyle = getRankStyle(rank);
+          const rankStyle = getRankStyle(rank, colors.surface, colors.textMuted);
           const predictions = getPredictionCount(item);
 
           return (
@@ -273,6 +478,7 @@ type LeaderboardRowProps = {
 };
 
 function LeaderboardRow({ item, rank, isMe, rankStyle, predictions, onPress }: LeaderboardRowProps) {
+  const styles = useThemedStyles(makeStyles);
   // S12-T4: determine delta badge to render
   const delta = item.rankDelta ?? null;
   const showDelta = delta != null && delta !== 0;
@@ -347,6 +553,8 @@ type YourRankCardProps = {
 };
 
 function YourRankCard({ userRank, userContext, category, onMakePrediction }: YourRankCardProps) {
+  const styles = useThemedStyles(makeStyles);
+
   // Unranked — no activity in selected window
   if (userRank == null || userContext == null) {
     return (
@@ -399,6 +607,8 @@ type EmptyStateProps = {
 };
 
 function EmptyState({ category, onMakePrediction }: EmptyStateProps) {
+  const styles = useThemedStyles(makeStyles);
+
   const message =
     category != null
       ? `No predictions in ${category.charAt(0) + category.slice(1).toLowerCase()} yet — be the first!`
@@ -413,205 +623,3 @@ function EmptyState({ category, onMakePrediction }: EmptyStateProps) {
     </View>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Styles
-// ---------------------------------------------------------------------------
-
-const styles = StyleSheet.create({
-  // S12-T3: outer container — flex: 1 so fixedHeader + FlatList fill the screen
-  screen: { flex: 1, backgroundColor: colors.background },
-  // S12-T3: fixed controls section (not inside FlatList)
-  fixedHeader: {
-    backgroundColor: colors.background,
-  },
-  // Padded wrapper for controls below GradientHeader (which owns its own horizontal padding)
-  controlsPanel: {
-    paddingHorizontal: spacing.xl,
-    backgroundColor: colors.background,
-  },
-
-  // Time-window selector
-  timeWindowRow: {
-    flexDirection: "row",
-    gap: spacing.sm,
-    paddingTop: spacing.lg,
-  },
-  timeWindowPill: {
-    flex: 1,
-    alignItems: "center",
-    paddingVertical: spacing.sm,
-    borderRadius: radius.pill,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  timeWindowPillActive: {
-    backgroundColor: colors.accent,
-    borderColor: colors.accent,
-  },
-  timeWindowLabel: { fontSize: 13, fontWeight: "600", color: colors.textMuted },
-  timeWindowLabelActive: { color: "#FFFFFF" },
-
-  // Category chips
-  tabs: {
-    paddingVertical: spacing.lg,
-    gap: spacing.sm,
-  },
-  tab: {
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    borderRadius: radius.pill,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  tabActive: { backgroundColor: colors.text, borderColor: colors.text },
-  tabLabel: { fontSize: 14, fontWeight: "600", color: colors.textMuted },
-  tabLabelActive: { color: "#FFFFFF" },
-
-  countLabel: {
-    fontSize: 12,
-    color: colors.textMuted,
-    marginBottom: spacing.sm,
-  },
-
-  // S12-T3: FlatList takes remaining space
-  list: { flex: 1 },
-  listContent: {
-    paddingHorizontal: spacing.xl,
-    paddingBottom: spacing["2xl"],
-    gap: spacing.sm,
-  },
-
-  // Leaderboard rows
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: spacing.lg,
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    gap: spacing.md,
-  },
-  rowHighlight: {
-    backgroundColor: "#EEF2FF",
-    borderWidth: 1,
-    borderColor: colors.accent,
-  },
-  rowPressed: { opacity: 0.7 },
-  rankPill: {
-    minWidth: 44,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-    borderRadius: radius.pill,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  rankText: { fontSize: 13, fontWeight: "700" },
-
-  // S12-T4: delta badge
-  deltaBadge: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
-    borderRadius: radius.pill,
-  },
-  deltaBadgeUp: { backgroundColor: "#D1FAE5" },
-  deltaBadgeDown: { backgroundColor: "#FEE2E2" },
-  deltaBadgeText: { fontSize: 11, fontWeight: "700" },
-  deltaBadgeTextUp: { color: "#065F46" },
-  deltaBadgeTextDown: { color: "#991B1B" },
-
-  userInfo: { flex: 1 },
-  usernameRow: { flexDirection: "row", alignItems: "center" },
-  username: { fontSize: 15, fontWeight: "600", color: colors.text },
-  youLabel: { fontSize: 13, fontWeight: "600", color: colors.accent },
-  followerLine: {
-    fontSize: 11,
-    color: colors.textMuted,
-    opacity: 0.7,
-    marginTop: 1,
-  },
-  statsRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: 3,
-    flexWrap: "wrap",
-  },
-  statLabel: { fontSize: 12, color: colors.textMuted },
-  statValue: { fontSize: 12, color: colors.textMuted, fontWeight: "600" },
-  statSpacer: { fontSize: 12, color: colors.textMuted },
-  chevron: {
-    fontSize: 20,
-    color: colors.textMuted,
-    lineHeight: 22,
-  },
-
-  // Your Rank sticky card (S12-T3)
-  rankCard: {
-    backgroundColor: "#EEF2FF",
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.accent,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    marginBottom: spacing.sm,
-    gap: spacing.xs,
-  },
-  rankCardTitle: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: colors.accent,
-  },
-  rankCardTarget: {
-    fontSize: 13,
-    color: colors.textMuted,
-  },
-  rankCardUnranked: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: colors.textMuted,
-  },
-
-  // CTA button — shared between YourRankCard and EmptyState
-  ctaButton: {
-    marginTop: spacing.sm,
-    alignSelf: "flex-start",
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.md,
-    backgroundColor: colors.accent,
-  },
-  ctaButtonLabel: {
-    color: "#FFFFFF",
-    fontWeight: "700",
-    fontSize: 13,
-  },
-
-  // Empty state
-  emptyContainer: {
-    alignItems: "center",
-    paddingVertical: spacing.xl,
-    gap: spacing.sm,
-  },
-  emptyText: {
-    textAlign: "center",
-    color: colors.textMuted,
-    fontSize: 14,
-  },
-
-  center: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    padding: spacing.xl,
-  },
-  errorText: { color: colors.danger, fontSize: 14 },
-  retry: {
-    marginTop: spacing.lg,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.md,
-    backgroundColor: colors.accent,
-  },
-  retryLabel: { color: "#FFFFFF", fontWeight: "700", fontSize: 14 },
-});

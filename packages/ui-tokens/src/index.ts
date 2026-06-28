@@ -95,9 +95,9 @@ export const darkColors: ThemeColors = {
   pillarBDeep: "#059669",
   pillarBSoft: "#0D1F1A",
 
-  gradStart: "#3B82F6",
-  gradMid: "#38BDF8",
-  gradEnd: "#22D3EE",
+  gradStart: "#2563EB",
+  gradMid: "#1D4ED8",
+  gradEnd: "#0E7490",
 
   success: "#10B981",
   successSoft: "#0D1F1A",
@@ -121,6 +121,21 @@ export const brandGradient = {
 // Analyst-pillar gradient (blue depth, no cyan bleed) — credibility/Big Call accents.
 export const pillarAGradient = {
   stops: ["#2563EB", "#3B82F6"] as [string, string],
+  start: { x: 0, y: 0 },
+  end: { x: 1, y: 1 },
+} as const;
+
+// Dark-theme gradients — deeper blues (the light theme's bright cyan reads as
+// out-of-place on a dark navy surface). Selected by BrandGradient when isDark.
+export const darkBrandGradient = {
+  stops: ["#1E3A8A", "#2563EB", "#0E7490"] as [string, string, string],
+  locations: [0, 0.5, 1] as [number, number, number],
+  start: { x: 0, y: 0 },
+  end: { x: 1, y: 1 },
+} as const;
+
+export const darkPillarAGradient = {
+  stops: ["#1E3A8A", "#2563EB"] as [string, string],
   start: { x: 0, y: 0 },
   end: { x: 1, y: 1 },
 } as const;

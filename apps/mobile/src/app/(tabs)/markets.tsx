@@ -17,7 +17,8 @@ import {
 import { GradientHeader } from "@/components/gradient-header";
 
 import type { ApiDiscoverGroup, ApiGroupSummary, ApiMarketSummary, ApiPollListItem } from "@predict-future/types";
-import { colors, radius, shadows, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 import {
   CategoryFilterBar,
@@ -81,6 +82,8 @@ function allViewStatusGroup(status: string | undefined): number {
 // ── screen ──────────────────────────────────────────────────────────
 
 export default function MarketsScreen() {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const router = useRouter();
   const [mode, setMode] = useState<MarketMode>("public");
   const [statusTab, setStatusTab] = useState<StatusTab>("all");
@@ -740,6 +743,9 @@ function PollsScreen({
   onRefresh: () => void;
   onBack: () => void;
 }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+  const pollStyles = useThemedStyles(makePollStyles);
   const votedCount = allPolls.filter((p) => p.userVote !== null).length;
   const openCount = allPolls.filter((p) => p.status === "OPEN").length;
 
@@ -839,6 +845,8 @@ function buildNumericPlaceholder(poll: ApiPollListItem): string {
 }
 
 function PollCard({ poll, onVoted }: { poll: ApiPollListItem; onVoted?: () => void }) {
+  const { colors } = useTheme();
+  const pollStyles = useThemedStyles(makePollStyles);
   const [expanded, setExpanded] = useState(false);
   const isNumeric = poll.marketType === "NUMERIC";
 
@@ -1051,20 +1059,20 @@ function PollCard({ poll, onVoted }: { poll: ApiPollListItem; onVoted?: () => vo
   );
 }
 
-const pollStyles = StyleSheet.create({
+const makePollStyles = (t: ThemeContextValue) => StyleSheet.create({
   backBtn: { marginRight: spacing.sm, padding: 4 },
   statsRow: {
     flexDirection: "row",
     marginHorizontal: spacing.xl,
     marginBottom: spacing.md,
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderRadius: radius.md,
     paddingVertical: spacing.md,
   },
   statBox: { flex: 1, alignItems: "center" },
-  statDivider: { width: 1, backgroundColor: colors.border },
-  statNum: { fontSize: 22, fontWeight: "800", color: colors.text },
-  statLabel: { fontSize: 11, color: colors.textMuted, marginTop: 2, fontWeight: "600" },
+  statDivider: { width: 1, backgroundColor: t.colors.border },
+  statNum: { fontSize: 22, fontWeight: "800", color: t.colors.text },
+  statLabel: { fontSize: 11, color: t.colors.textMuted, marginTop: 2, fontWeight: "600" },
   filterRow: {
     flexDirection: "row",
     marginHorizontal: spacing.xl,
@@ -1077,17 +1085,17 @@ const pollStyles = StyleSheet.create({
     borderRadius: radius.pill,
     backgroundColor: "#F1F5F9",
   },
-  filterChipActive: { backgroundColor: colors.text },
-  filterChipText: { fontSize: 13, fontWeight: "600", color: colors.textMuted },
+  filterChipActive: { backgroundColor: t.colors.text },
+  filterChipText: { fontSize: 13, fontWeight: "600", color: t.colors.textMuted },
   filterChipTextActive: { color: "#fff" },
   listContent: { paddingHorizontal: spacing.xl, paddingBottom: 100, gap: spacing.md },
   footerSpinner: { paddingVertical: spacing.xl, alignItems: "center" },
   card: {
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderRadius: radius.lg,
     padding: spacing.lg,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
     gap: spacing.sm,
   },
   cardTopRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
@@ -1097,7 +1105,7 @@ const pollStyles = StyleSheet.create({
     borderRadius: radius.pill,
     backgroundColor: "#EEF2FF",
   },
-  categoryPillText: { fontSize: 10, fontWeight: "700", color: colors.accent, letterSpacing: 0.3 },
+  categoryPillText: { fontSize: 10, fontWeight: "700", color: t.colors.accent, letterSpacing: 0.3 },
   statusPill: {
     flexDirection: "row", alignItems: "center", gap: 4,
     paddingHorizontal: spacing.sm, paddingVertical: 3,
@@ -1108,11 +1116,11 @@ const pollStyles = StyleSheet.create({
   liveDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: "#ef4444" },
   statusText: { fontSize: 10, fontWeight: "800", letterSpacing: 0.5 },
   statusTextOpen: { color: "#ef4444" },
-  statusTextClosed: { color: colors.textMuted },
-  storyLine: { fontSize: 13, fontWeight: "600", color: colors.text, lineHeight: 19 },
+  statusTextClosed: { color: t.colors.textMuted },
+  storyLine: { fontSize: 13, fontWeight: "600", color: t.colors.text, lineHeight: 19 },
   storySummary: {
     fontSize: 13,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     lineHeight: 20,
     marginTop: spacing.xs,
   },
@@ -1122,19 +1130,19 @@ const pollStyles = StyleSheet.create({
     gap: 3,
     marginTop: spacing.xs,
   },
-  readMoreText: { fontSize: 12, fontWeight: "700", color: colors.accent },
-  divider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border, marginVertical: spacing.xs },
-  question: { fontSize: 15, fontWeight: "700", color: colors.text, lineHeight: 22 },
+  readMoreText: { fontSize: 12, fontWeight: "700", color: t.colors.accent },
+  divider: { height: StyleSheet.hairlineWidth, backgroundColor: t.colors.border, marginVertical: spacing.xs },
+  question: { fontSize: 15, fontWeight: "700", color: t.colors.text, lineHeight: 22 },
   barTrack: { flexDirection: "row", height: 8, borderRadius: radius.pill, overflow: "hidden", gap: 2 },
   barYes: { backgroundColor: "#059669", borderRadius: radius.pill },
   barNo: { backgroundColor: "#F87171", borderRadius: radius.pill },
   barLabels: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   barLabelYes: { fontSize: 11, fontWeight: "700", color: "#059669" },
   barLabelNo: { fontSize: 11, fontWeight: "700", color: "#F87171" },
-  barNo2: { fontSize: 11, color: colors.textMuted },
-  noVotes: { fontSize: 12, color: colors.textMuted },
+  barNo2: { fontSize: 11, color: t.colors.textMuted },
+  noVotes: { fontSize: 12, color: t.colors.textMuted },
   votedRow: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: spacing.xs },
-  votedText: { fontSize: 12, fontWeight: "600", color: colors.accent },
+  votedText: { fontSize: 12, fontWeight: "600", color: t.colors.accent },
   shareVoteBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -1142,8 +1150,8 @@ const pollStyles = StyleSheet.create({
     marginTop: spacing.xs,
     alignSelf: "flex-start",
   },
-  shareVoteBtnText: { fontSize: 11, fontWeight: "600", color: colors.accent },
-  notVotedText: { fontSize: 12, color: colors.textMuted, marginTop: spacing.xs },
+  shareVoteBtnText: { fontSize: 11, fontWeight: "600", color: t.colors.accent },
+  notVotedText: { fontSize: 12, color: t.colors.textMuted, marginTop: spacing.xs },
   voteButtons: {
     flexDirection: "row",
     gap: spacing.sm,
@@ -1154,7 +1162,7 @@ const pollStyles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: radius.md,
     alignItems: "center",
-    backgroundColor: `${colors.accent}15`,
+    backgroundColor: `${t.colors.accent}15`,
   },
   voteBtnYes: { backgroundColor: "#059669" },
   voteBtnNo: { backgroundColor: "#E5392B" },
@@ -1169,22 +1177,22 @@ const pollStyles = StyleSheet.create({
     height: 44,
     borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
     paddingHorizontal: spacing.md,
     fontSize: 15,
-    color: colors.text,
-    backgroundColor: colors.background,
+    color: t.colors.text,
+    backgroundColor: t.colors.background,
   },
   numericUnit: {
     fontSize: 13,
     fontWeight: "700",
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
   submitGuessBtn: {
     height: 44,
     paddingHorizontal: spacing.lg,
     borderRadius: radius.md,
-    backgroundColor: colors.accent,
+    backgroundColor: t.colors.accent,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -1194,10 +1202,10 @@ const pollStyles = StyleSheet.create({
 
 // ── styles ──────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: t.colors.background,
   },
   header: {
     flexDirection: "row",
@@ -1210,14 +1218,14 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 22,
     fontWeight: "800",
-    color: colors.text,
+    color: t.colors.text,
     letterSpacing: -0.5,
   },
   centerState: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: colors.background,
+    backgroundColor: t.colors.background,
   },
 
   // ── Level 1: mode toggle ─────────────────────────────────────────
@@ -1237,16 +1245,16 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   modeBtnActive: {
-    backgroundColor: colors.surface,
-    ...shadows.card,
+    backgroundColor: t.colors.surface,
+    ...t.shadows.card,
   },
   modeBtnText: {
     fontSize: 14,
     fontWeight: "600",
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
   modeBtnTextActive: {
-    color: colors.text,
+    color: t.colors.text,
     fontWeight: "700",
   },
 
@@ -1288,17 +1296,17 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     borderWidth: 1,
     borderColor: "#D1D5DB",
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
   },
   dropdownTriggerText: {
     fontSize: 15,
     fontWeight: "600",
-    color: colors.text,
+    color: t.colors.text,
     flex: 1,
   },
   dropdownArrow: {
     fontSize: 12,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     marginLeft: spacing.sm,
   },
   dropdownMenu: {
@@ -1306,8 +1314,8 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     borderWidth: 1,
     borderColor: "#E2E8F0",
-    backgroundColor: colors.surface,
-    ...shadows.card,
+    backgroundColor: t.colors.surface,
+    ...t.shadows.card,
     overflow: "hidden",
   },
   dropdownItem: {
@@ -1334,17 +1342,17 @@ const styles = StyleSheet.create({
   dropdownItemText: {
     fontSize: 14,
     fontWeight: "500",
-    color: colors.text,
+    color: t.colors.text,
     flex: 1,
   },
   dropdownItemTextActive: {
     fontWeight: "700",
-    color: colors.primary,
+    color: t.colors.primary,
   },
   dropdownItemCount: {
     fontSize: 12,
     fontWeight: "700",
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     marginLeft: spacing.sm,
   },
   noGroupsBanner: {
@@ -1381,14 +1389,14 @@ const styles = StyleSheet.create({
     borderRadius: 17,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
   },
   sortChipActive: {
-    backgroundColor: colors.accent,
-    borderColor: colors.accent,
-    shadowColor: colors.accent,
+    backgroundColor: t.colors.accent,
+    borderColor: t.colors.accent,
+    shadowColor: t.colors.accent,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 4,
@@ -1397,7 +1405,7 @@ const styles = StyleSheet.create({
   sortChipText: {
     fontSize: 12,
     fontWeight: "600",
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
   sortChipTextActive: {
     color: "#FFFFFF",
@@ -1419,7 +1427,7 @@ const styles = StyleSheet.create({
   discoverSectionHeader: {
     fontSize: 13,
     fontWeight: "700",
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     textTransform: "uppercase" as const,
     letterSpacing: 0.6,
     marginHorizontal: spacing.lg,
@@ -1439,15 +1447,15 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.lg,
     borderRadius: 12,
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
   },
 
   discoverCommunitiesCtaText: {
     fontSize: 13,
     fontWeight: "600",
-    color: colors.accent,
+    color: t.colors.accent,
   },
 
   // ── List ──────────────────────────────────────────────────────────
@@ -1462,19 +1470,19 @@ const styles = StyleSheet.create({
   emptyCard: {
     marginTop: spacing.lg,
     padding: spacing.xl,
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderRadius: radius.lg,
   },
   emptyTitle: {
     fontSize: 18,
     fontWeight: "700",
-    color: colors.text,
+    color: t.colors.text,
   },
   emptyText: {
     marginTop: spacing.sm,
     fontSize: 14,
     lineHeight: 22,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
   retry: {
     marginTop: spacing.lg,
@@ -1482,10 +1490,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
     borderRadius: radius.md,
-    backgroundColor: colors.accent,
+    backgroundColor: t.colors.accent,
   },
   retryLabel: {
-    color: colors.surface,
+    color: t.colors.surface,
     fontWeight: "700",
     fontSize: 14,
   },

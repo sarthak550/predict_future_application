@@ -17,8 +17,9 @@ import type {
   ApiFinanceBigCallOpinion,
   ApiTopExpertEntry,
 } from "@predict-future/types";
-import { colors, radius, shadows, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
 
+import { useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 import { BrandGradient } from "@/components/brand-gradient";
 import { formatRelativeTime, freshnessColor } from "@predict-future/utils";
 
@@ -43,6 +44,7 @@ export type CombinedAnalystCardProps = {
 
 /** Skeleton row for a single analyst entry while top-weekly data loads. */
 function RowSkeleton() {
+  const styles = useThemedStyles(makeStyles);
   return (
     <View style={styles.rowSkeleton}>
       <View style={styles.skeletonRank} />
@@ -59,6 +61,7 @@ function AnalystRow({
   entry: ApiTopExpertEntry;
   onPress: () => void;
 }) {
+  const styles = useThemedStyles(makeStyles);
   const hitRatePct = Math.round(entry.hitRate * 100);
   return (
     <Pressable
@@ -105,6 +108,7 @@ export function CombinedAnalystCard({
   topLoading,
   onAnalystPress,
 }: CombinedAnalystCardProps) {
+  const styles = useThemedStyles(makeStyles);
   const displayEntries = entries.slice(0, 3);
 
   // Derive hero section display values when opinion is present.
@@ -239,17 +243,17 @@ export function CombinedAnalystCard({
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   card: {
     marginHorizontal: spacing.lg,
     marginTop: spacing.xs,
     marginBottom: spacing.xs,
-    backgroundColor: colors.surfacePillarA,
+    backgroundColor: t.colors.surfacePillarA,
     borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
     overflow: "hidden",
-    ...shadows.card,
+    ...t.shadows.card,
   },
   accentBar: {
     height: 4,
@@ -280,7 +284,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "800",
     color: "#fff",
-    backgroundColor: colors.accent,
+    backgroundColor: t.colors.accent,
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 999,
@@ -347,7 +351,7 @@ const styles = StyleSheet.create({
   // ── Divider ─────────────────────────────────────────────────────────────
   divider: {
     height: 1,
-    backgroundColor: colors.border,
+    backgroundColor: t.colors.border,
   },
 
   // ── Bottom section ───────────────────────────────────────────────────────
@@ -358,7 +362,7 @@ const styles = StyleSheet.create({
   bottomHeader: {
     fontSize: 11,
     fontWeight: "500",
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     letterSpacing: 0.3,
     marginBottom: 4,
   },
@@ -374,12 +378,12 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   rowPressed: {
-    backgroundColor: colors.background,
+    backgroundColor: t.colors.background,
   },
   rank: {
     fontSize: 12,
     fontWeight: "700",
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     minWidth: 20,
   },
   badgeWrap: {
@@ -387,14 +391,14 @@ const styles = StyleSheet.create({
   },
   callCount: {
     fontSize: 11,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     fontWeight: "500",
     minWidth: 44,
     textAlign: "right",
   },
   emptyText: {
     fontSize: 13,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     textAlign: "center",
     paddingVertical: spacing.md,
     lineHeight: 18,
@@ -410,12 +414,12 @@ const styles = StyleSheet.create({
     width: 20,
     height: 12,
     borderRadius: 6,
-    backgroundColor: colors.border,
+    backgroundColor: t.colors.border,
   },
   skeletonBadge: {
     flex: 1,
     height: 12,
     borderRadius: 6,
-    backgroundColor: colors.border,
+    backgroundColor: t.colors.border,
   },
 });

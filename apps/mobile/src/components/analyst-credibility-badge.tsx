@@ -1,8 +1,8 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import type { AppAnalystTier } from "@predict-future/types";
-import { colors } from "@predict-future/ui-tokens";
 
+import { useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 import { AnalystTierBadge } from "./analyst-tier-badge";
 
 export type AnalystCredibilityBadgeProps = {
@@ -62,6 +62,7 @@ function AnalystCredibilityBadgeInner({
   size = "md",
   layout = "default",
 }: Omit<AnalystCredibilityBadgeProps, "onPress">) {
+  const styles = useThemedStyles(makeStyles);
   const sizeConfig = SIZE_CONFIG[size];
 
   // Only show accuracy when we have enough data (>= 3 resolved calls)
@@ -163,7 +164,7 @@ export function AnalystCredibilityBadge({
   return <AnalystCredibilityBadgeInner {...rest} />;
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   container: {
     flexDirection: "column",
     alignItems: "flex-start",
@@ -181,15 +182,15 @@ const styles = StyleSheet.create({
   },
   name: {
     fontWeight: "700",
-    color: colors.text,
+    color: t.colors.text,
     flexShrink: 1,
   },
   separator: {
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     fontWeight: "400",
   },
   org: {
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     fontWeight: "400",
     flexShrink: 1,
   },
@@ -199,7 +200,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   accuracy: {
-    color: colors.success,
+    color: t.colors.success,
     fontWeight: "600",
   },
 });

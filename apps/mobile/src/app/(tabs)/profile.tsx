@@ -39,7 +39,8 @@ import type {
   GroupNotifLevel,
 } from "@predict-future/types";
 import { formatPoints, formatRelativeTime } from "@predict-future/utils";
-import { colors, radius, spacing } from "@predict-future/ui-tokens";
+import { radius, spacing } from "@predict-future/ui-tokens";
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 import { useApiQuery } from "@/hooks/useApiQuery";
 import { mobileApi } from "@/lib/api";
@@ -81,8 +82,8 @@ const STATUS_META: Record<string, { label: string; color: string; bg: string }> 
   CANCELLED:           { label: "Cancelled", color: "#94A3B8", bg: "#F8FAFC" },
 };
 
-function getStatusMeta(status: string) {
-  return STATUS_META[status] ?? { label: status, color: colors.textMuted, bg: colors.background };
+function getStatusMeta(status: string, textMuted: string, background: string) {
+  return STATUS_META[status] ?? { label: status, color: textMuted, bg: background };
 }
 
 // ── League tier helpers ───────────────────────────────────────────────────────
@@ -115,6 +116,7 @@ function TierBadge({
   );
 }
 
+// tierBadgeStyles has no colors.* or shadows.* — static is fine
 const tierBadgeStyles = StyleSheet.create({
   pill: {
     paddingHorizontal: 10,
@@ -148,6 +150,8 @@ function TierProgressSection({
   tierProgress: ApiTierProgress;
   onUpgradeTap: () => void;
 }) {
+  const { colors } = useTheme();
+  const tierProgressStyles = useThemedStyles(makeTierProgressStyles);
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
@@ -217,7 +221,7 @@ function TierProgressSection({
   );
 }
 
-const tierProgressStyles = StyleSheet.create({
+const makeTierProgressStyles = (t: ThemeContextValue) => StyleSheet.create({
   row: {
     flexDirection: "row",
     alignItems: "center",
@@ -225,7 +229,7 @@ const tierProgressStyles = StyleSheet.create({
   },
   topTierText: {
     fontSize: 11,
-    color: colors.success,
+    color: t.colors.success,
     fontWeight: "600",
   },
   eligibleChip: {
@@ -264,7 +268,7 @@ const tierProgressStyles = StyleSheet.create({
   },
   trackFill: {
     height: 4,
-    backgroundColor: colors.accent,
+    backgroundColor: t.colors.accent,
     borderRadius: 2,
   },
 });
@@ -336,6 +340,8 @@ function buildVoteItems(votes: VoteItem[]): ActivityItem[] {
 export default function ProfileScreen() {
   const router = useRouter();
   const { session, status: sessionStatus, signOut } = useSession();
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const userId = session?.userId;
   const watchlist = useWatchlist();
 
@@ -591,7 +597,7 @@ export default function ProfileScreen() {
             </Text>
           </View>
           <View style={styles.headerRight}>
-            <Text style={styles.username}>@{user.username}</Text>
+            <Text style={styles.username}>{`@${user.username}`}</Text>
             <View style={styles.tagRow}>
               {user.level != null && <Tag label={`Lv ${user.level}`} />}
               {(user.streak ?? 0) > 0 && (
@@ -927,6 +933,7 @@ function SubTabBar({
   activeTab: ProfileTab;
   onSelect: (tab: ProfileTab) => void;
 }) {
+  const subTabStyles = useThemedStyles(makeSubTabStyles);
   const tabs: Array<{ key: ProfileTab; label: string }> = [
     { key: "activity", label: "Activity" },
     { key: "stats",    label: "Stats" },
@@ -961,17 +968,17 @@ function SubTabBar({
   );
 }
 
-const subTabStyles = StyleSheet.create({
+const makeSubTabStyles = (t: ThemeContextValue) => StyleSheet.create({
   bar: {
-    backgroundColor: colors.background,
+    backgroundColor: t.colors.background,
     paddingHorizontal: spacing.xl,
     paddingVertical: spacing.sm,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
+    borderBottomColor: t.colors.border,
   },
   segmented: {
     flexDirection: "row",
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderRadius: radius.lg,
     padding: 3,
     alignSelf: "stretch",
@@ -983,12 +990,12 @@ const subTabStyles = StyleSheet.create({
     borderRadius: radius.md,
   },
   pillActive: {
-    backgroundColor: colors.text,
+    backgroundColor: t.colors.text,
   },
   pillLabel: {
     fontSize: 13,
     fontWeight: "600",
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
   pillLabelActive: {
     color: "#FFFFFF",
@@ -1013,6 +1020,8 @@ function ActivityTabContent({
   isFullyBrandNew: boolean;
   router: ReturnType<typeof useRouter>;
 }) {
+  const styles = useThemedStyles(makeStyles);
+  const activityTabStyles = useThemedStyles(makeActivityTabStyles);
   const [activitySubTab, setActivitySubTab] = useState<ActivitySubTab>("bets");
 
   // For truly brand-new users (all four categories empty), show GetStartedCard
@@ -1093,17 +1102,17 @@ function ActivityTabContent({
   );
 }
 
-const activityTabStyles = StyleSheet.create({
+const makeActivityTabStyles = (t: ThemeContextValue) => StyleSheet.create({
   // ── Pill toggle (subordinate to main SubTabBar) ──
   subPillBar: {
     flexDirection: "row",
-    backgroundColor: colors.background,
+    backgroundColor: t.colors.background,
     borderRadius: radius.md,
     padding: 2,
     alignSelf: "flex-start",
     marginBottom: spacing.md,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
   },
   subPill: {
     paddingVertical: 5,
@@ -1111,19 +1120,19 @@ const activityTabStyles = StyleSheet.create({
     borderRadius: radius.sm,
   },
   subPillActive: {
-    backgroundColor: colors.text,
+    backgroundColor: t.colors.text,
   },
   subPillLabel: {
     fontSize: 12,
     fontWeight: "600",
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
   subPillLabelActive: {
     color: "#FFFFFF",
   },
   sectionEmptyText: {
     fontSize: 13,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     lineHeight: 19,
     paddingBottom: spacing.sm,
   },
@@ -1136,12 +1145,14 @@ function ActivityRow({
   item: ActivityItem;
   router: ReturnType<typeof useRouter>;
 }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const callColor = item.call === "YES" ? "#059669" : item.call === "NO" ? "#DC2626" : colors.text;
 
   function outcomeIcon(): React.ReactNode {
     if (item.kind === "vote") {
       // Votes don't have a winningSide tracked in the same way — show clock unless resolved
-      const sm = getStatusMeta(item.marketStatus);
+      const sm = getStatusMeta(item.marketStatus, colors.textMuted, colors.background);
       if (item.marketStatus === "RESOLVED") {
         return <Ionicons name="checkmark-circle-outline" size={16} color={colors.textMuted} />;
       }
@@ -1211,6 +1222,9 @@ function StatsTabContent({
   accuracyScore: number;
   isFullyBrandNew: boolean;
 }) {
+  const { colors } = useTheme();
+  const tabEmptyStyles = useThemedStyles(makeTabEmptyStyles);
+
   // Fully brand-new users: suppress the card — GetStartedCard on Activity tab
   // already handles the empty state. Show a simple message instead.
   if (isFullyBrandNew) {
@@ -1266,6 +1280,9 @@ function PerformanceCard({
   positions: ApiPositionSummary[];
   accuracyScore: number;
 }) {
+  const { colors } = useTheme();
+  const perfStyles = useThemedStyles(makePerfStyles);
+  const styles = useThemedStyles(makeStyles);
   const [catExpanded, setCatExpanded] = useState(false);
   const [hostExpanded, setHostExpanded] = useState(false);
 
@@ -1398,6 +1415,7 @@ function PerformanceCard({
 // ── StatPill ─────────────────────────────────────────────────────────────────
 
 function StatPill({ label, value }: { label: string; value: string }) {
+  const perfStyles = useThemedStyles(makePerfStyles);
   return (
     <View style={perfStyles.pill}>
       <Text style={perfStyles.pillValue} numberOfLines={1} adjustsFontSizeToFit>
@@ -1413,6 +1431,8 @@ function StatPill({ label, value }: { label: string; value: string }) {
 // Uses muted-grey placeholder blocks to show the layout shape, plus a CTA.
 
 function PerformanceSkeletonCard() {
+  const { colors } = useTheme();
+  const perfStyles = useThemedStyles(makePerfStyles);
   return (
     <View style={perfStyles.card}>
       {/* Skeleton: dominant number area */}
@@ -1442,10 +1462,10 @@ function PerformanceSkeletonCard() {
   );
 }
 
-const perfStyles = StyleSheet.create({
+const makePerfStyles = (t: ThemeContextValue) => StyleSheet.create({
   card: {
     marginTop: spacing.md,
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderRadius: radius.lg,
     overflow: "hidden",
   },
@@ -1464,14 +1484,14 @@ const perfStyles = StyleSheet.create({
   pnlSubtext: {
     marginTop: 4,
     fontSize: 12,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     textAlign: "center",
   },
 
   // ── Divider ──
   divider: {
     height: StyleSheet.hairlineWidth,
-    backgroundColor: colors.border,
+    backgroundColor: t.colors.border,
     marginHorizontal: spacing.lg,
   },
 
@@ -1486,7 +1506,7 @@ const perfStyles = StyleSheet.create({
     flex: 1,
     minWidth: "44%",
     alignItems: "center",
-    backgroundColor: colors.background,
+    backgroundColor: t.colors.background,
     borderRadius: radius.md,
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.sm,
@@ -1494,14 +1514,14 @@ const perfStyles = StyleSheet.create({
   pillValue: {
     fontSize: 18,
     fontWeight: "700",
-    color: colors.text,
+    color: t.colors.text,
     textAlign: "center",
   },
   pillLabel: {
     marginTop: 3,
     fontSize: 10,
     fontWeight: "600",
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     textAlign: "center",
   },
 
@@ -1516,7 +1536,7 @@ const perfStyles = StyleSheet.create({
   collapseLabel: {
     fontSize: 14,
     fontWeight: "700",
-    color: colors.text,
+    color: t.colors.text,
   },
   collapseRight: {
     flexDirection: "row",
@@ -1525,7 +1545,7 @@ const perfStyles = StyleSheet.create({
   },
   collapseTeaser: {
     fontSize: 12,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
   collapseBody: {
     paddingHorizontal: spacing.lg,
@@ -1542,13 +1562,13 @@ const perfStyles = StyleSheet.create({
     width: 120,
     height: 36,
     borderRadius: radius.md,
-    backgroundColor: colors.border,
+    backgroundColor: t.colors.border,
   },
   skeletonSubtextBlock: {
     width: 200,
     height: 12,
     borderRadius: radius.sm,
-    backgroundColor: colors.border,
+    backgroundColor: t.colors.border,
     opacity: 0.6,
   },
   skeletonPill: {
@@ -1556,7 +1576,7 @@ const perfStyles = StyleSheet.create({
     minWidth: "44%",
     height: 60,
     borderRadius: radius.md,
-    backgroundColor: colors.border,
+    backgroundColor: t.colors.border,
     opacity: 0.5,
   },
   skeletonCta: {
@@ -1569,7 +1589,7 @@ const perfStyles = StyleSheet.create({
   },
   skeletonCtaText: {
     fontSize: 13,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     fontWeight: "600",
     textAlign: "center",
   },
@@ -1588,6 +1608,10 @@ function MarketsTabContent({
   hasMarkets: boolean;
   router: ReturnType<typeof useRouter>;
 }) {
+  const { colors } = useTheme();
+  const tabEmptyStyles = useThemedStyles(makeTabEmptyStyles);
+  const styles = useThemedStyles(makeStyles);
+
   if (!hasMarkets) {
     return (
       <View style={tabEmptyStyles.container}>
@@ -1635,7 +1659,7 @@ function MarketsTabContent({
 
 // ── Tab empty state ───────────────────────────────────────────────────────────
 
-const tabEmptyStyles = StyleSheet.create({
+const makeTabEmptyStyles = (t: ThemeContextValue) => StyleSheet.create({
   container: {
     marginTop: spacing.xl,
     alignItems: "center",
@@ -1645,13 +1669,13 @@ const tabEmptyStyles = StyleSheet.create({
   text: {
     fontSize: 14,
     fontWeight: "600",
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     textAlign: "center",
     maxWidth: 260,
   },
   hint: {
     fontSize: 12,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     textAlign: "center",
     maxWidth: 260,
   },
@@ -1660,6 +1684,9 @@ const tabEmptyStyles = StyleSheet.create({
 // ── GetStartedCard ────────────────────────────────────────────────────────────
 
 function GetStartedCard({ router }: { router: ReturnType<typeof useRouter> }) {
+  const { colors } = useTheme();
+  const getStartedStyles = useThemedStyles(makeGetStartedStyles);
+
   const rows: Array<{
     icon: keyof typeof Ionicons.glyphMap;
     label: string;
@@ -1693,24 +1720,24 @@ function GetStartedCard({ router }: { router: ReturnType<typeof useRouter> }) {
   );
 }
 
-const getStartedStyles = StyleSheet.create({
+const makeGetStartedStyles = (t: ThemeContextValue) => StyleSheet.create({
   card: {
     marginTop: spacing.lg,
     padding: spacing.lg,
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
   },
   heading: {
     fontSize: 16,
     fontWeight: "700",
-    color: colors.text,
+    color: t.colors.text,
   },
   subtitle: {
     marginTop: 4,
     fontSize: 13,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     lineHeight: 18,
   },
   rowList: {
@@ -1723,13 +1750,13 @@ const getStartedStyles = StyleSheet.create({
     gap: spacing.md,
     paddingVertical: 12,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
+    borderTopColor: t.colors.border,
   },
   rowLabel: {
     flex: 1,
     fontSize: 14,
     fontWeight: "600",
-    color: colors.text,
+    color: t.colors.text,
   },
 });
 
@@ -1748,6 +1775,8 @@ function MyMarketsSection({
 }: {
   createdMarkets: Array<{ id: string; title: string; status: AppMarketStatus }>;
 }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const router = useRouter();
 
   return (
@@ -1793,7 +1822,9 @@ function WatchlistRow({
   onRemove: () => void;
   onPress: () => void;
 }) {
-  const sm = getStatusMeta(item.status);
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+  const sm = getStatusMeta(item.status, colors.textMuted, colors.background);
   return (
     <Pressable style={styles.watchlistRow} onPress={onPress}>
       <View style={styles.watchlistRowLeft}>
@@ -1812,6 +1843,7 @@ function WatchlistRow({
 }
 
 function Tag({ label, accent }: { label: string; accent?: boolean }) {
+  const styles = useThemedStyles(makeStyles);
   return (
     <View style={[styles.tag, accent && styles.tagAccent]}>
       <Text style={styles.tagText}>{label}</Text>
@@ -1820,6 +1852,7 @@ function Tag({ label, accent }: { label: string; accent?: boolean }) {
 }
 
 function HostStat({ label, value }: { label: string; value: string }) {
+  const styles = useThemedStyles(makeStyles);
   return (
     <View style={styles.hostStatBox}>
       <Text style={styles.hostStatValue}>{value}</Text>
@@ -1839,6 +1872,8 @@ function ActionRow({
   sublabel?: string;
   onPress?: () => void;
 }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
   return (
     <Pressable style={styles.actionRow} onPress={onPress} disabled={!onPress}>
       <Ionicons name={icon} size={20} color={colors.text} />
@@ -1853,24 +1888,24 @@ function ActionRow({
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.background },
-  scrollBody: { flex: 1, backgroundColor: colors.background },
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
+  screen: { flex: 1, backgroundColor: t.colors.background },
+  scrollBody: { flex: 1, backgroundColor: t.colors.background },
   scrollContent: { paddingHorizontal: spacing.xl, paddingTop: 0, paddingBottom: 60 },
   center: { flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.xl },
-  errorText: { color: colors.danger, fontSize: 14 },
+  errorText: { color: t.colors.danger, fontSize: 14 },
   retryBtn: {
     marginTop: spacing.lg,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
     borderRadius: radius.md,
-    backgroundColor: colors.accent,
+    backgroundColor: t.colors.accent,
   },
   retryLabel: { color: "#FFFFFF", fontWeight: "700", fontSize: 14 },
 
   // ── Header ──
   headerCard: {
-    backgroundColor: colors.text,
+    backgroundColor: t.colors.text,
     paddingHorizontal: spacing.xl,
     paddingVertical: spacing.lg,
   },
@@ -1937,17 +1972,17 @@ const styles = StyleSheet.create({
   card: {
     marginTop: spacing.md,
     padding: spacing.lg,
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderRadius: radius.lg,
   },
-  sectionTitle: { fontSize: 16, fontWeight: "700", color: colors.text },
+  sectionTitle: { fontSize: 16, fontWeight: "700", color: t.colors.text },
   sectionTitleRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: spacing.md,
   },
-  clearBtn: { fontSize: 13, fontWeight: "600", color: colors.accent },
+  clearBtn: { fontSize: 13, fontWeight: "600", color: t.colors.accent },
 
   // ── Track record (shared row styles) ──
   trackRow: {
@@ -1956,13 +1991,13 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     paddingVertical: spacing.sm,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
+    borderBottomColor: t.colors.border,
   },
   trackRowPressed: {
-    backgroundColor: colors.background,
+    backgroundColor: t.colors.background,
   },
   trackRowLeft: { flex: 1 },
-  trackTitle: { fontSize: 13, fontWeight: "600", color: colors.text, lineHeight: 18 },
+  trackTitle: { fontSize: 13, fontWeight: "600", color: t.colors.text, lineHeight: 18 },
   trackMeta: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: 4, flexWrap: "wrap" },
   statusPill: {
     paddingHorizontal: 7,
@@ -1970,9 +2005,9 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
   },
   statusPillText: { fontSize: 10, fontWeight: "700" },
-  trackVote: { fontSize: 12, color: colors.textMuted },
-  trackCrowd: { fontSize: 11, color: colors.textMuted, fontWeight: "600" },
-  betAmountLabel: { fontSize: 9, color: colors.textMuted, marginTop: 1 },
+  trackVote: { fontSize: 12, color: t.colors.textMuted },
+  trackCrowd: { fontSize: 11, color: t.colors.textMuted, fontWeight: "600" },
+  betAmountLabel: { fontSize: 9, color: t.colors.textMuted, marginTop: 1 },
 
   // ── Watchlist ──
   watchlistRow: {
@@ -1981,18 +2016,18 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     paddingVertical: spacing.sm,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
+    borderBottomColor: t.colors.border,
   },
   watchlistRowLeft: { flex: 1 },
-  watchlistTitle: { fontSize: 14, fontWeight: "600", color: colors.text, lineHeight: 20 },
+  watchlistTitle: { fontSize: 14, fontWeight: "600", color: t.colors.text, lineHeight: 20 },
 
   // ── Social card (Leaderboard + Groups unified) ──
   socialCard: {
     marginTop: spacing.md,
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderRadius: radius.lg,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
     paddingVertical: spacing.xs,
   },
   socialRow: {
@@ -2006,30 +2041,30 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 14,
     fontWeight: "700",
-    color: colors.text,
+    color: t.colors.text,
   },
   socialRowBadge: {
     minWidth: 22,
     height: 22,
     paddingHorizontal: 6,
     borderRadius: 11,
-    backgroundColor: colors.accent + "1F",
+    backgroundColor: t.colors.accent + "1F",
     alignItems: "center",
     justifyContent: "center",
   },
   socialRowBadgeText: {
     fontSize: 11,
     fontWeight: "700",
-    color: colors.accent,
+    color: t.colors.accent,
   },
   socialDivider: {
     height: StyleSheet.hairlineWidth,
-    backgroundColor: colors.border,
+    backgroundColor: t.colors.border,
     marginHorizontal: spacing.md,
   },
   socialEmptyHint: {
     fontSize: 12,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     paddingHorizontal: spacing.md,
     paddingBottom: spacing.md,
     marginTop: -spacing.sm,
@@ -2042,9 +2077,9 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   groupChip: {
-    backgroundColor: colors.background,
+    backgroundColor: t.colors.background,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm - 2,
     borderRadius: radius.pill,
@@ -2053,7 +2088,7 @@ const styles = StyleSheet.create({
   groupChipName: {
     fontSize: 13,
     fontWeight: "600",
-    color: colors.text,
+    color: t.colors.text,
   },
 
   // ── Host stats ──
@@ -2062,16 +2097,16 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     padding: spacing.sm,
-    backgroundColor: colors.background,
+    backgroundColor: t.colors.background,
     borderRadius: radius.md,
   },
-  hostStatValue: { fontSize: 18, fontWeight: "700", color: colors.text },
-  hostStatLabel: { fontSize: 10, color: colors.textMuted, marginTop: 2 },
+  hostStatValue: { fontSize: 18, fontWeight: "700", color: t.colors.text },
+  hostStatLabel: { fontSize: 10, color: t.colors.textMuted, marginTop: 2 },
 
   // ── Actions card ──
   actionsCard: {
     marginTop: spacing.md,
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderRadius: radius.lg,
     overflow: "hidden",
   },
@@ -2082,11 +2117,11 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   actionTextWrap: { flex: 1 },
-  actionLabel: { fontSize: 15, fontWeight: "600", color: colors.text },
-  actionSublabel: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
+  actionLabel: { fontSize: 15, fontWeight: "600", color: t.colors.text },
+  actionSublabel: { fontSize: 12, color: t.colors.textMuted, marginTop: 2 },
   actionDivider: {
     height: StyleSheet.hairlineWidth,
-    backgroundColor: colors.border,
+    backgroundColor: t.colors.border,
     marginHorizontal: spacing.md,
   },
   // Notification unread badge (S30-T4)
@@ -2107,17 +2142,17 @@ const styles = StyleSheet.create({
 
   // ── Unauthenticated ──
   unauthCard: {
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderRadius: radius.lg,
     padding: spacing.xl,
     alignItems: "center",
     marginHorizontal: spacing.xl,
   },
-  unauthTitle: { fontSize: 20, fontWeight: "700", color: colors.text, textAlign: "center" },
+  unauthTitle: { fontSize: 20, fontWeight: "700", color: t.colors.text, textAlign: "center" },
   unauthSubtitle: {
     marginTop: spacing.sm,
     fontSize: 14,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     textAlign: "center",
     lineHeight: 20,
   },
@@ -2126,7 +2161,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xl,
     paddingVertical: spacing.md,
     borderRadius: radius.pill,
-    backgroundColor: colors.accent,
+    backgroundColor: t.colors.accent,
   },
   signInBtnText: { color: "#FFFFFF", fontWeight: "700", fontSize: 15 },
 
@@ -2141,22 +2176,22 @@ const styles = StyleSheet.create({
     width: 72,
     fontSize: 12,
     fontWeight: "600",
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     textTransform: "capitalize",
   },
   catBreakBarTrack: {
     flex: 1,
     height: 6,
     borderRadius: radius.pill,
-    backgroundColor: colors.border,
+    backgroundColor: t.colors.border,
     overflow: "hidden",
   },
   catBreakBarFill: {
     height: "100%",
     borderRadius: radius.pill,
-    backgroundColor: colors.accent,
+    backgroundColor: t.colors.accent,
   },
-  catBreakPct: { width: 36, textAlign: "right", fontSize: 12, fontWeight: "700", color: colors.text },
+  catBreakPct: { width: 36, textAlign: "right", fontSize: 12, fontWeight: "700", color: t.colors.text },
 
   // ── Leagues row ──
   leagueBadgeRow: {
@@ -2179,11 +2214,11 @@ const styles = StyleSheet.create({
   leagueRankText: {
     fontSize: 12,
     fontWeight: "600",
-    color: colors.textMuted,
+    color: t.colors.textMuted,
   },
   leagueUnranked: {
     fontSize: 12,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     marginRight: spacing.sm,
   },
 
@@ -2196,17 +2231,20 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     paddingVertical: spacing.md,
     borderRadius: radius.lg,
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
   },
   logoutPressed: { opacity: 0.7 },
-  logoutText: { fontSize: 15, fontWeight: "600", color: colors.danger },
+  logoutText: { fontSize: 15, fontWeight: "600", color: t.colors.danger },
 });
 
 // ── InviteFriendsCard ─────────────────────────────────────────────────────────
 
 function InviteFriendsCard({ referral }: { referral: ApiReferralInfo }) {
+  const { colors } = useTheme();
+  const inviteStyles = useThemedStyles(makeInviteStyles);
+
   const shareMessage = `Join me on Predict Future! Use my code ${referral.referralCode} — we both get 250 points when you make your first prediction. https://predictfuture.app`;
 
   async function handleShare() {
@@ -2259,14 +2297,14 @@ function InviteFriendsCard({ referral }: { referral: ApiReferralInfo }) {
   );
 }
 
-const inviteStyles = StyleSheet.create({
+const makeInviteStyles = (t: ThemeContextValue) => StyleSheet.create({
   card: {
     marginTop: spacing.md,
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderRadius: radius.lg,
     padding: spacing.lg,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
   },
   headerRow: {
     flexDirection: "row",
@@ -2277,20 +2315,20 @@ const inviteStyles = StyleSheet.create({
   title: {
     fontSize: 15,
     fontWeight: "700",
-    color: colors.text,
+    color: t.colors.text,
   },
   subtitle: {
     fontSize: 13,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     lineHeight: 19,
     marginBottom: spacing.md,
   },
   highlight: {
-    color: colors.text,
+    color: t.colors.text,
     fontWeight: "700",
   },
   codeBox: {
-    backgroundColor: colors.background,
+    backgroundColor: t.colors.background,
     borderRadius: radius.md,
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.md,
@@ -2299,19 +2337,19 @@ const inviteStyles = StyleSheet.create({
     justifyContent: "space-between",
     marginBottom: spacing.md,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
   },
   codeLabel: {
     fontSize: 11,
     fontWeight: "600",
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     textTransform: "uppercase",
     letterSpacing: 0.5,
   },
   code: {
     fontSize: 18,
     fontWeight: "800",
-    color: colors.text,
+    color: t.colors.text,
     letterSpacing: 2,
   },
   shareBtn: {
@@ -2332,7 +2370,7 @@ const inviteStyles = StyleSheet.create({
   stats: {
     marginTop: spacing.sm,
     fontSize: 12,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     textAlign: "center",
   },
 });
@@ -2358,6 +2396,8 @@ function AnonymousToggleCard({
   userId: string;
   onToggle: (enabled: boolean) => Promise<void>;
 }) {
+  const { colors } = useTheme();
+  const anonStyles = useThemedStyles(makeAnonStyles);
   const isAnonymous = displayMode === "ANONYMOUS";
 
   function handleValueChange(value: boolean) {
@@ -2411,14 +2451,14 @@ function AnonymousToggleCard({
   );
 }
 
-const anonStyles = StyleSheet.create({
+const makeAnonStyles = (t: ThemeContextValue) => StyleSheet.create({
   card: {
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderRadius: radius.lg,
     marginTop: spacing.lg,
     padding: spacing.lg,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
   },
   row: {
     flexDirection: "row",
@@ -2435,17 +2475,17 @@ const anonStyles = StyleSheet.create({
   label: {
     fontSize: 14,
     fontWeight: "600",
-    color: colors.text,
+    color: t.colors.text,
   },
   sublabel: {
     fontSize: 12,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     marginTop: 2,
   },
   hint: {
     marginTop: spacing.sm,
     fontSize: 12,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     lineHeight: 17,
     paddingLeft: 32 + spacing.md,
   },
@@ -2478,6 +2518,9 @@ function GroupNotifDefaultCard({
   current: GroupNotifLevel;
   onChange: (level: GroupNotifLevel) => Promise<void>;
 }) {
+  const { colors } = useTheme();
+  const groupNotifStyles = useThemedStyles(makeGroupNotifStyles);
+
   function handlePress() {
     const opts = GROUP_NOTIF_OPTIONS.map((o) => ({
       text: current === o.value ? `${o.label} (current)` : o.label,
@@ -2513,19 +2556,19 @@ function GroupNotifDefaultCard({
   );
 }
 
-const groupNotifStyles = StyleSheet.create({
+const makeGroupNotifStyles = (t: ThemeContextValue) => StyleSheet.create({
   card: {
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderRadius: radius.lg,
     marginTop: spacing.lg,
     padding: spacing.lg,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
   },
   sectionTitle: {
     fontSize: 12,
     fontWeight: "700",
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     textTransform: "uppercase",
     letterSpacing: 0.5,
     marginBottom: spacing.sm,
@@ -2545,16 +2588,16 @@ const groupNotifStyles = StyleSheet.create({
   label: {
     fontSize: 14,
     fontWeight: "600",
-    color: colors.text,
+    color: t.colors.text,
   },
   sublabel: {
     fontSize: 12,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     marginTop: 2,
   },
   value: {
     fontSize: 13,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     fontWeight: "500",
     marginRight: 4,
   },
@@ -2571,6 +2614,8 @@ function PhoneVerifyCard({
   onVerifyNow: () => void;
   onDismiss: () => void | Promise<void>;
 }) {
+  const { colors } = useTheme();
+  const pvCardStyles = useThemedStyles(makePvCardStyles);
   return (
     <View style={pvCardStyles.card}>
       <View style={pvCardStyles.headerRow}>
@@ -2607,14 +2652,14 @@ function PhoneVerifyCard({
   );
 }
 
-const pvCardStyles = StyleSheet.create({
+const makePvCardStyles = (t: ThemeContextValue) => StyleSheet.create({
   card: {
     marginTop: spacing.md,
-    backgroundColor: colors.surface,
+    backgroundColor: t.colors.surface,
     borderRadius: radius.lg,
     padding: spacing.lg,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
   },
   headerRow: {
     flexDirection: "row",
@@ -2626,19 +2671,19 @@ const pvCardStyles = StyleSheet.create({
     flex: 1,
     fontSize: 15,
     fontWeight: "700",
-    color: colors.text,
+    color: t.colors.text,
   },
   dismissBtn: {
     padding: 2,
   },
   body: {
     fontSize: 13,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     lineHeight: 19,
     marginBottom: spacing.md,
   },
   highlight: {
-    color: colors.text,
+    color: t.colors.text,
     fontWeight: "700",
   },
   ctaRow: {
@@ -2647,7 +2692,7 @@ const pvCardStyles = StyleSheet.create({
     alignItems: "center",
   },
   verifyBtn: {
-    backgroundColor: colors.accent,
+    backgroundColor: t.colors.accent,
     borderRadius: radius.md,
     paddingVertical: spacing.sm + 2,
     paddingHorizontal: spacing.lg,
@@ -2662,7 +2707,7 @@ const pvCardStyles = StyleSheet.create({
     paddingHorizontal: spacing.md,
   },
   laterBtnText: {
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     fontSize: 13,
     fontWeight: "500",
   },
@@ -2681,6 +2726,8 @@ function PhoneVerifyModal({
   onClose: () => void;
   onSuccess: () => void;
 }) {
+  const { colors } = useTheme();
+  const pvModalStyles = useThemedStyles(makePvModalStyles);
   const [step, setStep] = useState<VerifyStep>("phone");
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState("");
@@ -2856,7 +2903,7 @@ function PhoneVerifyModal({
   );
 }
 
-const pvModalStyles = StyleSheet.create({
+const makePvModalStyles = (t: ThemeContextValue) => StyleSheet.create({
   overlay: {
     flex: 1,
     justifyContent: "flex-end",
@@ -2866,7 +2913,7 @@ const pvModalStyles = StyleSheet.create({
     backgroundColor: "rgba(0,0,0,0.5)",
   },
   sheet: {
-    backgroundColor: colors.background,
+    backgroundColor: t.colors.background,
     borderTopLeftRadius: radius.lg,
     borderTopRightRadius: radius.lg,
     padding: spacing.xl,
@@ -2877,7 +2924,7 @@ const pvModalStyles = StyleSheet.create({
     width: 40,
     height: 4,
     borderRadius: 2,
-    backgroundColor: colors.border,
+    backgroundColor: t.colors.border,
     alignSelf: "center",
     marginBottom: spacing.lg,
   },
@@ -2890,24 +2937,24 @@ const pvModalStyles = StyleSheet.create({
   heading: {
     fontSize: 20,
     fontWeight: "800",
-    color: colors.text,
+    color: t.colors.text,
     marginBottom: spacing.sm,
   },
   subheading: {
     fontSize: 14,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     lineHeight: 20,
     marginBottom: spacing.lg,
   },
   input: {
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: t.colors.border,
     borderRadius: radius.md,
     paddingVertical: 12,
     paddingHorizontal: spacing.md,
     fontSize: 16,
-    color: colors.text,
-    backgroundColor: colors.surface,
+    color: t.colors.text,
+    backgroundColor: t.colors.surface,
     marginBottom: spacing.md,
   },
   error: {
@@ -2916,7 +2963,7 @@ const pvModalStyles = StyleSheet.create({
     marginBottom: spacing.sm,
   },
   primaryBtn: {
-    backgroundColor: colors.accent,
+    backgroundColor: t.colors.accent,
     borderRadius: radius.md,
     paddingVertical: 13,
     alignItems: "center",
@@ -2937,7 +2984,7 @@ const pvModalStyles = StyleSheet.create({
     marginTop: spacing.sm,
   },
   secondaryBtnText: {
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     fontSize: 14,
     fontWeight: "500",
   },
@@ -2950,11 +2997,11 @@ const pvModalStyles = StyleSheet.create({
   successHeading: {
     fontSize: 22,
     fontWeight: "800",
-    color: colors.text,
+    color: t.colors.text,
   },
   successBody: {
     fontSize: 15,
-    color: colors.textMuted,
+    color: t.colors.textMuted,
     textAlign: "center",
     lineHeight: 22,
   },

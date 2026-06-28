@@ -1,13 +1,14 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
-import { colors } from "@predict-future/ui-tokens";
+import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 import { FinanceMode } from "@/components/finance-mode";
 import { GradientHeader } from "@/components/gradient-header";
 
 export default function FinanceTabScreen() {
   const router = useRouter();
+  const styles = useThemedStyles(makeStyles);
   const params = useLocalSearchParams<{ clusterId?: string }>();
   const initialClusterId = typeof params.clusterId === "string" ? params.clusterId : null;
 
@@ -49,8 +50,8 @@ export default function FinanceTabScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.background },
+const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
+  screen: { flex: 1, backgroundColor: t.colors.background },
   searchBox: {
     flexDirection: "row",
     alignItems: "center",
