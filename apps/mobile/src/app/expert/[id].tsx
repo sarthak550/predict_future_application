@@ -15,6 +15,7 @@ import type { ApiExpertCall, ApiExpertProfile } from "@predict-future/types";
 import { colors, radius, spacing } from "@predict-future/ui-tokens";
 
 import { mobileApi } from "@/lib/api";
+import { withRetry } from "@/lib/retry";
 import { getExpertInitials, getExpertInitialsColor } from "@/utils/expertAvatar";
 import { AnalystCredibilityBadge } from "@/components/analyst-credibility-badge";
 
@@ -115,33 +116,41 @@ export default function ExpertProfileScreen() {
 
   useEffect(() => {
     if (!id) return;
+    let cancelled = false;
     void (async () => {
       try {
         const [profileData, callsData] = await Promise.all([
-          mobileApi.getExpertProfile(id),
-          mobileApi.getExpertCalls(id),
+          withRetry(() => mobileApi.getExpertProfile(id)),
+          withRetry(() => mobileApi.getExpertCalls(id)),
         ]);
+        if (cancelled) return;
         setProfile(profileData);
         setCalls(callsData.items);
         setNextCursor(callsData.nextCursor);
       } catch {
-        setError("Expert not found.");
+        if (!cancelled) setError("Expert not found.");
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     })();
+    return () => {
+      cancelled = true;
+    };
   }, [id]);
 
   const loadMore = async () => {
     if (!nextCursor || loadingMore || !id) return;
     setLoadingMore(true);
     try {
-      const data = await mobileApi.getExpertCalls(id, { cursor: nextCursor });
+      const data = await withRetry(() => mobileApi.getExpertCalls(id, { cursor: nextCursor }));
       setCalls((prev) => {
         const existingIds = new Set(prev.map((c) => c.id));
         return [...prev, ...data.items.filter((c) => !existingIds.has(c.id))];
       });
       setNextCursor(data.nextCursor);
+    } catch (err) {
+      // Don't leave an unhandled rejection — keep the cursor so the user can tap "Load more" again.
+      console.error("[expert] loadMore failed:", err);
     } finally {
       setLoadingMore(false);
     }

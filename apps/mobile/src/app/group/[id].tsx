@@ -1063,8 +1063,8 @@ const styles = StyleSheet.create({
   pillTextRTJ: { color: "#1D4ED8" },
   pillInviteOnly: { backgroundColor: "#F3F4F6" },
   pillTextInviteOnly: { color: "#6B7280" },
-  pillOwner: { backgroundColor: "#EEF2FF" },
-  pillTextOwner: { color: "#4F46E5" },
+  pillOwner: { backgroundColor: colors.accentSoft },
+  pillTextOwner: { color: colors.accent },
   pillAdmin: { backgroundColor: "#FEF3C7" },
   pillTextAdmin: { color: "#92400E" },
   pillMember: { backgroundColor: "#DCFCE7" },
@@ -1135,7 +1135,7 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     padding: spacing.md,
     borderRadius: radius.md,
-    backgroundColor: "#EEF2FF",
+    backgroundColor: colors.accentSoft,
     borderWidth: 1,
     borderColor: "#C7D2FE"
   },
@@ -1143,7 +1143,7 @@ const styles = StyleSheet.create({
   inviteLabel: {
     fontSize: 10,
     fontWeight: "700",
-    color: "#6366F1",
+    color: colors.accent,
     textTransform: "uppercase",
     letterSpacing: 0.5
   },
@@ -1151,14 +1151,14 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontSize: 18,
     fontWeight: "800",
-    color: "#4F46E5",
+    color: colors.accent,
     letterSpacing: 2
   },
   copyBtn: {
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     borderRadius: radius.md,
-    backgroundColor: "#4F46E5"
+    backgroundColor: colors.accent
   },
   copyBtnText: {
     fontSize: 13,
@@ -1288,12 +1288,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 7,
     paddingVertical: 2,
     borderRadius: radius.sm,
-    backgroundColor: "#EEF2FF"
+    backgroundColor: colors.accentSoft
   },
   rolePillText: {
     fontSize: 10,
     fontWeight: "700",
-    color: "#4F46E5",
+    color: colors.accent,
     letterSpacing: 0.3,
     textTransform: "uppercase"
   },

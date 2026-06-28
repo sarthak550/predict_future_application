@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
+import { StyleSheet } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
+
+import { colors, shadows } from "@predict-future/ui-tokens";
 
 import { OnboardingWalkthrough } from "@/components/onboarding-walkthrough";
 import { StreakReminder } from "@/components/streak-reminder";
@@ -36,16 +39,21 @@ export default function TabsLayout() {
       <Tabs
         screenOptions={{
           headerShown: false,
-          tabBarActiveTintColor: "#0F172A",
-          tabBarInactiveTintColor: "#94A3B8",
+          tabBarActiveTintColor: colors.accent,
+          tabBarInactiveTintColor: colors.textMuted,
           tabBarStyle: {
             height: 72,
             paddingTop: 8,
             paddingBottom: 10,
+            backgroundColor: colors.surface,
+            borderTopWidth: StyleSheet.hairlineWidth,
+            borderTopColor: colors.border,
+            ...shadows.sm,
           },
           tabBarLabelStyle: {
-            fontSize: 11,
-            fontWeight: "600",
+            fontSize: 10,
+            fontWeight: "700",
+            letterSpacing: 0.3,
           },
         }}
       >

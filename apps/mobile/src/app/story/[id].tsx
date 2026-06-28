@@ -1,5 +1,5 @@
 import { Stack, useLocalSearchParams } from "expo-router";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -16,6 +16,7 @@ import { formatRelativeTime } from "@predict-future/utils";
 import { colors, radius, spacing } from "@predict-future/ui-tokens";
 
 import { mobileApi } from "@/lib/api";
+import { withRetry } from "@/lib/retry";
 import { ExpertOpinionCard } from "@/components/expert-opinion-card";
 
 // ── Skeleton placeholder ──────────────────────────────────────────────────────
@@ -55,23 +56,33 @@ export default function StoryScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!id) return;
-    void (async () => {
-      try {
-        const data = await mobileApi.getStory(id);
-        setStory(data.story);
-      } catch (err: unknown) {
-        const isNotFound =
-          err instanceof Error &&
-          "status" in (err as { status?: number }) &&
-          (err as { status?: number }).status === 404;
-        setError(isNotFound ? "Story not found." : "Failed to load story. Please try again.");
-      } finally {
-        setLoading(false);
-      }
-    })();
+  const load = useCallback(async () => {
+    if (!id) {
+      // No id param — don't sit on the skeleton forever.
+      setError("Story not found.");
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      // Retry transient network blips so one flaky request doesn't strand the screen.
+      const data = await withRetry(() => mobileApi.getStory(id));
+      setStory(data.story);
+    } catch (err: unknown) {
+      const isNotFound =
+        err instanceof Error &&
+        "status" in (err as { status?: number }) &&
+        (err as { status?: number }).status === 404;
+      setError(isNotFound ? "Story not found." : "Failed to load story. Please try again.");
+    } finally {
+      setLoading(false);
+    }
   }, [id]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   if (loading) {
     return (
@@ -104,6 +115,15 @@ export default function StoryScreen() {
           <Text style={styles.errorSubtitle}>
             This story may have been removed or is not available.
           </Text>
+          {error && error !== "Story not found." ? (
+            <Pressable
+              onPress={() => void load()}
+              style={({ pressed }) => [styles.retryButton, pressed && { opacity: 0.7 }]}
+              accessibilityRole="button"
+            >
+              <Text style={styles.retryButtonText}>Retry</Text>
+            </Pressable>
+          ) : null}
         </View>
       </>
     );
@@ -319,5 +339,17 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     textAlign: "center",
     lineHeight: 22,
+  },
+  retryButton: {
+    marginTop: spacing.sm,
+    paddingVertical: 10,
+    paddingHorizontal: 24,
+    borderRadius: radius.md,
+    backgroundColor: colors.accent,
+  },
+  retryButtonText: {
+    color: "#fff",
+    fontSize: 15,
+    fontWeight: "700",
   },
 });

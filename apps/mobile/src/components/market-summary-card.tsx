@@ -78,7 +78,7 @@ export function MarketSummaryCard({ item, onSaveToggled, compact = false }: Prop
             <Feather
               name={isSaved ? "bookmark" : "bookmark"}
               size={16}
-              color={isSaved ? colors.accent : colors.textMuted}
+              color={isSaved ? colors.pillarB : colors.textMuted}
             />
           </Pressable>
           <Pressable
@@ -257,12 +257,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: radius.sm,
-    backgroundColor: "#EEF2FF",
+    backgroundColor: colors.pillarBSoft,
   },
   shareBtnText: {
     fontSize: 11,
     fontWeight: "700",
-    color: colors.primary,
+    color: colors.pillarBDeep,
   },
   badge: {
     paddingHorizontal: 8,
@@ -388,13 +388,13 @@ const styles = StyleSheet.create({
   progressTrack: {
     height: 8,
     borderRadius: radius.pill,
-    backgroundColor: "#FEE2E2",
+    backgroundColor: colors.dangerSoft,
     overflow: "hidden",
   },
   progressFill: {
     height: "100%",
     borderRadius: radius.pill,
-    backgroundColor: "#16A34A",
+    backgroundColor: colors.success,
   },
   probRow: {
     marginTop: 6,
@@ -404,12 +404,12 @@ const styles = StyleSheet.create({
   probYes: {
     fontSize: 13,
     fontWeight: "700",
-    color: "#16A34A",
+    color: colors.success,
   },
   probNo: {
     fontSize: 13,
     fontWeight: "700",
-    color: "#DC2626",
+    color: colors.danger,
   },
   outcomeRow: {
     marginTop: spacing.lg,
@@ -472,7 +472,7 @@ const styles = StyleSheet.create({
     marginTop: spacing.md,
     fontSize: 13,
     fontWeight: "600",
-    color: colors.accent,
+    color: colors.pillarBDeep,
   },
   sourceAttribution: {
     marginTop: spacing.sm,

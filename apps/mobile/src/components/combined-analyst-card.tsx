@@ -17,7 +17,9 @@ import type {
   ApiFinanceBigCallOpinion,
   ApiTopExpertEntry,
 } from "@predict-future/types";
-import { colors, radius, spacing } from "@predict-future/ui-tokens";
+import { colors, radius, shadows, spacing } from "@predict-future/ui-tokens";
+
+import { BrandGradient } from "@/components/brand-gradient";
 import { formatRelativeTime, freshnessColor } from "@predict-future/utils";
 
 import { AnalystCredibilityBadge } from "@/components/analyst-credibility-badge";
@@ -133,6 +135,9 @@ export function CombinedAnalystCard({
 
   return (
     <View style={styles.card}>
+      {/* ── Pillar-A identity: 4px gradient accent bar ───────────────────── */}
+      <BrandGradient variant="pillarA" style={styles.accentBar} />
+
       {/* ── Top section: Call of the Week ───────────────────────────────── */}
       {opinion !== null && hero !== null && (
         <Pressable
@@ -239,11 +244,15 @@ const styles = StyleSheet.create({
     marginHorizontal: spacing.lg,
     marginTop: spacing.xs,
     marginBottom: spacing.xs,
-    backgroundColor: colors.surface,
+    backgroundColor: colors.surfacePillarA,
     borderRadius: radius.md,
     borderWidth: 1,
     borderColor: colors.border,
     overflow: "hidden",
+    ...shadows.card,
+  },
+  accentBar: {
+    height: 4,
   },
 
   // ── Hero (top) section ──────────────────────────────────────────────────
@@ -265,13 +274,13 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: "800",
     letterSpacing: 1.2,
-    color: "#a5b4fc",
+    color: "#93c5fd",
   },
   heroVoteHint: {
     fontSize: 12,
     fontWeight: "800",
     color: "#fff",
-    backgroundColor: "#4338ca",
+    backgroundColor: colors.accent,
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 999,

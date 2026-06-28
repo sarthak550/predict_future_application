@@ -5,6 +5,18 @@
  * which serves regular betting markets. Polls are: free vote, no amount staked,
  * no reasoning input. The detail screen surfaces related expert opinions so
  * users can read what economists are saying and compare their stance.
+ *
+ * S61 additions:
+ *  - T2: EMI impact line from structuredData shown under the Repo question.
+ *  - T2: "You vs the crowd" consensus breakdown shown after the user votes.
+ *  - T5: "Next: predict the stance" CTA after voting on the Repo question,
+ *        when the screen was launched from an MPC pack card (sisterMarketId param).
+ *
+ * S62-T7 addition:
+ *  - When the URL carries `source=poll-api`, the screen fetches via
+ *    `getPoll(id)` and submits votes via `votePoll(id, optionId)`.
+ *    The Market API path (getMarketById / placeMultiChoicePosition) is
+ *    preserved unchanged for all non-RBI flagship polls.
  */
 
 import { Feather, Ionicons } from "@expo/vector-icons";
@@ -27,6 +39,7 @@ import { mobileApi } from "@/lib/api";
 import { useApiQuery } from "@/hooks/useApiQuery";
 import { colors, radius, spacing } from "@predict-future/ui-tokens";
 import { formatRelativeTime } from "@predict-future/utils";
+import type { ApiPollDetail } from "@predict-future/types";
 
 type RelatedOpinion = {
   id: string;
@@ -52,6 +65,12 @@ type PollResponse = {
     id: string;
     title: string;
     description?: string | null;
+    /**
+     * For RBI MPC markets: `{ emiImpactLine: string }`.
+     * Typed as unknown values to match the API definition — we narrowly cast
+     * to string when rendering.
+     */
+    structuredData?: Record<string, unknown> | null;
     marketType?: string;
     flagshipEventAt?: string | null;
     flagshipEventType?: string | null;
@@ -77,19 +96,97 @@ function countdown(target: string): string {
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
+// ─── Adapter: normalise ApiPollDetail into the PollResponse shape ────────────
+
+function pollDetailToResponse(poll: ApiPollDetail): PollResponse {
+  return {
+    market: {
+      id: poll.id,
+      title: poll.question,
+      description: poll.description,
+      structuredData: poll.structuredData as Record<string, unknown> | null,
+      // Poll API polls are always MULTIPLE_CHOICE (options-based).
+      marketType: "MULTIPLE_CHOICE",
+      flagshipEventAt: poll.eventAt,
+      // Poll API does not carry a flagshipEventType — use a safe default.
+      flagshipEventType: "RBI",
+      // Map ApiPollOption.voteCount → totalStaked for the existing VoteConsensus renderer.
+      options: poll.options.map((o) => ({
+        id: o.id,
+        label: o.label,
+        sortOrder: o.sortOrder,
+        totalStaked: o.voteCount,
+      })),
+      totalParticipants: poll.totalVotes,
+      closeAt: poll.closeAt,
+      status: poll.status === "OPEN" ? "OPEN" : poll.status === "RESOLVED" ? "RESOLVED" : "CLOSED",
+    },
+    // Translate userVote into the userMultiChoicePositions shape the rest of
+    // the screen already knows how to read.
+    userMultiChoicePositions: poll.userVote
+      ? [{ optionId: poll.userVote.optionId, amount: 0 }]
+      : [],
+    relatedExpertOpinions: [],
+  };
+}
+
+// ─── Screen ───────────────────────────────────────────────────────────────────
+
 export default function PollDetailScreen() {
   const router = useRouter();
-  const { id } = useLocalSearchParams<{ id: string }>();
-  const marketId = typeof id === "string" ? id : "";
+  const {
+    id,
+    // Legacy Market-path params (non-RBI flagship polls)
+    packClusterId,
+    sisterMarketId,
+    // Poll-API params (S62-T7: RBI MPC polls)
+    source,
+    packId,
+    sisterPollId,
+    preselect,
+  } = useLocalSearchParams<{
+    id: string;
+    packClusterId?: string;
+    sisterMarketId?: string;
+    source?: string;
+    packId?: string;
+    sisterPollId?: string;
+    preselect?: string;
+  }>();
+
+  const pollId = typeof id === "string" ? id : "";
+  // When source=poll-api the screen uses getPoll/votePoll; otherwise the
+  // existing Market API path (getMarketById/placeMultiChoicePosition) is used.
+  const isPollApi = source === "poll-api";
+
   const insets = useSafeAreaInsets();
   const [voteSheetOpen, setVoteSheetOpen] = useState(false);
 
-  const fetcher = useCallback(() => mobileApi.getMarketById(marketId), [marketId]);
-  const { data, status, error, refetch } = useApiQuery<PollResponse>(fetcher, [marketId], {
-    enabled: Boolean(marketId),
+  // Track whether the user just voted in this session (used for sister CTA).
+  const [justVoted, setJustVoted] = useState(false);
+
+  // ── Market API path (non-RBI flagship polls, unchanged) ──────────────────
+  const marketFetcher = useCallback(
+    () => mobileApi.getMarketById(pollId),
+    [pollId]
+  );
+  const marketQuery = useApiQuery<PollResponse>(marketFetcher, [pollId], {
+    enabled: Boolean(pollId) && !isPollApi,
   });
 
-  if (!marketId || status === "loading") {
+  // ── Poll API path (S62-T7 — RBI MPC polls) ───────────────────────────────
+  const pollApiFetcher = useCallback(
+    () => mobileApi.getPoll(pollId).then(({ poll }) => pollDetailToResponse(poll)),
+    [pollId]
+  );
+  const pollApiQuery = useApiQuery<PollResponse>(pollApiFetcher, [pollId], {
+    enabled: Boolean(pollId) && isPollApi,
+  });
+
+  // Unified view over whichever query is active
+  const { data, status, error, refetch } = isPollApi ? pollApiQuery : marketQuery;
+
+  if (!pollId || status === "loading") {
     return (
       <View style={styles.center}>
         <Stack.Screen options={{ title: "Poll" }} />
@@ -120,6 +217,34 @@ export default function PollDetailScreen() {
 
   const cd = market.flagshipEventAt ? countdown(market.flagshipEventAt) : null;
   const isClosed = cd === "Closed" || market.status !== "OPEN";
+
+  // S61-T2: Extract EMI impact line from structuredData if present.
+  const emiImpactLine =
+    market.structuredData &&
+    typeof market.structuredData["emiImpactLine"] === "string"
+      ? (market.structuredData["emiImpactLine"] as string)
+      : null;
+
+  // Sister-market CTA — supports both the legacy Market path (sisterMarketId)
+  // and the new Poll API path (sisterPollId). The CTA is shown after voting.
+  const effectiveSisterId = isPollApi
+    ? (typeof sisterPollId === "string" ? sisterPollId : "")
+    : (typeof sisterMarketId === "string" ? sisterMarketId : "");
+  const hasSisterCta = justVoted && effectiveSisterId.length > 0;
+
+  const goToSister = () => {
+    if (!effectiveSisterId) return;
+    if (isPollApi) {
+      const effectivePackId = typeof packId === "string" ? packId : "";
+      router.push(
+        `/finance/poll/${effectiveSisterId}?source=poll-api&packId=${effectivePackId}&sisterPollId=${pollId}` as Parameters<typeof router.push>[0]
+      );
+    } else {
+      router.push(
+        `/finance/poll/${effectiveSisterId}?packClusterId=${packClusterId ?? ""}&sisterMarketId=${pollId}` as Parameters<typeof router.push>[0]
+      );
+    }
+  };
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
@@ -162,13 +287,33 @@ export default function PollDetailScreen() {
           {market.description ? (
             <Text style={styles.description}>{market.description}</Text>
           ) : null}
+
+          {/* S61-T2: EMI impact line — only shown for Repo rate markets */}
+          {emiImpactLine ? (
+            <View style={styles.emiBox}>
+              <Text style={styles.emiLabel}>What this means for your EMI</Text>
+              <Text style={styles.emiText}>{emiImpactLine}</Text>
+            </View>
+          ) : null}
+
           <Text style={styles.metaLine}>
             {(market.totalParticipants ?? 0).toLocaleString()} {market.totalParticipants === 1 ? "vote" : "votes"}
           </Text>
         </View>
 
-        {/* Vote summary */}
-        <VoteConsensus market={market} isMultiChoice={isMultiChoice} userSide={userSide} userOptionId={userOptionId} hasVoted={hasVoted} />
+        {/* S61-T5: "Next: predict the stance" nudge — shown right after voting */}
+        {hasSisterCta && (
+          <SisterMarketCta onPress={goToSister} />
+        )}
+
+        {/* Vote summary / consensus */}
+        <VoteConsensus
+          market={market}
+          isMultiChoice={isMultiChoice}
+          userSide={userSide}
+          userOptionId={userOptionId}
+          hasVoted={hasVoted}
+        />
 
         {/* Related expert opinions */}
         <ExpertOpinionsSection opinions={opinions} />
@@ -181,12 +326,12 @@ export default function PollDetailScreen() {
             <View style={styles.votedBadge}>
               <Feather name="check-circle" size={16} color={colors.accent} />
               <Text style={styles.votedBadgeText}>
-                You voted{userSide ? ` ${userSide}` : userOptionId ? ` "${market.options?.find((o) => o.id === userOptionId)?.label}"` : ""}
+                You predicted{userSide ? ` ${userSide}` : userOptionId ? ` "${market.options?.find((o) => o.id === userOptionId)?.label}"` : ""}
               </Text>
             </View>
           ) : (
             <Pressable style={styles.voteBtn} onPress={() => setVoteSheetOpen(true)}>
-              <Text style={styles.voteBtnText}>Cast your vote</Text>
+              <Text style={styles.voteBtnText}>Predict — it&apos;s free</Text>
             </Pressable>
           )}
         </View>
@@ -196,11 +341,14 @@ export default function PollDetailScreen() {
       <PollVoteSheet
         visible={voteSheetOpen}
         onClose={() => setVoteSheetOpen(false)}
-        marketId={marketId}
+        pollId={pollId}
+        isPollApi={isPollApi}
         market={market}
         isMultiChoice={isMultiChoice}
+        preselectOptionId={typeof preselect === "string" ? preselect : null}
         onSuccess={() => {
           setVoteSheetOpen(false);
+          setJustVoted(true);
           refetch();
         }}
       />
@@ -208,7 +356,29 @@ export default function PollDetailScreen() {
   );
 }
 
-// ─── Vote Consensus ──────────────────────────────────────────────────────────
+// ─── Sister-market CTA (S61-T5) ──────────────────────────────────────────────
+
+function SisterMarketCta({ onPress }: { onPress: () => void }) {
+  return (
+    <Pressable
+      style={({ pressed }) => [styles.sisterCta, pressed && { opacity: 0.8 }]}
+      onPress={onPress}
+    >
+      <View style={styles.sisterCtaInner}>
+        <View>
+          <Text style={styles.sisterCtaLabel}>Next prediction</Text>
+          <Text style={styles.sisterCtaTitle}>Predict the stance decision</Text>
+          <Text style={styles.sisterCtaSub}>
+            Complete both questions for a full MPC prediction
+          </Text>
+        </View>
+        <Text style={styles.sisterCtaArrow}>›</Text>
+      </View>
+    </Pressable>
+  );
+}
+
+// ─── Vote Consensus (S61-T2: You vs the crowd) ───────────────────────────────
 
 function VoteConsensus({
   market,
@@ -227,47 +397,95 @@ function VoteConsensus({
     return (
       <View style={styles.card}>
         <Text style={styles.sectionLabel}>Live consensus</Text>
-        <Text style={styles.consensusEmpty}>Cast your vote to reveal the crowd consensus.</Text>
+        <Text style={styles.consensusEmpty}>Cast your prediction to reveal the crowd consensus.</Text>
       </View>
     );
   }
 
   if (isMultiChoice) {
     const options = market.options ?? [];
-    const total = options.reduce((sum, o) => sum + (o.totalStaked || 1), 0); // each vote counts as 1
+    // Use totalStaked as vote count (each free poll vote counts as 1 stake).
+    const total = options.reduce((sum, o) => sum + Math.max(o.totalStaked, 1), 0);
+
+    // Find the crowd favourite (option with highest share).
+    const crowdLeaderId = options.reduce<string | null>(
+      (best, o) => {
+        if (!best) return o.id;
+        const bestOpt = options.find((x) => x.id === best);
+        return (o.totalStaked ?? 0) > (bestOpt?.totalStaked ?? 0) ? o.id : best;
+      },
+      null
+    );
+
+    const isYouVsCrowd =
+      userOptionId !== null &&
+      crowdLeaderId !== null &&
+      userOptionId !== crowdLeaderId;
+
     return (
       <View style={styles.card}>
-        <Text style={styles.sectionLabel}>Live consensus</Text>
+        {/* S61-T2: "You vs the crowd" header */}
+        <Text style={styles.sectionLabel}>You vs the crowd</Text>
+        {isYouVsCrowd && (
+          <Text style={styles.youVsCrowdNote}>
+            You picked differently from the crowd — that&apos;s what makes it interesting.
+          </Text>
+        )}
+
         {options.map((opt) => {
-          const pct = total > 0 ? (opt.totalStaked || 1) / total : 0;
+          const pct = total > 0 ? (Math.max(opt.totalStaked, 1)) / total : 0;
           const mine = opt.id === userOptionId;
+          const isCrowdFave = opt.id === crowdLeaderId;
           return (
             <View key={opt.id} style={styles.mcRow}>
               <View style={styles.mcRowHeader}>
-                <Text style={[styles.mcLabel, mine && styles.mcLabelMine]} numberOfLines={2}>
-                  {opt.label}{mine ? " · your vote" : ""}
-                </Text>
-                <Text style={styles.mcPct}>{Math.round(pct * 100)}%</Text>
+                <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 6, marginRight: 8 }}>
+                  <Text style={[styles.mcLabel, mine && styles.mcLabelMine]} numberOfLines={2}>
+                    {opt.label}
+                  </Text>
+                  {mine && (
+                    <View style={styles.yourPickBadge}>
+                      <Text style={styles.yourPickBadgeText}>Your pick</Text>
+                    </View>
+                  )}
+                  {isCrowdFave && !mine && (
+                    <View style={styles.crowdFaveBadge}>
+                      <Text style={styles.crowdFaveBadgeText}>Crowd</Text>
+                    </View>
+                  )}
+                </View>
+                <Text style={[styles.mcPct, mine && styles.mcPctMine]}>{Math.round(pct * 100)}%</Text>
               </View>
               <View style={styles.mcBar}>
-                <View style={[styles.mcBarFill, mine && styles.mcBarFillMine, { width: `${Math.round(pct * 100)}%` }]} />
+                <View
+                  style={[
+                    styles.mcBarFill,
+                    mine && styles.mcBarFillMine,
+                    isCrowdFave && !mine && styles.mcBarFillCrowd,
+                    { width: `${Math.round(pct * 100)}%` },
+                  ]}
+                />
               </View>
             </View>
           );
         })}
+
+        {market.totalParticipants != null && market.totalParticipants > 0 && (
+          <Text style={styles.participantNote}>
+            Based on {market.totalParticipants.toLocaleString()} predictions
+          </Text>
+        )}
       </View>
     );
   }
 
-  // Binary. yesPct is a placeholder constant (50%) until the API surfaces raw
-  // counts — keeping it as a plain const avoids the Rules-of-Hooks violation
-  // we'd hit by calling useMemo after the conditional early returns above.
-  const yesPct = 0.5;
+  // Binary — use same crowd-vs-you layout.
+  const yesPct = 0.5; // placeholder until API returns raw counts for binary markets
   return (
     <View style={styles.card}>
-      <Text style={styles.sectionLabel}>Your vote</Text>
+      <Text style={styles.sectionLabel}>You vs the crowd</Text>
       <View style={[styles.sideTag, userSide === "YES" ? styles.sideTagYes : styles.sideTagNo]}>
-        <Text style={styles.sideTagText}>{userSide}</Text>
+        <Text style={styles.sideTagText}>You predicted: {userSide}</Text>
       </View>
       <Text style={[styles.consensusEmpty, { marginTop: spacing.sm }]}>
         Consensus updates as more votes come in. {Math.round(yesPct * 100)}% YES so far.
@@ -294,7 +512,7 @@ function ExpertOpinionsSection({ opinions }: { opinions: RelatedOpinion[] }) {
     <View style={styles.card}>
       <Text style={styles.sectionLabel}>What economists are saying</Text>
       <Text style={styles.helperLine}>
-        Read curated analyst calls on this event. Compare your vote to the expert view.
+        Read curated analyst calls on this event. Compare your prediction to the expert view.
       </Text>
       {opinions.map((op) => (
         <Pressable
@@ -334,28 +552,46 @@ function ExpertOpinionsSection({ opinions }: { opinions: RelatedOpinion[] }) {
 function PollVoteSheet({
   visible,
   onClose,
-  marketId,
+  pollId,
+  isPollApi,
   market,
   isMultiChoice,
+  preselectOptionId,
   onSuccess,
 }: {
   visible: boolean;
   onClose: () => void;
-  marketId: string;
+  /** The poll/market id being voted on. */
+  pollId: string;
+  /**
+   * When true, votes are submitted via `votePoll(pollId, optionId)`.
+   * When false, the legacy Market API path is used (placeMultiChoicePosition /
+   * placePosition).
+   */
+  isPollApi: boolean;
   market: PollResponse["market"];
   isMultiChoice: boolean;
+  preselectOptionId: string | null;
   onSuccess: () => void;
 }) {
   const insets = useSafeAreaInsets();
   const [selectedSide, setSelectedSide] = useState<"YES" | "NO" | null>(null);
-  const [selectedOptionId, setSelectedOptionId] = useState<string | null>(null);
+  // Honour the preselect param from MpcPollPackCard option chip tap.
+  const [selectedOptionId, setSelectedOptionId] = useState<string | null>(preselectOptionId);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Extract EMI impact line to show inside the vote sheet as well.
+  const emiImpactLine =
+    market.structuredData &&
+    typeof market.structuredData["emiImpactLine"] === "string"
+      ? (market.structuredData["emiImpactLine"] as string)
+      : null;
 
   async function submit() {
     if (submitting) return;
     if (isMultiChoice && !selectedOptionId) {
-      setError("Pick an option.");
+      setError("Pick an option to predict.");
       return;
     }
     if (!isMultiChoice && !selectedSide) {
@@ -365,17 +601,28 @@ function PollVoteSheet({
     setSubmitting(true);
     setError(null);
     try {
-      if (isMultiChoice && selectedOptionId) {
-        await mobileApi.placeMultiChoicePosition(marketId, { optionId: selectedOptionId, amount: 0 });
+      if (isPollApi) {
+        // S62-T7: RBI MPC polls — use the Poll API's free-vote endpoint.
+        if (!selectedOptionId) {
+          setError("Pick an option to predict.");
+          return;
+        }
+        await mobileApi.votePoll(pollId, selectedOptionId);
+      } else if (isMultiChoice && selectedOptionId) {
+        // Legacy Market API path (non-RBI flagship polls).
+        await mobileApi.placeMultiChoicePosition(pollId, { optionId: selectedOptionId, amount: 0 });
       } else if (selectedSide) {
-        await mobileApi.placePosition(marketId, { side: selectedSide, amount: 0 });
+        await mobileApi.placePosition(pollId, { side: selectedSide, amount: 0 });
       }
-      Alert.alert("Vote recorded", "Your vote is in. Read what economists are saying to compare your view.");
+      Alert.alert(
+        "Prediction locked in",
+        "Nice! Check the crowd consensus below and see what economists are saying."
+      );
       onSuccess();
       setSelectedSide(null);
-      setSelectedOptionId(null);
+      setSelectedOptionId(preselectOptionId);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to record vote.");
+      setError(err instanceof Error ? err.message : "Failed to record prediction.");
     } finally {
       setSubmitting(false);
     }
@@ -387,12 +634,19 @@ function PollVoteSheet({
       <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 16) }]}>
         <View style={styles.sheetHandle} />
         <View style={styles.sheetHeader}>
-          <Text style={styles.sheetTitle}>Cast your vote</Text>
+          <Text style={styles.sheetTitle}>Your prediction</Text>
           <Pressable onPress={onClose} hitSlop={12}>
             <Text style={styles.sheetClose}>Cancel</Text>
           </Pressable>
         </View>
         <Text style={styles.sheetSub} numberOfLines={3}>{market.title}</Text>
+
+        {/* S61-T2: EMI impact nudge inside the vote sheet */}
+        {emiImpactLine ? (
+          <View style={styles.sheetEmiBox}>
+            <Text style={styles.sheetEmiText}>{emiImpactLine}</Text>
+          </View>
+        ) : null}
 
         {isMultiChoice ? (
           <ScrollView style={{ maxHeight: 280 }}>
@@ -430,9 +684,9 @@ function PollVoteSheet({
         {error ? <Text style={styles.errorLine}>{error}</Text> : null}
 
         <Pressable style={[styles.submitBtn, submitting && { opacity: 0.6 }]} onPress={submit} disabled={submitting}>
-          {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitBtnText}>Submit vote</Text>}
+          {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitBtnText}>Lock in prediction</Text>}
         </Pressable>
-        <Text style={styles.disclaimer}>One vote per user — your stance is final once submitted.</Text>
+        <Text style={styles.disclaimer}>Predictions are free. One prediction per market — final once submitted.</Text>
       </View>
     </Modal>
   );
@@ -470,6 +724,70 @@ const styles = StyleSheet.create({
   description: { fontSize: 14, color: colors.textMuted, marginTop: 8, lineHeight: 20 },
   metaLine: { fontSize: 12, color: colors.textMuted, marginTop: 12, fontWeight: "600" },
 
+  // S61-T2: EMI impact box on header card
+  emiBox: {
+    marginTop: 12,
+    backgroundColor: "rgba(220, 38, 38, 0.06)",
+    borderLeftWidth: 3,
+    borderLeftColor: "#DC2626",
+    borderRadius: 6,
+    padding: 10,
+  },
+  emiLabel: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: "#991B1B",
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
+    marginBottom: 3,
+  },
+  emiText: {
+    fontSize: 13,
+    color: "#374151",
+    lineHeight: 18,
+  },
+
+  // S61-T5: Sister-market CTA card
+  sisterCta: {
+    marginHorizontal: spacing.md,
+    marginTop: spacing.md,
+    backgroundColor: "#EFF6FF",
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
+    padding: spacing.md,
+  },
+  sisterCtaInner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  sisterCtaLabel: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: "#1D4ED8",
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+    marginBottom: 2,
+  },
+  sisterCtaTitle: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#1E3A8A",
+  },
+  sisterCtaSub: {
+    fontSize: 12,
+    color: "#3B82F6",
+    marginTop: 2,
+    lineHeight: 17,
+  },
+  sisterCtaArrow: {
+    fontSize: 28,
+    color: "#3B82F6",
+    fontWeight: "600",
+    lineHeight: 32,
+  },
+
   card: {
     backgroundColor: colors.surface,
     marginHorizontal: spacing.md,
@@ -481,14 +799,56 @@ const styles = StyleSheet.create({
   helperLine: { fontSize: 12, color: colors.textMuted, marginBottom: 12, lineHeight: 17 },
   consensusEmpty: { fontSize: 13, color: colors.textMuted, fontStyle: "italic" },
 
+  // S61-T2: You vs the crowd note
+  youVsCrowdNote: {
+    fontSize: 12,
+    color: "#4338CA",
+    marginBottom: 10,
+    fontStyle: "italic",
+    lineHeight: 17,
+  },
+  participantNote: {
+    fontSize: 11,
+    color: colors.textMuted,
+    marginTop: 8,
+  },
+
   mcRow: { marginBottom: spacing.sm },
-  mcRowHeader: { flexDirection: "row", justifyContent: "space-between", marginBottom: 4 },
-  mcLabel: { fontSize: 13, color: colors.text, flex: 1, marginRight: 8 },
+  mcRowHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 },
+  mcLabel: { fontSize: 13, color: colors.text, flex: 1, marginRight: 4 },
   mcLabelMine: { fontWeight: "700", color: "#92400e" },
-  mcPct: { fontSize: 13, fontWeight: "700", color: colors.text },
+  mcPct: { fontSize: 13, fontWeight: "700", color: colors.text, minWidth: 36, textAlign: "right" },
+  mcPctMine: { color: "#92400e" },
   mcBar: { height: 6, backgroundColor: "#f3f4f6", borderRadius: 3, overflow: "hidden" },
   mcBarFill: { height: "100%", backgroundColor: colors.accent, borderRadius: 3 },
   mcBarFillMine: { backgroundColor: "#f59e0b" },
+  mcBarFillCrowd: { backgroundColor: "#6366F1" },
+
+  // Your pick + crowd fave inline badges
+  yourPickBadge: {
+    backgroundColor: "#FEF3C7",
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+  },
+  yourPickBadgeText: {
+    fontSize: 9,
+    fontWeight: "800",
+    color: "#92400e",
+    letterSpacing: 0.2,
+  },
+  crowdFaveBadge: {
+    backgroundColor: "#EEF2FF",
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+  },
+  crowdFaveBadgeText: {
+    fontSize: 9,
+    fontWeight: "800",
+    color: "#4338CA",
+    letterSpacing: 0.2,
+  },
 
   sideTag: { alignSelf: "flex-start", paddingHorizontal: 14, paddingVertical: 6, borderRadius: 999 },
   sideTagYes: { backgroundColor: "#dcfce7" },
@@ -523,7 +883,23 @@ const styles = StyleSheet.create({
   sheetHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 },
   sheetTitle: { fontSize: 18, fontWeight: "800", color: colors.text },
   sheetClose: { color: colors.accent, fontSize: 14, fontWeight: "600" },
-  sheetSub: { fontSize: 13, color: colors.textMuted, marginBottom: spacing.lg },
+  sheetSub: { fontSize: 13, color: colors.textMuted, marginBottom: spacing.md },
+
+  // S61-T2: EMI line inside the vote sheet
+  sheetEmiBox: {
+    backgroundColor: "rgba(220, 38, 38, 0.06)",
+    borderLeftWidth: 3,
+    borderLeftColor: "#DC2626",
+    borderRadius: 6,
+    padding: 10,
+    marginBottom: spacing.md,
+  },
+  sheetEmiText: {
+    fontSize: 12,
+    color: "#374151",
+    lineHeight: 17,
+  },
+
   sideRow: { flexDirection: "row", gap: spacing.md, marginBottom: spacing.md },
   sideBtn: { flex: 1, paddingVertical: 18, borderRadius: radius.md, alignItems: "center", borderWidth: 1 },
   sideYes: { backgroundColor: "#f0fdf4", borderColor: "#86efac" },
@@ -537,6 +913,6 @@ const styles = StyleSheet.create({
   mcChoiceTextSelected: { fontWeight: "700" },
   submitBtn: { backgroundColor: colors.accent, paddingVertical: 14, borderRadius: radius.md, alignItems: "center", marginTop: 8 },
   submitBtnText: { color: "#fff", fontSize: 15, fontWeight: "800" },
-  disclaimer: { fontSize: 11, color: colors.textMuted, textAlign: "center", marginTop: 8 },
+  disclaimer: { fontSize: 11, color: colors.textMuted, textAlign: "center", marginTop: 8, lineHeight: 16 },
   errorLine: { color: "#dc2626", fontSize: 12, marginBottom: 8 },
 });

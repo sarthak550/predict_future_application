@@ -22,9 +22,9 @@ import {
   FILTER_BAR_CATEGORIES,
   type CategoryKey,
 } from "@/components/category-filter-bar";
+import { GradientHeader } from "@/components/gradient-header";
 import { InsightCard } from "@/components/insight-card";
 import { NewsFeedCard } from "@/components/news-feed-card";
-import { PlatformTrustBanner } from "@/components/platform-trust-banner";
 import { SkeletonFeedCard } from "@/components/skeleton-feed-card";
 import { StreakBadge } from "@/components/streak-reminder";
 import { mobileApi } from "@/lib/api";
@@ -378,6 +378,8 @@ export default function FeedScreen() {
 
   return (
     <View style={styles.screen}>
+      <GradientHeader title="Feed" />
+
       {/* For You / All toggle pills */}
       {authStatus === "authenticated" && (
         <View style={styles.personalizationRow}>
@@ -435,9 +437,6 @@ export default function FeedScreen() {
           }
         />
       </View>
-
-      {/* Platform trust banner — compact accuracy pill below the category bar */}
-      <PlatformTrustBanner />
 
       <FlatList
         ref={listRef}
@@ -680,7 +679,7 @@ const styles = StyleSheet.create({
   tierNudgeText: {
     flex: 1,
     fontSize: 12,
-    color: "#7C3AED",
+    color: colors.accent,
     fontWeight: "600",
   },
 
@@ -700,7 +699,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     padding: 32,
   },
-  stateTitle: { fontSize: 24, fontWeight: "700", color: colors.text },
+  stateTitle: { fontSize: 24, fontWeight: "800", color: colors.text, letterSpacing: -0.5 },
   stateText: {
     marginTop: spacing.md,
     fontSize: 15,

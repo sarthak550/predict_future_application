@@ -464,7 +464,7 @@ function RoleBadge({ role }: { role: string }) {
   if (role === "MEMBER") return null;
   const config =
     role === "OWNER"
-      ? { bg: "#EEF2FF", text: "#4F46E5" }
+      ? { bg: colors.accentSoft, text: colors.accent }
       : { bg: "#FEF3C7", text: "#92400E" };
   return (
     <View style={[styles.roleBadge, { backgroundColor: config.bg }]}>

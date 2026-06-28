@@ -30,6 +30,7 @@ import { useApiQuery } from "@/hooks/useApiQuery";
 import { useInterval } from "@/hooks/useInterval";
 import { mobileApi } from "@/lib/api";
 import { useSession } from "@/providers/session-provider";
+import { GradientButton } from "@/components/gradient-button";
 import { VerifiedBadge } from "@/components/verified-badge";
 
 type UserPosition = {
@@ -881,20 +882,14 @@ function BettingSheet({
 
             {betError ? <Text style={styles.betError}>{betError}</Text> : null}
 
-            <Pressable
-              style={[styles.placeBetBtn, placing && styles.btnDisabled]}
+            {/* Primary commit CTA — GradientButton (brand gradient, highest-intent action) */}
+            <GradientButton
+              label={`${hasPosition ? "Increase Bet" : "Place Bet"}${betAmount >= 50 ? ` — ${betAmount} pts` : ""}`}
               onPress={handlePlaceBet}
               disabled={placing}
-            >
-              {placing ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={styles.placeBetText}>
-                  {hasPosition ? "Increase Bet" : "Place Bet"}{" "}
-                  {betAmount >= 50 ? `— ${betAmount} pts` : ""}
-                </Text>
-              )}
-            </Pressable>
+              loading={placing}
+              style={styles.placeBetBtn}
+            />
           </>
         )}
       </View>
@@ -2178,7 +2173,7 @@ const relatedStyles = StyleSheet.create({
     fontSize: 9,
     fontWeight: "800",
     letterSpacing: 0.4,
-    color: "#4F46E5",
+    color: colors.accent,
     textTransform: "uppercase",
   },
   title: {
@@ -3170,10 +3165,6 @@ const styles = StyleSheet.create({
   },
   placeBetBtn: {
     marginTop: spacing.lg,
-    paddingVertical: 16,
-    borderRadius: radius.md,
-    backgroundColor: colors.primary,
-    alignItems: "center",
   },
   placeBetText: {
     fontSize: 16,

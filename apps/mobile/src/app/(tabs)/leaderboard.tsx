@@ -11,6 +11,8 @@ import {
 } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 
+import { GradientHeader } from "@/components/gradient-header";
+
 import type {
   ApiLeaderboardEntry,
   ApiLeaderboardResponse,
@@ -136,56 +138,55 @@ export default function LeaderboardScreen() {
   // S12-T3: fixed controls above FlatList (time-window pills + category chips + Your Rank card)
   const fixedControls = (
     <>
-      <View style={styles.header}>
-        <Text style={styles.title}>Leaderboard</Text>
-        <Text style={styles.subtitle}>{subtitle}</Text>
-      </View>
+      <GradientHeader title="Leaderboard" subtitle={subtitle} />
 
-      {/* Time-window selector */}
-      <View style={styles.timeWindowRow}>
-        {TIME_WINDOWS.map((item) => (
-          <Pressable
-            key={item.value}
-            style={[styles.timeWindowPill, timeWindow === item.value && styles.timeWindowPillActive]}
-            onPress={() => setTimeWindow(item.value)}
-          >
-            <Text
-              style={[
-                styles.timeWindowLabel,
-                timeWindow === item.value && styles.timeWindowLabelActive,
-              ]}
+      <View style={styles.controlsPanel}>
+        {/* Time-window selector */}
+        <View style={styles.timeWindowRow}>
+          {TIME_WINDOWS.map((item) => (
+            <Pressable
+              key={item.value}
+              style={[styles.timeWindowPill, timeWindow === item.value && styles.timeWindowPillActive]}
+              onPress={() => setTimeWindow(item.value)}
             >
-              {item.label}
-            </Text>
-          </Pressable>
-        ))}
+              <Text
+                style={[
+                  styles.timeWindowLabel,
+                  timeWindow === item.value && styles.timeWindowLabelActive,
+                ]}
+              >
+                {item.label}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+
+        {/* Category filter chips */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.tabs}
+        >
+          {CATEGORIES.map((item) => (
+            <Pressable
+              key={item.label}
+              style={[styles.tab, category === item.value && styles.tabActive]}
+              onPress={() => setCategory(item.value)}
+            >
+              <Text style={[styles.tabLabel, category === item.value && styles.tabLabelActive]}>
+                {item.label}
+              </Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+
+        {/* Sticky "Your Rank" card pinned above the list */}
+        {yourRankCard}
+
+        {countLabel != null && (
+          <Text style={styles.countLabel}>{countLabel}</Text>
+        )}
       </View>
-
-      {/* Category filter chips */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.tabs}
-      >
-        {CATEGORIES.map((item) => (
-          <Pressable
-            key={item.label}
-            style={[styles.tab, category === item.value && styles.tabActive]}
-            onPress={() => setCategory(item.value)}
-          >
-            <Text style={[styles.tabLabel, category === item.value && styles.tabLabelActive]}>
-              {item.label}
-            </Text>
-          </Pressable>
-        ))}
-      </ScrollView>
-
-      {/* Sticky "Your Rank" card pinned above the list */}
-      {yourRankCard}
-
-      {countLabel != null && (
-        <Text style={styles.countLabel}>{countLabel}</Text>
-      )}
     </>
   );
 
@@ -422,12 +423,13 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
   // S12-T3: fixed controls section (not inside FlatList)
   fixedHeader: {
+    backgroundColor: colors.background,
+  },
+  // Padded wrapper for controls below GradientHeader (which owns its own horizontal padding)
+  controlsPanel: {
     paddingHorizontal: spacing.xl,
     backgroundColor: colors.background,
   },
-  header: { paddingTop: spacing.xl },
-  title: { fontSize: 28, fontWeight: "700", color: colors.text },
-  subtitle: { marginTop: spacing.xs, fontSize: 14, color: colors.textMuted },
 
   // Time-window selector
   timeWindowRow: {

@@ -42,7 +42,9 @@ const SIZE_CONFIG = {
  *
  * Composes AnalystTierBadge for the tier chip. Intended for placement next to
  * analyst names on all public-facing surfaces (feed cards, opinion cards,
- * leaderboard rows, profile headers).
+ * leaderboard rows, profile headers). This is a TEXT attribution line — the name
+ * and organization render as plain text (never on a filled/colored pill); the
+ * analyst-pillar accent lives on the surrounding card, not on the name itself.
  *
  * Rendering rules:
  * - Name is always rendered in bold.

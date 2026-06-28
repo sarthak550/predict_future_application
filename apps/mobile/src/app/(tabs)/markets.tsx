@@ -14,6 +14,8 @@ import {
   View,
 } from "react-native";
 
+import { GradientHeader } from "@/components/gradient-header";
+
 import type { ApiDiscoverGroup, ApiGroupSummary, ApiMarketSummary, ApiPollListItem } from "@predict-future/types";
 import { colors, radius, shadows, spacing } from "@predict-future/ui-tokens";
 
@@ -30,21 +32,25 @@ import { mobileApi } from "@/lib/api";
 // ── constants ───────────────────────────────────────────────────────
 
 type MarketMode = "public" | "private" | "polls";
-type StatusTab = "live" | "ended" | "settled" | "saved";
+type StatusTab = "all" | "live" | "ended" | "settled" | "saved";
 type MarketSort = "new" | "rank" | "close_at" | "volume";
 
-const STATUS_TABS: { key: StatusTab; label: string }[] = [
-  { key: "live", label: "Live" },
-  { key: "ended", label: "Cancelled" },
-  { key: "settled", label: "Settled" },
-  { key: "saved", label: "Saved" },
-];
+// Merged view-selector chips: each chip sets both statusTab + sort atomically.
+type ViewChip = {
+  label: string;
+  statusTab: StatusTab;
+  sort: MarketSort;
+};
 
-const SORT_OPTIONS: { key: MarketSort; label: string }[] = [
-  { key: "new", label: "New" },
-  { key: "rank", label: "Trending" },
-  { key: "close_at", label: "Closing Soon" },
-  { key: "volume", label: "Most Active" },
+const VIEW_CHIPS: ViewChip[] = [
+  { label: "All",          statusTab: "all",     sort: "new"      },
+  { label: "Trending",     statusTab: "live",    sort: "rank"     },
+  { label: "New",          statusTab: "live",    sort: "new"      },
+  { label: "Closing Soon", statusTab: "live",    sort: "close_at" },
+  { label: "Most Active",  statusTab: "live",    sort: "volume"   },
+  { label: "Settled",      statusTab: "settled", sort: "new"      },
+  { label: "Cancelled",    statusTab: "ended",   sort: "new"      },
+  { label: "Saved",        statusTab: "saved",   sort: "new"      },
 ];
 
 // CATEGORIES is provided by the shared CategoryFilterBar via FILTER_BAR_CATEGORIES.
@@ -55,9 +61,21 @@ const SETTLED_STATUSES = new Set(["RESOLVED", "RESOLVING"]);
 
 function matchesStatusTab(status: string | undefined, tab: StatusTab) {
   const s = status ?? "OPEN";
+  if (tab === "all") return true;
   if (tab === "live") return LIVE_STATUSES.has(s);
   if (tab === "ended") return ENDED_STATUSES.has(s);
   return SETTLED_STATUSES.has(s);
+}
+
+// "All" view ordering bucket: live/open markets first (0), then markets still
+// pending an outcome (1), with resolved/settled markets last (2). Within a bucket
+// we order by marketRankScore, which already blends popularity (participants,
+// volume, engagement) with recency — so new + popular markets float to the top.
+function allViewStatusGroup(status: string | undefined): number {
+  const s = status ?? "OPEN";
+  if (LIVE_STATUSES.has(s)) return 0;
+  if (SETTLED_STATUSES.has(s)) return 2;
+  return 1; // CLOSED / CANCELLED / AWAITING_RESOLUTION
 }
 
 // ── screen ──────────────────────────────────────────────────────────
@@ -65,7 +83,7 @@ function matchesStatusTab(status: string | undefined, tab: StatusTab) {
 export default function MarketsScreen() {
   const router = useRouter();
   const [mode, setMode] = useState<MarketMode>("public");
-  const [statusTab, setStatusTab] = useState<StatusTab>("live");
+  const [statusTab, setStatusTab] = useState<StatusTab>("all");
   const [category, setCategory] = useState<CategoryKey>("ALL");
   const [selectedGroupId, setSelectedGroupId] = useState<string>("ALL");
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -73,8 +91,6 @@ export default function MarketsScreen() {
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [sort, setSort] = useState<MarketSort>("new");
-  const [trendingMarkets, setTrendingMarkets] = useState<ApiMarketSummary[]>([]);
-  const [loadingTrending, setLoadingTrending] = useState(false);
 
   // Reset category filter when switching status tabs (category filter only applies on "live")
   useEffect(() => {
@@ -195,18 +211,6 @@ export default function MarketsScreen() {
     status: publicStatus,
     refetch: handlePublicRefresh,
   };
-
-  // ── trending carousel (top 5 by rank, parallel fetch) ────────────────
-
-  useEffect(() => {
-    if (mode !== "public") return;
-    setLoadingTrending(true);
-    mobileApi
-      .getPublicMarkets({ sort: "rank", limit: 5, status: "OPEN" })
-      .then((res) => setTrendingMarkets(res.markets.slice(0, 5)))
-      .catch(() => setTrendingMarkets([]))
-      .finally(() => setLoadingTrending(false));
-  }, [mode]);
 
   // ── discover groups (community spotlight + rail) ──────────────────
   // Single fetch of limit=8: results[0] → spotlight, results[0..7] → rail.
@@ -351,15 +355,6 @@ export default function MarketsScreen() {
       : groupsQuery.error;
   const queryStatus = mode === "public" ? publicQuery.status : groupsQuery.status;
 
-  // Status counts for badges
-  const statusCounts = useMemo(() => {
-    const live = allMarkets.filter((m) => matchesStatusTab(m.status, "live")).length;
-    const ended = allMarkets.filter((m) => matchesStatusTab(m.status, "ended")).length;
-    const settled = allMarkets.filter((m) => matchesStatusTab(m.status, "settled")).length;
-    const saved = savedMarkets.length;
-    return { live, ended, settled, saved };
-  }, [allMarkets, savedMarkets]);
-
   // Filter: status → category (client-side; no re-fetch on category change)
   const filteredMarkets = useMemo(() => {
     if (statusTab === "saved") {
@@ -372,16 +367,26 @@ export default function MarketsScreen() {
       });
     }
     let result = allMarkets.filter((m) => matchesStatusTab(m.status, statusTab));
-    if (mode === "public" && statusTab === "live" && category !== "ALL") {
+    if (mode === "public" && (statusTab === "live" || statusTab === "all") && category !== "ALL") {
       result = result.filter((m) => (m.category as string) === category);
     }
     // Defensive dedupe: even if upstream returns duplicates, FlatList must see unique keys.
     const seen = new Set<string>();
-    return result.filter((m) => {
+    const deduped = result.filter((m) => {
       if (seen.has(m.id)) return false;
       seen.add(m.id);
       return true;
     });
+    // "All" view: live/new markets at the top, resolved/settled at the bottom,
+    // ranked within each bucket by popularity + recency (marketRankScore).
+    if (statusTab === "all") {
+      deduped.sort((a, b) => {
+        const groupDelta = allViewStatusGroup(a.status) - allViewStatusGroup(b.status);
+        if (groupDelta !== 0) return groupDelta;
+        return (b.marketRankScore ?? 0) - (a.marketRankScore ?? 0);
+      });
+    }
+    return deduped;
   }, [allMarkets, savedMarkets, statusTab, category, mode]);
 
   const handleRefresh = useCallback(() => {
@@ -428,10 +433,28 @@ export default function MarketsScreen() {
 
   return (
     <View style={styles.screen}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.title}>Explore</Text>
-      </View>
+      <GradientHeader
+        title="Explore"
+        right={
+          <View style={styles.searchRow}>
+            <Feather name="search" size={16} color="rgba(255,255,255,0.85)" />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search markets..."
+              placeholderTextColor="rgba(255,255,255,0.6)"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+            />
+            {searchLoading && mode === "public" ? (
+              <ActivityIndicator size="small" color="rgba(255,255,255,0.85)" />
+            ) : searchQuery.length > 0 ? (
+              <Pressable onPress={() => setSearchQuery("")} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Feather name="x" size={16} color="rgba(255,255,255,0.85)" />
+              </Pressable>
+            ) : null}
+          </View>
+        }
+      />
 
       {/* ── Level 1: Public / Private / Polls toggle ── */}
       <View style={styles.modeRow}>
@@ -461,26 +484,7 @@ export default function MarketsScreen() {
         </Pressable>
       </View>
 
-      {/* ── Search bar (all modes) ── */}
-      <View style={styles.searchRow}>
-        <Feather name="search" size={16} color={colors.textMuted} />
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Search markets..."
-          placeholderTextColor={colors.textMuted}
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-        />
-        {searchLoading && mode === "public" ? (
-          <ActivityIndicator size="small" color={colors.textMuted} />
-        ) : searchQuery.length > 0 ? (
-          <Pressable onPress={() => setSearchQuery("")} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-            <Feather name="x" size={16} color={colors.textMuted} />
-          </Pressable>
-        ) : null}
-      </View>
-
-      {/* ── Sort control row (public/Explore mode, hidden in search mode) ── */}
+      {/* ── Merged view-selector chip row (public mode, hidden in search mode) ── */}
       {mode === "public" && !isSearchMode ? (
         <ScrollView
           horizontal
@@ -488,20 +492,26 @@ export default function MarketsScreen() {
           style={styles.sortScroll}
           contentContainerStyle={styles.sortRow}
         >
-          {SORT_OPTIONS.map((opt) => (
-            <Pressable
-              key={opt.key}
-              style={[styles.sortChip, sort === opt.key && styles.sortChipActive]}
-              onPress={() => setSort(opt.key)}
-            >
-              <Text
-                numberOfLines={1}
-                style={[styles.sortChipText, sort === opt.key && styles.sortChipTextActive]}
+          {VIEW_CHIPS.map((chip) => {
+            const isLiveView = chip.statusTab === "live";
+            const active = isLiveView
+              ? statusTab === "live" && sort === chip.sort
+              : statusTab === chip.statusTab;
+            return (
+              <Pressable
+                key={chip.label}
+                style={[styles.sortChip, active && styles.sortChipActive]}
+                onPress={() => { setStatusTab(chip.statusTab); setSort(chip.sort); }}
               >
-                {opt.label}
-              </Text>
-            </Pressable>
-          ))}
+                <Text
+                  numberOfLines={1}
+                  style={[styles.sortChipText, active && styles.sortChipTextActive]}
+                >
+                  {chip.label}
+                </Text>
+              </Pressable>
+            );
+          })}
         </ScrollView>
       ) : null}
 
@@ -570,41 +580,14 @@ export default function MarketsScreen() {
         ) : null
       ) : null}
 
-      {/* ── Level 2: Status tabs (Live / Ended / Settled) — hidden in search mode ── */}
-      {!isSearchMode ? (
-        <View style={styles.statusRow}>
-          {STATUS_TABS.map((tab) => {
-            const count = statusCounts[tab.key];
-            const active = statusTab === tab.key;
-            return (
-              <Pressable
-                key={tab.key}
-                style={[styles.statusTab, active && styles.statusTabActive]}
-                onPress={() => setStatusTab(tab.key)}
-              >
-                <Text style={[styles.statusTabText, active && styles.statusTabTextActive]}>
-                  {tab.label}
-                </Text>
-                {count > 0 ? (
-                  <View style={[styles.statusBadge, active && styles.statusBadgeActive]}>
-                    <Text style={[styles.statusBadgeText, active && styles.statusBadgeTextActive]}>
-                      {count}
-                    </Text>
-                  </View>
-                ) : null}
-              </Pressable>
-            );
-          })}
-        </View>
-      ) : null}
-
-      {/* ── Sticky category filter bar (public Explore mode, live tab, not searching) ── */}
-      {mode === "public" && statusTab === "live" && !isSearchMode ? (
+      {/* ── Category filter bar (public Explore mode, All/Live tabs, not searching) ──
+          Rendered non-elevated so it shares the screen background with the
+          view-selector row above — the two pill rows read as one filter system. */}
+      {mode === "public" && (statusTab === "all" || statusTab === "live") && !isSearchMode ? (
         <CategoryFilterBar
           selected={category}
           onSelect={setCategory}
           categories={FILTER_BAR_CATEGORIES}
-          elevated
         />
       ) : null}
 
@@ -625,71 +608,6 @@ export default function MarketsScreen() {
               <Text style={styles.discoverSectionHeader}>Discover communities</Text>
               <CommunitiesList groups={discoverGroups} limit={5} />
             </View>
-          ) : !isSearchMode && mode === "public" && statusTab === "live" ? (
-            <>
-              {/* Trending carousel — hero cards (S31-T3) */}
-              {(trendingMarkets.length > 0 || loadingTrending) ? (
-                <View style={styles.trendingShelf}>
-                  <View style={styles.trendingHeader}>
-                    <Feather name="trending-up" size={15} color={colors.accent} />
-                    <Text style={styles.trendingTitle}>Trending Markets</Text>
-                  </View>
-                  {loadingTrending ? (
-                    <ActivityIndicator color={colors.accent} style={{ marginVertical: 8 }} />
-                  ) : (
-                    <ScrollView
-                      horizontal
-                      showsHorizontalScrollIndicator={false}
-                      contentContainerStyle={styles.trendingScroll}
-                    >
-                      {trendingMarkets.map((m) => {
-                        const yesPool = m.yesPool ?? 0;
-                        const noPool = m.noPool ?? 0;
-                        const total = yesPool + noPool;
-                        const yesPct = total > 0 ? yesPool / total : (m.externalProbability ?? 0.5);
-                        return (
-                          <Pressable
-                            key={m.id}
-                            style={({ pressed }) => [styles.heroCard, pressed && { opacity: 0.85 }]}
-                            onPress={() => router.push(`/market/${m.id}`)}
-                          >
-                            <View style={styles.heroCardHeader}>
-                              {m.category ? (
-                                <View style={styles.trendingCatBadge}>
-                                  <Text style={styles.trendingCatText}>{m.category}</Text>
-                                </View>
-                              ) : null}
-                              <Text style={styles.heroCardPlayers}>
-                                {m.totalParticipants ?? 0} players
-                              </Text>
-                            </View>
-                            <Text style={styles.heroCardTitle} numberOfLines={2}>{m.title}</Text>
-                            {m.marketType === "NUMERIC" ? (
-                              <Text style={styles.heroCardProb}>
-                                {m.averageNumericValue != null
-                                  ? `~${Number(m.averageNumericValue).toFixed(1)}${m.unit ? ` ${m.unit}` : ""}`
-                                  : "—"}
-                              </Text>
-                            ) : (
-                              <View style={styles.heroCardProbSection}>
-                                <View style={styles.heroCardBar}>
-                                  <View style={[styles.heroCardBarYes, { flex: Math.max(0.04, yesPct) }]} />
-                                  <View style={[styles.heroCardBarNo, { flex: Math.max(0.04, 1 - yesPct) }]} />
-                                </View>
-                                <View style={styles.heroCardProbRow}>
-                                  <Text style={styles.heroCardYesLabel}>YES {Math.round(yesPct * 100)}%</Text>
-                                  <Text style={styles.heroCardNoLabel}>NO {Math.round((1 - yesPct) * 100)}%</Text>
-                                </View>
-                              </View>
-                            )}
-                          </Pressable>
-                        );
-                      })}
-                    </ScrollView>
-                  )}
-                </View>
-              ) : null}
-            </>
           ) : null
         }
         onEndReachedThreshold={0.3}
@@ -1179,7 +1097,7 @@ const pollStyles = StyleSheet.create({
     borderRadius: radius.pill,
     backgroundColor: "#EEF2FF",
   },
-  categoryPillText: { fontSize: 10, fontWeight: "700", color: "#4F46E5", letterSpacing: 0.3 },
+  categoryPillText: { fontSize: 10, fontWeight: "700", color: colors.accent, letterSpacing: 0.3 },
   statusPill: {
     flexDirection: "row", alignItems: "center", gap: 4,
     paddingHorizontal: spacing.sm, paddingVertical: 3,
@@ -1286,12 +1204,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: spacing.xl,
     paddingTop: spacing.xl,
-    paddingBottom: spacing.sm,
+    paddingBottom: spacing.xs,
   },
+  // Used by the Polls sub-screen header title
   title: {
-    fontSize: 28,
-    fontWeight: "700",
+    fontSize: 22,
+    fontWeight: "800",
     color: colors.text,
+    letterSpacing: -0.5,
   },
   centerState: {
     flex: 1,
@@ -1330,25 +1250,25 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
 
-  // ── Search bar ───────────────────────────────────────────────────
+  // ── Search bar (white-on-gradient pill, lives inside GradientHeader right slot) ──
 
   searchRow: {
+    flex: 1,
+    maxWidth: 220,
     flexDirection: "row",
     alignItems: "center",
-    marginHorizontal: spacing.xl,
-    marginTop: spacing.md,
     paddingHorizontal: spacing.md,
-    paddingVertical: 10,
+    paddingVertical: 7,
     gap: spacing.sm,
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    borderRadius: 999,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: "rgba(255,255,255,0.35)",
   },
   searchInput: {
     flex: 1,
     fontSize: 14,
-    color: colors.text,
+    color: "#FFFFFF",
     paddingVertical: 0,
   },
 
@@ -1446,29 +1366,38 @@ const styles = StyleSheet.create({
     flexGrow: 0,
     flexShrink: 0,
   },
+  // View-selector pills — kept visually identical to CategoryFilterBar's pills
+  // (category-filter-bar.tsx) so the two stacked filter rows read as one system.
   sortRow: {
-    paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.sm,
-    gap: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: 9,
+    gap: 8,
     alignItems: "center",
   },
   sortChip: {
     flexShrink: 0,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: 10,
-    borderRadius: radius.pill,
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1.5,
-    borderColor: "#CBD5E1",
+    height: 34,
+    paddingHorizontal: 14,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   sortChipActive: {
-    backgroundColor: "#0F172A",
-    borderColor: "#0F172A",
+    backgroundColor: colors.accent,
+    borderColor: colors.accent,
+    shadowColor: colors.accent,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 3,
   },
   sortChipText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "600",
-    color: "#0F172A",
+    color: colors.textMuted,
   },
   sortChipTextActive: {
     color: "#FFFFFF",
@@ -1519,149 +1448,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "600",
     color: colors.accent,
-  },
-
-  // ── Trending carousel (S31-T3) ────────────────────────────────────
-
-  trendingShelf: {
-    marginBottom: spacing.md,
-  },
-  trendingHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    marginBottom: spacing.sm,
-  },
-  trendingTitle: {
-    fontSize: 15,
-    fontWeight: "800",
-    color: colors.text,
-  },
-  trendingScroll: {
-    gap: spacing.sm,
-    paddingBottom: spacing.xs,
-  },
-  heroCard: {
-    width: 220,
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    padding: spacing.lg,
-    borderWidth: 1.5,
-    borderColor: colors.accent + "33",
-    gap: spacing.sm,
-  },
-  heroCardHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  trendingCatBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: radius.pill,
-    backgroundColor: "#EEF2FF",
-  },
-  trendingCatText: {
-    fontSize: 9,
-    fontWeight: "800",
-    letterSpacing: 0.5,
-    color: "#4F46E5",
-    textTransform: "uppercase",
-  },
-  heroCardPlayers: {
-    fontSize: 10,
-    color: colors.textMuted,
-    fontWeight: "600",
-  },
-  heroCardTitle: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: colors.text,
-    lineHeight: 21,
-  },
-  heroCardProb: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: colors.accent,
-  },
-  heroCardProbSection: {
-    gap: 4,
-  },
-  heroCardBar: {
-    flexDirection: "row",
-    height: 7,
-    borderRadius: 4,
-    overflow: "hidden",
-    gap: 1,
-  },
-  heroCardBarYes: {
-    backgroundColor: "#16A34A",
-    borderRadius: 4,
-  },
-  heroCardBarNo: {
-    backgroundColor: "#DC2626",
-    borderRadius: 4,
-  },
-  heroCardProbRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-  },
-  heroCardYesLabel: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: "#16A34A",
-  },
-  heroCardNoLabel: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: "#DC2626",
-  },
-
-  // ── Level 2: status tabs ──────────────────────────────────────────
-
-  statusRow: {
-    flexDirection: "row",
-    marginHorizontal: spacing.xl,
-    marginTop: spacing.md,
-    gap: spacing.xs,
-  },
-  statusTab: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    paddingVertical: 10,
-    borderRadius: radius.md,
-    backgroundColor: "#F1F5F9",
-  },
-  statusTabActive: {
-    backgroundColor: colors.text,
-  },
-  statusTabText: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: colors.textMuted,
-  },
-  statusTabTextActive: {
-    color: "#fff",
-  },
-  statusBadge: {
-    backgroundColor: "#E2E8F0",
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: 10,
-  },
-  statusBadgeActive: {
-    backgroundColor: "rgba(255,255,255,0.25)",
-  },
-  statusBadgeText: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: colors.textMuted,
-  },
-  statusBadgeTextActive: {
-    color: "#fff",
   },
 
   // ── List ──────────────────────────────────────────────────────────

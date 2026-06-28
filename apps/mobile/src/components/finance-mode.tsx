@@ -22,9 +22,9 @@ import type {
   ApiFinanceExpertSentiment,
   ApiFinanceMarketsResponse,
   ApiInstrumentCatalogItem,
-  ApiMarketSummary,
   ApiMyCallsDigest,
   ApiNewsFeedItem,
+  ApiPoll,
   ApiTopExpertEntry,
   ApiUserProfile,
   ApiVerifiedCall,
@@ -38,8 +38,6 @@ import { ExpertOpinionCard } from "@/components/expert-opinion-card";
 import { CombinedAnalystCard } from "@/components/combined-analyst-card";
 import { mobileApi } from "@/lib/api";
 import { withRetry } from "@/lib/retry";
-import { getExpertInitials, getExpertInitialsColor } from "@/utils/expertAvatar";
-import { AnalystTierBadge } from "@/components/analyst-tier-badge";
 import { isNSEHoliday } from "@/constants/nse-holidays-2026";
 
 const FOLLOWED_ANALYSTS_KEY = "finance:followedAnalysts";
@@ -92,33 +90,6 @@ function getMarketWindow(): MarketWindow {
   return "after-hours"; // 20:00+
 }
 
-const MARKET_WINDOW_COPY: Record<MarketWindow, { header: string; subtitle: string }> = {
-  "pre-market": {
-    header: "Pre-market briefing",
-    subtitle: "What experts are saying before the bell",
-  },
-  live: {
-    header: "Live now · markets open",
-    subtitle: "Calls made during today's session",
-  },
-  "closing-wrap": {
-    header: "Closing wrap",
-    subtitle: "How today's calls played out",
-  },
-  "after-hours": {
-    header: "After hours",
-    subtitle: "Analyst takes for tomorrow",
-  },
-  weekend: {
-    header: "Weekend wrap",
-    subtitle: "Calls to watch when markets reopen",
-  },
-  holiday: {
-    header: "Markets closed today",
-    subtitle: "Expert takes for the next session",
-  },
-};
-
 // ─── Flagship Events Carousel (S32-T2) ────────────────────────────────────────
 
 const EVENT_TYPE_COLORS: Record<string, string> = {
@@ -141,6 +112,353 @@ function getCountdownLabel(flagshipEventAt: string): string {
   const diffWeeks = Math.round(diffDays / 7);
   return `in ${diffWeeks}w`;
 }
+
+// ─── RBI MPC Poll-Pack Hero Card (S62-T7) ────────────────────────────────────
+// Renders when the Poll API returns an open RBI MPC pack (two ApiPoll entries
+// sharing a packId). Data comes from getPollPacks({ status: "open" }), NOT
+// from the Market/flagship API. Voting routes through votePoll().
+
+const MPC_RBI_COLOR = "#DC2626"; // same as EVENT_TYPE_COLORS["RBI"]
+
+function MpcOptionChips({
+  poll,
+  onPickOption,
+}: {
+  poll: ApiPoll;
+  onPickOption: (pollId: string, optionId: string) => void;
+}) {
+  const options = poll.options ?? [];
+  if (options.length === 0) return null;
+
+  const totalVotes = poll.totalVotes > 0 ? poll.totalVotes : options.reduce((s, o) => s + o.voteCount, 0);
+
+  return (
+    <View style={mpcStyles.chipsWrap}>
+      {options.map((opt) => {
+        const pct = totalVotes > 0 ? Math.round((opt.voteCount / totalVotes) * 100) : 0;
+        const maxPct = totalVotes > 0
+          ? Math.max(...options.map((o) => Math.round((o.voteCount / totalVotes) * 100)))
+          : 0;
+        const isLeading = totalVotes > 0 && pct === maxPct;
+        return (
+          <Pressable
+            key={opt.id}
+            style={({ pressed }) => [
+              mpcStyles.chip,
+              isLeading && mpcStyles.chipLeading,
+              pressed && { opacity: 0.75 },
+            ]}
+            onPress={() => onPickOption(poll.id, opt.id)}
+            accessibilityRole="button"
+            accessibilityLabel={`Predict ${opt.label}${pct > 0 ? `, ${pct}% crowd` : ""}`}
+          >
+            <Text style={[mpcStyles.chipText, isLeading && mpcStyles.chipTextLeading]} numberOfLines={1}>
+              {opt.label}
+            </Text>
+            {totalVotes > 0 && (
+              <Text style={[mpcStyles.chipPct, isLeading && mpcStyles.chipPctLeading]}>
+                {pct}%
+              </Text>
+            )}
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+// Q-badge accent colors rotate through the first 3 questions (Repo / CRR / SLR).
+const Q_BADGE_COLORS: Array<{ bg: string; border: string; text: string }> = [
+  { bg: "#FEF2F2", border: "#FECACA", text: "#991B1B" }, // red  — Repo
+  { bg: "#EFF6FF", border: "#BFDBFE", text: "#1E40AF" }, // blue — CRR
+  { bg: "#F0FDF4", border: "#BBF7D0", text: "#166534" }, // green — SLR
+];
+
+/**
+ * RBI MPC pack card — renders each poll in the pack as a prediction question
+ * (Q1 = Repo Rate, Q2 = CRR, Q3 = SLR). Defaults collapsed; tap header to expand.
+ */
+function MpcPollPackCard({ polls }: { polls: ApiPoll[] }) {
+  const router = useRouter();
+  const [collapsed, setCollapsed] = useState(true);
+
+  // Use the first poll's eventAt as the canonical meeting date.
+  const firstPoll = polls[0];
+  const meetingIso = firstPoll.eventAt ?? firstPoll.closeAt;
+  const countdown = getCountdownLabel(meetingIso);
+  const meetingDate = new Date(meetingIso).toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+
+  const packId = firstPoll.packId ?? "";
+
+  const navigateToPoll = (pollId: string, optionId?: string) => {
+    // Pass all other poll ids as sisterPollId (using the first non-matching one for compat).
+    const sisterPollId = polls.find((p) => p.id !== pollId)?.id ?? "";
+    const path = `/finance/poll/${pollId}?source=poll-api&packId=${packId}&sisterPollId=${sisterPollId}${optionId ? `&preselect=${optionId}` : ""}`;
+    router.push(path as Parameters<typeof router.push>[0]);
+  };
+
+  const totalParticipants = Math.max(...polls.map((p) => p.totalVotes));
+
+  return (
+    <View style={mpcStyles.card}>
+      {/* Tappable header — always visible; collapses/expands the card */}
+      <Pressable
+        onPress={() => setCollapsed((c) => !c)}
+        style={mpcStyles.collapsibleHeader}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: !collapsed }}
+        accessibilityLabel={collapsed ? "Predict the RBI Decision — tap to expand" : "Predict the RBI Decision — tap to collapse"}
+      >
+        {/* Top row: RBI chip + countdown + date + chevron */}
+        <View style={mpcStyles.headerRow}>
+          <View style={mpcStyles.rbiChip}>
+            <Text style={mpcStyles.rbiChipText}>RBI MPC</Text>
+          </View>
+          <View style={mpcStyles.countdownChip}>
+            <Text style={mpcStyles.countdownText}>{countdown}</Text>
+          </View>
+          <Text style={mpcStyles.meetingDate}>{meetingDate}</Text>
+          <Text style={mpcStyles.collapseChevron}>{collapsed ? "▸" : "▾"}</Text>
+        </View>
+
+        {/* Title row — always visible */}
+        <Text style={mpcStyles.heroTitle}>Predict the RBI Decision</Text>
+
+        {/* Collapsed: one-line teaser */}
+        {collapsed && (
+          <Text style={mpcStyles.collapsedTeaser} numberOfLines={1}>
+            Repo · CRR · SLR — 3 quick predictions
+          </Text>
+        )}
+      </Pressable>
+
+      {/* Expanded content */}
+      {!collapsed && (
+        <>
+          <Text style={mpcStyles.heroSub}>
+            {totalParticipants > 0
+              ? `${totalParticipants.toLocaleString()} predictions so far — cast yours free`
+              : "Be among the first to predict — free, no strings attached"}
+          </Text>
+
+          {/* Question blocks — one per poll in the pack */}
+          {polls.map((poll, idx) => {
+            const accent = Q_BADGE_COLORS[idx % Q_BADGE_COLORS.length];
+            return (
+              <View key={poll.id}>
+                <View style={mpcStyles.divider} />
+                <Pressable
+                  onPress={() => navigateToPoll(poll.id)}
+                  style={mpcStyles.questionBlock}
+                >
+                  <View style={mpcStyles.questionHeader}>
+                    <View style={[mpcStyles.qBadge, { backgroundColor: accent.bg, borderColor: accent.border }]}>
+                      <Text style={[mpcStyles.qBadgeText, { color: accent.text }]}>Q{idx + 1}</Text>
+                    </View>
+                    <Text style={mpcStyles.questionTitle} numberOfLines={2}>{poll.question}</Text>
+                  </View>
+                  {poll.description ? (
+                    <Text style={mpcStyles.questionDescription}>{poll.description}</Text>
+                  ) : null}
+                  <MpcOptionChips
+                    poll={poll}
+                    onPickOption={(pId, oId) => navigateToPoll(pId, oId)}
+                  />
+                </Pressable>
+              </View>
+            );
+          })}
+
+          {/* Footer CTA */}
+          <Pressable
+            style={mpcStyles.ctaBtn}
+            onPress={() => navigateToPoll(firstPoll.id)}
+          >
+            <Text style={mpcStyles.ctaBtnText}>Predict now — it&apos;s free</Text>
+          </Pressable>
+        </>
+      )}
+    </View>
+  );
+}
+
+const mpcStyles = StyleSheet.create({
+  // ── Predict card ──────────────────────────────────────────────────────────
+  card: {
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.xs,
+    marginBottom: spacing.xs,
+    backgroundColor: "#fff",
+    borderRadius: radius.lg,
+    borderWidth: 1.5,
+    borderColor: "#FECACA",
+    padding: spacing.md,
+    shadowColor: MPC_RBI_COLOR,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.10,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  rbiChip: {
+    backgroundColor: MPC_RBI_COLOR,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radius.pill,
+  },
+  rbiChipText: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: "#fff",
+    letterSpacing: 0.6,
+  },
+  countdownChip: {
+    backgroundColor: "#FEF2F2",
+    borderWidth: 1,
+    borderColor: "#FECACA",
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: radius.pill,
+  },
+  countdownText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#991B1B",
+  },
+  meetingDate: {
+    fontSize: 11,
+    color: "#6B7280",
+    marginLeft: "auto",
+  },
+  collapseChevron: {
+    fontSize: 13,
+    color: "#9CA3AF",
+    marginLeft: spacing.xs,
+  },
+  collapsibleHeader: {
+    // No extra padding — card already has spacing.md padding
+  },
+  collapsedTeaser: {
+    fontSize: 12,
+    color: "#6B7280",
+    marginTop: 3,
+    lineHeight: 17,
+  },
+  heroTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#111827",
+    lineHeight: 24,
+  },
+  heroSub: {
+    fontSize: 12,
+    color: "#6B7280",
+    marginTop: 4,
+    lineHeight: 17,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: "#F3F4F6",
+    marginVertical: spacing.sm,
+  },
+  questionBlock: {
+    gap: 8,
+  },
+  questionHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+  },
+  qBadge: {
+    borderWidth: 1,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginTop: 1,
+    flexShrink: 0,
+  },
+  qBadgeText: {
+    fontSize: 9,
+    fontWeight: "800",
+    letterSpacing: 0.3,
+  },
+  questionTitle: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#1F2937",
+    flex: 1,
+    lineHeight: 18,
+  },
+  questionDescription: {
+    fontSize: 11,
+    color: "#6B7280",
+    lineHeight: 16,
+    fontStyle: "italic",
+  },
+  chipsWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    marginTop: 4,
+  },
+  chip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+  },
+  chipLeading: {
+    backgroundColor: "#FEF2F2",
+    borderColor: "#FECACA",
+  },
+  chipText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#374151",
+  },
+  chipTextLeading: {
+    color: "#991B1B",
+    fontWeight: "700",
+  },
+  chipPct: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#9CA3AF",
+  },
+  chipPctLeading: {
+    color: "#DC2626",
+  },
+  ctaBtn: {
+    marginTop: spacing.md,
+    backgroundColor: MPC_RBI_COLOR,
+    paddingVertical: 12,
+    borderRadius: radius.md,
+    alignItems: "center",
+  },
+  ctaBtnText: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#fff",
+    letterSpacing: 0.2,
+  },
+
+});
+
+// ─── END MPC Poll-Pack Hero Card ──────────────────────────────────────────────
 
 function FlagshipProbabilityBar({
   market,
@@ -325,286 +643,6 @@ function formatDateRange(startsAt: string, endsAt: string): string {
   return `${fmt(startsAt)} – ${fmt(endsAt)}`;
 }
 
-function formatSentimentDelta(current: number, previous: number | null): string | null {
-  if (previous === null) return null;
-  const delta = current - previous;
-  if (delta === 0) return "— same as yesterday";
-  const sign = delta > 0 ? "▲" : "▼";
-  return `${sign} ${Math.abs(delta)}pts vs yesterday`;
-}
-
-function SentimentCard({
-  data,
-  onPress,
-}: {
-  data: NonNullable<ApiFinanceMarketsResponse["sentimentToday"]>;
-  onPress?: () => void;
-}) {
-  const router = useRouter();
-  const leanColor =
-    data.leanLabel === "Bullish" ? "#16a34a" : data.leanLabel === "Bearish" ? "#dc2626" : "#6b7280";
-
-  const deltaLabel = formatSentimentDelta(data.yesPercent, data.previousDayScore);
-  const isNew = data.previousDayScore === null;
-  const deltaPositive = deltaLabel?.startsWith("▲");
-  const deltaColor = deltaPositive ? "#16a34a" : deltaLabel?.startsWith("▼") ? "#dc2626" : "#6b7280";
-
-  const handlePress = () => {
-    if (onPress) {
-      onPress();
-    } else {
-      router.push(`/market/${data.marketId}` as Parameters<typeof router.push>[0]);
-    }
-  };
-
-  return (
-    <Pressable style={financeStyles.sentimentCard} onPress={handlePress}>
-      <Text style={financeStyles.sentimentTitle}>Today&apos;s Sentiment</Text>
-      <Text style={financeStyles.sentimentMarketTitle} numberOfLines={2}>
-        {data.marketTitle}
-      </Text>
-      <View style={financeStyles.sentimentGaugeRow}>
-        <View style={financeStyles.gaugeTrack}>
-          <View
-            style={[
-              financeStyles.gaugeFill,
-              { width: `${data.yesPercent}%`, backgroundColor: leanColor },
-            ]}
-          />
-        </View>
-        <Text style={[financeStyles.gaugeLabel, { color: leanColor }]}>
-          {data.yesPercent}%
-        </Text>
-      </View>
-      <View style={financeStyles.sentimentFooterRow}>
-        <View style={[financeStyles.leanChip, { backgroundColor: leanColor + "20", borderColor: leanColor + "60" }]}>
-          <Text style={[financeStyles.leanChipText, { color: leanColor }]}>
-            {data.leanLabel} · {data.totalVotes.toLocaleString()} votes
-          </Text>
-        </View>
-        {isNew ? (
-          <View style={financeStyles.newBadge}>
-            <Text style={financeStyles.newBadgeText}>new</Text>
-          </View>
-        ) : deltaLabel ? (
-          <Text style={[financeStyles.deltaText, { color: deltaColor }]}>{deltaLabel}</Text>
-        ) : null}
-      </View>
-      <Text style={financeStyles.sentimentSeeOpinions}>See opinions →</Text>
-    </Pressable>
-  );
-}
-
-function AnalystSentimentCard({
-  sentiment,
-  onPress,
-}: {
-  sentiment: ApiFinanceExpertSentiment;
-  onPress?: () => void;
-}) {
-  if (sentiment.totalCount === 0) {
-    return (
-      <View style={financeStyles.analystSentimentCard}>
-        <Text style={financeStyles.analystSentimentTitle}>This Week's Analyst Sentiment</Text>
-        <Text style={financeStyles.analystSentimentEmpty}>No analyst opinions in the past 7 days</Text>
-      </View>
-    );
-  }
-
-  const dominantColor =
-    sentiment.dominantLean === "BULLISH"
-      ? "#06D6A0"
-      : sentiment.dominantLean === "BEARISH"
-        ? "#E84855"
-        : sentiment.dominantLean === "MIXED"
-          ? "#F59E0B"
-          : "#6B7280";
-
-  return (
-    <Pressable style={financeStyles.analystSentimentCard} onPress={onPress}>
-      <Text style={financeStyles.analystSentimentTitle}>Today's Analyst Sentiment</Text>
-
-      {/* Count chips row */}
-      <View style={financeStyles.analystCountRow}>
-        <View style={financeStyles.analystCountChip}>
-          <Text style={financeStyles.analystCountNum}>{sentiment.bullishCount}</Text>
-          <Text style={[financeStyles.analystCountLabel, { color: "#06D6A0" }]}>Bullish</Text>
-        </View>
-        <View style={financeStyles.analystCountDivider} />
-        <View style={financeStyles.analystCountChip}>
-          <Text style={financeStyles.analystCountNum}>{sentiment.bearishCount}</Text>
-          <Text style={[financeStyles.analystCountLabel, { color: "#E84855" }]}>Bearish</Text>
-        </View>
-        <View style={financeStyles.analystCountDivider} />
-        <View style={financeStyles.analystCountChip}>
-          <Text style={financeStyles.analystCountNum}>{sentiment.neutralCount}</Text>
-          <Text style={[financeStyles.analystCountLabel, { color: "#6B7280" }]}>Neutral</Text>
-        </View>
-      </View>
-
-      {/* Gauge bar */}
-      <View style={financeStyles.analystGaugeTrack}>
-        {sentiment.bullishPercent > 0 && (
-          <View
-            style={[
-              financeStyles.analystGaugeSegment,
-              { flex: sentiment.bullishPercent, backgroundColor: "#06D6A0" },
-            ]}
-          />
-        )}
-        {sentiment.bearishPercent > 0 && (
-          <View
-            style={[
-              financeStyles.analystGaugeSegment,
-              { flex: sentiment.bearishPercent, backgroundColor: "#E84855" },
-            ]}
-          />
-        )}
-        {sentiment.neutralPercent > 0 && (
-          <View
-            style={[
-              financeStyles.analystGaugeSegment,
-              { flex: sentiment.neutralPercent, backgroundColor: "#D1D5DB" },
-            ]}
-          />
-        )}
-      </View>
-
-      {/* Dominant lean chip */}
-      <View style={financeStyles.analystFooterRow}>
-        <View
-          style={[
-            financeStyles.analystLeanChip,
-            { backgroundColor: dominantColor + "20", borderColor: dominantColor + "60" },
-          ]}
-        >
-          <Text style={[financeStyles.analystLeanChipText, { color: dominantColor }]}>
-            {sentiment.dominantLean}
-          </Text>
-        </View>
-        <Text style={financeStyles.analystSubtext}>
-          Based on {sentiment.totalCount} expert {sentiment.totalCount === 1 ? "opinion" : "opinions"} in the last 7 days
-        </Text>
-      </View>
-
-      <Text style={financeStyles.analystSeeOpinions}>See opinions →</Text>
-    </Pressable>
-  );
-}
-
-function MarketChip({ market }: { market: ApiMarketSummary }) {
-  const router = useRouter();
-  const isOpen = market.status === "OPEN";
-  const closeStr = market.closeAt
-    ? `Closes ${new Date(market.closeAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}`
-    : null;
-  return (
-    <Pressable
-      style={[financeStyles.marketChip, !isOpen && financeStyles.marketChipClosed]}
-      onPress={() => router.push(`/market/${market.id}` as Parameters<typeof router.push>[0])}
-    >
-      <Text style={financeStyles.marketChipTitle} numberOfLines={2}>
-        {market.title.length > 50 ? market.title.slice(0, 47) + "..." : market.title}
-      </Text>
-      <View style={financeStyles.marketChipMeta}>
-        <View
-          style={[
-            financeStyles.statusBadge,
-            { backgroundColor: isOpen ? "#dcfce7" : "#f3f4f6" },
-          ]}
-        >
-          <Text style={[financeStyles.statusBadgeText, { color: isOpen ? "#16a34a" : "#6b7280" }]}>
-            {isOpen ? "Open" : "Closed"}
-          </Text>
-        </View>
-        {closeStr && <Text style={financeStyles.closeStr}>{closeStr}</Text>}
-      </View>
-    </Pressable>
-  );
-}
-
-/** My Analysts avatar-chip row — shown when user follows 1+ analysts */
-function MyAnalystsRow({
-  followedIds,
-  expertNames,
-  selectedAnalystFilter,
-  onSelectAnalyst,
-  onClearFilter,
-}: {
-  followedIds: string[];
-  expertNames: Record<string, { name: string; org: string }>;
-  selectedAnalystFilter: string | null;
-  onSelectAnalyst: (id: string) => void;
-  onClearFilter: () => void;
-}) {
-  if (followedIds.length === 0) return null;
-
-  return (
-    <View style={financeStyles.myAnalystsSection}>
-      <Text style={financeStyles.myAnalystsLabel}>My Analysts</Text>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={financeStyles.myAnalystsScroll}
-      >
-        {/* All chip */}
-        <Pressable
-          style={[
-            financeStyles.analystChip,
-            selectedAnalystFilter === null && financeStyles.analystChipActive,
-          ]}
-          onPress={onClearFilter}
-        >
-          <Text
-            style={[
-              financeStyles.analystChipText,
-              selectedAnalystFilter === null && financeStyles.analystChipTextActive,
-            ]}
-          >
-            All
-          </Text>
-        </Pressable>
-
-        {followedIds.map((id) => {
-          const info = expertNames[id];
-          const displayName = info
-            ? (info.name || info.org).slice(0, 8)
-            : id.slice(0, 8);
-          const initials = info
-            ? getExpertInitials(info.name, info.org)
-            : "?";
-          const initialsColor = info
-            ? getExpertInitialsColor(info.name || info.org)
-            : "#6b7280";
-          const isSelected = selectedAnalystFilter === id;
-
-          return (
-            <Pressable
-              key={id}
-              style={[financeStyles.analystChip, isSelected && financeStyles.analystChipActive]}
-              onPress={() => onSelectAnalyst(id)}
-            >
-              <View style={[financeStyles.analystChipAvatar, { backgroundColor: initialsColor }]}>
-                <Text style={financeStyles.analystChipAvatarText}>{initials}</Text>
-              </View>
-              <Text
-                style={[
-                  financeStyles.analystChipText,
-                  isSelected && financeStyles.analystChipTextActive,
-                ]}
-                numberOfLines={1}
-              >
-                {displayName}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </ScrollView>
-    </View>
-  );
-}
-
-
 // PulseKind drives which PulseSheet is currently open. Sentiment was merged
 // into the Weekly Calls card via a toggle (S38) — no sentiment pill / sheet.
 type PulseKind = "events" | "calendar";
@@ -617,17 +655,29 @@ type PulsePill = {
   enabled: boolean;
 };
 
-// ─── Today's Pulse ribbon — Next Event + Policy Calendar stacked pills ───────
+// Shape of RBI current-rates data passed into PulseRibbon.
+type RbiCurrentRates = {
+  policyRepoRate?: number | null;
+  standingDepositFacilityRate?: number | null;
+  marginalStandingFacilityRate?: number | null;
+  bankRate?: number | null;
+  cashReserveRatio?: number | null;
+  statutoryLiquidityRatio?: number | null;
+};
+
+// ─── Rates & Events ribbon — RBI rates + Next Event + Policy Calendar ────────
 // S52: Redesigned from horizontal scroll of single-line pills to vertical
 // stacked 2-3 line pill cards that surface crowd consensus data already fetched.
 function PulseRibbon({
   flagshipEvents,
   clusters,
   onPress,
+  rbiRates,
 }: {
   flagshipEvents: ApiFlagshipEvent[];
   clusters: { name: string }[];
   onPress: (kind: PulseKind) => void;
+  rbiRates?: RbiCurrentRates | null;
 }) {
   const router = useRouter();
 
@@ -697,8 +747,8 @@ function PulseRibbon({
     .join(" · ");
 
   const a11yLabel = collapsed
-    ? `Today's Pulse: ${previewText}. Tap to expand.`
-    : "Today's Pulse, expanded. Tap to collapse.";
+    ? `Rates & Events: ${previewText}. Tap to expand.`
+    : "Rates & Events, expanded. Tap to collapse.";
 
   // Pill A urgency tint
   const eventPillBg =
@@ -739,7 +789,7 @@ function PulseRibbon({
       >
         {/* Row 1: label + chevron */}
         <View style={pulseStyles.headingInner}>
-          <Text style={pulseStyles.heading}>Today&apos;s Pulse</Text>
+          <Text style={pulseStyles.heading}>Rates &amp; Events</Text>
           <Text style={pulseStyles.collapseChevron}>{collapsed ? "▼" : "▲"}</Text>
         </View>
 
@@ -812,6 +862,32 @@ function PulseRibbon({
               </Text>
             </Pressable>
           )}
+
+          {/* Pill C — RBI current rates (compact inline row, only when rbiRates provided) */}
+          {rbiRates != null && (() => {
+            const ratePills: { label: string; value: number }[] = [
+              { label: "Repo", value: rbiRates.policyRepoRate ?? NaN },
+              { label: "CRR",  value: rbiRates.cashReserveRatio ?? NaN },
+              { label: "SLR",  value: rbiRates.statutoryLiquidityRatio ?? NaN },
+              { label: "SDF",  value: rbiRates.standingDepositFacilityRate ?? NaN },
+              { label: "MSF",  value: rbiRates.marginalStandingFacilityRate ?? NaN },
+              { label: "Bank", value: rbiRates.bankRate ?? NaN },
+            ].filter((r) => Number.isFinite(r.value));
+            if (ratePills.length === 0) return null;
+            return (
+              <View style={pulseStyles.ratesCard}>
+                <Text style={pulseStyles.ratesCardLabel}>🏦 RBI rates</Text>
+                <View style={pulseStyles.ratesGrid}>
+                  {ratePills.map((r) => (
+                    <View key={r.label} style={pulseStyles.rateTile}>
+                      <Text style={pulseStyles.rateTileLabel}>{r.label}</Text>
+                      <Text style={pulseStyles.rateTileValue}>{r.value.toFixed(2)}%</Text>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            );
+          })()}
         </View>
       )}
     </View>
@@ -950,6 +1026,53 @@ const pulseStyles = StyleSheet.create({
   },
   pillValue: { fontSize: 12, fontWeight: "700" as const, color: "#0f172a" },
   pillChevron: { fontSize: 16, color: "#94a3b8", fontWeight: "600" as const },
+
+  // RBI current rates — showcased as a wrapping grid of stat tiles so every
+  // value renders in full (the old single-line row truncated the numbers).
+  ratesCard: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: "#EFF6FF",
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
+    gap: 8,
+  },
+  ratesCardLabel: {
+    fontSize: 13,
+    fontWeight: "700" as const,
+    color: "#1E40AF",
+  },
+  ratesGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+  },
+  rateTile: {
+    flexGrow: 1,
+    flexBasis: "30%",
+    minWidth: 60,
+    alignItems: "center",
+    paddingVertical: 6,
+    paddingHorizontal: 4,
+    borderRadius: 8,
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
+    gap: 2,
+  },
+  rateTileLabel: {
+    fontSize: 9,
+    fontWeight: "700" as const,
+    color: "#1E40AF",
+    textTransform: "uppercase" as const,
+    letterSpacing: 0.4,
+  },
+  rateTileValue: {
+    fontSize: 13,
+    fontWeight: "800" as const,
+    color: "#0f172a",
+  },
 
   // Bottom sheet (events / sentiment / calendar)
   sheetBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)" },
@@ -1192,62 +1315,6 @@ function SentimentBody({ sentiment }: { sentiment: ApiFinanceExpertSentiment }) 
   );
 }
 
-// Legacy WeeklyCallsDigestCard — kept as a no-op shim so any other callers
-// (story detail, etc.) don't crash. Renders nothing in this file's usage.
-function WeeklyCallsDigestCard({
-  digest,
-  onPress,
-}: {
-  digest: ApiMyCallsDigest;
-  onPress: () => void;
-}) {
-  const total = digest.hits + digest.misses;
-  const hitPct = total > 0 ? Math.round((digest.hits / total) * 100) : 0;
-
-  return (
-    <Pressable style={digestStyles.card} onPress={onPress}>
-      <View style={digestStyles.header}>
-        <Text style={digestStyles.title}>Your week in calls</Text>
-        <Text style={digestStyles.chevron}>›</Text>
-      </View>
-
-      <View style={digestStyles.statRow}>
-        <View style={digestStyles.statBlock}>
-          <Text style={[digestStyles.statCount, { color: "#16a34a" }]}>{digest.hits}</Text>
-          <Text style={digestStyles.statLabel}>Correct</Text>
-        </View>
-        <View style={digestStyles.statDivider} />
-        <View style={digestStyles.statBlock}>
-          <Text style={[digestStyles.statCount, { color: "#dc2626" }]}>{digest.misses}</Text>
-          <Text style={digestStyles.statLabel}>Wrong</Text>
-        </View>
-        {digest.pending > 0 && (
-          <>
-            <View style={digestStyles.statDivider} />
-            <View style={digestStyles.statBlock}>
-              <Text style={[digestStyles.statCount, { color: "#6b7280" }]}>{digest.pending}</Text>
-              <Text style={digestStyles.statLabel}>Pending</Text>
-            </View>
-          </>
-        )}
-      </View>
-
-      {total > 0 && (
-        <View style={digestStyles.barTrack}>
-          <View
-            style={[digestStyles.barFill, { flex: hitPct, backgroundColor: "#16a34a" }]}
-          />
-          <View
-            style={[digestStyles.barFill, { flex: 100 - hitPct, backgroundColor: "#dc2626" }]}
-          />
-        </View>
-      )}
-
-      <Text style={digestStyles.tapHint}>Tap to see all your calls</Text>
-    </Pressable>
-  );
-}
-
 const digestStyles = StyleSheet.create({
   card: {
     marginHorizontal: spacing.lg,
@@ -1297,23 +1364,6 @@ const digestStyles = StyleSheet.create({
     textAlign: "center",
     paddingVertical: spacing.md,
     fontStyle: "italic",
-  },
-  header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: spacing.sm,
-  },
-  title: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#111827",
-    letterSpacing: 0.1,
-  },
-  chevron: {
-    fontSize: 18,
-    color: "#9ca3af",
-    lineHeight: 20,
   },
   statRow: {
     flexDirection: "row",
@@ -1448,8 +1498,8 @@ const controlsStyles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#c7d2fe",
   },
-  filterChipText: { fontSize: 11, fontWeight: "700" as const, color: "#3730a3" },
-  filterChipX: { fontSize: 14, color: "#6366f1", marginLeft: 2, lineHeight: 14 },
+  filterChipText: { fontSize: 11, fontWeight: "700" as const, color: colors.accentDeep },
+  filterChipX: { fontSize: 14, color: colors.accent, marginLeft: 2, lineHeight: 14 },
   addFilterChip: {
     flexDirection: "row",
     alignItems: "center",
@@ -1516,86 +1566,6 @@ const lensStyles = StyleSheet.create({
   pillTextActive: { color: "#fff" },
 });
 
-// ─── S35-T3: Personal Accuracy Chip ──────────────────────────────────────────
-
-function PersonalAccuracyChip({
-  financeProfile,
-  onScrollToFirstPending,
-}: {
-  financeProfile: Pick<ApiUserProfile, "financeStreak" | "financeAccuracy" | "financeTotalVotes" | "financeResolvedVotes"> | null;
-  onScrollToFirstPending: () => void;
-}) {
-  const router = useRouter();
-
-  if (!financeProfile) return null;
-
-  const { financeStreak = 0, financeAccuracy, financeTotalVotes = 0, financeResolvedVotes = 0 } = financeProfile;
-
-  const handleTap = () => {
-    if (financeTotalVotes === 0) {
-      onScrollToFirstPending();
-    } else {
-      router.push("/finance/my-calls" as Parameters<typeof router.push>[0]);
-    }
-  };
-
-  let chipText: string;
-  let flameColor: string | null = null;
-  let showFlame = false;
-
-  if (financeTotalVotes === 0) {
-    chipText = "Start voting — track your accuracy";
-  } else if (financeResolvedVotes === 0) {
-    chipText = `${financeTotalVotes} vote${financeTotalVotes !== 1 ? "s" : ""} cast · awaiting results`;
-  } else if (financeStreak === 0 || financeAccuracy === null) {
-    chipText = financeAccuracy !== null
-      ? `Your accuracy: ${financeAccuracy}% · across ${financeResolvedVotes} call${financeResolvedVotes !== 1 ? "s" : ""}`
-      : `${financeResolvedVotes} call${financeResolvedVotes !== 1 ? "s" : ""} resolved`;
-  } else {
-    chipText = `Your accuracy: ${financeAccuracy ?? 0}% · ${financeStreak}-day streak`;
-    if (financeStreak >= 7) {
-      showFlame = true;
-      flameColor = financeStreak >= 30 ? "#F59E0B" : null;
-    }
-  }
-
-  return (
-    <Pressable style={accuracyStyles.chip} onPress={handleTap}>
-      <Text style={accuracyStyles.chipText} numberOfLines={1}>{chipText}</Text>
-      {financeTotalVotes === 0 ? (
-        <Text style={accuracyStyles.arrow}>→</Text>
-      ) : showFlame ? (
-        <Text style={[accuracyStyles.flame, flameColor ? { color: flameColor } : {}]}>🔥</Text>
-      ) : null}
-    </Pressable>
-  );
-}
-
-const accuracyStyles = StyleSheet.create({
-  chip: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginHorizontal: spacing.lg,
-    marginBottom: spacing.sm,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: radius.pill,
-    backgroundColor: "#F0FDF4",
-    borderWidth: 1,
-    borderColor: "#BBF7D0",
-    gap: 8,
-  },
-  chipText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#166534",
-    flex: 1,
-  },
-  arrow: { fontSize: 16, color: "#166534" },
-  flame: { fontSize: 16 },
-});
-
 export function FinanceMode({
   onNavigateToFeed,
   initialClusterId,
@@ -1627,6 +1597,11 @@ export function FinanceMode({
   const [topWeeklyExperts, setTopWeeklyExperts] = useState<ApiTopExpertEntry[]>([]);
   const [topWeeklyLoading, setTopWeeklyLoading] = useState(true);
   const [topWeeklyRefetchEpoch, setTopWeeklyRefetchEpoch] = useState(0);
+
+  // S62-T7 / redesign: RBI MPC pack from the Poll API — fetched independently so a
+  // failure here never blocks the main Finance load. Groups the returned polls
+  // by packId and surfaces the first open pack (3 polls: Repo / CRR / SLR).
+  const [rbiPollPack, setRbiPollPack] = useState<ApiPoll[] | null>(null);
 
   // S35-T1: Active instrument filter — toggled by tapping ticker chips
   const [activeInstrumentFilter, setActiveInstrumentFilter] = useState<string | null>(null);
@@ -2146,6 +2121,44 @@ export function FinanceMode({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [topWeeklyRefetchEpoch]);
 
+  // S62-T7 / redesign: Fetch RBI MPC pack from the Poll API independently so any failure
+  // here does not block the main Finance screen load. Re-fires on pull-to-refresh
+  // via topWeeklyRefetchEpoch (both cards share the same epoch counter).
+  // A valid pack has 2+ polls sharing the same packId; ordered by createdAt ascending
+  // so creation order (Repo → CRR → SLR) is preserved.
+  useEffect(() => {
+    let cancelled = false;
+    withRetry(() => mobileApi.getPollPacks({ status: "open" }))
+      .then(({ polls }) => {
+        if (cancelled) return;
+        // Group polls by packId.
+        const byPack = new Map<string, ApiPoll[]>();
+        for (const poll of polls) {
+          if (!poll.packId) continue;
+          const group = byPack.get(poll.packId) ?? [];
+          group.push(poll);
+          byPack.set(poll.packId, group);
+        }
+        for (const [, packPolls] of byPack.entries()) {
+          if (packPolls.length < 2) continue;
+          // Sort by createdAt ascending so Repo → CRR → SLR order is preserved.
+          const sorted = [...packPolls].sort(
+            (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+          );
+          setRbiPollPack(sorted);
+          return; // Take the first valid pack only
+        }
+        // No valid pack found — clear any stale state
+        setRbiPollPack(null);
+      })
+      .catch((err: unknown) => {
+        console.error("[finance-mode] getPollPacks fetch failed (RBI card hidden):", err);
+        if (!cancelled) setRbiPollPack(null);
+      });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [topWeeklyRefetchEpoch]);
+
   // S28-T1: Build expert name map from loaded financeNews
   useEffect(() => {
     const map: Record<string, { name: string; org: string }> = {};
@@ -2243,13 +2256,29 @@ export function FinanceMode({
         }
       />
 
+      {/* RBI MPC Poll-Pack Hero Card — 3 prediction questions (Repo / CRR / SLR).
+          Data comes from the Poll API (getPollPacks). Only renders when the
+          Poll API returns an open pack with 2+ polls.
+          Non-RBI flagship events are unaffected — they still use flagshipEvents. */}
+      {rbiPollPack !== null && (
+        <MpcPollPackCard polls={rbiPollPack} />
+      )}
+
       {/* PulseRibbon — context (next event countdown, policy calendar). Now
           rendered AFTER the hero with lighter visual treatment so the editorial
-          pick claims primacy. */}
+          pick claims primacy. RBI current rates folded in as a compact row
+          inside the ribbon's expanded content (rates sourced from first poll's
+          structuredData, shown only when present). */}
       <PulseRibbon
         flagshipEvents={flagshipEvents}
         clusters={data?.eventClusters ?? []}
         onPress={(kind) => setPulseOpen(kind)}
+        rbiRates={
+          rbiPollPack != null
+            ? ((rbiPollPack[0].structuredData as Record<string, unknown> | null)
+                ?.currentRates as RbiCurrentRates | null | undefined) ?? null
+            : null
+        }
       />
 
       {/* S38: Merged Your Week + Market Sentiment toggle card.
@@ -3236,216 +3265,6 @@ const financeStyles = StyleSheet.create({
     fontWeight: "700",
     color: colors.accent,
   },
-  sentimentCard: {
-    marginHorizontal: spacing.lg,
-    marginBottom: spacing.lg,
-    padding: spacing.lg,
-    borderRadius: radius.md,
-    backgroundColor: "#EEF2FF",
-    borderWidth: 1,
-    borderColor: "#C7D2FE",
-  },
-  sentimentTitle: {
-    fontSize: 10,
-    fontWeight: "800",
-    letterSpacing: 0.8,
-    textTransform: "uppercase",
-    color: "#4338CA",
-    marginBottom: 4,
-  },
-  sentimentMarketTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#1e1b4b",
-    marginBottom: spacing.sm,
-  },
-  sentimentGaugeRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm,
-    marginBottom: spacing.sm,
-  },
-  gaugeTrack: {
-    flex: 1,
-    height: 10,
-    backgroundColor: "#E5E7EB",
-    borderRadius: 5,
-    overflow: "hidden",
-  },
-  gaugeFill: { height: 10, borderRadius: 5 },
-  gaugeLabel: { fontSize: 18, fontWeight: "800", width: 45, textAlign: "right" },
-  sentimentFooterRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm,
-    flexWrap: "wrap",
-  },
-  sentimentSeeOpinions: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: "#4338CA",
-    textAlign: "right",
-    marginTop: spacing.sm,
-  },
-  leanChip: {
-    alignSelf: "flex-start",
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-  },
-  leanChipText: { fontSize: 11, fontWeight: "700" },
-  newBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: radius.pill,
-    backgroundColor: "#DBEAFE",
-    borderWidth: 1,
-    borderColor: "#93C5FD",
-  },
-  newBadgeText: { fontSize: 10, fontWeight: "700", color: "#1D4ED8" },
-  deltaText: { fontSize: 11, fontWeight: "600" },
-  analystSentimentCard: {
-    marginHorizontal: spacing.lg,
-    marginBottom: spacing.lg,
-    padding: spacing.lg,
-    borderRadius: radius.md,
-    backgroundColor: "#F0FDF4",
-    borderWidth: 1,
-    borderColor: "#BBF7D0",
-  },
-  analystSentimentTitle: {
-    fontSize: 10,
-    fontWeight: "800",
-    letterSpacing: 0.8,
-    textTransform: "uppercase",
-    color: "#166534",
-    marginBottom: spacing.sm,
-  },
-  analystSentimentEmpty: {
-    fontSize: 13,
-    color: "#6b7280",
-    fontStyle: "italic",
-  },
-  analystSeeOpinions: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: "#166534",
-    textAlign: "right",
-    marginTop: spacing.sm,
-  },
-  analystCountRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: spacing.sm,
-  },
-  analystCountChip: {
-    flex: 1,
-    alignItems: "center",
-  },
-  analystCountDivider: {
-    width: 1,
-    height: 28,
-    backgroundColor: "#D1FAE5",
-  },
-  analystCountNum: {
-    fontSize: 20,
-    fontWeight: "800",
-    color: "#111827",
-  },
-  analystCountLabel: {
-    fontSize: 10,
-    fontWeight: "700",
-    letterSpacing: 0.3,
-    marginTop: 1,
-  },
-  analystGaugeTrack: {
-    flexDirection: "row",
-    height: 10,
-    borderRadius: 5,
-    overflow: "hidden",
-    marginBottom: spacing.sm,
-    gap: 2,
-  },
-  analystGaugeSegment: {
-    borderRadius: 5,
-  },
-  analystFooterRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm,
-    flexWrap: "wrap",
-  },
-  analystLeanChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-  },
-  analystLeanChipText: {
-    fontSize: 11,
-    fontWeight: "800",
-    letterSpacing: 0.5,
-  },
-  analystSubtext: {
-    fontSize: 11,
-    color: "#6b7280",
-    flex: 1,
-    flexWrap: "wrap",
-  },
-  // Crowd vs Experts card
-  // My Analysts row
-  myAnalystsSection: {
-    marginBottom: spacing.md,
-  },
-  myAnalystsLabel: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: colors.textMuted ?? "#6b7280",
-    marginHorizontal: spacing.lg,
-    marginBottom: spacing.xs ?? 4,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-  },
-  myAnalystsScroll: {
-    paddingHorizontal: spacing.lg,
-    gap: spacing.sm,
-  },
-  analystChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: radius.pill,
-    backgroundColor: "#F3F4F6",
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    gap: 6,
-  },
-  analystChipActive: {
-    backgroundColor: colors.accent,
-    borderColor: colors.accent,
-  },
-  analystChipAvatar: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  analystChipAvatarText: {
-    fontSize: 8,
-    fontWeight: "800",
-    color: "#fff",
-  },
-  analystChipText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#374151",
-  },
-  analystChipTextActive: {
-    color: "#fff",
-  },
   // Direction filter chips
   directionChipsScroll: {
     paddingHorizontal: spacing.lg,
@@ -3654,27 +3473,6 @@ const financeStyles = StyleSheet.create({
     fontSize: 12,
     color: colors.textMuted ?? "#6b7280",
   },
-  marketChip: {
-    width: 180,
-    padding: spacing.md,
-    marginRight: spacing.sm,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    backgroundColor: "#fff",
-  },
-  marketChipClosed: {
-    opacity: 0.6,
-  },
-  marketChipTitle: { fontSize: 13, fontWeight: "600", color: colors.text ?? "#111827", marginBottom: 6 },
-  marketChipMeta: { flexDirection: "row", alignItems: "center", gap: 6 },
-  statusBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: radius.pill,
-  },
-  statusBadgeText: { fontSize: 9, fontWeight: "700" },
-  closeStr: { fontSize: 10, color: colors.textMuted ?? "#6b7280" },
   sectionHeader: {
     fontSize: 14,
     fontWeight: "800",

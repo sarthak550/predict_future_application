@@ -73,6 +73,13 @@ export function PlatformTrustBanner() {
   }
 
   const { avgAccuracyScore, totalResolvedMarkets } = state.data;
+
+  // Don't surface a meaningless trust stat: a 0% (or not-yet-computed) accuracy
+  // reads as broken rather than trustworthy. Hide until there's a real figure.
+  if (!(avgAccuracyScore > 0) || totalResolvedMarkets <= 0) {
+    return null;
+  }
+
   const accuracyPct = (avgAccuracyScore * 100).toFixed(1);
 
   return (
