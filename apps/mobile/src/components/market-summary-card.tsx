@@ -1,7 +1,7 @@
-import { Feather, Ionicons } from "@expo/vector-icons";
+import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useState } from "react";
-import { Linking, Pressable, Share, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import type { ApiMarketSummary } from "@predict-future/types";
 import { formatPercent, formatPoints, formatRelativeTime } from "@predict-future/utils";
@@ -15,17 +15,10 @@ type Props = {
   /** Called after a successful save toggle so parent can sync state. */
   onSaveToggled?: (marketId: string, saved: boolean) => void;
   /**
-   * S55-T5: When true, suppresses the "Hosted by [Group]" chip and other
-   * secondary metadata in dense / compact list contexts.
+   * S55-T5: When true, suppresses secondary metadata in dense / compact list contexts.
    */
   compact?: boolean;
 };
-
-async function shareMarket(item: ApiMarketSummary) {
-  const url = `https://predictfuture.app/markets/${item.id}`;
-  const message = `"${item.title}" — what do you think? Predict on Predict Future: ${url}`;
-  await Share.share({ message, url });
-}
 
 export function MarketSummaryCard({ item, onSaveToggled, compact = false }: Props) {
   const router = useRouter();
@@ -33,12 +26,10 @@ export function MarketSummaryCard({ item, onSaveToggled, compact = false }: Prop
   const { colors } = useTheme();
   const [isSaved, setIsSaved] = useState(item.iSaved ?? false);
   const [savingInFlight, setSavingInFlight] = useState(false);
-  const trust = item.creator?.stats?.hostTrustScore;
   const yesPool = item.yesPool ?? 0;
   const noPool = item.noPool ?? 0;
   const totalPool = yesPool + noPool;
   const yesProbability = totalPool > 0 ? yesPool / totalPool : 0.5;
-  const isOpen = item.status === "OPEN";
 
   const handleToggleSave = async () => {
     if (savingInFlight) return;
@@ -57,175 +48,110 @@ export function MarketSummaryCard({ item, onSaveToggled, compact = false }: Prop
     }
   };
 
+  // ── BET STATS ────────────────────────────────────────────────────────────────
+
+  const metaLine = (() => {
+    const parts: string[] = [];
+    if ((item.totalVolume ?? 0) > 0) parts.push(formatPoints(item.totalVolume ?? 0));
+    if ((item.totalParticipants ?? 0) > 0) parts.push(`${item.totalParticipants} players`);
+    if (item.closeAt) parts.push(`closes ${formatRelativeTime(item.closeAt)}`);
+    return parts.join(" · ");
+  })();
+
+  const betStats = (() => {
+    if (item.marketType === "NUMERIC") {
+      const avgLabel =
+        item.averageNumericValue != null
+          ? `${Number(item.averageNumericValue).toLocaleString(undefined, { maximumFractionDigits: 2 })}${item.unit ? ` ${item.unit}` : ""}`
+          : "No guesses yet";
+      const guessCount =
+        (item.totalParticipants ?? 0) > 0
+          ? `${item.totalParticipants} ${item.totalParticipants === 1 ? "guess" : "guesses"}`
+          : null;
+      const numericMeta = [guessCount, item.closeAt ? `closes ${formatRelativeTime(item.closeAt)}` : null]
+        .filter(Boolean)
+        .join(" · ");
+      return (
+        <View style={styles.numericCompact}>
+          <Text style={styles.numericAvg}>{avgLabel}</Text>
+          {numericMeta ? <Text style={styles.metaText}>{numericMeta}</Text> : null}
+        </View>
+      );
+    }
+
+    if (item.status === "RESOLVED") {
+      const resolvedSide = item.outcome ?? null;
+      if (resolvedSide === "YES" || resolvedSide === "NO") {
+        return (
+          <View style={styles.outcomeRow}>
+            <View
+              style={[
+                styles.outcomeChip,
+                resolvedSide === "YES" ? styles.outcomeChipYes : styles.outcomeChipNo,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.outcomeChipText,
+                  { color: resolvedSide === "YES" ? "#16A34A" : "#DC2626" },
+                ]}
+              >{`✓ Resolved ${resolvedSide}`}</Text>
+            </View>
+            {metaLine ? <Text style={styles.metaText}>{metaLine}</Text> : null}
+          </View>
+        );
+      }
+      return null;
+    }
+
+    // Default: binary OPEN (or any non-numeric non-resolved)
+    return (
+      <View style={styles.binarySection}>
+        <View style={styles.progressTrack}>
+          <View style={[styles.progressFill, { width: `${Math.max(6, yesProbability * 100)}%` }]} />
+        </View>
+        <View style={styles.probRow}>
+          <View style={styles.probLabels}>
+            <Text style={styles.probYes}>YES {formatPercent(yesProbability)}</Text>
+            <Text style={styles.probNo}> · NO {formatPercent(1 - yesProbability)}</Text>
+          </View>
+          {metaLine ? <Text style={styles.metaText}>{metaLine}</Text> : null}
+        </View>
+      </View>
+    );
+  })();
+
   return (
     <Pressable
       style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
       onPress={() => router.push(`/market/${item.id}`)}
     >
+      {/* Top row: category tag (left) + bookmark (right) */}
       <View style={styles.topRow}>
-        <View style={[styles.badge, isOpen ? styles.badgeOpen : styles.badgeClosed]}>
-          <Text style={[styles.badgeText, isOpen ? styles.badgeTextOpen : styles.badgeTextClosed]}>
-            {item.status}
-          </Text>
-        </View>
         {item.category ? (
           <Text style={styles.category}>{item.category}</Text>
-        ) : null}
-        <View style={styles.topRowActions}>
-          <Pressable
-            style={styles.bookmarkBtn}
-            onPress={(e) => { e.stopPropagation?.(); void handleToggleSave(); }}
-            hitSlop={8}
-            accessibilityLabel={isSaved ? "Remove bookmark" : "Bookmark market"}
-          >
-            <Feather
-              name={isSaved ? "bookmark" : "bookmark"}
-              size={16}
-              color={isSaved ? colors.pillarB : colors.textMuted}
-            />
-          </Pressable>
-          <Pressable
-            style={styles.shareBtn}
-            onPress={(e) => { e.stopPropagation?.(); void shareMarket(item); }}
-            hitSlop={8}
-          >
-            <Text style={styles.shareBtnText}>Share</Text>
-          </Pressable>
-        </View>
+        ) : (
+          <View />
+        )}
+        <Pressable
+          style={styles.bookmarkBtn}
+          onPress={(e) => { e.stopPropagation?.(); void handleToggleSave(); }}
+          hitSlop={8}
+          accessibilityLabel={isSaved ? "Remove bookmark" : "Bookmark market"}
+        >
+          <Feather
+            name="bookmark"
+            size={15}
+            color={isSaved ? colors.pillarB : colors.textMuted}
+          />
+        </Pressable>
       </View>
 
+      {/* Question */}
       <Text style={styles.title} numberOfLines={2}>{item.title}</Text>
 
-
-      {item.description ? (
-        <Text style={styles.description} numberOfLines={2}>{item.description}</Text>
-      ) : null}
-
-      {item.marketType === "NUMERIC" ? (
-        <View style={styles.numericSection}>
-          <Text style={styles.numericLabel}>Avg. Prediction</Text>
-          <View style={styles.numericRow}>
-            <Text style={styles.numericValue}>
-              {item.averageNumericValue != null
-                ? `${Number(item.averageNumericValue).toLocaleString(undefined, { maximumFractionDigits: 2 })}${item.unit ? ` ${item.unit}` : ""}`
-                : "No guesses yet"}
-            </Text>
-            {(item.totalParticipants ?? 0) > 0 ? (
-              <Text style={styles.numericGuesses}>
-                {item.totalParticipants} {item.totalParticipants === 1 ? "guess" : "guesses"}
-              </Text>
-            ) : null}
-          </View>
-          {item.minValue != null && item.maxValue != null && item.averageNumericValue != null ? (
-            <View style={styles.rangeTrack}>
-              <View
-                style={[
-                  styles.rangeFill,
-                  {
-                    left: `${Math.max(0, Math.min(100, ((item.averageNumericValue - item.minValue) / (item.maxValue - item.minValue)) * 100))}%`,
-                  },
-                ]}
-              />
-            </View>
-          ) : null}
-          {item.minValue != null && item.maxValue != null ? (
-            <View style={styles.rangeLabels}>
-              <Text style={styles.rangeLabel}>{item.minValue}</Text>
-              <Text style={styles.rangeLabel}>{item.maxValue}</Text>
-            </View>
-          ) : null}
-        </View>
-      ) : item.status === "RESOLVED" ? (
-        // Resolved binary markets: show the final outcome chip instead of a probability bar.
-        (() => {
-          const resolvedSide = item.outcome ?? null;
-          if (resolvedSide === "YES" || resolvedSide === "NO") {
-            return (
-              <View style={styles.outcomeRow}>
-                <View
-                  style={[
-                    styles.outcomeChip,
-                    resolvedSide === "YES" ? styles.outcomeChipYes : styles.outcomeChipNo,
-                  ]}
-                >
-                  <Text style={[styles.outcomeChipText, { color: resolvedSide === "YES" ? "#16A34A" : "#DC2626" }]}>{`✓ Resolved ${resolvedSide}`}</Text>
-                </View>
-              </View>
-            );
-          }
-          return null;
-        })()
-      ) : (
-        <View style={styles.probabilitySection}>
-          <View style={styles.progressTrack}>
-            <View style={[styles.progressFill, { width: `${Math.max(6, yesProbability * 100)}%` }]} />
-          </View>
-          <View style={styles.probRow}>
-            <Text style={styles.probYes}>YES {formatPercent(yesProbability)}</Text>
-            <Text style={styles.probNo}>NO {formatPercent(1 - yesProbability)}</Text>
-          </View>
-        </View>
-      )}
-
-      <View style={styles.metricsRow}>
-        <View style={styles.metricItem}>
-          <Text style={styles.metricValue}>{formatPoints(item.totalVolume ?? 0)}</Text>
-          <Text style={styles.metricLabel}>Volume</Text>
-        </View>
-        <View style={styles.metricItem}>
-          <Text style={styles.metricValue}>{item.totalParticipants ?? 0}</Text>
-          <Text style={styles.metricLabel}>Players</Text>
-        </View>
-        {typeof trust === "number" ? (
-          <View style={styles.metricItem}>
-            <Text style={styles.metricValue}>{trust}</Text>
-            <Text style={styles.metricLabel}>Trust</Text>
-          </View>
-        ) : null}
-        {item.closeAt ? (
-          <View style={styles.metricItem}>
-            <Text style={styles.metricValue}>{formatRelativeTime(item.closeAt)}</Text>
-            <Text style={styles.metricLabel}>Closes</Text>
-          </View>
-        ) : null}
-      </View>
-
-      {/* S55-T5: Hosted by [Group] chip — shown when market belongs to a group and not in compact mode */}
-      {!compact && item.group ? (
-        <Pressable
-          style={styles.hostedByChip}
-          onPress={(e) => {
-            e.stopPropagation?.();
-            router.push(`/group/${item.group!.id}` as Parameters<typeof router.push>[0]);
-          }}
-          hitSlop={8}
-          accessibilityRole="button"
-          accessibilityLabel={`Hosted by ${item.group.name}`}
-        >
-          <Ionicons name="people-outline" size={11} color={colors.textMuted} />
-          <Text style={styles.hostedByText}>Hosted by {item.group.name}</Text>
-        </Pressable>
-      ) : null}
-
-      {/* Host line — only for native markets (no originPlatform) */}
-      {!item.originPlatform && item.creator?.username ? (
-        <Text style={styles.host}>@{item.creator.username}</Text>
-      ) : null}
-
-      {/* Source attribution for imported markets */}
-      {item.originPlatform != null && item.resolutionSourceUrl ? (
-        <Pressable
-          onPress={(e) => {
-            e.stopPropagation?.();
-            void Linking.openURL(item.resolutionSourceUrl as string);
-          }}
-          hitSlop={8}
-        >
-          <Text style={styles.sourceAttribution}>
-            Source: {item.originPlatform.charAt(0).toUpperCase() + item.originPlatform.slice(1)} →
-          </Text>
-        </Pressable>
-      ) : null}
+      {/* Bet stats */}
+      <View style={styles.statsContainer}>{betStats}</View>
     </Pressable>
   );
 }
@@ -234,7 +160,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   card: {
     backgroundColor: t.colors.surface,
     borderRadius: radius.lg,
-    padding: spacing.lg,
+    padding: spacing.md,
     ...t.shadows.card,
   },
   cardPressed: {
@@ -244,152 +170,35 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   topRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: spacing.sm,
-    flex: 1,
-  },
-  topRowActions: {
-    marginLeft: "auto",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xs,
-  },
-  bookmarkBtn: {
-    padding: 4,
-  },
-  shareBtn: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: radius.sm,
-    backgroundColor: t.colors.pillarBSoft,
-  },
-  shareBtnText: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: t.colors.pillarBDeep,
-  },
-  badge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: radius.sm,
-  },
-  badgeOpen: {
-    backgroundColor: "#DCFCE7",
-  },
-  badgeClosed: {
-    backgroundColor: t.colors.surfaceMuted,
-  },
-  badgeText: {
-    fontSize: 11,
-    fontWeight: "800",
-    letterSpacing: 0.5,
-    textTransform: "uppercase",
-  },
-  badgeTextOpen: {
-    color: "#16A34A",
-  },
-  badgeTextClosed: {
-    color: t.colors.textMuted,
+    justifyContent: "space-between",
   },
   category: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: "700",
-    letterSpacing: 0.5,
+    letterSpacing: 0.6,
     textTransform: "uppercase",
     color: t.colors.textMuted,
+  },
+  bookmarkBtn: {
+    padding: 2,
   },
   title: {
-    marginTop: spacing.md,
-    fontSize: 18,
-    fontWeight: "700",
-    lineHeight: 24,
+    marginTop: spacing.sm,
+    fontSize: 15,
+    fontWeight: "600",
+    lineHeight: 21,
     color: t.colors.text,
   },
-  description: {
-    marginTop: spacing.xs,
-    fontSize: 14,
-    lineHeight: 20,
-    color: t.colors.textMuted,
-  },
-  manifoldBlock: {
-    marginTop: spacing.xs,
-    gap: 4,
-  },
-  manifoldBadge: {
-    alignSelf: "flex-start",
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 10,
-    backgroundColor: t.colors.surfaceMuted,
-    borderWidth: 1,
-    borderColor: t.colors.border,
-  },
-  manifoldBadgeText: {
-    fontSize: 10,
-    fontWeight: "600",
-    color: t.colors.textMuted,
-    letterSpacing: 0.3,
-  },
-  crowdLine: {
-    fontSize: 11,
-    fontWeight: "500",
-    color: t.colors.textMuted,
-  },
-  numericSection: {
-    marginTop: spacing.lg,
-  },
-  numericLabel: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: t.colors.textMuted,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-  },
-  numericRow: {
-    flexDirection: "row",
-    alignItems: "baseline",
-    justifyContent: "space-between",
-    marginTop: 4,
-  },
-  numericValue: {
-    fontSize: 22,
-    fontWeight: "800",
-    color: t.colors.primary,
-  },
-  numericGuesses: {
-    fontSize: 12,
-    color: t.colors.textMuted,
-  },
-  rangeTrack: {
+  statsContainer: {
     marginTop: spacing.sm,
-    height: 8,
-    borderRadius: radius.pill,
-    backgroundColor: t.colors.surfaceMuted,
-    position: "relative",
-    overflow: "visible",
   },
-  rangeFill: {
-    position: "absolute",
-    top: -2,
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: t.colors.primary,
-    marginLeft: -6,
-  },
-  rangeLabels: {
-    marginTop: 4,
-    flexDirection: "row",
-    justifyContent: "space-between",
-  },
-  rangeLabel: {
-    fontSize: 11,
-    color: t.colors.textMuted,
-  },
-  probabilitySection: {
-    marginTop: spacing.lg,
+
+  // ── Binary / OPEN ──────────────────────────────────────────────────────────
+  binarySection: {
+    gap: spacing.xs,
   },
   progressTrack: {
-    height: 8,
+    height: 6,
     borderRadius: radius.pill,
     backgroundColor: t.colors.dangerSoft,
     overflow: "hidden",
@@ -400,28 +209,45 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     backgroundColor: t.colors.success,
   },
   probRow: {
-    marginTop: 6,
     flexDirection: "row",
+    alignItems: "center",
     justifyContent: "space-between",
   },
+  probLabels: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
   probYes: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "700",
     color: t.colors.success,
   },
   probNo: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "700",
     color: t.colors.danger,
   },
+
+  // ── Numeric ────────────────────────────────────────────────────────────────
+  numericCompact: {
+    gap: 2,
+  },
+  numericAvg: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: t.colors.primary,
+  },
+
+  // ── Resolved ──────────────────────────────────────────────────────────────
   outcomeRow: {
-    marginTop: spacing.lg,
     flexDirection: "row",
     alignItems: "center",
+    gap: spacing.sm,
+    flexWrap: "wrap",
   },
   outcomeChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
     borderRadius: radius.pill,
   },
   outcomeChipYes: {
@@ -434,53 +260,12 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     fontSize: 12,
     fontWeight: "700",
     letterSpacing: 0.3,
-    color: "#16A34A",
   },
-  metricsRow: {
-    marginTop: spacing.lg,
-    flexDirection: "row",
-    gap: spacing.lg,
-  },
-  metricItem: {
-    alignItems: "center",
-  },
-  metricValue: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: t.colors.text,
-  },
-  metricLabel: {
+
+  // ── Shared meta ───────────────────────────────────────────────────────────
+  metaText: {
     fontSize: 11,
     color: t.colors.textMuted,
-    marginTop: 2,
-  },
-  // S55-T5: "Hosted by [Group]" chip
-  hostedByChip: {
-    marginTop: spacing.sm,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    alignSelf: "flex-start",
-    backgroundColor: t.colors.surfaceMuted,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 4,
-  },
-  hostedByText: {
-    fontSize: 11,
-    fontWeight: "500",
-    color: t.colors.textMuted,
-  },
-  host: {
-    marginTop: spacing.md,
-    fontSize: 13,
-    fontWeight: "600",
-    color: t.colors.pillarBDeep,
-  },
-  sourceAttribution: {
-    marginTop: spacing.sm,
-    fontSize: 11,
-    fontWeight: "500",
-    color: t.colors.textMuted,
+    flexShrink: 1,
   },
 });
