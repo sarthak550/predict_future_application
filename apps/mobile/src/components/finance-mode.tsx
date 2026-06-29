@@ -45,6 +45,17 @@ const FOLLOWED_ANALYSTS_KEY = "finance:followedAnalysts";
 const FEED_DEFAULT_CACHE_KEY = "finance:feed:default";
 
 /**
+ * Feature flag — set to true to re-enable the Overnight Big Call hero spotlight
+ * at the top of the Finance feed. Requires active-user data to be meaningful;
+ * hidden for initial release so the CombinedAnalystCard shows only Top Analysts.
+ */
+const SHOW_OVERNIGHT_BIG_CALL = false;
+// Initial release: hide the whole analyst card (Big Call hero + Top Analysts list).
+// Both need active-user / resolved-call data to be meaningful. Flip to re-enable
+// (SHOW_OVERNIGHT_BIG_CALL then controls whether the Big Call hero shows too).
+const SHOW_TOP_ANALYSTS = false;
+
+/**
  * Persisted shape of the default-filter news feed (no filters active).
  * Hydrated on mount so users see instant content during a slow / failed
  * refresh instead of a blank loading spinner or error screen.
@@ -680,25 +691,34 @@ function PulseRibbon({
   clusters,
   onPress,
   rbiRates,
+  defaultExpanded = false,
 }: {
   flagshipEvents: ApiFlagshipEvent[];
   clusters: { name: string }[];
   onPress: (kind: PulseKind) => void;
   rbiRates?: RbiCurrentRates | null;
+  /** When true, the ribbon initialises expanded instead of collapsed.
+   *  Used when PulseRibbon is the primary content of a tab (Rates & Events). */
+  defaultExpanded?: boolean;
 }) {
   const router = useRouter();
   const pulseStyles = useThemedStyles(makePulseStyles);
   const { colors: pulseColors } = useTheme();
 
-  // S51-T2: Collapsed by default; state persisted per-device (no userId in scope).
-  const [collapsed, setCollapsed] = useState(true);
+  // S51-T2: Collapsed by default unless defaultExpanded is set; state persisted per-device.
+  const [collapsed, setCollapsed] = useState(!defaultExpanded);
 
   useEffect(() => {
+    // Only restore persisted state when not in defaultExpanded mode.
+    // In defaultExpanded mode the caller wants the ribbon open; honour that intent.
+    if (defaultExpanded) return;
     void AsyncStorage.getItem("finance_section_collapsed_pulse").then((v) => {
       // null = first launch → stay collapsed (default true)
       // "true" → collapsed, "false" → expanded
       if (v === "false") setCollapsed(false);
     });
+  // defaultExpanded is a prop that won't change at runtime — safe to list once.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const toggleCollapsed = useCallback(() => {
@@ -1634,7 +1654,7 @@ export function FinanceMode({
   //   "market-analysis" → brokerages / publications only (J.P. Morgan, ET Money, etc.)
   // Resolved + Verified live as filter chips (toggleable, compound on the tab).
   // Sort still uses max(resolvedAt, articlePublishedAt) so resolved calls bubble.
-  type ShowScope = "expert-opinions" | "market-analysis";
+  type ShowScope = "expert-opinions" | "market-analysis" | "rates-events";
   type SortMode = "latest" | "top-week";
 
   const defaultSortForWindow = (w: MarketWindow): SortMode => {
@@ -1650,7 +1670,7 @@ export function FinanceMode({
   useEffect(() => {
     // Hydrate persisted user overrides (one-time on mount).
     void AsyncStorage.getItem("finance.showScope").then((v) => {
-      if (v === "expert-opinions" || v === "market-analysis") setShowScopeState(v);
+      if (v === "expert-opinions" || v === "market-analysis" || v === "rates-events") setShowScopeState(v);
     });
     void AsyncStorage.getItem("finance.sortMode").then((v) => {
       if (v === "latest" || v === "top-week") setSortModeState(v);
@@ -2260,45 +2280,22 @@ export function FinanceMode({
         />
       }
     >
-      <CombinedAnalystCard
-        opinion={bigCallOpinion}
-        windowLabel={bigCallWindowLabel}
-        onOpenOpinionDetail={() => {
-          if (bigCallOpinion) {
-            router.push(`/finance/opinion/${bigCallOpinion.id}` as Parameters<typeof router.push>[0]);
+      {SHOW_TOP_ANALYSTS && (
+        <CombinedAnalystCard
+          opinion={SHOW_OVERNIGHT_BIG_CALL ? bigCallOpinion : null}
+          windowLabel={bigCallWindowLabel}
+          onOpenOpinionDetail={() => {
+            if (bigCallOpinion) {
+              router.push(`/finance/opinion/${bigCallOpinion.id}` as Parameters<typeof router.push>[0]);
+            }
+          }}
+          entries={topWeeklyExperts}
+          topLoading={topWeeklyLoading}
+          onAnalystPress={(expertId) =>
+            router.push(`/expert/${expertId}` as Parameters<typeof router.push>[0])
           }
-        }}
-        entries={topWeeklyExperts}
-        topLoading={topWeeklyLoading}
-        onAnalystPress={(expertId) =>
-          router.push(`/expert/${expertId}` as Parameters<typeof router.push>[0])
-        }
-      />
-
-      {/* RBI MPC Poll-Pack Hero Card — 3 prediction questions (Repo / CRR / SLR).
-          Data comes from the Poll API (getPollPacks). Only renders when the
-          Poll API returns an open pack with 2+ polls.
-          Non-RBI flagship events are unaffected — they still use flagshipEvents. */}
-      {rbiPollPack !== null && (
-        <MpcPollPackCard polls={rbiPollPack} />
+        />
       )}
-
-      {/* PulseRibbon — context (next event countdown, policy calendar). Now
-          rendered AFTER the hero with lighter visual treatment so the editorial
-          pick claims primacy. RBI current rates folded in as a compact row
-          inside the ribbon's expanded content (rates sourced from first poll's
-          structuredData, shown only when present). */}
-      <PulseRibbon
-        flagshipEvents={flagshipEvents}
-        clusters={data?.eventClusters ?? []}
-        onPress={(kind) => setPulseOpen(kind)}
-        rbiRates={
-          rbiPollPack != null
-            ? ((rbiPollPack[0].structuredData as Record<string, unknown> | null)
-                ?.currentRates as RbiCurrentRates | null | undefined) ?? null
-            : null
-        }
-      />
 
       {/* S38: Merged Your Week + Market Sentiment toggle card.
           Replaces the old standalone WeeklyCallsDigestCard. Sentiment moved out
@@ -2318,12 +2315,14 @@ export function FinanceMode({
         style={financeStyles.unclusteredSection}
         onLayout={(e) => { expertSectionY.current = e.nativeEvent.layout.y; }}
       >
-        {/* S38 v3: Only 2 tabs (content TYPE — exclusive). Verified + Resolved
-            moved to filter chips since they're qualifiers, not content types. */}
+        {/* S38 v3: 3 tabs (content TYPE — exclusive). Verified + Resolved
+            moved to filter chips since they're qualifiers, not content types.
+            "Rates & Events" hosts PulseRibbon + RBI MPC polls. */}
         <View style={controlsStyles.tabsRow}>
           {([
             { key: "expert-opinions" as const, label: "Expert Opinions" },
             { key: "market-analysis" as const, label: "Market Analysis" },
+            { key: "rates-events" as const, label: "Rates & Events" },
           ]).map((opt) => {
             const active = showScope === opt.key;
             return (
@@ -2340,6 +2339,35 @@ export function FinanceMode({
           })}
         </View>
 
+        {/* Rates & Events tab content — PulseRibbon + RBI MPC poll pack.
+            Rendered ONLY when showScope === "rates-events". PulseRibbon opens
+            expanded (defaultExpanded) because it is the primary content here,
+            not a secondary context strip. MpcPollPackCard is shown when an open
+            RBI MPC pack exists. */}
+        {showScope === "rates-events" && (
+          <>
+            <PulseRibbon
+              flagshipEvents={flagshipEvents}
+              clusters={data?.eventClusters ?? []}
+              onPress={(kind) => setPulseOpen(kind)}
+              rbiRates={
+                rbiPollPack != null
+                  ? ((rbiPollPack[0].structuredData as Record<string, unknown> | null)
+                      ?.currentRates as RbiCurrentRates | null | undefined) ?? null
+                  : null
+              }
+              defaultExpanded
+            />
+            {rbiPollPack !== null && (
+              <MpcPollPackCard polls={rbiPollPack} />
+            )}
+          </>
+        )}
+
+        {/* Sort/filter chip strip + opinion/market feed.
+            Hidden when the Rates & Events tab is active — that tab has its
+            own dedicated content (PulseRibbon + MpcPollPackCard) rendered above. */}
+        {showScope !== "rates-events" && <>
         {/* S38: Sort + active-filter chip strip — replaces the 3 separate rows
             (MY ANALYSTS row + instrument banner + cluster banner) AND hosts the
             Sort dropdown so it doesn't crowd the Show tabs row above. */}
@@ -2805,6 +2833,7 @@ export function FinanceMode({
             <Text style={financeStyles.noMoreText}>No more opinions</Text>
           </View>
         )}
+        </>}
       </View>
 
       {/* Top Experts link at the bottom, after the infinite-scroll feed */}
