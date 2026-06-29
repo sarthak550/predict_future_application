@@ -468,6 +468,8 @@ function TeamRow({ team, isLive, isCricket }: {
 // ---- Match Detail Modal ----
 
 const FOOTBALL_LEAGUE_PATH: Record<string, string> = {
+  "FIFA World Cup": "fifa.world",
+  Internationals: "fifa.friendly",
   EPL: "eng.1",
   "La Liga": "esp.1",
   UCL: "uefa.champions",

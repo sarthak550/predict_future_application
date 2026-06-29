@@ -57,6 +57,8 @@ const ESPN_LEAGUES: Array<{ sport: string; league: string; path: string }> = [
   { sport: "Cricket", league: "IPL", path: "cricket/8048" },
   { sport: "Cricket", league: "International", path: "cricket/8042" },
   // Football (Soccer)
+  { sport: "Football", league: "FIFA World Cup", path: "soccer/fifa.world" },
+  { sport: "Football", league: "Internationals", path: "soccer/fifa.friendly" },
   { sport: "Football", league: "EPL", path: "soccer/eng.1" },
   { sport: "Football", league: "La Liga", path: "soccer/esp.1" },
   { sport: "Football", league: "UCL", path: "soccer/uefa.champions" },
