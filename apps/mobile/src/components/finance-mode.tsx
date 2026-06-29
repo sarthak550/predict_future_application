@@ -189,12 +189,11 @@ const Q_BADGE_COLORS: Array<{ bg: string; border: string; text: string }> = [
 
 /**
  * RBI MPC pack card — renders each poll in the pack as a prediction question
- * (Q1 = Repo Rate, Q2 = CRR, Q3 = SLR). Defaults collapsed; tap header to expand.
+ * (Q1 = Repo Rate, Q2 = CRR, Q3 = SLR). Always expanded — no collapse mechanism.
  */
 function MpcPollPackCard({ polls }: { polls: ApiPoll[] }) {
   const mpcStyles = useThemedStyles(makeMpcStyles);
   const router = useRouter();
-  const [collapsed, setCollapsed] = useState(true);
 
   // Use the first poll's eventAt as the canonical meeting date.
   const firstPoll = polls[0];
@@ -219,83 +218,61 @@ function MpcPollPackCard({ polls }: { polls: ApiPoll[] }) {
 
   return (
     <View style={mpcStyles.card}>
-      {/* Tappable header — always visible; collapses/expands the card */}
-      <Pressable
-        onPress={() => setCollapsed((c) => !c)}
-        style={mpcStyles.collapsibleHeader}
-        accessibilityRole="button"
-        accessibilityState={{ expanded: !collapsed }}
-        accessibilityLabel={collapsed ? "Predict the RBI Decision — tap to expand" : "Predict the RBI Decision — tap to collapse"}
-      >
-        {/* Top row: RBI chip + countdown + date + chevron */}
-        <View style={mpcStyles.headerRow}>
-          <View style={mpcStyles.rbiChip}>
-            <Text style={mpcStyles.rbiChipText}>RBI MPC</Text>
-          </View>
-          <View style={mpcStyles.countdownChip}>
-            <Text style={mpcStyles.countdownText}>{countdown}</Text>
-          </View>
-          <Text style={mpcStyles.meetingDate}>{meetingDate}</Text>
-          <Text style={mpcStyles.collapseChevron}>{collapsed ? "▸" : "▾"}</Text>
+      {/* Non-tappable header */}
+      <View style={mpcStyles.headerRow}>
+        <View style={mpcStyles.rbiChip}>
+          <Text style={mpcStyles.rbiChipText}>RBI MPC</Text>
         </View>
+        <View style={mpcStyles.countdownChip}>
+          <Text style={mpcStyles.countdownText}>{countdown}</Text>
+        </View>
+        <Text style={mpcStyles.meetingDate}>{meetingDate}</Text>
+      </View>
 
-        {/* Title row — always visible */}
-        <Text style={mpcStyles.heroTitle}>Predict the RBI Decision</Text>
+      {/* Title — always visible, non-tappable */}
+      <Text style={mpcStyles.heroTitle}>Predict the RBI Decision</Text>
 
-        {/* Collapsed: one-line teaser */}
-        {collapsed && (
-          <Text style={mpcStyles.collapsedTeaser} numberOfLines={1}>
-            Repo · CRR · SLR — 3 quick predictions
-          </Text>
-        )}
-      </Pressable>
+      <Text style={mpcStyles.heroSub}>
+        {totalParticipants > 0
+          ? `${totalParticipants.toLocaleString()} predictions so far — cast yours free`
+          : "Be among the first to predict — free, no strings attached"}
+      </Text>
 
-      {/* Expanded content */}
-      {!collapsed && (
-        <>
-          <Text style={mpcStyles.heroSub}>
-            {totalParticipants > 0
-              ? `${totalParticipants.toLocaleString()} predictions so far — cast yours free`
-              : "Be among the first to predict — free, no strings attached"}
-          </Text>
-
-          {/* Question blocks — one per poll in the pack */}
-          {polls.map((poll, idx) => {
-            const accent = Q_BADGE_COLORS[idx % Q_BADGE_COLORS.length];
-            return (
-              <View key={poll.id}>
-                <View style={mpcStyles.divider} />
-                <Pressable
-                  onPress={() => navigateToPoll(poll.id)}
-                  style={mpcStyles.questionBlock}
-                >
-                  <View style={mpcStyles.questionHeader}>
-                    <View style={[mpcStyles.qBadge, { backgroundColor: accent.bg, borderColor: accent.border }]}>
-                      <Text style={[mpcStyles.qBadgeText, { color: accent.text }]}>Q{idx + 1}</Text>
-                    </View>
-                    <Text style={mpcStyles.questionTitle} numberOfLines={2}>{poll.question}</Text>
-                  </View>
-                  {poll.description ? (
-                    <Text style={mpcStyles.questionDescription}>{poll.description}</Text>
-                  ) : null}
-                  <MpcOptionChips
-                    poll={poll}
-                    onPickOption={(pId, oId) => navigateToPoll(pId, oId)}
-                  />
-                </Pressable>
+      {/* Question blocks — one per poll in the pack */}
+      {polls.map((poll, idx) => {
+        const accent = Q_BADGE_COLORS[idx % Q_BADGE_COLORS.length];
+        return (
+          <View key={poll.id}>
+            <View style={mpcStyles.divider} />
+            <Pressable
+              onPress={() => navigateToPoll(poll.id)}
+              style={mpcStyles.questionBlock}
+            >
+              <View style={mpcStyles.questionHeader}>
+                <View style={[mpcStyles.qBadge, { backgroundColor: accent.bg, borderColor: accent.border }]}>
+                  <Text style={[mpcStyles.qBadgeText, { color: accent.text }]}>Q{idx + 1}</Text>
+                </View>
+                <Text style={mpcStyles.questionTitle} numberOfLines={2}>{poll.question}</Text>
               </View>
-            );
-          })}
+              {poll.description ? (
+                <Text style={mpcStyles.questionDescription}>{poll.description}</Text>
+              ) : null}
+              <MpcOptionChips
+                poll={poll}
+                onPickOption={(pId, oId) => navigateToPoll(pId, oId)}
+              />
+            </Pressable>
+          </View>
+        );
+      })}
 
-          {/* Footer CTA */}
-          <Pressable
-            style={mpcStyles.ctaBtn}
-            onPress={() => navigateToPoll(firstPoll.id)}
-          >
-            <Text style={mpcStyles.ctaBtnText}>Predict now — it&apos;s free</Text>
-          </Pressable>
-        </>
-      )}
+      {/* Footer CTA */}
+      <Pressable
+        style={mpcStyles.ctaBtn}
+        onPress={() => navigateToPoll(firstPoll.id)}
+      >
+        <Text style={mpcStyles.ctaBtnText}>Predict now — it&apos;s free</Text>
+      </Pressable>
     </View>
   );
 }
@@ -1602,6 +1579,145 @@ const makeLensStyles = (t: ThemeContextValue) => StyleSheet.create({
   pillTextActive: { color: "#FFFFFF" },
 });
 
+// ─── Always-visible RBI Rates card (rates-events tab) ─────────────────────────
+// Renders the RBI current rates grid as a standalone non-collapsible card.
+// Must call hooks in its own body (themed styles).
+function RbiRatesCard({ rbiRates }: { rbiRates: RbiCurrentRates }) {
+  const pulseStyles = useThemedStyles(makePulseStyles);
+
+  const ratePills: { label: string; value: number }[] = [
+    { label: "Repo", value: rbiRates.policyRepoRate ?? NaN },
+    { label: "CRR",  value: rbiRates.cashReserveRatio ?? NaN },
+    { label: "SLR",  value: rbiRates.statutoryLiquidityRatio ?? NaN },
+    { label: "SDF",  value: rbiRates.standingDepositFacilityRate ?? NaN },
+    { label: "MSF",  value: rbiRates.marginalStandingFacilityRate ?? NaN },
+    { label: "Bank", value: rbiRates.bankRate ?? NaN },
+  ].filter((r) => Number.isFinite(r.value));
+
+  if (ratePills.length === 0) return null;
+
+  return (
+    <View
+      style={[
+        pulseStyles.card,
+        { marginHorizontal: 16, marginTop: 8, marginBottom: 4, padding: 12 },
+      ]}
+    >
+      <View style={pulseStyles.ratesCard}>
+        <Text style={pulseStyles.ratesCardLabel}>🏦 RBI rates</Text>
+        <View style={pulseStyles.ratesGrid}>
+          {ratePills.map((r) => (
+            <View key={r.label} style={pulseStyles.rateTile}>
+              <Text style={pulseStyles.rateTileLabel}>{r.label}</Text>
+              <Text style={pulseStyles.rateTileValue}>{r.value.toFixed(2)}%</Text>
+            </View>
+          ))}
+        </View>
+      </View>
+    </View>
+  );
+}
+
+// ─── Always-visible Policy Calendar card (rates-events tab) ──────────────────
+// Renders the eventClusters list inline without a bottom sheet. The
+// "See expert takes" footer switches to the Expert Opinions tab first (since
+// the feed is hidden while on the rates-events tab), then applies the cluster
+// filter and scrolls to the expert section.
+function PolicyCalendarCard({
+  clusters,
+  onGoToCluster,
+}: {
+  clusters: { id: string; name: string; startsAt: string; endsAt: string; bannerEmoji?: string | null; description?: string | null; dataPoints: { label: string; value: string; subtext?: string | null }[]; expertTakeCount: number }[];
+  onGoToCluster: (clusterId: string) => void;
+}) {
+  const financeStyles = useThemedStyles(makeFinanceStyles);
+  const pulseStyles = useThemedStyles(makePulseStyles);
+
+  return (
+    <View
+      style={[
+        pulseStyles.card,
+        { marginHorizontal: 16, marginTop: 4, marginBottom: 8, paddingTop: 12, paddingHorizontal: 0, paddingBottom: 0, overflow: "hidden" },
+      ]}
+    >
+      {/* Card heading */}
+      <Text
+        style={[
+          pulseStyles.ratesCardLabel,
+          { paddingHorizontal: 12, paddingBottom: 8, fontSize: 14, fontWeight: "800" },
+        ]}
+      >
+        💼 Policy Calendar
+      </Text>
+
+      {clusters.length === 0 ? (
+        <View style={{ paddingHorizontal: 12, paddingBottom: 12 }}>
+          <Text style={financeStyles.emptyText}>No events on the calendar this week.</Text>
+        </View>
+      ) : (
+        clusters.map((cluster) => {
+          const hasTakes = cluster.expertTakeCount > 0;
+          return (
+            <View key={cluster.id} style={[financeStyles.clusterSection, { marginHorizontal: 0, marginBottom: 0, borderRadius: 0, borderLeftWidth: 0, borderRightWidth: 0, borderBottomWidth: 0 }]}>
+              {/* Header: emoji + name + date */}
+              <View style={financeStyles.clusterHeader}>
+                {cluster.bannerEmoji ? (
+                  <Text style={financeStyles.clusterEmoji}>{cluster.bannerEmoji}</Text>
+                ) : null}
+                <View style={financeStyles.clusterHeaderText}>
+                  <Text style={financeStyles.clusterName}>{cluster.name}</Text>
+                  <Text style={financeStyles.clusterDateRange}>
+                    {formatDateRange(cluster.startsAt, cluster.endsAt)}
+                  </Text>
+                </View>
+              </View>
+
+              {/* Description */}
+              {cluster.description ? (
+                <Text style={financeStyles.clusterDescription}>{cluster.description}</Text>
+              ) : null}
+
+              {/* Data points */}
+              {cluster.dataPoints && cluster.dataPoints.length > 0 ? (
+                <View style={financeStyles.clusterDataGrid}>
+                  {cluster.dataPoints.map((dp, idx) => (
+                    <View key={idx} style={financeStyles.clusterDataItem}>
+                      <Text style={financeStyles.clusterDataLabel}>{dp.label}</Text>
+                      <Text style={financeStyles.clusterDataValue}>{dp.value}</Text>
+                      {dp.subtext ? (
+                        <Text style={financeStyles.clusterDataSubtext}>{dp.subtext}</Text>
+                      ) : null}
+                    </View>
+                  ))}
+                </View>
+              ) : null}
+
+              {/* Footer */}
+              {hasTakes ? (
+                <Pressable
+                  style={financeStyles.clusterFooter}
+                  onPress={() => onGoToCluster(cluster.id)}
+                  hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+                >
+                  <Text style={financeStyles.expertTakesLink}>
+                    {`→ See ${cluster.expertTakeCount} expert ${cluster.expertTakeCount === 1 ? "take" : "takes"} in the feed`}
+                  </Text>
+                </Pressable>
+              ) : (
+                <View style={financeStyles.clusterFooter}>
+                  <Text style={financeStyles.expertTakesMuted}>
+                    No expert takes yet — check back closer to the date
+                  </Text>
+                </View>
+              )}
+            </View>
+          );
+        })
+      )}
+    </View>
+  );
+}
+
 export function FinanceMode({
   onNavigateToFeed,
   initialClusterId,
@@ -2317,7 +2433,7 @@ export function FinanceMode({
       >
         {/* S38 v3: 3 tabs (content TYPE — exclusive). Verified + Resolved
             moved to filter chips since they're qualifiers, not content types.
-            "Rates & Events" hosts PulseRibbon + RBI MPC polls. */}
+            "Rates & Events" shows always-visible RBI Rates, Policy Calendar, and MPC polls. */}
         <View style={controlsStyles.tabsRow}>
           {([
             { key: "expert-opinions" as const, label: "Expert Opinions" },
@@ -2339,25 +2455,32 @@ export function FinanceMode({
           })}
         </View>
 
-        {/* Rates & Events tab content — PulseRibbon + RBI MPC poll pack.
-            Rendered ONLY when showScope === "rates-events". PulseRibbon opens
-            expanded (defaultExpanded) because it is the primary content here,
-            not a secondary context strip. MpcPollPackCard is shown when an open
-            RBI MPC pack exists. */}
+        {/* Rates & Events tab content — always-visible cards (no PulseRibbon, no collapse).
+            Render order: RBI Rates card → Policy Calendar card → MpcPollPackCard.
+            Rendered ONLY when showScope === "rates-events". */}
         {showScope === "rates-events" && (
           <>
-            <PulseRibbon
-              flagshipEvents={flagshipEvents}
+            {/* RBI Rates card — only shown when at least one rate is finite */}
+            {rbiPollPack != null && (() => {
+              const rates = ((rbiPollPack[0].structuredData as Record<string, unknown> | null)
+                ?.currentRates as RbiCurrentRates | null | undefined) ?? null;
+              return rates != null ? <RbiRatesCard rbiRates={rates} /> : null;
+            })()}
+
+            {/* Policy Calendar card — always visible; "See expert takes" switches to Expert Opinions tab */}
+            <PolicyCalendarCard
               clusters={data?.eventClusters ?? []}
-              onPress={(kind) => setPulseOpen(kind)}
-              rbiRates={
-                rbiPollPack != null
-                  ? ((rbiPollPack[0].structuredData as Record<string, unknown> | null)
-                      ?.currentRates as RbiCurrentRates | null | undefined) ?? null
-                  : null
-              }
-              defaultExpanded
+              onGoToCluster={(clusterId) => {
+                setShowScope("expert-opinions");
+                setSelectedClusterFilter(clusterId);
+                setTimeout(
+                  () => scrollViewRef.current?.scrollTo({ y: expertSectionY.current, animated: true }),
+                  200
+                );
+              }}
             />
+
+            {/* MPC predict card — non-collapsible, shown when an open RBI MPC pack exists */}
             {rbiPollPack !== null && (
               <MpcPollPackCard polls={rbiPollPack} />
             )}
@@ -2366,7 +2489,7 @@ export function FinanceMode({
 
         {/* Sort/filter chip strip + opinion/market feed.
             Hidden when the Rates & Events tab is active — that tab has its
-            own dedicated content (PulseRibbon + MpcPollPackCard) rendered above. */}
+            own dedicated content (RBI Rates + Policy Calendar + MpcPollPackCard) rendered above. */}
         {showScope !== "rates-events" && <>
         {/* S38: Sort + active-filter chip strip — replaces the 3 separate rows
             (MY ANALYSTS row + instrument banner + cluster banner) AND hosts the
