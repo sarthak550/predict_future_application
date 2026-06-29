@@ -1332,9 +1332,7 @@ export function NewsFeedCard({ item, viewportHeight, showHint, onVoted }: Props)
                       router.push({
                         pathname: "/(tabs)/create",
                         params: {
-                          initialDescription: item.sourceUrl
-                            ? `Context: ${item.headline}\n${item.sourceUrl}`
-                            : `Context: ${item.headline}`,
+                          initialDescription: `Context: ${item.headline}\nhttps://predictfuture.app/story/${item.id}`,
                           initialCategory: mapNewsCategory(item.category),
                         },
                       })

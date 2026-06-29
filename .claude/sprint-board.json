@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "currentSprint": 63,
+  "currentSprint": 64,
   "tickets": [
     {
       "id": "S7-T1",
@@ -3825,6 +3825,28 @@
       "sprint": 63,
       "title": "NewsFeedCard: \"Turn this into a prediction\" CTA",
       "description": "Add a low-prominence text CTA to each news card that deep-links into the Create market wizard, pre-filling description with article context and selecting the matching market category.\n\n**Acceptance criteria:**\n1. In apps/mobile/src/components/news-feed-card.tsx, import useSession from @/providers/session-provider (already imported in other components \u2014 confirm it is available here; if not, check the session provider hook pattern used elsewhere in the app).\n2. Add a category mapping object at module scope (near CATEGORY_COLORS):\n   const NEWS_TO_MARKET_CATEGORY: Record<string, AppMarketCategory> = {\n     FINANCE: \"FINANCE\", BUSINESS: \"BUSINESS\", TECH: \"TECH\", SPORTS: \"SPORTS\",\n     ENTERTAINMENT: \"ENTERTAINMENT\", WEATHER: \"WEATHER\", COMPANY: \"BUSINESS\",\n     PRODUCT: \"TECH\", GENERAL: \"GENERAL\"\n   };\n   Add a helper: function mapCategory(c: string): AppMarketCategory { return NEWS_TO_MARKET_CATEGORY[c] ?? \"GENERAL\"; }\n3. In the NewsFeedCard component, read const { status: sessionStatus } = useSession(); (or equivalent).\n4. In the footer row (styles.footer, which is already flexDirection:\"row\" justifyContent:\"space-between\"), add the CTA as the left element:\n   {sessionStatus === \"authenticated\" && (\n     <Pressable\n       onPress={() => router.push(\"/(tabs)/create\" as any, {\n         initialDescription: ,\n         initialCategory: mapCategory(item.category),\n       })}\n       hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}\n     >\n       <Text style={styles.createBetLink}>Turn this into a prediction \u2192</Text>\n     </Pressable>\n   )}\n5. Add createBetLink to makeStyles: fontSize: 12, color: t.colors.accent (same accent token used elsewhere in the codebase), fontWeight: \"500\".\n6. The CTA renders regardless of whether the AI_NEWS_POLL_ENABLED flag is true or false (the flag guards the poll block, not this CTA). The CTA lives in the content area footer, not inside the AI_NEWS_POLL_ENABLED conditional.\n7. Hidden (null) for non-authenticated users \u2014 no sign-in prompt replacement, just absent.\n8. No backend call from this button. It is a pure router.push. The Create screen (S63-T1) handles all state from there.\n9. QA check: (a) On a logged-in session, confirm the button appears on every news card. (b) Tap it \u2014 confirm the Create screen opens at the Question step (or whichever step description is on) with the description pre-filled as \"Context: [headline]\n[sourceUrl]\". (c) Confirm the correct market category is pre-selected. (d) Log out \u2014 confirm the button is absent. (e) Confirm no visual regression on the Finance discovery chip (renders above footer row and is unaffected).\n\n**Note to CTO:** T1 must be implemented before T2 since T2 depends on the initialDescription param existing. Implement and verify T1 first.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-30"
+    },
+    {
+      "id": "S64-T1",
+      "sprint": 64,
+      "title": "Create-a-bet prefill: use in-app story URL instead of raw sourceUrl",
+      "description": "The 'Create a bet' deep-link on news cards prefilled the market description with the raw item.sourceUrl, which for Google News feeds is an opaque news.google.com/rss/articles redirect that ejects users to a browser. Change the prefill to embed the in-app story URL instead: `Context: <headline>\\nhttps://predictfuture.app/story/<item.id>`. item.id is always present (same id used for the story deep-link). Pure mobile, no fallback needed. File: apps/mobile/src/components/news-feed-card.tsx.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-30"
+    },
+    {
+      "id": "S64-T2",
+      "sprint": 64,
+      "title": "LinkifiedText: route predictfuture.app URLs in-app",
+      "description": "LinkifiedText opened every URL via Linking.openURL (browser). Teach it to intercept our own domain: if a URL host is predictfuture.app (with/without www.), router.push the in-app path; all other URLs still open externally. Adds isInternalUrl/getInternalPath helpers + useRouter, no prop-API change. Covers all callers (market detail description + Resolution Rules, Create wizard review). File: apps/mobile/src/components/linkified-text.tsx. QA PASS (6/6); non-blocking note: trailing-punctuation on mid-sentence pasted app URLs is a pre-existing regex edge case, not triggered by this feature (URL is always end-of-line).",
       "priority": "high",
       "status": "done",
       "qaVerdict": "pass",
