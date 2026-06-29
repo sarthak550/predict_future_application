@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { summarizeNewsStory } from "@/lib/ai/summarizeNews";
 import { fetchArticleBody } from "@/lib/news/articleBody";
+import { needsBetterSummary } from "@/lib/news/rss-ingestion-service";
 import { getUserIdFromRequest } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
@@ -73,13 +74,9 @@ export async function POST(request: Request) {
       take: BATCH_SIZE * 4, // over-fetch; filter inline to fill the batch
     });
 
-    // Filter to stories where summary is blank or equals the headline
+    // Filter to stories that need a better summary (blank, headline-equal, too short, or truncated).
     const eligible = stories
-      .filter((s) => {
-        const normalizedSummary = s.summary.trim().toLowerCase();
-        const normalizedHeadline = s.headline.trim().toLowerCase();
-        return !normalizedSummary || normalizedSummary === normalizedHeadline;
-      })
+      .filter((s) => needsBetterSummary(s.summary, s.headline))
       .slice(0, BATCH_SIZE);
 
     if (eligible.length === 0) {

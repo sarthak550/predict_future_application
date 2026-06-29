@@ -362,6 +362,24 @@ const MAX_SUMMARIES_PER_BATCH = 10;
  * Concurrency is capped at SUMMARY_CONCURRENCY to avoid hammering external sites.
  * The 1500ms per-domain throttle inside fetchArticleBody provides additional spacing.
  */
+const MIN_FEED_SUMMARY_WORDS = 50;
+
+/**
+ * A story needs an AI-generated summary when its current summary is blank, equals the
+ * headline, is too short to fill a feed card (< 50 words), or looks truncated (ends
+ * with an ellipsis or not on sentence-ending punctuation). Exported so the backfill
+ * route applies the exact same eligibility rule.
+ */
+export function needsBetterSummary(summary: string | null | undefined, headline: string): boolean {
+  const s = (summary ?? "").trim();
+  if (!s) return true;
+  if (s.toLowerCase() === headline.trim().toLowerCase()) return true;
+  if (s.split(/\s+/).filter(Boolean).length < MIN_FEED_SUMMARY_WORDS) return true;
+  if (/(\.\.\.|…)\s*$/.test(s)) return true; // trailing ellipsis = truncated
+  if (!/[.!?]["'”’)\]]?\s*$/.test(s)) return true; // no terminal punctuation = cut mid-sentence
+  return false;
+}
+
 export async function generateSummariesInBackground(
   items: NormalizedNewsItem[]
 ): Promise<void> {
@@ -382,12 +400,8 @@ export async function generateSummariesInBackground(
     take: MAX_SUMMARIES_PER_BATCH,
   });
 
-  // Eligible: summary is blank OR equals the headline (trimmed comparison)
-  const eligible = stories.filter((s) => {
-    const normalizedSummary = s.summary.trim().toLowerCase();
-    const normalizedHeadline = s.headline.trim().toLowerCase();
-    return !normalizedSummary || normalizedSummary === normalizedHeadline;
-  });
+  // Eligible: blank, headline-equal, too short, or truncated.
+  const eligible = stories.filter((s) => needsBetterSummary(s.summary, s.headline));
 
   if (eligible.length === 0) {
     console.info("[news:summarizer] no stories need AI summaries");

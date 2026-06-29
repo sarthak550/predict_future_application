@@ -1581,8 +1581,8 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   },
   headline: {
     marginTop: spacing.sm,
-    fontSize: 20,
-    lineHeight: 27,
+    fontSize: 17,
+    lineHeight: 23,
     fontWeight: "800",
     color: t.colors.text,
   },
