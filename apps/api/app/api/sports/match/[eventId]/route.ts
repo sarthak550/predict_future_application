@@ -11,24 +11,34 @@ type CacheEntry = { data: unknown; fetchedAt: number };
 const cache = new Map<string, CacheEntry>();
 const CACHE_TTL_MS = 30_000;
 
-const CRICKET_LEAGUES: Record<string, string> = {
+/**
+ * Leagues are now discovered dynamically via the ESPN scoreboard header.
+ * Cricket leagues use numeric ids (e.g. "8048"), football leagues use slug paths
+ * (e.g. "eng.1", "fifa.world"). We detect the type by checking whether the id is
+ * purely numeric rather than maintaining an exhaustive whitelist.
+ *
+ * Friendly display names are kept for the detail response body only.
+ */
+const KNOWN_CRICKET_NAMES: Record<string, string> = {
   "8048": "IPL",
   "8042": "International",
 };
 
-const FOOTBALL_LEAGUES: Record<string, string> = {
+const KNOWN_FOOTBALL_NAMES: Record<string, string> = {
   "eng.1": "EPL",
   "esp.1": "La Liga",
   "uefa.champions": "UCL",
   "ita.1": "Serie A",
   "ger.1": "Bundesliga",
   "ind.1": "ISL",
+  "fifa.world": "FIFA World Cup",
+  "fifa.friendly": "Internationals",
 };
 
-const SUPPORTED_LEAGUES: Record<string, string> = {
-  ...CRICKET_LEAGUES,
-  ...FOOTBALL_LEAGUES,
-};
+/** Returns true for purely numeric league ids — those are cricket. */
+function isCricketLeagueId(leagueId: string): boolean {
+  return /^\d+$/.test(leagueId);
+}
 
 function findStat(stats: any[], name: string): any {
   return stats?.find((s: any) => s.name === name);
@@ -57,9 +67,11 @@ export async function GET(
     const { eventId } = params;
     const leagueId = request.nextUrl.searchParams.get("league") || "8048";
 
-    if (!SUPPORTED_LEAGUES[leagueId]) {
+    // Basic validation: leagueId must be non-empty. We no longer maintain an
+    // exhaustive whitelist — leagues are discovered dynamically.
+    if (!leagueId.trim()) {
       return NextResponse.json(
-        { error: "Unsupported league. Use cricket (8048, 8042) or football (eng.1, esp.1, uefa.champions, ita.1, ger.1, ind.1)." },
+        { error: "Missing league parameter." },
         { status: 400 }
       );
     }
@@ -72,14 +84,13 @@ export async function GET(
       });
     }
 
-    const isFootball = leagueId in FOOTBALL_LEAGUES;
+    const isFootball = !isCricketLeagueId(leagueId);
     const sport = isFootball ? "soccer" : "cricket";
-    const leaguePath = leagueId; // football uses path-based IDs like eng.1, cricket uses numeric IDs
-    const url = `https://site.api.espn.com/apis/site/v2/sports/${sport}/${leaguePath}/summary?event=${eventId}`;
+    const url = `https://site.api.espn.com/apis/site/v2/sports/${sport}/${leagueId}/summary?event=${eventId}`;
     const res = await fetch(url, { headers: { Accept: "application/json" }, cache: "no-store" });
 
     if (!res.ok) {
-      console.error(`[sports:match] ESPN returned ${res.status} for event ${eventId}`);
+      console.error(`[sports:match] ESPN returned ${res.status} for event ${eventId} (league=${leagueId})`);
       return NextResponse.json(
         { error: `ESPN API returned ${res.status}` },
         { status: 502 }
@@ -149,7 +160,7 @@ function transformEspnSummary(raw: any, eventId: string, leagueId: string) {
   return {
     eventId,
     sport: "Cricket",
-    league: CRICKET_LEAGUES[leagueId] ?? leagueId,
+    league: KNOWN_CRICKET_NAMES[leagueId] ?? leagueId,
     status: statusState as "pre" | "in" | "post",
     statusDetail,
     statusSummary,
@@ -446,7 +457,7 @@ function transformFootballSummary(raw: any, eventId: string, leagueId: string) {
   return {
     eventId,
     sport: "Football" as const,
-    league: FOOTBALL_LEAGUES[leagueId] ?? leagueId,
+    league: KNOWN_FOOTBALL_NAMES[leagueId] ?? leagueId,
     status: statusState as "pre" | "in" | "post",
     statusDetail,
     clock,

@@ -544,6 +544,10 @@ export type ApiLiveScore = {
   venueCity?: string;
   statusSummary?: string;
   broadcast?: string;
+  /** ESPN league slug used to fetch football match detail (e.g. "eng.1", "fifa.world"). */
+  leaguePath?: string;
+  /** ESPN numeric league id used to fetch cricket match detail (e.g. "8048", "8042"). */
+  leagueId?: string;
   homeTeam: ApiTeamDetail;
   awayTeam: ApiTeamDetail;
   leaderboard?: Array<{

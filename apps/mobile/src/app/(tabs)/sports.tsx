@@ -467,16 +467,9 @@ function TeamRow({ team, isLive, isCricket }: {
 
 // ---- Match Detail Modal ----
 
-const FOOTBALL_LEAGUE_PATH: Record<string, string> = {
-  "FIFA World Cup": "fifa.world",
-  Internationals: "fifa.friendly",
-  EPL: "eng.1",
-  "La Liga": "esp.1",
-  UCL: "uefa.champions",
-  "Serie A": "ita.1",
-  Bundesliga: "ger.1",
-  ISL: "ind.1",
-};
+// FOOTBALL_LEAGUE_PATH removed — the league slug is now embedded in each ApiLiveScore
+// as match.leaguePath (populated server-side from the ESPN header discovery), so the
+// client no longer needs a hardcoded league-name → path map.
 
 function MatchDetailModal({ match, relatedNews, onClose }: {
   match: ApiLiveScore | null;
@@ -532,9 +525,11 @@ function MatchDetailModal({ match, relatedNews, onClose }: {
     if (!match) return;
 
     if (match.sport === "Cricket") {
+      // leagueId is the ESPN numeric id embedded in the score by the server (e.g. "8048").
+      // Fall back to "8048" (IPL) only if the server omitted it for any reason.
+      const leagueId = match.leagueId ?? "8048";
       let cancelled = false;
       setLoadingDetail(true);
-      const leagueId = match.league === "International" ? "8042" : "8048";
       mobileApi.getCricketMatchDetail(match.id, leagueId)
         .then((data) => { if (!cancelled) setCricketDetail(data); })
         .catch((e) => console.warn("[sports] fetchMatchDetail error:", e))
@@ -543,9 +538,11 @@ function MatchDetailModal({ match, relatedNews, onClose }: {
     }
 
     if (match.sport === "Football") {
+      // leaguePath is the ESPN slug embedded in the score by the server (e.g. "fifa.world").
+      // Fall back to "eng.1" only if the server omitted it for any reason.
+      const leaguePath = match.leaguePath ?? "eng.1";
       let cancelled = false;
       setLoadingDetail(true);
-      const leaguePath = FOOTBALL_LEAGUE_PATH[match.league] ?? "eng.1";
       mobileApi.getFootballMatchDetail(match.id, leaguePath)
         .then((data) => { if (!cancelled) setFootballDetail(data); })
         .catch((e) => console.warn("[sports] fetchFootballDetail error:", e))

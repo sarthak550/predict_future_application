@@ -1,11 +1,13 @@
 /**
  * Multi-source sports scores client.
  *
- * - ESPN public API: Cricket (IPL, International), Football (EPL, La Liga, UCL, etc.), Tennis
- * - OpenF1 API: Formula 1 live timing and results
+ * - ESPN scoreboard header API: Cricket, Football (Soccer), Tennis — leagues discovered
+ *   dynamically per sport from ESPN's header endpoint, so new tournaments (e.g. FIFA World Cup)
+ *   appear automatically without any code change.
+ * - OpenF1 API: Formula 1 live timing and results.
  *
  * All APIs are free and require no API keys.
- * Scores are cached in-memory for 2 minutes.
+ * Scores are cached in-memory for 30 seconds.
  */
 
 export type TeamDetail = {
@@ -29,6 +31,10 @@ export type LiveScore = {
   venueCity?: string;
   statusSummary?: string;  // e.g. "GT won toss & fielded"
   broadcast?: string;
+  /** ESPN league slug used to construct football match-detail URLs (e.g. "eng.1", "fifa.world"). */
+  leaguePath?: string;
+  /** ESPN numeric league id used to construct cricket match-detail URLs (e.g. "8048", "8042"). */
+  leagueId?: string;
   homeTeam: TeamDetail;
   awayTeam: TeamDetail;
   leaderboard?: Array<{
@@ -50,126 +56,117 @@ const CACHE_TTL_MS = 30 * 1000; // 30 seconds for more real-time scores
 
 const scoreCache = new Map<string, CacheEntry>();
 
-// ---- ESPN Leagues ----
+// ---- Sport definitions (stable — sports don't change, leagues are discovered) ----
 
-const ESPN_LEAGUES: Array<{ sport: string; league: string; path: string }> = [
-  // Cricket
-  { sport: "Cricket", league: "IPL", path: "cricket/8048" },
-  { sport: "Cricket", league: "International", path: "cricket/8042" },
-  // Football (Soccer)
-  { sport: "Football", league: "FIFA World Cup", path: "soccer/fifa.world" },
-  { sport: "Football", league: "Internationals", path: "soccer/fifa.friendly" },
-  { sport: "Football", league: "EPL", path: "soccer/eng.1" },
-  { sport: "Football", league: "La Liga", path: "soccer/esp.1" },
-  { sport: "Football", league: "UCL", path: "soccer/uefa.champions" },
-  { sport: "Football", league: "Serie A", path: "soccer/ita.1" },
-  { sport: "Football", league: "Bundesliga", path: "soccer/ger.1" },
-  { sport: "Football", league: "ISL", path: "soccer/ind.1" },
-  // Tennis
-  { sport: "Tennis", league: "ATP", path: "tennis/atp" },
-  { sport: "Tennis", league: "WTA", path: "tennis/wta" },
+const ESPN_SPORTS: Array<{ key: string; display: string }> = [
+  { key: "soccer",  display: "Football" },
+  { key: "cricket", display: "Cricket"  },
+  { key: "tennis",  display: "Tennis"   },
 ];
 
-function buildScoreboardUrl(path: string): string {
-  return `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard`;
+function buildHeaderUrl(sportKey: string): string {
+  return `https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=${sportKey}&region=us&lang=en`;
 }
 
-async function fetchLeagueScores(leagueConfig: typeof ESPN_LEAGUES[number]): Promise<LiveScore[]> {
-  const cacheKey = leagueConfig.path;
+/**
+ * Fetch all events for one sport via the ESPN scoreboard header endpoint.
+ * The header returns every league that currently has events, with full event
+ * detail embedded — one HTTP call replaces the old per-league scoreboard calls.
+ */
+async function fetchSportScores(sport: { key: string; display: string }): Promise<LiveScore[]> {
+  const cacheKey = `header:${sport.key}`;
   const cached = scoreCache.get(cacheKey);
   if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
     return cached.scores;
   }
 
   try {
-    const url = buildScoreboardUrl(leagueConfig.path);
+    const url = buildHeaderUrl(sport.key);
     const response = await fetch(url, {
       headers: { Accept: "application/json" },
       cache: "no-store",
     });
 
     if (!response.ok) {
-      console.warn(`[sports:espn] ${leagueConfig.league} returned ${response.status}`);
+      console.warn(`[sports:espn] header for ${sport.key} returned ${response.status}`);
       return cached?.scores ?? [];
     }
 
     const data = await response.json();
-    const events = data?.events ?? [];
 
-    const scores: LiveScore[] = events.map((event: any) => {
-      const competition = event.competitions?.[0];
-      const statusObj = competition?.status ?? event.status;
-      const competitors = competition?.competitors ?? [];
+    // ESPN header: data.sports[0].leagues[].events[]
+    const leagues: any[] = data?.sports?.[0]?.leagues ?? [];
 
-      const home = competitors.find((c: any) => c.homeAway === "home") ?? competitors[0];
-      const away = competitors.find((c: any) => c.homeAway === "away") ?? competitors[1];
+    const scores: LiveScore[] = [];
 
-      const statusState = statusObj?.type?.state ?? "pre";
+    for (const league of leagues) {
+      const leagueName: string = league.name ?? league.slug ?? "Unknown";
+      const leagueSlug: string = league.slug ?? "";
+      // Cricket leagues use numeric slugs (e.g. "23813"); soccer leagues use dot-slugs (e.g. "eng.1")
+      const isCricketNumericId = /^\d+$/.test(leagueSlug);
+      const events: any[] = league.events ?? [];
 
-      const homeScore = home?.score ?? "0";
-      const awayScore = away?.score ?? "0";
+      for (const event of events) {
+        const competitors: any[] = event.competitors ?? [];
+        const home = competitors.find((c: any) => c.homeAway === "home") ?? competitors[0];
+        const away = competitors.find((c: any) => c.homeAway === "away") ?? competitors[1];
 
-      // Extract extra detail fields
-      const venue = competition?.venue;
-      const broadcasts = competition?.broadcasts ?? [];
-      const broadcastName = broadcasts[0]?.names?.[0] ?? "";
+        // Map ESPN status string to our three-state convention
+        const rawStatus: string = event.status ?? "pre";
+        const mappedStatus: LiveScore["status"] =
+          rawStatus === "in" ? "in" : rawStatus === "post" ? "post" : "pre";
 
-      const extractRecord = (c: any): string | undefined => {
-        const rec = c?.records?.find((r: any) => r.type === "total");
-        return rec?.summary || undefined;
-      };
+        // summary field holds human-readable state like "HT", "FT", "1-0", "45'"
+        const summary: string = event.summary ?? "";
+        // clock is a numeric string like "45:00"
+        const clock: string = event.clock ?? "";
 
-      const extractLinescores = (c: any): string[] | undefined => {
-        const ls = c?.linescores;
-        if (!ls || !Array.isArray(ls) || ls.length === 0) return undefined;
-        return ls.map((l: any) => {
-          // Cricket: show runs/wickets, Football: show goals
-          if (l.wickets !== undefined) return `${l.runs}/${l.wickets}`;
-          return String(l.value ?? l.displayValue ?? "");
-        });
-      };
+        const homeScore: string = home?.score ?? "";
+        const awayScore: string = away?.score ?? "";
 
-      return {
-        // Prefix with league key so ESPN events that appear in multiple feeds
-        // (e.g. ATP and WTA both surfacing the same Wimbledon mixed-doubles
-        // event id "415-2026") don't collide on the React `key` prop in the
-        // sports tab. Without this, the mobile FlatList raises "Encountered
-        // two children with the same key" and may render a stale/duplicated
-        // card.
-        id: `${leagueConfig.league}-${event.id}`,
-        sport: leagueConfig.sport,
-        league: leagueConfig.league,
-        status: statusState as LiveScore["status"],
-        statusDetail: statusObj?.type?.detail ?? "",
-        shortDetail: statusObj?.type?.shortDetail ?? statusObj?.displayClock ?? "",
-        startTime: event.date ?? competition?.date ?? "",
-        venue: venue?.fullName ?? undefined,
-        venueCity: venue?.address?.city ?? undefined,
-        statusSummary: statusObj?.summary ?? undefined,
-        broadcast: broadcastName || undefined,
-        homeTeam: {
-          name: home?.team?.displayName ?? home?.team?.name ?? "Home",
-          abbreviation: home?.team?.abbreviation ?? "",
-          logo: home?.team?.logo ?? home?.team?.logos?.[0]?.href ?? "",
-          score: homeScore,
-          record: extractRecord(home),
-          linescores: extractLinescores(home),
-        },
-        awayTeam: {
-          name: away?.team?.displayName ?? away?.team?.name ?? "Away",
-          abbreviation: away?.team?.abbreviation ?? "",
-          logo: away?.team?.logo ?? away?.team?.logos?.[0]?.href ?? "",
-          score: awayScore,
-          record: extractRecord(away),
-          linescores: extractLinescores(away),
-        },
-      };
-    });
+        const score: LiveScore = {
+          // Prefix id with league slug so events shared across feeds don't collide
+          // on React key props in the mobile FlatList.
+          id: `${leagueSlug}-${event.id}`,
+          sport: sport.display,
+          league: leagueName,
+          status: mappedStatus,
+          statusDetail: summary || clock,
+          shortDetail: summary || clock,
+          startTime: event.date ?? "",
+          venue: event.location ?? undefined,
+          venueCity: undefined,
+          statusSummary: undefined,
+          broadcast: undefined,
+          // Provide routing hints so the mobile detail fetch is fully dynamic —
+          // no hardcoded maps required on the client.
+          leaguePath: isCricketNumericId ? undefined : leagueSlug || undefined,
+          leagueId:   isCricketNumericId ? leagueSlug : undefined,
+          homeTeam: {
+            name: home?.displayName ?? home?.name ?? "Home",
+            abbreviation: home?.abbreviation ?? "",
+            logo: home?.logo ?? "",
+            score: homeScore,
+          },
+          awayTeam: {
+            name: away?.displayName ?? away?.name ?? "Away",
+            abbreviation: away?.abbreviation ?? "",
+            logo: away?.logo ?? "",
+            score: awayScore,
+          },
+        };
+
+        scores.push(score);
+      }
+    }
 
     scoreCache.set(cacheKey, { scores, fetchedAt: Date.now() });
     return scores;
   } catch (err) {
-    console.warn(`[sports:espn] failed to fetch ${leagueConfig.league}:`, err instanceof Error ? err.message : err);
+    console.warn(
+      `[sports:espn] failed to fetch header for ${sport.key}:`,
+      err instanceof Error ? err.message : err
+    );
     return cached?.scores ?? [];
   }
 }
@@ -313,12 +310,12 @@ async function fetchF1Scores(): Promise<LiveScore[]> {
 
 /**
  * Fetch scores for all configured sports.
- * Returns live games, today's finished games, and upcoming games (within 6 hours).
+ * Returns live games, today's finished games, and upcoming games (within 6–48 hours).
  * Live games are sorted first.
  */
 export async function getLiveScores(): Promise<LiveScore[]> {
   const results = await Promise.allSettled([
-    ...ESPN_LEAGUES.map((league) => fetchLeagueScores(league)),
+    ...ESPN_SPORTS.map((sport) => fetchSportScores(sport)),
     fetchF1Scores(),
   ]);
 
@@ -374,7 +371,7 @@ export function matchScoresToText(scores: LiveScore[], text: string): LiveScore[
  */
 export async function getAllScores(): Promise<LiveScore[]> {
   const results = await Promise.allSettled([
-    ...ESPN_LEAGUES.map((league) => fetchLeagueScores(league)),
+    ...ESPN_SPORTS.map((sport) => fetchSportScores(sport)),
     fetchF1Scores(),
   ]);
 
