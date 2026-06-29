@@ -1047,10 +1047,7 @@ export function ExpertOpinionPostCard({
   return (
     <View ref={cardRef} style={styles.card} collapsable={false}>
 
-      {/* S38 fix: RESOLVED stamp moved INLINE — used to be absolute top-right
-          and collided with the Follow button. Now lives inside the org row. */}
-
-      {/* ── HEADER ── */}
+      {/* ── HEADER ── LinkedIn-style: avatar · name stack · follow ── */}
       <View style={styles.header}>
         <Pressable
           onPress={() =>
@@ -1062,7 +1059,7 @@ export function ExpertOpinionPostCard({
             name={opinion.expertName}
             organization={opinion.expertOrganization}
             avatarUrl={opinion.avatarUrl}
-            size={42}
+            size={48}
           />
         </Pressable>
 
@@ -1090,6 +1087,15 @@ export function ExpertOpinionPostCard({
                   </View>
                 )}
               </View>
+              {/* Called-at subtitle — same slot as LinkedIn's "time" line */}
+              {(() => {
+                const callTime = opinion.analystCallAt ?? opinion.publishedAt;
+                return callTime ? (
+                  <Text style={[styles.calledAt, { color: freshnessColor(callTime) }]}>
+                    Called {formatRelativeTime(callTime)}
+                  </Text>
+                ) : null;
+              })()}
             </Pressable>
           ) : (
             <Pressable
@@ -1113,22 +1119,20 @@ export function ExpertOpinionPostCard({
                   </View>
                 </View>
               )}
+              {/* Called-at subtitle — same slot as LinkedIn's "time" line */}
+              {(() => {
+                const callTime = opinion.analystCallAt ?? opinion.publishedAt;
+                return callTime ? (
+                  <Text style={[styles.calledAt, { color: freshnessColor(callTime) }]}>
+                    Called {formatRelativeTime(callTime)}
+                  </Text>
+                ) : null;
+              })()}
             </Pressable>
           )}
-          {/* When the analyst made the call — prefers analystCallAt when the
-              extractor surfaced it, falls back to article publishedAt otherwise.
-              Color is tuned to recency. */}
-          {(() => {
-            const callTime = opinion.analystCallAt ?? opinion.publishedAt;
-            return callTime ? (
-              <Text style={[styles.calledAt, { color: freshnessColor(callTime) }]}>
-                Called {formatRelativeTime(callTime)}
-              </Text>
-            ) : null;
-          })()}
         </View>
 
-        {/* Follow button */}
+        {/* Follow button — LinkedIn-style outlined "+ Follow" / muted filled "Following" */}
         {onFollowToggle !== undefined && !opinion.isSourceAttribution && (
           <Pressable
             style={[styles.followPill, isFollowed && styles.followPillActive]}
@@ -1137,46 +1141,37 @@ export function ExpertOpinionPostCard({
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
             {followPending ? (
-              <ActivityIndicator size={10} color={isFollowed ? "#fff" : colors.accent} />
+              <ActivityIndicator size={10} color={isFollowed ? colors.textMuted : colors.accent} />
             ) : (
               <Text style={[styles.followPillText, isFollowed && styles.followPillTextActive]}>
-                {isFollowed ? "Following" : "Follow"}
+                {isFollowed ? "Following" : "+ Follow"}
               </Text>
             )}
           </Pressable>
         )}
       </View>
 
-      {/* ── VERDICT BADGE (direction + asset name) ── */}
-      <View
-        style={[
-          styles.verdictBadge,
-          { backgroundColor: verdictBg, borderColor: verdictBorder },
-        ]}
-      >
-        <Text style={[styles.verdictText, { color: verdictColor }]} numberOfLines={1}>
-          {dirConfig.icon}{"  "}{verdictLabel}
-          {opinion.instrument ? (
-            <Text style={[styles.verdictAssetText, { color: verdictColor }]}>
-              {" on "}{opinion.instrument}
-            </Text>
-          ) : null}
+      {/* ── CALL LINE — restrained single line replacing the heavy verdict badge ── */}
+      {/* Format: ● BULLISH on Reliance Industries · RELIANCE.NS */}
+      <View style={styles.callLine}>
+        {/* Colored dot */}
+        <View style={[styles.callDot, { backgroundColor: verdictColor }]} />
+        {/* Direction word */}
+        <Text style={[styles.callDirection, { color: verdictColor }]}>
+          {isResolved ? `${dirConfig.label}  ·  ${isHit ? "HIT" : "MISS"}` : dirConfig.label}
         </Text>
+        {/* "on {instrument}" */}
+        {opinion.instrument ? (
+          <Text style={styles.callInstrument}> on {opinion.instrument}</Text>
+        ) : null}
+        {/* " · TICKER" suffix */}
+        {opinion.instrumentTicker ? (
+          <Text style={styles.callTicker}> · {opinion.instrumentTicker}</Text>
+        ) : null}
       </View>
 
-      {/* ── TICKER CHIP (the actual symbol — for users who track by ticker) ── */}
-      {opinion.instrumentTicker && (
-        <View style={styles.tickerRow}>
-          <View style={[styles.tickerChip, { borderColor: verdictBorder }]}>
-            <Text style={[styles.tickerSymbol, { color: verdictColor }]}>
-              {opinion.instrumentTicker}
-            </Text>
-          </View>
-        </View>
-      )}
-
-      {/* ── BODY ── */}
-      <Pressable onPress={() => setBodyExpanded((x) => !x)}>
+      {/* ── BODY — hero content, generous breathing room ── */}
+      <Pressable onPress={() => setBodyExpanded((x) => !x)} style={styles.bodyWrap}>
         <Text
           style={styles.body}
           numberOfLines={bodyExpanded ? undefined : 3}
@@ -1188,47 +1183,45 @@ export function ExpertOpinionPostCard({
         )}
       </Pressable>
 
-      {/* ── SOURCE STRIP ── */}
+      {/* ── SOURCE — "via {domain}{ · date}", small + muted ── */}
       <Pressable
         onPress={() => void Linking.openURL(opinion.sourceUrl)}
         style={styles.sourceStrip}
       >
         <Ionicons name="open-outline" size={11} color={colors.textMuted} style={{ marginRight: 4 }} />
         <Text style={styles.sourceText} numberOfLines={1}>
-          AI-summarized from{" "}
-          <Text style={styles.sourceLink}>{sourceDomain}</Text>
-          {sourceDateLabel ? `  ·  ${sourceDateLabel}` : ""}
+          via <Text style={styles.sourceLink}>{sourceDomain}</Text>
+          {sourceDateLabel ? ` · ${sourceDateLabel}` : ""}
         </Text>
       </Pressable>
 
-      {/* ── SIBLINGS CHIP — links to story detail which renders all takes
-            stacked together with the article hero on top. */}
+      {/* ── SIBLINGS — quiet muted text link ── */}
       {siblings.length > 0 && opinion.storyId && (
         <Pressable
           onPress={() =>
             router.push(`/story/${opinion.storyId}` as Parameters<typeof router.push>[0])
           }
-          style={styles.siblingsChip}
+          style={styles.siblingsLink}
           hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
         >
-          <Text style={styles.siblingsChipText} numberOfLines={1} ellipsizeMode="tail">
+          <Text style={styles.siblingsLinkText} numberOfLines={1} ellipsizeMode="tail">
             +{siblings.length} other take{siblings.length === 1 ? "" : "s"} on this story
             {(siblingBullish > 0 || siblingBearish > 0 || siblingNeutral > 0) && " · "}
             {siblingBullish > 0 && (
               <Text style={styles.siblingsChipBullish}>{siblingBullish} bullish</Text>
             )}
-            {siblingBullish > 0 && siblingBearish > 0 && <Text style={styles.siblingsChipText}> · </Text>}
+            {siblingBullish > 0 && siblingBearish > 0 && <Text style={styles.siblingsLinkText}> · </Text>}
             {siblingBearish > 0 && (
               <Text style={styles.siblingsChipBearish}>{siblingBearish} bearish</Text>
             )}
             {(siblingBullish > 0 || siblingBearish > 0) && siblingNeutral > 0 && (
-              <Text style={styles.siblingsChipText}> · </Text>
+              <Text style={styles.siblingsLinkText}> · </Text>
             )}
             {siblingNeutral > 0 && (
               <Text style={styles.siblingsChipNeutral}>{siblingNeutral} neutral</Text>
             )}
           </Text>
-          <Text style={styles.siblingsChipChevron}>›</Text>
+          <Text style={styles.siblingsLinkChevron}>›</Text>
         </Pressable>
       )}
 
@@ -1304,11 +1297,9 @@ export function ExpertOpinionPostCard({
         onVoted={handleTalliesUpdate}
       />
 
-      {/* ── FOOTER ── */}
+      {/* ── FOOTER — hairline divider, compliance left, share right ── */}
       <View style={styles.footer}>
-        <Text style={styles.disclaimer}>
-          AI-summarized · Not investment advice · SEBI registered
-        </Text>
+        <Text style={styles.disclaimer}>Not investment advice</Text>
         <Pressable
           onPress={() => void handleShare()}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -1318,7 +1309,10 @@ export function ExpertOpinionPostCard({
           {sharing ? (
             <ActivityIndicator size={13} color={colors.textSubtle} />
           ) : (
-            <Ionicons name="share-outline" size={16} color={colors.textSubtle} />
+            <View style={styles.shareBtnInner}>
+              <Ionicons name="share-outline" size={15} color={colors.textSubtle} />
+              <Text style={styles.shareBtnLabel}>Share</Text>
+            </View>
           )}
         </Pressable>
       </View>
@@ -1339,19 +1333,13 @@ const makeCardStyles = (t: ThemeContextValue) => StyleSheet.create({
   card: {
     marginHorizontal: spacing.lg,
     marginBottom: spacing.lg,
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.md,
-    paddingBottom: spacing.sm,
+    padding: spacing.lg,
     borderRadius: radius.md,
     backgroundColor: t.colors.surface,
     borderWidth: 1,
     borderColor: t.colors.border,
-    // Subtle card shadow — Robinhood / fintech premium feel
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
+    // Soft card lift — t.shadows.card spread
+    ...t.shadows.card,
     overflow: "visible",
   },
 
@@ -1385,7 +1373,7 @@ const makeCardStyles = (t: ThemeContextValue) => StyleSheet.create({
 
   // Resolution-reason inline banner
   resolutionBanner: {
-    marginTop: spacing.sm,
+    marginTop: spacing.md,
     borderLeftWidth: 3,
     borderRadius: radius.sm,
     paddingHorizontal: spacing.sm,
@@ -1408,7 +1396,7 @@ const makeCardStyles = (t: ThemeContextValue) => StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 6,
-    marginTop: spacing.sm,
+    marginTop: spacing.md,
   },
   narrativeChip: {
     paddingHorizontal: 8,
@@ -1435,7 +1423,7 @@ const makeCardStyles = (t: ThemeContextValue) => StyleSheet.create({
   },
   headerMeta: {
     flex: 1,
-    marginLeft: 10,
+    marginLeft: 12,
     marginRight: 8,
   },
   nameRow: {
@@ -1474,27 +1462,30 @@ const makeCardStyles = (t: ThemeContextValue) => StyleSheet.create({
     fontSize: 12,
     color: t.colors.textMuted,
   },
-  calledAt: { fontSize: 11, color: t.colors.textSubtle, marginTop: 2, fontWeight: "500" as const },
+  // "Called X" — sits directly below the credibility badge like LinkedIn's time/title subtitle
+  calledAt: { fontSize: 11, color: t.colors.textSubtle, marginTop: 3, fontWeight: "500" as const },
   hitRateLabel: {
     fontSize: 11,
     color: "#16a34a",
     fontWeight: "600",
   },
 
-  // Follow pill
+  // Follow button — LinkedIn-style: transparent pill with accent border (unfollowed)
+  // / muted filled pill (following). NOT a heavy filled accent pill.
   followPill: {
-    borderWidth: 1.5,
+    borderWidth: 1,
     borderColor: t.colors.accent,
-    borderRadius: 20,
+    borderRadius: radius.pill,
     paddingHorizontal: 12,
     paddingVertical: 5,
     alignItems: "center",
     justifyContent: "center",
-    minWidth: 72,
+    backgroundColor: "transparent",
+    minWidth: 76,
   },
   followPillActive: {
-    backgroundColor: t.colors.accent,
-    borderColor: t.colors.accent,
+    backgroundColor: t.colors.surfaceMuted,
+    borderColor: t.colors.border,
   },
   followPillText: {
     fontSize: 12,
@@ -1502,71 +1493,63 @@ const makeCardStyles = (t: ThemeContextValue) => StyleSheet.create({
     color: t.colors.accent,
   },
   followPillTextActive: {
-    color: "#fff",
+    color: t.colors.textMuted,
+    fontWeight: "600",
   },
 
-  // Verdict badge
-  verdictBadge: {
-    borderWidth: 1.5,
-    borderRadius: 100,
-    paddingVertical: 9,
-    paddingHorizontal: 24,
-    alignItems: "center",
-    marginBottom: 10,
-  },
-  verdictText: {
-    fontSize: 15,
-    fontWeight: "800",
-    letterSpacing: 1.5,
-  },
-  verdictAssetText: {
-    fontSize: 14,
-    fontWeight: "700",
-    letterSpacing: 0.3,
-    textTransform: "none" as const,
-  },
-
-  // Ticker chip — small monospace-style badge of the actual Yahoo ticker
-  tickerRow: {
+  // Call line — replaces the heavy filled verdict badge + ticker chip
+  // One restrained line: ● DIRECTION on Instrument · TICKER
+  callLine: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 10,
+    marginBottom: spacing.md,
+    flexWrap: "wrap",
   },
-  tickerChip: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-    borderWidth: 1,
-    backgroundColor: t.colors.surface,
+  callDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 7,
   },
-  tickerSymbol: {
-    fontSize: 11,
-    fontWeight: "800",
-    letterSpacing: 0.8,
-    fontVariant: ["tabular-nums" as const],
+  callDirection: {
+    fontSize: 13,
+    fontWeight: "700",
+    letterSpacing: 0.6,
+  },
+  callInstrument: {
+    fontSize: 13,
+    fontWeight: "400",
+    color: t.colors.text,
+  },
+  callTicker: {
+    fontSize: 13,
+    fontWeight: "400",
+    color: t.colors.textMuted,
   },
 
-  // Body
+  // Body — hero content, generous margins
+  bodyWrap: {
+    marginTop: 2,
+    marginBottom: spacing.md,
+  },
   body: {
-    fontSize: 14,
+    fontSize: 15,
     color: t.colors.text,
-    lineHeight: 21,
+    lineHeight: 22,
     letterSpacing: 0.1,
-    marginBottom: 4,
   },
   moreLink: {
     fontSize: 13,
     color: t.colors.accent,
     fontWeight: "600",
-    marginBottom: 6,
+    marginTop: 4,
   },
 
-  // Source strip
+  // Source strip — "via {domain}{ · date}"
   sourceStrip: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 2,
-    marginTop: 2,
+    marginBottom: spacing.sm,
   },
   sourceText: {
     fontSize: 12,
@@ -1574,45 +1557,49 @@ const makeCardStyles = (t: ThemeContextValue) => StyleSheet.create({
     flex: 1,
   },
   sourceLink: {
-    color: t.colors.accent,
+    color: t.colors.textMuted,
     fontWeight: "600",
   },
 
-  // Siblings chip + sheet
-  siblingsChip: {
+  // Siblings — quiet text link (no chip background/border)
+  siblingsLink: {
     flexDirection: "row",
     alignItems: "center",
-    marginTop: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 999,
-    backgroundColor: t.colors.surfaceMuted,
-    borderWidth: 1,
-    borderColor: t.colors.border,
+    marginBottom: spacing.sm,
   },
-  siblingsChipText: { fontSize: 12, fontWeight: "600", color: t.colors.textMuted, flex: 1 },
+  siblingsLinkText: { fontSize: 12, fontWeight: "500", color: t.colors.textMuted, flex: 1 },
   siblingsChipBullish: { color: "#16a34a", fontWeight: "700" },
   siblingsChipBearish: { color: "#dc2626", fontWeight: "700" },
   siblingsChipNeutral: { color: "#6b7280", fontWeight: "700" },
-  siblingsChipChevron: { fontSize: 16, color: t.colors.textSubtle, marginLeft: 6 },
+  siblingsLinkChevron: { fontSize: 15, color: t.colors.textSubtle, marginLeft: 4 },
 
-  // Footer
+  // Footer — hairline divider, compliance left, share right
   footer: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginTop: spacing.sm,
-    paddingTop: spacing.sm,
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: t.colors.border,
   },
   disclaimer: {
-    fontSize: 10,
+    fontSize: 11,
     color: t.colors.textSubtle,
     flex: 1,
     letterSpacing: 0.1,
   },
   shareBtn: {
-    paddingLeft: 10,
+    paddingLeft: spacing.md,
+  },
+  shareBtnInner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+  },
+  shareBtnLabel: {
+    fontSize: 12,
+    color: t.colors.textSubtle,
+    fontWeight: "500",
   },
 });
