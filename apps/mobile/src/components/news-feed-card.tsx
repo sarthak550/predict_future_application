@@ -1581,15 +1581,15 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   },
   headline: {
     marginTop: spacing.sm,
-    fontSize: 17,
-    lineHeight: 23,
+    fontSize: 16,
+    lineHeight: 22,
     fontWeight: "800",
     color: t.colors.text,
   },
   summary: {
     marginTop: spacing.md,
-    fontSize: 16,
-    lineHeight: 24,
+    fontSize: 14,
+    lineHeight: 20,
     color: t.colors.text,
   },
 
