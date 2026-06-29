@@ -109,9 +109,11 @@ export default function CreateScreen() {
   const params = useLocalSearchParams<{
     initialTitle?: string;
     initialCategory?: string;
+    initialDescription?: string;
     preselectCategory?: string;
   }>();
   const initialTitle = typeof params.initialTitle === "string" ? params.initialTitle : undefined;
+  const initialDescription = typeof params.initialDescription === "string" ? params.initialDescription : undefined;
   const initialCategory =
     typeof params.initialCategory === "string"
       ? (params.initialCategory as AppMarketCategory)
@@ -149,6 +151,7 @@ export default function CreateScreen() {
         userId={userId}
         initialTitle={initialTitle}
         initialCategory={initialCategory}
+        initialDescription={initialDescription}
         isAdmin={eligibility?.isAdmin ?? false}
         eligibility={eligibility}
       />
@@ -193,12 +196,14 @@ function CreateWizard({
   userId,
   initialTitle,
   initialCategory,
+  initialDescription,
   isAdmin,
   eligibility,
 }: {
   userId: string;
   initialTitle?: string;
   initialCategory?: AppMarketCategory;
+  initialDescription?: string;
   isAdmin: boolean;
   eligibility: ApiHostEligibility | null;
 }) {
@@ -225,7 +230,7 @@ function CreateWizard({
   const [marketType, setMarketType] = useState<MarketType>("BINARY");
   const [category, setCategory] = useState<AppMarketCategory>(initialCategory ?? "GENERAL");
   const [title, setTitle] = useState(initialTitle ?? "");
-  const [description, setDescription] = useState("");
+  const [description, setDescription] = useState(initialDescription ?? "");
 
   // Timing — store actual dates
   const [closeAt, setCloseAt] = useState<Date>(() => new Date(Date.now() + 24 * 3600000));

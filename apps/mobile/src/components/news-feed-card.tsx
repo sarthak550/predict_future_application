@@ -17,7 +17,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { SnappedSlider as Slider } from "@/components/snapped-slider";
 
-import type { ApiExpertOpinionItem, ApiExpertOpinionTallies, ApiImplicationChoice, ApiNewsFeedItem } from "@predict-future/types";
+import type { AppMarketCategory, ApiExpertOpinionItem, ApiExpertOpinionTallies, ApiImplicationChoice, ApiNewsFeedItem } from "@predict-future/types";
 import { formatPercent, formatRelativeTime, freshnessColor } from "@predict-future/utils";
 import { radius, spacing } from "@predict-future/ui-tokens";
 import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
@@ -28,6 +28,7 @@ import { getExpertInitials, getExpertInitialsColor } from "@/utils/expertAvatar"
 import { USE_POST_CARD } from "@/lib/feature-flags";
 import { ExpertOpinionPostCard } from "@/components/expert-opinion-post-card";
 import { AnalystCredibilityBadge } from "@/components/analyst-credibility-badge";
+import { useSession } from "@/providers/session-provider";
 
 // ── Expert opinion direction configuration ──
 
@@ -1096,6 +1097,7 @@ export function NewsFeedCard({ item, viewportHeight, showHint, onVoted }: Props)
   const { colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
   const router = useRouter();
+  const { status: authStatus } = useSession();
   const market = item.market;
   const poll = item.poll;
 
@@ -1320,9 +1322,31 @@ export function NewsFeedCard({ item, viewportHeight, showHint, onVoted }: Props)
 
             {/* Inshorts-style footer: time · Read more */}
             <View style={styles.footer}>
-              <Text style={styles.footerMeta}>
-                {formatRelativeTime(item.publishedAt)}
-              </Text>
+              <View style={styles.footerLeft}>
+                <Text style={styles.footerMeta}>
+                  {formatRelativeTime(item.publishedAt)}
+                </Text>
+                {authStatus === "authenticated" && (
+                  <Pressable
+                    onPress={() =>
+                      router.push({
+                        pathname: "/(tabs)/create",
+                        params: {
+                          initialDescription: item.sourceUrl
+                            ? `Context: ${item.headline}\n${item.sourceUrl}`
+                            : `Context: ${item.headline}`,
+                          initialCategory: mapNewsCategory(item.category),
+                        },
+                      })
+                    }
+                    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                    style={styles.createBetCta}
+                  >
+                    <Ionicons name="add-circle-outline" size={12} color={colors.textMuted} style={styles.createBetIcon} />
+                    <Text style={styles.createBetLabel}>Create a bet</Text>
+                  </Pressable>
+                )}
+              </View>
               <Pressable onPress={() => void Linking.openURL(item.sourceUrl)}>
                 <Text style={styles.readMoreLink}>Read more →</Text>
               </Pressable>
@@ -1555,6 +1579,22 @@ const CATEGORY_COLORS: Record<string, string> = {
   FINANCE: "#4338CA",
 };
 
+const NEWS_TO_MARKET_CATEGORY: Record<string, AppMarketCategory> = {
+  FINANCE: "FINANCE",
+  BUSINESS: "BUSINESS",
+  TECH: "TECH",
+  SPORTS: "SPORTS",
+  ENTERTAINMENT: "ENTERTAINMENT",
+  WEATHER: "WEATHER",
+  COMPANY: "BUSINESS",
+  PRODUCT: "TECH",
+  GENERAL: "GENERAL",
+};
+
+function mapNewsCategory(c: string): AppMarketCategory {
+  return NEWS_TO_MARKET_CATEGORY[c] ?? "GENERAL";
+}
+
 const CATEGORY_EMOJI: Record<string, string> = {
   TECH: "💻",
   BUSINESS: "📈",
@@ -1718,6 +1758,24 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     fontWeight: "600",
     color: t.colors.accent,
     flexShrink: 0,
+  },
+
+  // Left column of footer — stacks time and optional "Create a bet" CTA
+  footerLeft: {
+    flexShrink: 1,
+    flexDirection: "column",
+    gap: 4,
+  },
+  createBetCta: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  createBetIcon: {
+    marginRight: 3,
+  },
+  createBetLabel: {
+    fontSize: 11,
+    color: t.colors.textMuted,
   },
 
   financeChip: {
