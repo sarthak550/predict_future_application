@@ -19,7 +19,7 @@
  * Gate: controlled by USE_POST_CARD in src/lib/feature-flags.ts.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Linking,
@@ -36,17 +36,12 @@ import { captureRef } from "react-native-view-shot";
 
 import type {
   ApiExpertOpinionItem,
-  ApiExpertOpinionTallies,
-  ApiImplicationChoice,
   ApiOpinionSibling,
   AppAnalystTier,
 } from "@predict-future/types";
 import { formatRelativeTime, freshnessColor } from "@predict-future/utils";
 import { radius, spacing } from "@predict-future/ui-tokens";
 import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
-import { SnappedSlider as Slider } from "@/components/snapped-slider";
-import { trackVoteEvent } from "@/lib/analytics";
-import { mobileApi } from "@/lib/api";
 import { getExpertInitials, getExpertInitialsColor } from "@/utils/expertAvatar";
 import { AnalystCredibilityBadge } from "@/components/analyst-credibility-badge";
 
@@ -77,45 +72,6 @@ const DIRECTION_CONFIG = {
 } as const;
 
 type DirectionKey = keyof typeof DIRECTION_CONFIG;
-
-// ─── Poll A bucket definitions ─────────────────────────────────────────────────
-
-const IMPLICATION_BUCKETS: {
-  key: ApiImplicationChoice;
-  label: string;
-  tickLabel: string;
-  color: string;
-}[] = [
-  { key: "STRONGLY_DISAGREE", label: "Strongly Disagree", tickLabel: "−−", color: "#dc2626" },
-  { key: "DISAGREE", label: "Disagree", tickLabel: "−", color: "#f87171" },
-  { key: "NEUTRAL", label: "Neutral", tickLabel: "0", color: "#6b7280" },
-  { key: "AGREE", label: "Agree", tickLabel: "+", color: "#4ade80" },
-  { key: "STRONGLY_AGREE", label: "Strongly Agree", tickLabel: "++", color: "#16a34a" },
-];
-
-function implicationChoiceToIndex(choice: string): number {
-  switch (choice) {
-    case "STRONGLY_DISAGREE":
-    case "STRONG_DROP":
-    case "BEARISH":
-      return 0;
-    case "DISAGREE":
-    case "MILD_DROP":
-      return 1;
-    case "NEUTRAL":
-    case "FLAT":
-      return 2;
-    case "AGREE":
-    case "MILD_GAIN":
-      return 3;
-    case "STRONGLY_AGREE":
-    case "STRONG_GAIN":
-    case "BULLISH":
-      return 4;
-    default:
-      return 2;
-  }
-}
 
 // ─── Utility ───────────────────────────────────────────────────────────────────
 
@@ -176,567 +132,6 @@ function ExpertAvatar({
       >
         {initials}
       </Text>
-    </View>
-  );
-}
-
-const makeConsensusStyles = (t: ThemeContextValue) => StyleSheet.create({
-  preVoteWrap: { marginBottom: 6 },
-  preVoteTrack: {
-    flexDirection: "row",
-    height: 3,
-    borderRadius: 2,
-    overflow: "hidden",
-    backgroundColor: t.colors.border,
-    marginBottom: 4,
-  },
-  preVoteFill: { backgroundColor: "#16a34a", height: 3 },
-  preVoteRest: { backgroundColor: t.colors.border, height: 3 },
-  preVoteLabel: { fontSize: 11, color: t.colors.textMuted, letterSpacing: 0.1 },
-  postVoteWrap: { marginBottom: 6 },
-  splitTrack: {
-    flexDirection: "row",
-    height: 5,
-    borderRadius: 3,
-    overflow: "hidden",
-    marginBottom: 4,
-  },
-  splitSegment: { height: 5 },
-  splitLabels: { flexDirection: "row", justifyContent: "space-between" },
-  splitLabel: { fontSize: 10, fontWeight: "600", letterSpacing: 0.1 },
-});
-
-/**
- * ConsensusBar — slim social-proof bar showing live Poll A aggregate.
- * Pre-vote: single thin green bar + label.
- * Post-vote / resolved: split bar with agree/neutral/disagree segments.
- */
-function ConsensusBar({
-  tallies,
-  hasVoted,
-  userBucketIndex,
-}: {
-  tallies: ApiExpertOpinionTallies;
-  hasVoted: boolean;
-  userBucketIndex: number;
-}) {
-  const consensusStyles = useThemedStyles(makeConsensusStyles);
-  const { colors } = useTheme();
-  const impl = tallies.implication;
-  if (impl.total === 0) return null;
-
-  const agreeCount = impl.agree + impl.stronglyAgree;
-  const disagreeCount = impl.stronglyDisagree + impl.disagree;
-  const neutralCount = impl.neutral;
-  const agreePct = Math.round((agreeCount / impl.total) * 100);
-
-  // S38: hide engagement % below N=5 — same threshold as the Big Call hero.
-  const ENGAGEMENT_MIN = 5;
-
-  if (!hasVoted) {
-    if (impl.total < ENGAGEMENT_MIN) {
-      return (
-        <View style={consensusStyles.preVoteWrap}>
-          <Text style={consensusStyles.preVoteLabel}>Vote to see how others stand</Text>
-        </View>
-      );
-    }
-    return (
-      <View style={consensusStyles.preVoteWrap}>
-        <View style={consensusStyles.preVoteTrack}>
-          <View style={[consensusStyles.preVoteFill, { flex: agreePct }]} />
-          <View style={[consensusStyles.preVoteRest, { flex: Math.max(100 - agreePct, 0) }]} />
-        </View>
-        <Text style={consensusStyles.preVoteLabel}>
-          {agreePct}% of {impl.total} reader{impl.total !== 1 ? "s" : ""} agreed
-        </Text>
-      </View>
-    );
-  }
-
-  const userIsAgree = userBucketIndex >= 3;
-  const userIsDisagree = userBucketIndex <= 1;
-  const userIsNeutral = userBucketIndex === 2;
-
-  const totalSafe = Math.max(impl.total, 1);
-  const agreeFlex = Math.round((agreeCount / totalSafe) * 100);
-  const neutralFlex = Math.round((neutralCount / totalSafe) * 100);
-  const disagreeFlex = Math.max(100 - agreeFlex - neutralFlex, 0);
-
-  return (
-    <View style={consensusStyles.postVoteWrap}>
-      <View style={consensusStyles.splitTrack}>
-        {agreeFlex > 0 && (
-          <View
-            style={[
-              consensusStyles.splitSegment,
-              { flex: agreeFlex, backgroundColor: userIsAgree ? "#16a34a" : "#bbf7d0" },
-            ]}
-          />
-        )}
-        {neutralFlex > 0 && (
-          <View
-            style={[
-              consensusStyles.splitSegment,
-              { flex: neutralFlex, backgroundColor: userIsNeutral ? "#9ca3af" : colors.border },
-            ]}
-          />
-        )}
-        {disagreeFlex > 0 && (
-          <View
-            style={[
-              consensusStyles.splitSegment,
-              { flex: Math.max(disagreeFlex, 1), backgroundColor: userIsDisagree ? "#dc2626" : "#fecaca" },
-            ]}
-          />
-        )}
-      </View>
-      <View style={consensusStyles.splitLabels}>
-        <Text style={[consensusStyles.splitLabel, { color: userIsAgree ? "#16a34a" : colors.textMuted }]}>
-          {agreePct}% agreed
-        </Text>
-        <Text style={[consensusStyles.splitLabel, { color: colors.textSubtle }]}>
-          {Math.round((neutralCount / totalSafe) * 100)}% neutral
-        </Text>
-        <Text style={[consensusStyles.splitLabel, { color: userIsDisagree ? "#dc2626" : colors.textMuted }]}>
-          {Math.round((disagreeCount / totalSafe) * 100)}% disagreed
-        </Text>
-      </View>
-    </View>
-  );
-}
-
-// ─── Poll A ────────────────────────────────────────────────────────────────────
-
-const makePollStyles = (t: ThemeContextValue) => StyleSheet.create({
-  section: {
-    paddingTop: spacing.sm,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: t.colors.border,
-    marginTop: spacing.sm,
-  },
-  sectionHeader: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: t.colors.text,
-    marginBottom: 8,
-    letterSpacing: 0.1,
-  },
-  sliderSkeletonTrack: {
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: t.colors.border,
-    marginVertical: 8,
-  },
-  sliderPositionLabel: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: t.colors.text,
-    textAlign: "center",
-    marginBottom: 6,
-  },
-  slider: { width: "100%", height: 36 },
-  tickRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    paddingHorizontal: 4,
-    marginBottom: 10,
-  },
-  tickLabel: {
-    fontSize: 11,
-    color: t.colors.textSubtle,
-    fontWeight: "600",
-    width: 20,
-    textAlign: "center",
-  },
-  submitVoteBtn: {
-    backgroundColor: t.colors.accent,
-    borderRadius: radius.sm,
-    paddingVertical: 10,
-    alignItems: "center",
-    marginTop: 2,
-  },
-  submitVoteBtnDisabled: { opacity: 0.55 },
-  submitVoteBtnText: { color: "#fff", fontSize: 13, fontWeight: "700", letterSpacing: 0.3 },
-  castVoteBtn: {
-    backgroundColor: "#4338ca",
-    borderRadius: radius.sm,
-    paddingVertical: 9,
-    alignItems: "center",
-    marginTop: spacing.sm,
-  },
-  castVoteBtnText: { color: "#fff", fontSize: 12, fontWeight: "700", letterSpacing: 0.2 },
-  castVoteHint: { fontSize: 10, color: t.colors.textMuted, marginTop: 4, textAlign: "center" },
-  histogramRow: {
-    flexDirection: "row",
-    alignItems: "flex-end",
-    justifyContent: "space-around",
-    height: 34,
-    marginBottom: 2,
-  },
-  histogramCell: { alignItems: "center", flex: 1 },
-  histogramBar: { width: 14, borderRadius: 3 },
-  medianFlag: { marginBottom: 1 },
-  medianFlagText: { fontSize: 8, color: t.colors.textSubtle },
-  youVotedChip: {
-    fontSize: 11,
-    color: t.colors.textMuted,
-    marginTop: 6,
-    textAlign: "center",
-    fontStyle: "italic",
-  },
-  errorText: { fontSize: 11, color: "#dc2626", marginTop: 4, textAlign: "center" },
-});
-
-function PollA({
-  opinion,
-  tallies,
-  loadingTallies,
-  onVoted,
-}: {
-  opinion: ApiExpertOpinionItem;
-  tallies: ApiExpertOpinionTallies | null;
-  loadingTallies: boolean;
-  onVoted: (tallies: ApiExpertOpinionTallies) => void;
-}) {
-  const pollStyles = useThemedStyles(makePollStyles);
-  const { colors } = useTheme();
-  const [voting, setVoting] = useState(false);
-  const [pendingBucket, setPendingBucket] = useState<number>(2);
-  const [localChoice, setLocalChoice] = useState<ApiImplicationChoice | null>(
-    tallies?.implication.userChoice ?? null
-  );
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (tallies?.implication.userChoice) {
-      setLocalChoice(tallies.implication.userChoice);
-    }
-  }, [tallies?.implication.userChoice]);
-
-  const isPending = opinion.resolutionStatus === "PENDING";
-  const hasVoted = localChoice !== null;
-  const impTallies = tallies?.implication;
-  const isLocked = Boolean(impTallies?.userLockedAt);
-  const isDraftEditable = hasVoted && !isLocked && isPending;
-
-  // When a draft vote becomes editable (or its server-side bucket changes),
-  // align the slider position so the user can drag from where they currently sit.
-  useEffect(() => {
-    if (isDraftEditable && localChoice) {
-      setPendingBucket(implicationChoiceToIndex(localChoice));
-    }
-  }, [isDraftEditable, localChoice]);
-
-  const handleSubmit = async () => {
-    if (voting) return;
-    const choice = IMPLICATION_BUCKETS[pendingBucket]?.key;
-    if (!choice) return;
-    if (!isPending) {
-      trackVoteEvent("opinion_vote_blocked", {
-        opinionId: opinion.id,
-        expertId: opinion.expertId,
-        expertOrganization: opinion.expertOrganization,
-        direction: opinion.direction as "BULLISH" | "BEARISH" | "NEUTRAL",
-        resolutionStatus: opinion.resolutionStatus as "RESOLVED_HIT" | "RESOLVED_MISS",
-      });
-      return;
-    }
-    setVoting(true);
-    setError(null);
-    const prev = localChoice;
-    setLocalChoice(choice);
-    try {
-      const updated = await mobileApi.castExpertOpinionVote(opinion.id, {
-        pollType: "IMPLICATION",
-        choice,
-      });
-      onVoted(updated);
-      trackVoteEvent(prev === null ? "opinion_vote_cast" : "opinion_vote_changed", {
-        opinionId: opinion.id,
-        expertId: opinion.expertId,
-        expertOrganization: opinion.expertOrganization,
-        direction: opinion.direction as "BULLISH" | "BEARISH" | "NEUTRAL",
-        choice,
-        previousChoice: prev,
-      });
-    } catch (err) {
-      setLocalChoice(prev);
-      setError("Vote failed. Tap to retry.");
-      console.error("[poll-a] castExpertOpinionVote failed:", err);
-    } finally {
-      setVoting(false);
-    }
-  };
-
-  const handleLock = async () => {
-    if (voting || isLocked) return;
-    if (!isPending) {
-      trackVoteEvent("opinion_vote_blocked", {
-        opinionId: opinion.id,
-        expertId: opinion.expertId,
-        expertOrganization: opinion.expertOrganization,
-        direction: opinion.direction as "BULLISH" | "BEARISH" | "NEUTRAL",
-        resolutionStatus: opinion.resolutionStatus as "RESOLVED_HIT" | "RESOLVED_MISS",
-      });
-      return;
-    }
-    setVoting(true);
-    setError(null);
-    try {
-      const updated = await mobileApi.lockExpertOpinionVote(opinion.id);
-      onVoted(updated);
-      trackVoteEvent("opinion_vote_locked", {
-        opinionId: opinion.id,
-        expertId: opinion.expertId,
-        expertOrganization: opinion.expertOrganization,
-        direction: opinion.direction as "BULLISH" | "BEARISH" | "NEUTRAL",
-        choice: localChoice ?? undefined,
-      });
-    } catch (err) {
-      setError("Couldn't cast vote. Tap to retry.");
-      console.error("[poll-a] lockExpertOpinionVote failed:", err);
-    } finally {
-      setVoting(false);
-    }
-  };
-
-  // UX2: atomic re-cast + lock for the "user changed their draft bucket" case.
-  // Without this, switching from drafted-A to locked-B is a 2-tap flow:
-  // "Update draft to B" → "Cast my vote: B". One tap is more direct.
-  const handleSubmitAndLock = async () => {
-    if (voting || isLocked || !isPending) return;
-    const choice = IMPLICATION_BUCKETS[pendingBucket]?.key;
-    if (!choice) return;
-    setVoting(true);
-    setError(null);
-    const prev = localChoice;
-    setLocalChoice(choice);
-    try {
-      // 1. Re-cast with new bucket
-      await mobileApi.castExpertOpinionVote(opinion.id, { pollType: "IMPLICATION", choice });
-      trackVoteEvent(prev === null ? "opinion_vote_cast" : "opinion_vote_changed", {
-        opinionId: opinion.id,
-        expertId: opinion.expertId,
-        expertOrganization: opinion.expertOrganization,
-        direction: opinion.direction as "BULLISH" | "BEARISH" | "NEUTRAL",
-        choice,
-        previousChoice: prev,
-      });
-      // 2. Lock immediately so user gets a single-tap commit
-      const updated = await mobileApi.lockExpertOpinionVote(opinion.id);
-      onVoted(updated);
-      trackVoteEvent("opinion_vote_locked", {
-        opinionId: opinion.id,
-        expertId: opinion.expertId,
-        expertOrganization: opinion.expertOrganization,
-        direction: opinion.direction as "BULLISH" | "BEARISH" | "NEUTRAL",
-        choice,
-      });
-    } catch (err) {
-      setLocalChoice(prev);
-      setError("Couldn't cast vote. Tap to retry.");
-      console.error("[poll-a] submit+lock failed:", err);
-    } finally {
-      setVoting(false);
-    }
-  };
-
-  const votedBucketIndex = localChoice != null ? implicationChoiceToIndex(localChoice) : 2;
-
-  const bucketCounts = impTallies
-    ? [
-        impTallies.stronglyDisagree,
-        impTallies.disagree,
-        impTallies.neutral,
-        impTallies.agree,
-        impTallies.stronglyAgree,
-      ]
-    : [0, 0, 0, 0, 0];
-  const maxCount = Math.max(...bucketCounts, 1);
-
-  if (loadingTallies && !hasVoted) {
-    return (
-      <View style={pollStyles.section}>
-        <Text style={pollStyles.sectionHeader}>Where do you stand on this analyst's view?</Text>
-        <View style={pollStyles.sliderSkeletonTrack} />
-      </View>
-    );
-  }
-
-  return (
-    <View style={pollStyles.section}>
-      <Text style={pollStyles.sectionHeader}>Where do you stand on this analyst's view?</Text>
-
-      {tallies !== null && (
-        <ConsensusBar
-          tallies={tallies}
-          hasVoted={hasVoted}
-          userBucketIndex={hasVoted ? votedBucketIndex : -1}
-        />
-      )}
-
-      {!hasVoted && isPending ? (
-        <>
-          <Text style={pollStyles.sliderPositionLabel}>
-            {IMPLICATION_BUCKETS[pendingBucket]?.label ?? ""}
-          </Text>
-
-          <Slider
-            style={pollStyles.slider}
-            minimumValue={0}
-            maximumValue={4}
-            step={1}
-            value={pendingBucket}
-            onValueChange={(val) => setPendingBucket(Math.round(val))}
-            minimumTrackTintColor={IMPLICATION_BUCKETS[pendingBucket]?.color ?? "#6b7280"}
-            maximumTrackTintColor={colors.border}
-            thumbTintColor={IMPLICATION_BUCKETS[pendingBucket]?.color ?? "#6b7280"}
-            disabled={voting}
-          />
-
-          <View style={pollStyles.tickRow}>
-            {IMPLICATION_BUCKETS.map((b, i) => (
-              <Text
-                key={b.key}
-                style={[
-                  pollStyles.tickLabel,
-                  pendingBucket === i && { color: b.color, fontWeight: "800" },
-                ]}
-              >
-                {b.tickLabel}
-              </Text>
-            ))}
-          </View>
-
-          <Pressable
-            style={[pollStyles.submitVoteBtn, voting && pollStyles.submitVoteBtnDisabled]}
-            onPress={() => void handleSubmit()}
-            disabled={voting}
-          >
-            {voting ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Text style={pollStyles.submitVoteBtnText}>Submit Vote</Text>
-            )}
-          </Pressable>
-        </>
-      ) : (
-        <>
-          <View style={pollStyles.histogramRow}>
-            {bucketCounts.map((count, i) => {
-              const barH = Math.max(2, Math.round((count / maxCount) * 28));
-              const isMedian = impTallies?.medianBucket === i;
-              const isVoted = hasVoted && votedBucketIndex === i;
-              return (
-                <View key={i} style={pollStyles.histogramCell}>
-                  {isMedian && (
-                    <View style={pollStyles.medianFlag}>
-                      <Text style={pollStyles.medianFlagText}>▼</Text>
-                    </View>
-                  )}
-                  <View
-                    style={[
-                      pollStyles.histogramBar,
-                      {
-                        height: barH,
-                        backgroundColor: isVoted
-                          ? (IMPLICATION_BUCKETS[i]?.color ?? "#6b7280")
-                          : (IMPLICATION_BUCKETS[i]?.color ?? "#6b7280") + "55",
-                      },
-                    ]}
-                  />
-                </View>
-              );
-            })}
-          </View>
-
-          <Slider
-            style={pollStyles.slider}
-            minimumValue={0}
-            maximumValue={4}
-            step={1}
-            value={isDraftEditable ? pendingBucket : votedBucketIndex}
-            onValueChange={isDraftEditable ? (val) => setPendingBucket(Math.round(val)) : undefined}
-            minimumTrackTintColor={
-              IMPLICATION_BUCKETS[isDraftEditable ? pendingBucket : votedBucketIndex]?.color ?? "#6b7280"
-            }
-            maximumTrackTintColor={colors.border}
-            thumbTintColor={
-              IMPLICATION_BUCKETS[isDraftEditable ? pendingBucket : votedBucketIndex]?.color ?? "#6b7280"
-            }
-            disabled={!isDraftEditable || voting}
-          />
-
-          <View style={pollStyles.tickRow}>
-            {IMPLICATION_BUCKETS.map((b, i) => {
-              const activeIdx = isDraftEditable ? pendingBucket : votedBucketIndex;
-              return (
-                <Text
-                  key={b.key}
-                  style={[
-                    pollStyles.tickLabel,
-                    activeIdx === i && { color: b.color, fontWeight: "800" },
-                  ]}
-                >
-                  {b.tickLabel}
-                </Text>
-              );
-            })}
-          </View>
-
-          {localChoice && isLocked && impTallies?.userLockedAt && (
-            <Text style={pollStyles.youVotedChip}>
-              ✓ Voted {IMPLICATION_BUCKETS[votedBucketIndex]?.label ?? localChoice}
-              {" · "}
-              {new Date(impTallies.userLockedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
-              {!isPending && " · Poll closed"}
-            </Text>
-          )}
-
-          {isDraftEditable && (() => {
-            const draftChanged = pendingBucket !== votedBucketIndex;
-            // Button label always shows the bucket being committed (pendingBucket
-            // when changed, votedBucketIndex when not). Handler is atomic when
-            // changed — single tap re-casts AND locks.
-            const committingBucket = draftChanged ? pendingBucket : votedBucketIndex;
-            return (
-              <>
-                <Pressable
-                  style={[pollStyles.castVoteBtn, voting && pollStyles.submitVoteBtnDisabled]}
-                  onPress={() => void (draftChanged ? handleSubmitAndLock() : handleLock())}
-                  disabled={voting}
-                >
-                  {voting ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <Text style={pollStyles.castVoteBtnText}>
-                      Cast my vote: {IMPLICATION_BUCKETS[committingBucket]?.label ?? localChoice}
-                    </Text>
-                  )}
-                </Pressable>
-                <Text style={pollStyles.castVoteHint}>
-                  {draftChanged
-                    ? "Drag to change · One tap locks in your updated vote."
-                    : "Draft only — only cast votes count toward your accuracy."}
-                </Text>
-              </>
-            );
-          })()}
-
-          {localChoice && !isLocked && !isPending && (
-            <Text style={pollStyles.youVotedChip}>
-              Your draft of {IMPLICATION_BUCKETS[votedBucketIndex]?.label ?? localChoice} didn't count · Poll closed
-            </Text>
-          )}
-        </>
-      )}
-
-      {error && (
-        <Pressable onPress={() => void handleSubmit()}>
-          <Text style={pollStyles.errorText}>{error} Tap to retry.</Text>
-        </Pressable>
-      )}
     </View>
   );
 }
@@ -920,11 +315,6 @@ export function ExpertOpinionPostCard({
   const styles = useThemedStyles(makeCardStyles);
   const { colors } = useTheme();
 
-  // ── Tallies state ──
-  const [tallies, setTallies] = useState<ApiExpertOpinionTallies | null>(null);
-  const [loadingTallies, setLoadingTallies] = useState(false);
-  const [showSkeleton, setShowSkeleton] = useState(false);
-
   // ── Follow state ──
   const [followPending, setFollowPending] = useState(false);
 
@@ -950,39 +340,6 @@ export function ExpertOpinionPostCard({
     opinion.resolutionStatus === "RESOLVED_MISS";
   const isHit = opinion.resolutionStatus === "RESOLVED_HIT";
   const isMiss = opinion.resolutionStatus === "RESOLVED_MISS";
-
-  // ── Load tallies on mount ──
-  useEffect(() => {
-    let cancelled = false;
-    const skeletonTimer = setTimeout(() => {
-      if (!cancelled) setShowSkeleton(true);
-    }, 150);
-
-    setLoadingTallies(true);
-    mobileApi
-      .getExpertOpinionTallies(opinion.id)
-      .then((t) => {
-        if (!cancelled) setTallies(t);
-      })
-      .catch(() => {
-        // non-blocking — polls degrade silently
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setLoadingTallies(false);
-          setShowSkeleton(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-      clearTimeout(skeletonTimer);
-    };
-  }, [opinion.id]);
-
-  const handleTalliesUpdate = useCallback((updated: ApiExpertOpinionTallies) => {
-    setTallies(updated);
-  }, []);
 
   // ── Follow handler ──
   // followPending is set to true before the API call and cleared in finally —
@@ -1253,23 +610,14 @@ export function ExpertOpinionPostCard({
               year: "numeric",
             })
           : null;
-        const impl = tallies?.implication;
-        const scoreable = impl ? impl.agree + impl.stronglyAgree + impl.disagree + impl.stronglyDisagree : 0;
-        const crowdRight = impl
-          ? isHit
-            ? impl.agree + impl.stronglyAgree
-            : impl.disagree + impl.stronglyDisagree
-          : 0;
-        const crowdPct = scoreable > 0 ? Math.round((crowdRight / scoreable) * 100) : null;
-        const accentColor = isHit ? "#16a34a" : "#dc2626";
 
-        if (!resolvedDateLabel && !daysToResolve && crowdPct === null) return null;
+        if (!resolvedDateLabel && !daysToResolve) return null;
         return (
           <View style={styles.narrativeStrip}>
             {resolvedDateLabel && (
               <View style={styles.narrativeChip}>
                 <Text style={styles.narrativeChipText}>
-                  📅 Resolved {resolvedDateLabel}
+                  Resolved {resolvedDateLabel}
                   {daysToResolve !== null && (
                     <Text style={styles.narrativeChipSubtle}>
                       {"  ·  in "}{daysToResolve} day{daysToResolve === 1 ? "" : "s"}
@@ -1278,42 +626,51 @@ export function ExpertOpinionPostCard({
                 </Text>
               </View>
             )}
-            {crowdPct !== null && scoreable >= 5 && (
-              <View style={[styles.narrativeChip, { backgroundColor: isHit ? "#dcfce7" : "#fee2e2" }]}>
-                <Text style={[styles.narrativeChipText, { color: accentColor, fontWeight: "700" }]}>
-                  {crowdRight}/{scoreable} voters got this right ({crowdPct}%)
-                </Text>
-              </View>
-            )}
           </View>
         );
       })()}
 
-      {/* ── ENGAGEMENT ZONE ── */}
-      <PollA
-        opinion={opinion}
-        tallies={tallies}
-        loadingTallies={loadingTallies && showSkeleton}
-        onVoted={handleTalliesUpdate}
-      />
-
-      {/* ── FOOTER — hairline divider, compliance left, share right ── */}
-      <View style={styles.footer}>
-        <Text style={styles.disclaimer}>Not investment advice</Text>
+      {/* ── ENGAGEMENT BAR — LinkedIn-style 3-action row ── */}
+      <Text style={styles.engagementDisclaimer}>Not investment advice</Text>
+      <View style={styles.engagementDivider} />
+      <View style={styles.engagementBar}>
+        {/* Predict — primary CTA, accent-coloured */}
         <Pressable
+          style={styles.engagementAction}
+          onPress={() =>
+            router.push(`/finance/opinion/${opinion.id}` as Parameters<typeof router.push>[0])
+          }
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Ionicons name="trending-up" size={18} color={colors.accent} />
+          <Text style={[styles.engagementLabel, { color: colors.accent }]}>Predict</Text>
+        </Pressable>
+
+        {/* Discuss — navigates to detail screen (comments live there) */}
+        <Pressable
+          style={styles.engagementAction}
+          onPress={() =>
+            router.push(`/finance/opinion/${opinion.id}` as Parameters<typeof router.push>[0])
+          }
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Ionicons name="chatbubble-outline" size={18} color={colors.textMuted} />
+          <Text style={[styles.engagementLabel, { color: colors.textMuted }]}>Discuss</Text>
+        </Pressable>
+
+        {/* Share — existing handleShare logic */}
+        <Pressable
+          style={styles.engagementAction}
           onPress={() => void handleShare()}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           disabled={sharing}
-          style={styles.shareBtn}
         >
           {sharing ? (
-            <ActivityIndicator size={13} color={colors.textSubtle} />
+            <ActivityIndicator size={16} color={colors.textMuted} />
           ) : (
-            <View style={styles.shareBtnInner}>
-              <Ionicons name="share-outline" size={15} color={colors.textSubtle} />
-              <Text style={styles.shareBtnLabel}>Share</Text>
-            </View>
+            <Ionicons name="share-outline" size={18} color={colors.textMuted} />
           )}
+          <Text style={[styles.engagementLabel, { color: colors.textMuted }]}>Share</Text>
         </Pressable>
       </View>
 
@@ -1573,33 +930,35 @@ const makeCardStyles = (t: ThemeContextValue) => StyleSheet.create({
   siblingsChipNeutral: { color: "#6b7280", fontWeight: "700" },
   siblingsLinkChevron: { fontSize: 15, color: t.colors.textSubtle, marginLeft: 4 },
 
-  // Footer — hairline divider, compliance left, share right
-  footer: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginTop: spacing.md,
-    paddingTop: spacing.md,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: t.colors.border,
-  },
-  disclaimer: {
-    fontSize: 11,
+  // Engagement bar — LinkedIn-style 3-action row replacing the old poll + icon-only footer
+  engagementDisclaimer: {
+    fontSize: 10,
     color: t.colors.textSubtle,
-    flex: 1,
+    textAlign: "center",
+    marginTop: spacing.md,
     letterSpacing: 0.1,
   },
-  shareBtn: {
-    paddingLeft: spacing.md,
+  engagementDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: t.colors.border,
+    marginTop: spacing.sm,
   },
-  shareBtnInner: {
+  engagementBar: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+    paddingTop: spacing.sm,
+    paddingBottom: 2,
+  },
+  engagementAction: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
-    gap: 5,
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 6,
   },
-  shareBtnLabel: {
-    fontSize: 12,
-    color: t.colors.textSubtle,
+  engagementLabel: {
+    fontSize: 13,
     fontWeight: "500",
   },
 });
