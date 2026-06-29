@@ -145,9 +145,20 @@ export default function CreateScreen() {
 
   const eligibility = eligibilityData?.eligibility ?? null;
 
+  // `/(tabs)/create` is a persistent tab — once mounted it is NOT remounted when a
+  // deep-link arrives with new params, so the wizard's mount-time `useState(initial…)`
+  // seeds would go stale and ignore the prefill. Keying the wizard on the prefill
+  // params forces a fresh, re-seeded wizard whenever a deep-link prefill arrives,
+  // while plain navigation (no params) keeps a stable key and preserves in-progress work.
+  const prefillKey =
+    initialTitle != null || initialDescription != null || initialCategory != null
+      ? `prefill:${initialTitle ?? ""}|${initialCategory ?? ""}|${initialDescription ?? ""}`
+      : "wizard";
+
   return (
     <View style={styles.screen}>
       <CreateWizard
+        key={prefillKey}
         userId={userId}
         initialTitle={initialTitle}
         initialCategory={initialCategory}
