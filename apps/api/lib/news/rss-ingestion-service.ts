@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { type MarketCategory, type MarketType, StoryStatus } from "@prisma/client";
 
 import { generatePollWithAI } from "@/lib/ai/gemini";
+import { summarizeNewsStory } from "@/lib/ai/summarizeNews";
 import {
   extractExpertOpinionsFromStory,
   isApprovedFinanceSource,
@@ -345,6 +346,95 @@ async function generatePollsInBackground(items: NormalizedNewsItem[], actorId: s
   console.info(`[news:ai-polls] done — ${generated}/${stories.length} polls created`);
 }
 
+// Maximum stories to summarize in a single background pass. Kept small to avoid
+// exhausting Groq free-tier quota during a large ingestion run.
+const MAX_SUMMARIES_PER_BATCH = 10;
+
+/**
+ * Phase 2b: Generate AI summaries for newly-ingested stories whose summary is
+ * empty or identical to the headline. Runs fire-and-forget after ingestion.
+ *
+ * For each eligible story:
+ * 1. Fetch the article body via fetchArticleBody (10s timeout, domain-throttled).
+ * 2. Call summarizeNewsStory (Groq → Gemini fallback) for a 2-3 sentence summary.
+ * 3. Update story.summary in the DB. Skip silently on any failure.
+ *
+ * Concurrency is capped at SUMMARY_CONCURRENCY to avoid hammering external sites.
+ * The 1500ms per-domain throttle inside fetchArticleBody provides additional spacing.
+ */
+export async function generateSummariesInBackground(
+  items: NormalizedNewsItem[]
+): Promise<void> {
+  if (!process.env.GROQ_API_KEY && !process.env.GEMINI_API_KEY) {
+    console.debug("[news:summarizer] No AI key configured — skipping background summarization");
+    return;
+  }
+
+  // Resolve source URLs to DB story records; filter to those needing a summary.
+  const sourceUrls = items.map((i) => i.source_url);
+  const stories = await prisma.story.findMany({
+    where: {
+      sourceUrl: { in: sourceUrls },
+      status: { in: ["PUBLISHED", "APPROVED"] },
+    },
+    select: { id: true, headline: true, summary: true, sourceUrl: true },
+    orderBy: { publishedAt: "desc" },
+    take: MAX_SUMMARIES_PER_BATCH,
+  });
+
+  // Eligible: summary is blank OR equals the headline (trimmed comparison)
+  const eligible = stories.filter((s) => {
+    const normalizedSummary = s.summary.trim().toLowerCase();
+    const normalizedHeadline = s.headline.trim().toLowerCase();
+    return !normalizedSummary || normalizedSummary === normalizedHeadline;
+  });
+
+  if (eligible.length === 0) {
+    console.info("[news:summarizer] no stories need AI summaries");
+    return;
+  }
+
+  console.info(`[news:summarizer] summarizing ${eligible.length} stories`);
+
+  const SUMMARY_CONCURRENCY = 3;
+  let summarized = 0;
+
+  for (let i = 0; i < eligible.length; i += SUMMARY_CONCURRENCY) {
+    const batch = eligible.slice(i, i + SUMMARY_CONCURRENCY);
+    await Promise.allSettled(
+      batch.map(async (story) => {
+        try {
+          const { text: bodyText, error: bodyError } = await fetchArticleBody(story.sourceUrl);
+          if (!bodyText) {
+            console.debug(
+              `[news:summarizer] body fetch failed for "${story.headline.slice(0, 60)}": ${bodyError ?? "unknown"}`
+            );
+            return;
+          }
+
+          const summary = await summarizeNewsStory(story.headline, bodyText);
+          if (!summary) {
+            console.debug(`[news:summarizer] AI returned null for "${story.headline.slice(0, 60)}"`);
+            return;
+          }
+
+          await prisma.story.update({
+            where: { id: story.id },
+            data: { summary },
+          });
+          summarized++;
+          console.info(`[news:summarizer] updated summary for "${story.headline.slice(0, 60)}"`);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.warn(`[news:summarizer] failed for "${story.headline.slice(0, 60)}": ${msg.slice(0, 200)}`);
+        }
+      })
+    );
+  }
+
+  console.info(`[news:summarizer] done — ${summarized}/${eligible.length} summaries written`);
+}
+
 const MAX_FINANCE_EXTRACTIONS_PER_BATCH = 5;
 
 /**
@@ -614,6 +704,11 @@ export class RSSIngestionService {
       //   console.error("[news:ai-polls] background poll generation failed:", err)
       // );
       void generatePollWithAI; // keep import live so noUnusedLocals doesn't break the build
+
+      // ---- Phase 2b: Summarize stories whose summary is just the headline ----
+      void generateSummariesInBackground(newStories).catch((err) =>
+        console.error("[news:summarizer] background summarization failed:", err)
+      );
     }
 
     // ---- Phase 3: Extract expert opinions for FINANCE stories from approved sources ----

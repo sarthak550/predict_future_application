@@ -7,6 +7,7 @@ import {
   Linking,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -1195,6 +1196,7 @@ export function NewsFeedCard({ item, viewportHeight, showHint, onVoted }: Props)
   }
 
   const hasImage = !!item.imageUrl;
+  const heroHeight = Math.round(viewportHeight * 0.42);
 
   return (
     <View style={[styles.frame, { height: viewportHeight }]}>
@@ -1208,14 +1210,14 @@ export function NewsFeedCard({ item, viewportHeight, showHint, onVoted }: Props)
           {hasImage ? (
             <Image
               source={{ uri: item.imageUrl! }}
-              style={styles.heroImage}
+              style={[styles.heroImage, { height: heroHeight }]}
               resizeMode="cover"
             />
           ) : (
             <View
               style={[
                 styles.heroPlaceholder,
-                { backgroundColor: CATEGORY_COLORS[item.category] ?? CATEGORY_COLORS.GENERAL },
+                { backgroundColor: CATEGORY_COLORS[item.category] ?? CATEGORY_COLORS.GENERAL, height: heroHeight },
               ]}
             >
               <Text style={styles.placeholderEmoji}>
@@ -1223,6 +1225,23 @@ export function NewsFeedCard({ item, viewportHeight, showHint, onVoted }: Props)
               </Text>
             </View>
           )}
+
+          {/* Inshorts-style source + share row */}
+          <View style={styles.sourceShareRow}>
+            <Text style={styles.sourceName} numberOfLines={1}>{item.sourceName}</Text>
+            <Pressable
+              style={styles.shareBtn}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              onPress={() =>
+                void Share.share({
+                  message: `${item.headline} — ${item.sourceUrl}`,
+                  url: item.sourceUrl,
+                })
+              }
+            >
+              <Ionicons name="share-outline" size={18} color={colors.textMuted} />
+            </Pressable>
+          </View>
 
           <View style={styles.content}>
             <Text style={styles.category}>{item.category}</Text>
@@ -1247,15 +1266,15 @@ export function NewsFeedCard({ item, viewportHeight, showHint, onVoted }: Props)
               </Pressable>
             )}
 
-            <Pressable
-              onPress={() => Linking.openURL(item.sourceUrl)}
-              style={styles.metaRow}
-            >
-              <Text style={styles.source}>{item.sourceName}</Text>
-              <Text style={styles.readMore}>Read more →</Text>
-              <View style={{ flex: 1 }} />
-              <Text style={styles.published}>{formatRelativeTime(item.publishedAt)}</Text>
-            </Pressable>
+            {/* Inshorts-style footer: time · source + Read more */}
+            <View style={styles.footer}>
+              <Text style={styles.footerMeta}>
+                {formatRelativeTime(item.publishedAt)} · {item.sourceName}
+              </Text>
+              <Pressable onPress={() => void Linking.openURL(item.sourceUrl)}>
+                <Text style={styles.readMoreLink}>Read more →</Text>
+              </Pressable>
+            </View>
 
             {/* Expert Take is intentionally NOT shown here —
                 Feed is for news + AI polls only.
@@ -1513,17 +1532,40 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   scrollView: { flex: 1 },
   scrollContent: { flexGrow: 1 },
 
-  heroImage: { width: "100%", height: 220 },
+  // Hero image — height set via inline style (viewportHeight * 0.42); width fixed
+  heroImage: { width: "100%" },
   heroPlaceholder: {
     width: "100%",
-    height: 160,
     alignItems: "center",
     justifyContent: "center",
     opacity: 0.85,
   },
   placeholderEmoji: { fontSize: 52 },
 
-  content: { flex: 1, padding: spacing.xl, justifyContent: "center" },
+  // Inshorts source + share row — sits between image and content
+  sourceShareRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: t.colors.border,
+  },
+  sourceName: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: "600",
+    color: t.colors.textMuted,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+  shareBtn: {
+    paddingLeft: spacing.sm,
+  },
+
+  // Content flows top-down (flex-start kills the centered white gap)
+  content: { flex: 1, padding: spacing.lg, justifyContent: "flex-start" },
   category: {
     fontSize: 11,
     fontWeight: "800",
@@ -1538,28 +1580,41 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     overflow: "hidden",
   },
   headline: {
-    marginTop: spacing.md,
-    fontSize: 22,
-    lineHeight: 28,
+    marginTop: spacing.sm,
+    fontSize: 20,
+    lineHeight: 27,
     fontWeight: "800",
     color: t.colors.text,
   },
   summary: {
     marginTop: spacing.md,
-    fontSize: 15,
-    lineHeight: 23,
-    color: t.colors.textMuted,
+    fontSize: 16,
+    lineHeight: 24,
+    color: t.colors.text,
   },
-  metaRow: {
+
+  // Inshorts-style footer: muted time · source + Read more link
+  footer: {
     marginTop: spacing.lg,
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    paddingVertical: spacing.sm,
+    justifyContent: "space-between",
+    paddingTop: spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: t.colors.border,
   },
-  source: { fontSize: 13, fontWeight: "700", color: t.colors.text },
-  readMore: { fontSize: 13, fontWeight: "600", color: t.colors.accent },
-  published: { fontSize: 12, color: t.colors.textMuted },
+  footerMeta: {
+    fontSize: 12,
+    color: t.colors.textMuted,
+    flexShrink: 1,
+    marginRight: spacing.sm,
+  },
+  readMoreLink: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: t.colors.accent,
+    flexShrink: 0,
+  },
 
   financeChip: {
     alignSelf: "flex-start",
