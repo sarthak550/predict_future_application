@@ -5,6 +5,7 @@ import {
   ActivityIndicator,
   Image,
   Linking,
+  Modal,
   Pressable,
   ScrollView,
   Share,
@@ -1197,9 +1198,70 @@ export function NewsFeedCard({ item, viewportHeight, showHint, onVoted }: Props)
 
   const hasImage = !!item.imageUrl;
   const heroHeight = Math.round(viewportHeight * 0.42);
+  const [imageViewerOpen, setImageViewerOpen] = useState(false);
+
+  const categoryColor = CATEGORY_COLORS[item.category] ?? CATEGORY_COLORS.GENERAL;
+
+  const handleShare = () =>
+    void Share.share({
+      message: `${item.headline} — ${item.sourceUrl}`,
+      url: item.sourceUrl,
+    });
+
+  /** Overlays rendered on top of both the image and placeholder. */
+  const heroOverlays = (
+    <>
+      {/* Category pill — top-left */}
+      <View style={[styles.categoryOverlay, { backgroundColor: categoryColor }]}>
+        <Text style={styles.categoryOverlayText}>{item.category}</Text>
+      </View>
+
+      {/* Source + Share row — bottom */}
+      <View style={styles.imageOverlayBottom}>
+        <View style={styles.sourceOverlayPill}>
+          <Text style={styles.sourceOverlayText} numberOfLines={1}>{item.sourceName}</Text>
+        </View>
+        <Pressable
+          style={styles.shareOverlayBtn}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          onPress={handleShare}
+        >
+          <Ionicons name="share-outline" size={16} color="#111" />
+        </Pressable>
+      </View>
+    </>
+  );
 
   return (
     <View style={[styles.frame, { height: viewportHeight }]}>
+      {/* Full-screen image viewer modal */}
+      {hasImage && (
+        <Modal
+          visible={imageViewerOpen}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setImageViewerOpen(false)}
+        >
+          <Pressable
+            style={styles.imageModalBackdrop}
+            onPress={() => setImageViewerOpen(false)}
+          >
+            <Image
+              source={{ uri: item.imageUrl! }}
+              style={styles.imageModalFull}
+              resizeMode="contain"
+            />
+            <Pressable
+              style={styles.imageModalClose}
+              onPress={() => setImageViewerOpen(false)}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Text style={styles.imageModalCloseText}>✕</Text>
+            </Pressable>
+          </Pressable>
+        </Modal>
+      )}
+
       <View style={styles.card}>
         <ScrollView
           style={styles.scrollView}
@@ -1208,43 +1270,33 @@ export function NewsFeedCard({ item, viewportHeight, showHint, onVoted }: Props)
           nestedScrollEnabled
         >
           {hasImage ? (
-            <Image
-              source={{ uri: item.imageUrl! }}
-              style={[styles.heroImage, { height: heroHeight }]}
-              resizeMode="cover"
-            />
+            <Pressable
+              onPress={() => setImageViewerOpen(true)}
+              style={[styles.heroWrapper, { height: heroHeight }]}
+            >
+              <Image
+                source={{ uri: item.imageUrl! }}
+                style={styles.heroImage}
+                resizeMode="cover"
+              />
+              {heroOverlays}
+            </Pressable>
           ) : (
             <View
               style={[
+                styles.heroWrapper,
                 styles.heroPlaceholder,
-                { backgroundColor: CATEGORY_COLORS[item.category] ?? CATEGORY_COLORS.GENERAL, height: heroHeight },
+                { backgroundColor: categoryColor, height: heroHeight },
               ]}
             >
               <Text style={styles.placeholderEmoji}>
                 {CATEGORY_EMOJI[item.category] ?? "📰"}
               </Text>
+              {heroOverlays}
             </View>
           )}
 
-          {/* Inshorts-style source + share row */}
-          <View style={styles.sourceShareRow}>
-            <Text style={styles.sourceName} numberOfLines={1}>{item.sourceName}</Text>
-            <Pressable
-              style={styles.shareBtn}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              onPress={() =>
-                void Share.share({
-                  message: `${item.headline} — ${item.sourceUrl}`,
-                  url: item.sourceUrl,
-                })
-              }
-            >
-              <Ionicons name="share-outline" size={18} color={colors.textMuted} />
-            </Pressable>
-          </View>
-
           <View style={styles.content}>
-            <Text style={styles.category}>{item.category}</Text>
             <Text style={styles.headline}>{item.headline}</Text>
             <Text style={styles.summary}>{item.summary}</Text>
 
@@ -1266,10 +1318,10 @@ export function NewsFeedCard({ item, viewportHeight, showHint, onVoted }: Props)
               </Pressable>
             )}
 
-            {/* Inshorts-style footer: time · source + Read more */}
+            {/* Inshorts-style footer: time · Read more */}
             <View style={styles.footer}>
               <Text style={styles.footerMeta}>
-                {formatRelativeTime(item.publishedAt)} · {item.sourceName}
+                {formatRelativeTime(item.publishedAt)}
               </Text>
               <Pressable onPress={() => void Linking.openURL(item.sourceUrl)}>
                 <Text style={styles.readMoreLink}>Read more →</Text>
@@ -1532,55 +1584,107 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   scrollView: { flex: 1 },
   scrollContent: { flexGrow: 1 },
 
-  // Hero image — height set via inline style (viewportHeight * 0.42); width fixed
-  heroImage: { width: "100%" },
-  heroPlaceholder: {
+  // Hero wrapper — relative container for image + absolute overlays
+  heroWrapper: {
     width: "100%",
+    position: "relative",
+    overflow: "hidden",
+  },
+  // Hero image fills the wrapper (height comes from wrapper)
+  heroImage: {
+    width: "100%",
+    height: "100%",
+  },
+  heroPlaceholder: {
     alignItems: "center",
     justifyContent: "center",
     opacity: 0.85,
   },
   placeholderEmoji: { fontSize: 52 },
 
-  // Inshorts source + share row — sits between image and content
-  sourceShareRow: {
+  // Category pill overlay — top-left corner of hero
+  categoryOverlay: {
+    position: "absolute",
+    top: 10,
+    left: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radius.pill,
+  },
+  categoryOverlayText: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: "#fff",
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
+
+  // Source + Share overlay row — pinned to bottom of hero
+  imageOverlayBottom: {
+    position: "absolute",
+    bottom: 10,
+    left: 10,
+    right: 10,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: t.colors.border,
   },
-  sourceName: {
+  sourceOverlayPill: {
+    backgroundColor: "#fff",
+    borderRadius: radius.pill,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    flexShrink: 1,
+    maxWidth: "80%",
+  },
+  sourceOverlayText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#111",
+    letterSpacing: 0.2,
+  },
+  shareOverlayBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#fff",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+
+  // Full-screen image viewer modal
+  imageModalBackdrop: {
     flex: 1,
-    fontSize: 12,
-    fontWeight: "600",
-    color: t.colors.textMuted,
-    textTransform: "uppercase",
-    letterSpacing: 0.4,
+    backgroundColor: "rgba(0,0,0,0.95)",
+    alignItems: "center",
+    justifyContent: "center",
   },
-  shareBtn: {
-    paddingLeft: spacing.sm,
+  imageModalFull: {
+    width: "100%",
+    height: "100%",
+  },
+  imageModalClose: {
+    position: "absolute",
+    top: 52,
+    right: 20,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,0.15)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  imageModalCloseText: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#fff",
+    lineHeight: 20,
   },
 
   // Content flows top-down (flex-start kills the centered white gap)
   content: { flex: 1, padding: spacing.lg, justifyContent: "flex-start" },
-  category: {
-    fontSize: 11,
-    fontWeight: "800",
-    letterSpacing: 1,
-    textTransform: "uppercase",
-    color: t.colors.accent,
-    backgroundColor: t.colors.surfaceMuted,
-    alignSelf: "flex-start",
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-    borderRadius: radius.pill,
-    overflow: "hidden",
-  },
   headline: {
-    marginTop: spacing.sm,
     fontSize: 16,
     lineHeight: 22,
     fontWeight: "800",
