@@ -498,12 +498,12 @@ function countTennisSetsWon(sets: string[], opp: string[]): number {
   return won;
 }
 
-function TennisScore({ home, away, final }: {
-  home: ApiLiveScore["homeTeam"];
-  away: ApiLiveScore["awayTeam"];
-  final: boolean;
-}) {
-  const styles = useThemedStyles(makeStyles);
+/** Shared tennis-score derivation used by both the score card and the detail modal. */
+function computeTennisSets(
+  home: ApiLiveScore["homeTeam"],
+  away: ApiLiveScore["awayTeam"],
+  final: boolean
+): { homeSets: string[]; awaySets: string[]; homeWon: boolean; awayWon: boolean } {
   let homeSets = parseTennisSets(home.score);
   let awaySets = parseTennisSets(away.score);
   // Trim trailing unplayed placeholder sets (ESPN emits a "0-0" set for retirements / in-progress).
@@ -519,6 +519,16 @@ function TennisScore({ home, away, final }: {
   // Only crown a winner once the match is final — leading mid-match isn't a win.
   const homeWon = final && countTennisSetsWon(homeSets, awaySets) > countTennisSetsWon(awaySets, homeSets);
   const awayWon = final && countTennisSetsWon(awaySets, homeSets) > countTennisSetsWon(homeSets, awaySets);
+  return { homeSets, awaySets, homeWon, awayWon };
+}
+
+function TennisScore({ home, away, final }: {
+  home: ApiLiveScore["homeTeam"];
+  away: ApiLiveScore["awayTeam"];
+  final: boolean;
+}) {
+  const styles = useThemedStyles(makeStyles);
+  const { homeSets, awaySets, homeWon, awayWon } = computeTennisSets(home, away, final);
 
   return (
     <View style={styles.teamsContainer}>
@@ -654,6 +664,7 @@ function MatchDetailModal({ match, relatedNews, onClose }: {
 
   const isLive = match.status === "in";
   const isCricket = match.sport === "Cricket";
+  const isTennis = match.sport === "Tennis";
   const statusColor = match.status === "in" ? STATUS_COLOR_IN : match.status === "post" ? colors.textMuted : colors.accent;
 
   // Find related news by matching team names
@@ -915,43 +926,47 @@ function MatchDetailModal({ match, relatedNews, onClose }: {
               <Text style={modal.summary}>{match.statusSummary}</Text>
             ) : null}
 
-            {/* Score display */}
-            <View style={modal.scoreSection}>
-              <View style={modal.teamSide}>
-                {match.homeTeam.logo ? (
-                  <Image source={{ uri: match.homeTeam.logo }} style={modal.teamLogo} />
-                ) : (
-                  <View style={modal.teamLogoFallback}>
-                    <Feather name="shield" size={28} color={colors.textMuted} />
-                  </View>
-                )}
-                <Text style={modal.teamName} numberOfLines={2}>{match.homeTeam.name}</Text>
-                {match.homeTeam.record ? <Text style={modal.teamRecord}>{match.homeTeam.record}</Text> : null}
-              </View>
-
-              <View style={modal.scoreCenter}>
-                <View style={modal.scoreRow}>
-                  <Text style={[modal.bigScore, isLive && modal.scoreLive]}>{match.homeTeam.score || "0"}</Text>
-                  <Text style={modal.scoreDash}>-</Text>
-                  <Text style={[modal.bigScore, isLive && modal.scoreLive]}>{match.awayTeam.score || "0"}</Text>
+            {/* Score display — tennis gets a dedicated set-by-set grid; team sports get logos + big score */}
+            {isTennis ? (
+              <TennisDetailScore match={match} />
+            ) : (
+              <View style={modal.scoreSection}>
+                <View style={modal.teamSide}>
+                  {match.homeTeam.logo ? (
+                    <Image source={{ uri: match.homeTeam.logo }} style={modal.teamLogo} />
+                  ) : (
+                    <View style={modal.teamLogoFallback}>
+                      <Feather name="shield" size={28} color={colors.textMuted} />
+                    </View>
+                  )}
+                  <Text style={modal.teamName} numberOfLines={2}>{match.homeTeam.name}</Text>
+                  {match.homeTeam.record ? <Text style={modal.teamRecord}>{match.homeTeam.record}</Text> : null}
                 </View>
-                <Text style={modal.shortDetail}>
-                  {match.status === "pre" ? formatMatchTime(match.startTime) : match.shortDetail}
-                </Text>
-              </View>
 
-              <View style={modal.teamSide}>
-                {match.awayTeam.logo ? (
-                  <Image source={{ uri: match.awayTeam.logo }} style={modal.teamLogo} />
-                ) : (
-                  <View style={modal.teamLogoFallback}>
-                    <Feather name="shield" size={28} color={colors.textMuted} />
+                <View style={modal.scoreCenter}>
+                  <View style={modal.scoreRow}>
+                    <Text style={[modal.bigScore, isLive && modal.scoreLive]}>{match.homeTeam.score || "0"}</Text>
+                    <Text style={modal.scoreDash}>-</Text>
+                    <Text style={[modal.bigScore, isLive && modal.scoreLive]}>{match.awayTeam.score || "0"}</Text>
                   </View>
-                )}
-                <Text style={modal.teamName} numberOfLines={2}>{match.awayTeam.name}</Text>
-                {match.awayTeam.record ? <Text style={modal.teamRecord}>{match.awayTeam.record}</Text> : null}
+                  <Text style={modal.shortDetail}>
+                    {match.status === "pre" ? formatMatchTime(match.startTime) : match.shortDetail}
+                  </Text>
+                </View>
+
+                <View style={modal.teamSide}>
+                  {match.awayTeam.logo ? (
+                    <Image source={{ uri: match.awayTeam.logo }} style={modal.teamLogo} />
+                  ) : (
+                    <View style={modal.teamLogoFallback}>
+                      <Feather name="shield" size={28} color={colors.textMuted} />
+                    </View>
+                  )}
+                  <Text style={modal.teamName} numberOfLines={2}>{match.awayTeam.name}</Text>
+                  {match.awayTeam.record ? <Text style={modal.teamRecord}>{match.awayTeam.record}</Text> : null}
+                </View>
               </View>
-            </View>
+            )}
 
             {/* Linescores */}
             {(match.homeTeam.linescores || match.awayTeam.linescores) ? (
@@ -1021,6 +1036,66 @@ function MatchDetailModal({ match, relatedNews, onClose }: {
         </View>
       </View>
     </Modal>
+  );
+}
+
+// ---- Tennis detail (modal) ----
+// Replaces the team-sport "logo · big score · logo" header with a tennis-appropriate
+// set-by-set grid: player names down the left, one column per set, winner highlighted.
+
+function TennisDetailScore({ match }: { match: ApiLiveScore }) {
+  const final = match.status === "post";
+  const isLive = match.status === "in";
+  const { homeSets, awaySets, homeWon, awayWon } = computeTennisSets(match.homeTeam, match.awayTeam, final);
+  const maxSets = Math.max(homeSets.length, awaySets.length);
+  const statusLabel = isLive
+    ? match.shortDetail || "In progress"
+    : final
+      ? match.shortDetail || match.statusDetail || "Final"
+      : formatMatchTime(match.startTime);
+
+  return (
+    <View style={modal.tennisDetail}>
+      {maxSets > 0 ? (
+        <View style={modal.tennisDetailHeaderRow}>
+          {/* spacers align the set-number headers above the set cells */}
+          <View style={{ width: 15 }} />
+          <View style={{ flex: 1 }} />
+          {Array.from({ length: maxSets }).map((_, i) => (
+            <Text key={i} style={modal.tennisDetailSetHeader}>{`S${i + 1}`}</Text>
+          ))}
+        </View>
+      ) : null}
+      <TennisDetailRow name={match.homeTeam.name} sets={homeSets} oppSets={awaySets} won={homeWon} maxSets={maxSets} />
+      <TennisDetailRow name={match.awayTeam.name} sets={awaySets} oppSets={homeSets} won={awayWon} maxSets={maxSets} />
+      <Text style={modal.tennisDetailStatus}>{statusLabel}</Text>
+    </View>
+  );
+}
+
+function TennisDetailRow({ name, sets, oppSets, won, maxSets }: {
+  name: string;
+  sets: string[];
+  oppSets: string[];
+  won: boolean;
+  maxSets: number;
+}) {
+  return (
+    <View style={modal.tennisDetailRow}>
+      <View style={[modal.tennisDetailWinDot, won && modal.tennisDetailWinDotOn]} />
+      <Text style={[modal.tennisDetailName, won && modal.tennisDetailNameWon]} numberOfLines={1}>
+        {name}
+      </Text>
+      {Array.from({ length: maxSets }).map((_, i) => {
+        const games = sets[i];
+        const setWon = games !== undefined && Number(games) > Number(oppSets[i]);
+        return (
+          <Text key={i} style={[modal.tennisDetailSetCell, setWon && modal.tennisDetailSetCellWon]}>
+            {games ?? "·"}
+          </Text>
+        );
+      })}
+    </View>
   );
 }
 
@@ -1823,6 +1898,27 @@ const modal = StyleSheet.create({
     flexDirection: "row", alignItems: "flex-start", justifyContent: "center",
     paddingVertical: spacing.lg, gap: spacing.md,
   },
+  // Tennis detail set-by-set grid
+  tennisDetail: { paddingVertical: spacing.lg },
+  tennisDetailHeaderRow: { flexDirection: "row", alignItems: "center", marginBottom: 6 },
+  tennisDetailSetHeader: {
+    width: 30, textAlign: "center", fontSize: 11, fontWeight: "700",
+    color: "rgba(255,255,255,0.35)", letterSpacing: 0.5,
+  },
+  tennisDetailRow: {
+    flexDirection: "row", alignItems: "center", paddingVertical: 12,
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "rgba(255,255,255,0.08)",
+  },
+  tennisDetailWinDot: { width: 8, height: 8, borderRadius: 4, marginRight: 7, backgroundColor: "transparent" },
+  tennisDetailWinDotOn: { backgroundColor: "#22c55e" },
+  tennisDetailName: { flex: 1, fontSize: 16, fontWeight: "600", color: "rgba(255,255,255,0.55)" },
+  tennisDetailNameWon: { color: "#FFF", fontWeight: "700" },
+  tennisDetailSetCell: {
+    width: 30, textAlign: "center", fontSize: 19, fontWeight: "800",
+    color: "rgba(255,255,255,0.4)", fontVariant: ["tabular-nums"],
+  },
+  tennisDetailSetCellWon: { color: "#FFF" },
+  tennisDetailStatus: { marginTop: 12, fontSize: 12, color: "rgba(255,255,255,0.45)", textAlign: "center" },
   teamSide: { alignItems: "center", flex: 1, gap: 4 },
   teamLogo: { width: 52, height: 52, borderRadius: 26 },
   teamLogoFallback: {
