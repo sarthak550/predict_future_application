@@ -31,8 +31,6 @@ import { mobileApi } from "@/lib/api";
 import { useSession } from "@/providers/session-provider";
 import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
-const FEED_PERSONALIZATION_KEY = "feed_personalization_mode";
-
 const PAGE_SIZE = 10;
 const TAB_BAR_HEIGHT = 72;
 const CATEGORY_BAR_HEIGHT = 52;
@@ -77,8 +75,6 @@ function buildFeedItems(newsItems: ApiNewsFeedItem[]): NewsListItem[] {
   return result;
 }
 
-type PersonalizationMode = "for_you" | "all";
-
 export default function FeedScreen() {
   const { colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
@@ -89,11 +85,6 @@ export default function FeedScreen() {
   const { session, status: authStatus } = useSession();
   const listRef = useRef<FlatList<NewsListItem>>(null);
   const [streakCount, setStreakCount] = useState(0);
-  const [followCount, setFollowCount] = useState<number | null>(null);
-
-  // Personalization mode — "for_you" or "all". Loaded from AsyncStorage on mount.
-  const [personalizationMode, setPersonalizationMode] = useState<PersonalizationMode>("all");
-  const personalizationModeRef = useRef<PersonalizationMode>("all");
 
   // Tier upgrade nudge — shown when user is eligible for next tier
   const [tierUpgradeNextTier, setTierUpgradeNextTier] = useState<AppAnalystTier | null>(null);
@@ -130,31 +121,11 @@ export default function FeedScreen() {
   // from reappearing on pull-to-refresh or category switches once we've had data).
   const hasEverLoadedRef = useRef(false);
 
-  // Load persisted personalization mode from AsyncStorage on mount
-  useEffect(() => {
-    void AsyncStorage.getItem(FEED_PERSONALIZATION_KEY).then((stored) => {
-      if (stored === "for_you" || stored === "all") {
-        personalizationModeRef.current = stored;
-        setPersonalizationMode(stored);
-      }
-    }).catch(() => {});
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Fetch streak count + follow count + tier progress once when authenticated
+  // Fetch streak count + tier progress once when authenticated
   useEffect(() => {
     if (authStatus !== "authenticated" || !session) return;
     void mobileApi.getMyProfile().then(async (p) => {
       setStreakCount(p.user.streak ?? 0);
-      const following = (p.user as { followingCount?: number }).followingCount ?? 0;
-      setFollowCount(following);
-      // Default to "for_you" if user has follows and hasn't explicitly chosen a mode
-      void AsyncStorage.getItem(FEED_PERSONALIZATION_KEY).then((stored) => {
-        if (!stored && following > 0) {
-          personalizationModeRef.current = "for_you";
-          setPersonalizationMode("for_you");
-        }
-      }).catch(() => {});
 
       // Check tier upgrade nudge
       const tierProgress = (p.user as { tierProgress?: { isEligible?: boolean; nextTier?: AppAnalystTier | null } }).tierProgress;
@@ -235,11 +206,12 @@ export default function FeedScreen() {
       const query: Parameters<typeof mobileApi.getNews>[0] = {
         limit: PAGE_SIZE,
         cursor: mode === "append" ? cursorRef.current : null,
-        personalized: personalizationModeRef.current === "for_you" ? true : undefined,
       };
 
       if (cat !== "ALL") {
         query.category = cat as AppMarketCategory;
+      } else {
+        query.excludeCategory = "SPORTS";
       }
 
       const response = await mobileApi.getNews(query);
@@ -366,64 +338,9 @@ export default function FeedScreen() {
     [cardHeight]
   );
 
-  function handlePersonalizationToggle(mode: PersonalizationMode) {
-    if (mode === personalizationModeRef.current) return;
-    personalizationModeRef.current = mode;
-    setPersonalizationMode(mode);
-    void AsyncStorage.setItem(FEED_PERSONALIZATION_KEY, mode).catch(() => {});
-    // Reset paging and reload with the new mode
-    setItems([]);
-    cursorRef.current = null;
-    hasMoreRef.current = true;
-    inFlightRef.current = false;
-    void loadPage("replace");
-  }
-
   return (
     <View style={styles.screen}>
       <GradientHeader title="Feed" />
-
-      {/* For You / All toggle pills */}
-      {authStatus === "authenticated" && (
-        <View style={styles.personalizationRow}>
-          <Pressable
-            style={[
-              styles.personalizationPill,
-              personalizationMode === "for_you" && styles.personalizationPillActive,
-            ]}
-            onPress={() => handlePersonalizationToggle("for_you")}
-            accessibilityRole="button"
-            accessibilityLabel="For You feed"
-          >
-            <Text
-              style={[
-                styles.personalizationPillText,
-                personalizationMode === "for_you" && styles.personalizationPillTextActive,
-              ]}
-            >
-              For You
-            </Text>
-          </Pressable>
-          <Pressable
-            style={[
-              styles.personalizationPill,
-              personalizationMode === "all" && styles.personalizationPillActive,
-            ]}
-            onPress={() => handlePersonalizationToggle("all")}
-            accessibilityRole="button"
-            accessibilityLabel="All feed"
-          >
-            <Text
-              style={[
-                styles.personalizationPillText,
-                personalizationMode === "all" && styles.personalizationPillTextActive,
-              ]}
-            >
-              All
-            </Text>
-          </Pressable>
-        </View>
-      )}
 
       {/* Category filter bar — sticky above the feed cards.
           StreakBadge is appended at the trailing end of the same scroll row. */}
@@ -471,20 +388,6 @@ export default function FeedScreen() {
               </View>
             )}
 
-            {/* Nudge row: shown in "For You" mode when user has 0 follows */}
-            {personalizationMode === "for_you" && followCount === 0 && (
-              <Pressable
-                style={styles.followNudgeRow}
-                onPress={() => router.push("/expert-leaderboard")}
-                accessibilityRole="button"
-                accessibilityLabel="Browse the expert leaderboard to find analysts to follow"
-              >
-                <Text style={styles.followNudgeText}>
-                  Follow analysts to personalize your feed
-                </Text>
-                <Text style={styles.followNudgeLink}>Browse Leaderboard</Text>
-              </Pressable>
-            )}
           </>
         }
         snapToInterval={cardHeight}
@@ -606,63 +509,6 @@ function mergeUniqueItems(current: ApiNewsFeedItem[], next: ApiNewsFeedItem[]) {
 
 const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   screen: { flex: 1, backgroundColor: t.colors.background },
-
-  // For You / All toggle
-  personalizationRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: spacing.sm,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.lg,
-    backgroundColor: t.colors.surface,
-  },
-  personalizationPill: {
-    paddingHorizontal: spacing.lg,
-    paddingVertical: 6,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    borderColor: t.colors.border,
-    backgroundColor: t.colors.background,
-  },
-  personalizationPillActive: {
-    backgroundColor: t.colors.accent,
-    borderColor: t.colors.accent,
-  },
-  personalizationPillText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: t.colors.textMuted,
-  },
-  personalizationPillTextActive: {
-    color: "#fff",
-  },
-
-  // Follow nudge row
-  followNudgeRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginHorizontal: spacing.lg,
-    marginTop: spacing.sm,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    backgroundColor: "#EFF6FF",
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: "#BFDBFE",
-  },
-  followNudgeText: {
-    flex: 1,
-    fontSize: 13,
-    color: "#1D4ED8",
-  },
-  followNudgeLink: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: "#1D4ED8",
-    marginLeft: spacing.sm,
-  },
 
   // Tier upgrade nudge banner
   tierNudgeBanner: {
