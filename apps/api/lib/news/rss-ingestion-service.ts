@@ -609,9 +609,11 @@ export class RSSIngestionService {
     // ---- Phase 2: Generate AI polls in background for stories without markets ----
     const aiEnabled = Boolean(process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY);
     if (aiEnabled) {
-      void generatePollsInBackground(newStories, staffActorId).catch((err) =>
-        console.error("[news:ai-polls] background poll generation failed:", err)
-      );
+      // Disabled 2026-06-30: AI news-poll generation cut (quality + belonging). Re-enable to restore.
+      // void generatePollsInBackground(newStories, staffActorId).catch((err) =>
+      //   console.error("[news:ai-polls] background poll generation failed:", err)
+      // );
+      void generatePollWithAI; // keep import live so noUnusedLocals doesn't break the build
     }
 
     // ---- Phase 3: Extract expert opinions for FINANCE stories from approved sources ----

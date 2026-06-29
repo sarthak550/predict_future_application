@@ -477,14 +477,15 @@ export default function MarketsScreen() {
             My Groups
           </Text>
         </Pressable>
-        <Pressable
+        {/* Disabled 2026-06-30: AI news-poll cut — Polls tab hidden (mode state + render logic kept intact, just unreachable). Re-enable by removing the null below. */}
+        {null /* <Pressable
           style={[styles.modeBtn, (mode as MarketMode) === "polls" && styles.modeBtnActive]}
           onPress={() => setMode("polls")}
         >
           <Text style={[styles.modeBtnText, (mode as MarketMode) === "polls" && styles.modeBtnTextActive]}>
             Polls
           </Text>
-        </Pressable>
+        </Pressable> */}
       </View>
 
       {/* ── Merged view-selector chip row (public mode, hidden in search mode) ── */}

@@ -53,24 +53,25 @@ type NewsListItem =
 
 function buildFeedItems(newsItems: ApiNewsFeedItem[]): NewsListItem[] {
   const result: NewsListItem[] = [];
-  let insightCandidateIndex = 0;
 
   for (let i = 0; i < newsItems.length; i++) {
     result.push({ _type: "news", _key: newsItems[i].id, item: newsItems[i] });
 
-    // After every INSIGHT_INTERVAL items, inject a crowd context card
-    // for the most recent item that has a market with votes
-    if ((i + 1) % INSIGHT_INTERVAL === 0 && i + 1 < newsItems.length) {
-      // Look back for the nearest item with a market that has votes
-      for (let j = i; j >= insightCandidateIndex; j--) {
-        const candidate = newsItems[j];
-        if (candidate.market && (candidate.poll?.totalVotes ?? 0) > 0) {
-          result.push({ _type: "insight", _key: `insight-${candidate.id}-${i}`, item: candidate });
-          insightCandidateIndex = i + 1;
-          break;
-        }
-      }
-    }
+    // Disabled 2026-06-30: AI news-poll cut — InsightCard injection removed.
+    // The "insight" union member, InsightCard import, and render branch are kept
+    // in place (harmless dead code) so the feature can be re-enabled by restoring
+    // the injection block below.
+    //
+    // if ((i + 1) % INSIGHT_INTERVAL === 0 && i + 1 < newsItems.length) {
+    //   for (let j = i; j >= insightCandidateIndex; j--) {
+    //     const candidate = newsItems[j];
+    //     if (candidate.market && (candidate.poll?.totalVotes ?? 0) > 0) {
+    //       result.push({ _type: "insight", _key: `insight-${candidate.id}-${i}`, item: candidate });
+    //       insightCandidateIndex = i + 1;
+    //       break;
+    //     }
+    //   }
+    // }
   }
   return result;
 }

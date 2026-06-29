@@ -1086,6 +1086,10 @@ type Props = {
   onVoted?: () => void;
 };
 
+// Disabled 2026-06-30: AI news-poll generation cut (quality + belonging).
+// Flip to true to restore the market/poll voting block on news cards.
+const AI_NEWS_POLL_ENABLED = false;
+
 export function NewsFeedCard({ item, viewportHeight, showHint, onVoted }: Props) {
   const { colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
@@ -1257,7 +1261,10 @@ export function NewsFeedCard({ item, viewportHeight, showHint, onVoted }: Props)
                 Feed is for news + AI polls only.
                 Expert opinions live on the dedicated Finance tab. */}
 
-            {market ? (
+            {/* Disabled 2026-06-30: AI news-poll cut — market/poll block hidden.
+                PollA (analyst Opine vote) on ExpertOpinionRow is unaffected.
+                Re-enable by flipping AI_NEWS_POLL_ENABLED to true below. */}
+            {AI_NEWS_POLL_ENABLED && market ? (
               <View style={styles.marketBlock}>
                 {/* Market title row with bookmark */}
                 <View style={styles.marketTitleRow}>
@@ -1442,14 +1449,14 @@ export function NewsFeedCard({ item, viewportHeight, showHint, onVoted }: Props)
 
                 {error ? <Text style={styles.errorText}>{error}</Text> : null}
               </View>
-            ) : (
+            ) : AI_NEWS_POLL_ENABLED ? (
               <View style={styles.marketBlock}>
                 <Text style={styles.marketTitle}>Generating prediction…</Text>
                 <Text style={styles.summary}>
                   This story is live — a market will appear shortly.
                 </Text>
               </View>
-            )}
+            ) : null}
           </View>
         </ScrollView>
       </View>
