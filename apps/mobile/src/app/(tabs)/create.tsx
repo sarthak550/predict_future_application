@@ -24,6 +24,7 @@ import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/t
 import { useApiQuery } from "@/hooks/useApiQuery";
 import { mobileApi } from "@/lib/api";
 import { useSession } from "@/providers/session-provider";
+import { LinkifiedText } from "@/components/linkified-text";
 
 const DRAFT_KEY = "draft_market_form";
 
@@ -2138,7 +2139,7 @@ function StepReview({
         {groupName && <Text style={styles.reviewMeta}>Group: {groupName}</Text>}
 
         <Text style={styles.reviewTitle}>{title}</Text>
-        <Text style={styles.reviewDesc}>{description}</Text>
+        <LinkifiedText text={description} style={styles.reviewDesc} linkStyle={styles.reviewLink} />
 
         <View style={styles.reviewDivider} />
 
@@ -2570,6 +2571,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   tagText: { color: t.colors.background, fontSize: 11, fontWeight: "700", textTransform: "uppercase" },
   reviewTitle: { fontSize: 20, fontWeight: "700", color: t.colors.text, marginTop: spacing.sm },
   reviewDesc: { fontSize: 14, color: t.colors.textMuted, marginTop: spacing.sm, lineHeight: 20 },
+  reviewLink: { color: t.colors.accent, textDecorationLine: "underline" },
   reviewDivider: { height: 1, backgroundColor: t.colors.border, marginVertical: spacing.lg },
   reviewSectionTitle: { fontSize: 15, fontWeight: "700", color: t.colors.text, marginBottom: spacing.sm },
   reviewMeta: { fontSize: 13, color: t.colors.textMuted, marginTop: spacing.xs },

@@ -33,6 +33,7 @@ import { useSession } from "@/providers/session-provider";
 import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 import { GradientButton } from "@/components/gradient-button";
 import { VerifiedBadge } from "@/components/verified-badge";
+import { LinkifiedText } from "@/components/linkified-text";
 
 type UserPosition = {
   id: string;
@@ -1614,7 +1615,11 @@ function MarketBody({
 
         <Text style={styles.cardTitle}>{market.title}</Text>
         {market.description ? (
-          <Text style={styles.subtitle}>{market.description}</Text>
+          <LinkifiedText
+            text={market.description}
+            style={styles.subtitle}
+            linkStyle={{ color: colors.accent, textDecorationLine: "underline" }}
+          />
         ) : null}
 
         {isNumeric ? (
@@ -1842,7 +1847,11 @@ function MarketBody({
       {market.resolutionRuleText ? (
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Resolution Rules</Text>
-          <Text style={styles.subtitle}>{market.resolutionRuleText}</Text>
+          <LinkifiedText
+            text={market.resolutionRuleText}
+            style={styles.subtitle}
+            linkStyle={{ color: colors.accent, textDecorationLine: "underline" }}
+          />
         </View>
       ) : null}
 
