@@ -302,6 +302,7 @@ function ScoreCard({ score, onPress }: { score: ApiLiveScore; onPress: () => voi
   const styles = useThemedStyles(makeStyles);
   const isLive = score.status === "in";
   const isCricket = score.sport === "Cricket";
+  const isTennis = score.sport === "Tennis";
   const statusColor = score.status === "in" ? STATUS_COLOR_IN : score.status === "post" ? colors.textMuted : colors.accent;
 
   return (
@@ -321,10 +322,14 @@ function ScoreCard({ score, onPress }: { score: ApiLiveScore; onPress: () => voi
         </View>
       </View>
 
-      <View style={styles.teamsContainer}>
-        <TeamRow team={score.homeTeam} isLive={isLive} isCricket={isCricket} />
-        <TeamRow team={score.awayTeam} isLive={isLive} isCricket={isCricket} />
-      </View>
+      {isTennis ? (
+        <TennisScore home={score.homeTeam} away={score.awayTeam} final={score.status === "post"} />
+      ) : (
+        <View style={styles.teamsContainer}>
+          <TeamRow team={score.homeTeam} isLive={isLive} isCricket={isCricket} />
+          <TeamRow team={score.awayTeam} isLive={isLive} isCricket={isCricket} />
+        </View>
+      )}
 
       {score.venue ? (
         <View style={styles.cardFooter}>
@@ -461,6 +466,93 @@ function TeamRow({ team, isLive, isCricket }: {
       >
         {team.score || "-"}
       </Text>
+    </View>
+  );
+}
+
+// ---- Tennis scoreboard ----
+// ESPN delivers a tennis match's score as a per-player set string in `team.score`,
+// e.g. home "6-3 6-7(7-9) 7-5" / away "3-6 7-6(9-7) 5-7". The generic TeamRow renders
+// that as one giant cramped number, so tennis gets a dedicated set-by-set grid.
+
+/** Extract this player's games-per-set from an ESPN tennis score string. */
+function parseTennisSets(scoreStr: string | undefined): string[] {
+  if (!scoreStr) return [];
+  return scoreStr
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((tok) => {
+      const core = tok.replace(/\([^)]*\)/, ""); // strip tiebreak e.g. "(7-9)"
+      return (core.split("-")[0] ?? "").trim(); // this player's games for the set
+    });
+}
+
+function countTennisSetsWon(sets: string[], opp: string[]): number {
+  let won = 0;
+  for (let i = 0; i < sets.length; i++) {
+    const a = Number(sets[i]);
+    const b = Number(opp[i]);
+    if (Number.isFinite(a) && Number.isFinite(b) && a > b) won++;
+  }
+  return won;
+}
+
+function TennisScore({ home, away, final }: {
+  home: ApiLiveScore["homeTeam"];
+  away: ApiLiveScore["awayTeam"];
+  final: boolean;
+}) {
+  const styles = useThemedStyles(makeStyles);
+  let homeSets = parseTennisSets(home.score);
+  let awaySets = parseTennisSets(away.score);
+  // Trim trailing unplayed placeholder sets (ESPN emits a "0-0" set for retirements / in-progress).
+  while (
+    homeSets.length > 1 &&
+    homeSets.length === awaySets.length &&
+    homeSets[homeSets.length - 1] === "0" &&
+    awaySets[awaySets.length - 1] === "0"
+  ) {
+    homeSets = homeSets.slice(0, -1);
+    awaySets = awaySets.slice(0, -1);
+  }
+  // Only crown a winner once the match is final — leading mid-match isn't a win.
+  const homeWon = final && countTennisSetsWon(homeSets, awaySets) > countTennisSetsWon(awaySets, homeSets);
+  const awayWon = final && countTennisSetsWon(awaySets, homeSets) > countTennisSetsWon(homeSets, awaySets);
+
+  return (
+    <View style={styles.teamsContainer}>
+      <TennisRow name={home.name} sets={homeSets} oppSets={awaySets} won={homeWon} />
+      <TennisRow name={away.name} sets={awaySets} oppSets={homeSets} won={awayWon} />
+    </View>
+  );
+}
+
+function TennisRow({ name, sets, oppSets, won }: {
+  name: string;
+  sets: string[];
+  oppSets: string[];
+  won: boolean;
+}) {
+  const styles = useThemedStyles(makeStyles);
+  return (
+    <View style={styles.tennisRow}>
+      <View style={[styles.tennisWinDot, won && styles.tennisWinDotOn]} />
+      <Text style={[styles.tennisName, won ? styles.tennisNameWon : null]} numberOfLines={1}>
+        {name}
+      </Text>
+      <View style={styles.tennisSets}>
+        {sets.map((games, i) => {
+          const setWon = Number(games) > Number(oppSets[i]);
+          return (
+            <View key={i} style={styles.tennisSetCell}>
+              <Text style={[styles.tennisSetGames, setWon ? styles.tennisSetGamesWon : null]}>
+                {games || "–"}
+              </Text>
+            </View>
+          );
+        })}
+      </View>
     </View>
   );
 }
@@ -1641,6 +1733,16 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   teamScore: { fontSize: 20, fontWeight: "800", color: "#FFF", minWidth: 32, textAlign: "right" },
   teamScoreCricket: { fontSize: 13, fontWeight: "700", color: "#FFF", maxWidth: 140, textAlign: "right" },
   teamScoreLive: { color: "#ef4444" },
+  // Tennis set-by-set grid
+  tennisRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: 6 },
+  tennisWinDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "transparent" },
+  tennisWinDotOn: { backgroundColor: "#22c55e" },
+  tennisName: { flex: 1, fontSize: 14, fontWeight: "600", color: "rgba(255,255,255,0.55)" },
+  tennisNameWon: { color: "#FFF", fontWeight: "700" },
+  tennisSets: { flexDirection: "row", gap: 6 },
+  tennisSetCell: { minWidth: 16, alignItems: "center" },
+  tennisSetGames: { fontSize: 15, fontWeight: "700", color: "rgba(255,255,255,0.4)", fontVariant: ["tabular-nums"] },
+  tennisSetGamesWon: { color: "#FFF" },
   cardFooter: {
     flexDirection: "row", alignItems: "center", gap: 4,
     marginTop: 6, paddingTop: 6, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.04)",
