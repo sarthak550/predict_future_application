@@ -19,7 +19,7 @@
  * Gate: controlled by USE_POST_CARD in src/lib/feature-flags.ts.
  */
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Linking,
@@ -42,6 +42,7 @@ import type {
 import { formatRelativeTime, freshnessColor } from "@predict-future/utils";
 import { radius, spacing } from "@predict-future/ui-tokens";
 import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
+import { mobileApi } from "@/lib/api";
 import { getExpertInitials, getExpertInitialsColor } from "@/utils/expertAvatar";
 import { AnalystCredibilityBadge } from "@/components/analyst-credibility-badge";
 
@@ -314,6 +315,36 @@ export function ExpertOpinionPostCard({
   const router = useRouter();
   const styles = useThemedStyles(makeCardStyles);
   const { colors } = useTheme();
+
+  // ── Consensus tally (read-only; voting happens on detail screen) ──
+  const [consensus, setConsensus] = useState<{
+    agree: number;
+    neutral: number;
+    disagree: number;
+    total: number;
+  } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const result = await mobileApi.getExpertOpinionTallies(opinion.id);
+        if (cancelled) return;
+        const impl = result.implication;
+        setConsensus({
+          agree: impl.agree + impl.stronglyAgree,
+          neutral: impl.neutral,
+          disagree: impl.disagree + impl.stronglyDisagree,
+          total: impl.total,
+        });
+      } catch {
+        // Leave consensus null — bar simply won't render
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [opinion.id]);
 
   // ── Follow state ──
   const [followPending, setFollowPending] = useState(false);
@@ -630,11 +661,36 @@ export function ExpertOpinionPostCard({
         );
       })()}
 
+      {/* ── CONSENSUS BAR — read-only stacked agreement tally ── */}
+      {consensus && consensus.total > 0 && (() => {
+        const { agree, neutral, disagree, total } = consensus;
+        const agreePct = Math.round((agree / total) * 100);
+        const disagreePct = Math.round((disagree / total) * 100);
+        return (
+          <View style={styles.consensusWrap}>
+            <View style={styles.consensusTrack}>
+              {agree > 0 && (
+                <View style={[styles.consensusSegment, { flex: agree, backgroundColor: "#16a34a" }]} />
+              )}
+              {neutral > 0 && (
+                <View style={[styles.consensusSegment, { flex: neutral, backgroundColor: colors.border }]} />
+              )}
+              {disagree > 0 && (
+                <View style={[styles.consensusSegment, { flex: disagree, backgroundColor: "#dc2626" }]} />
+              )}
+            </View>
+            <Text style={styles.consensusCaption}>
+              {agreePct}% agree · {disagreePct}% disagree · {total} {total === 1 ? "view" : "views"}
+            </Text>
+          </View>
+        );
+      })()}
+
       {/* ── ENGAGEMENT BAR — LinkedIn-style 3-action row ── */}
       <Text style={styles.engagementDisclaimer}>Not investment advice</Text>
       <View style={styles.engagementDivider} />
       <View style={styles.engagementBar}>
-        {/* Predict — primary CTA, accent-coloured */}
+        {/* Opine — primary CTA, accent-coloured (agree/neutral/disagree on the detail screen) */}
         <Pressable
           style={styles.engagementAction}
           onPress={() =>
@@ -642,8 +698,8 @@ export function ExpertOpinionPostCard({
           }
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
-          <Ionicons name="trending-up" size={18} color={colors.accent} />
-          <Text style={[styles.engagementLabel, { color: colors.accent }]}>Predict</Text>
+          <Ionicons name="create-outline" size={18} color={colors.accent} />
+          <Text style={[styles.engagementLabel, { color: colors.accent }]}>Opine</Text>
         </Pressable>
 
         {/* Discuss — navigates to detail screen (comments live there) */}
@@ -929,6 +985,26 @@ const makeCardStyles = (t: ThemeContextValue) => StyleSheet.create({
   siblingsChipBearish: { color: "#dc2626", fontWeight: "700" },
   siblingsChipNeutral: { color: "#6b7280", fontWeight: "700" },
   siblingsLinkChevron: { fontSize: 15, color: t.colors.textSubtle, marginLeft: 4 },
+
+  // Consensus bar — read-only stacked agreement tally above the engagement bar
+  consensusWrap: {
+    marginTop: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  consensusTrack: {
+    flexDirection: "row",
+    height: 6,
+    borderRadius: 3,
+    overflow: "hidden",
+  },
+  consensusSegment: {
+    // flex is set inline per segment
+  },
+  consensusCaption: {
+    fontSize: 11.5,
+    color: t.colors.textMuted,
+    marginTop: 5,
+  },
 
   // Engagement bar — LinkedIn-style 3-action row replacing the old poll + icon-only footer
   engagementDisclaimer: {

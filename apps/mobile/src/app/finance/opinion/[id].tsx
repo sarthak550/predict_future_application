@@ -34,12 +34,12 @@ import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/t
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
+// Three options only (Agree / Neutral / Disagree). The backend enum still has the
+// "strongly" variants for legacy votes; we fold those into these three.
 const IMPLICATION_OPTIONS: { key: ApiImplicationChoice; label: string; color: string }[] = [
-  { key: "STRONGLY_DISAGREE", label: "Strongly Disagree", color: "#dc2626" },
-  { key: "DISAGREE", label: "Disagree", color: "#f87171" },
+  { key: "AGREE", label: "Agree", color: "#16a34a" },
   { key: "NEUTRAL", label: "Neutral", color: "#6b7280" },
-  { key: "AGREE", label: "Agree", color: "#4ade80" },
-  { key: "STRONGLY_AGREE", label: "Strongly Agree", color: "#16a34a" },
+  { key: "DISAGREE", label: "Disagree", color: "#dc2626" },
 ];
 
 const DIRECTION_STYLE: Record<
@@ -52,17 +52,19 @@ const DIRECTION_STYLE: Record<
 };
 
 function implCount(tallies: ApiExpertOpinionTallies, choice: ApiImplicationChoice): number {
+  const impl = tallies.implication;
   switch (choice) {
-    case "STRONGLY_DISAGREE":
-      return tallies.implication.stronglyDisagree;
-    case "DISAGREE":
-      return tallies.implication.disagree;
-    case "NEUTRAL":
-      return tallies.implication.neutral;
+    // The 3 visible options fold in the legacy "strongly" buckets.
     case "AGREE":
-      return tallies.implication.agree;
+      return impl.agree + impl.stronglyAgree;
+    case "NEUTRAL":
+      return impl.neutral;
+    case "DISAGREE":
+      return impl.disagree + impl.stronglyDisagree;
     case "STRONGLY_AGREE":
-      return tallies.implication.stronglyAgree;
+      return impl.stronglyAgree;
+    case "STRONGLY_DISAGREE":
+      return impl.stronglyDisagree;
   }
 }
 
