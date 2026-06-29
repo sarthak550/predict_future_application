@@ -533,7 +533,10 @@ export type ApiTeamDetail = {
 };
 
 export type ApiLiveScore = {
+  /** Globally-unique React key. May embed competitor ids to disambiguate matches that share an ESPN event id (e.g. tennis Grand Slam draws). */
   id: string;
+  /** Raw ESPN event id (no league prefix) used to fetch match detail. Absent on older API responses. */
+  eventId?: string;
   sport: string;
   league: string;
   status: "pre" | "in" | "post";

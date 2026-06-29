@@ -530,7 +530,7 @@ function MatchDetailModal({ match, relatedNews, onClose }: {
       const leagueId = match.leagueId ?? "8048";
       let cancelled = false;
       setLoadingDetail(true);
-      mobileApi.getCricketMatchDetail(match.id, leagueId)
+      mobileApi.getCricketMatchDetail(match.eventId ?? match.id, leagueId)
         .then((data) => { if (!cancelled) setCricketDetail(data); })
         .catch((e) => console.warn("[sports] fetchMatchDetail error:", e))
         .finally(() => { if (!cancelled) setLoadingDetail(false); });
@@ -543,7 +543,7 @@ function MatchDetailModal({ match, relatedNews, onClose }: {
       const leaguePath = match.leaguePath ?? "eng.1";
       let cancelled = false;
       setLoadingDetail(true);
-      mobileApi.getFootballMatchDetail(match.id, leaguePath)
+      mobileApi.getFootballMatchDetail(match.eventId ?? match.id, leaguePath)
         .then((data) => { if (!cancelled) setFootballDetail(data); })
         .catch((e) => console.warn("[sports] fetchFootballDetail error:", e))
         .finally(() => { if (!cancelled) setLoadingDetail(false); });

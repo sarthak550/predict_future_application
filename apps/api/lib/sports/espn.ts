@@ -21,6 +21,8 @@ export type TeamDetail = {
 
 export type LiveScore = {
   id: string;
+  /** Raw ESPN event id (no league prefix) — used to build match-detail URLs. */
+  eventId: string;
   sport: string;
   league: string;
   status: "pre" | "in" | "post";
@@ -124,10 +126,17 @@ async function fetchSportScores(sport: { key: string; display: string }): Promis
         const homeScore: string = home?.score ?? "";
         const awayScore: string = away?.score ?? "";
 
+        // Globally-unique React key. ESPN models some tournaments (e.g. a tennis
+        // Grand Slam) as a SINGLE event id shared by every match in the draw, so
+        // `${slug}-${event.id}` alone collides across matches. Append the two
+        // competitor ids (which differ per match) to guarantee uniqueness. The raw
+        // ESPN event id is preserved separately in `eventId` for detail fetches.
+        const competitorKey = [home?.id, away?.id].filter(Boolean).join("-");
         const score: LiveScore = {
-          // Prefix id with league slug so events shared across feeds don't collide
-          // on React key props in the mobile FlatList.
-          id: `${leagueSlug}-${event.id}`,
+          id: competitorKey
+            ? `${leagueSlug}-${event.id}-${competitorKey}`
+            : `${leagueSlug}-${event.id}`,
+          eventId: String(event.id ?? ""),
           sport: sport.display,
           league: leagueName,
           status: mappedStatus,
@@ -262,6 +271,7 @@ async function fetchF1Scores(): Promise<LiveScore[]> {
 
       scores.push({
         id: `f1-${session.session_key}`,
+        eventId: String(session.session_key),
         sport: "F1",
         league: "F1",
         status,
