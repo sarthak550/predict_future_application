@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "currentSprint": 67,
+  "currentSprint": 68,
   "tickets": [
     {
       "id": "S7-T1",
@@ -3924,6 +3924,17 @@
       "sprint": 67,
       "title": "Analyst tier credential: accuracy gate -> lifetime net-PnL gate",
       "description": "Per user decision, the Analyst tier credential is now gated on lifetime net PnL (totalNetPoints), not accuracy %, to reward conviction/stakes. New ladder (user-approved 'accessible' thresholds): ANALYST >=10 preds & >=+200 net pts; SENIOR >=50 & >=+1000; CHIEF >=200 & >=+4000 & verified; ROOKIE default (negative PnL stays Rookie). No schema migration (totalNetPoints already stored). Changed: analysts.ts computeTierFromStats + both select sites; profile/me TIER_THRESHOLDS (pnlNeeded) + computeTierProgress (currentNetPoints); ApiTierProgress type; mobile TierProgressSection (Net PnL bar, negative clamp), analyst headline + share copy (net pts); accuracy RETAINED as a Track Record stat. Added admin /api/admin/users/recalc-tiers route (CRON_SECRET-or-admin, cursor-paginated) to recompute all users on deploy, + a one-time dismissible Profile notice. Hardened recalc auth against empty CRON_SECRET. QA PASS 8/8.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-30"
+    },
+    {
+      "id": "S68-T1",
+      "sprint": 68,
+      "title": "Profile/Markets bundle: points balance (Profile + bet panel), My Bets view, watchlist 'More' fix",
+      "description": "(1) Restored the points balance (regression from the S66 redesign): balance pill in the Profile header + 'Available: X pts' in the bet panel (both sheets) with an informational low-balance warning. (2) New 'My Bets' surface: dedicated GET /api/profile/me/positions endpoint (auth-scoped, returns FULL positions — profile/me capped at 10), api-client getMyPositions + ApiMyPositionsResponse type, a 'My Bets' chip on the Markets tab (BetMarketRow: title/side/stake/status/win-loss, dedupe by market.id, empty state), ?tab=saved/?tab=mybets deep-link param (consumed once), and a 'See all my bets' link in Profile Recent Activity. (3) Watchlist 'More' now deep-links to the Saved filter ('See all saved'); 'My Markets' overflow relabeled. No schema migration. QA PASS incl. runtime (401 unauth, cross-user isolation, shape, dedupe).",
       "priority": "high",
       "status": "done",
       "qaVerdict": "pass",

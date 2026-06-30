@@ -22,7 +22,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import type { Session } from "@/providers/session-provider";
 
-import type { ApiAnalystPosition, ApiMarketDetail, ApiMarketSummary, ApiProbabilityHistory } from "@predict-future/types";
+import type { ApiAnalystPosition, ApiMarketDetail, ApiMarketSummary, ApiMyProfile, ApiProbabilityHistory } from "@predict-future/types";
 import { formatPercent, formatPoints, formatRelativeTime } from "@predict-future/utils";
 import { radius, spacing } from "@predict-future/ui-tokens";
 
@@ -142,6 +142,17 @@ export default function MarketDetailScreen() {
     enabled: Boolean(id),
     errorFallback: "Unable to load market.",
   });
+
+  // ── Balance for bet panel (T2: S68) ─────────────────────────────────────────
+  // Fetch the user's wallet balance once on mount so the betting sheets can
+  // show an "Available: X pts" hint. Failures are silently swallowed — we
+  // never block betting on a balance fetch error.
+  const { session } = useSession();
+  const profileFetcher = useCallback(() => mobileApi.getMyProfile(), []);
+  const { data: profileData } = useApiQuery<ApiMyProfile>(profileFetcher, [session?.userId], {
+    enabled: Boolean(session?.userId),
+  });
+  const walletBalance: number | null = profileData?.user?.wallet?.balance ?? null;
 
   // Track whether the screen is focused AND the app is foregrounded
   const [pollActive, setPollActive] = useState(false);
@@ -280,6 +291,7 @@ export default function MarketDetailScreen() {
           onCloseBetSheet={() => setBetSheetOpen(false)}
           onRefresh={refetch}
           bottomInset={insets.bottom}
+          walletBalance={walletBalance}
         />
       ) : null}
 
@@ -308,6 +320,7 @@ type StickyBettingBarProps = {
   onCloseBetSheet: () => void;
   onRefresh: () => void;
   bottomInset: number;
+  walletBalance: number | null;
 };
 
 function StickyBettingBar({
@@ -318,6 +331,7 @@ function StickyBettingBar({
   onCloseBetSheet,
   onRefresh,
   bottomInset,
+  walletBalance,
 }: StickyBettingBarProps) {
   const styles = useThemedStyles(makeStyles);
   const { colors } = useTheme();
@@ -499,6 +513,7 @@ function StickyBettingBar({
           onRefresh={onRefresh}
           onBetSuccess={onCloseBetSheet}
           bottomInset={bottomInset}
+          walletBalance={walletBalance}
         />
       </>
     );
@@ -562,6 +577,7 @@ function StickyBettingBar({
         onRefresh={onRefresh}
         onBetSuccess={onCloseBetSheet}
         bottomInset={bottomInset}
+        walletBalance={walletBalance}
       />
     </>
   );
@@ -577,6 +593,7 @@ type BettingSheetProps = {
   onRefresh: () => void;
   onBetSuccess: () => void;
   bottomInset: number;
+  walletBalance: number | null;
 };
 
 function BettingSheet({
@@ -587,6 +604,7 @@ function BettingSheet({
   onRefresh,
   onBetSuccess,
   bottomInset,
+  walletBalance,
 }: BettingSheetProps) {
   const styles = useThemedStyles(makeStyles);
   const { colors } = useTheme();
@@ -696,9 +714,16 @@ function BettingSheet({
 
         {/* Header */}
         <View style={styles.sheetHeader}>
-          <Text style={styles.sheetTitle}>
-            {hasPosition ? "Increase Your Bet" : "Place Your Bet"}
-          </Text>
+          <View style={styles.sheetTitleWrap}>
+            <Text style={styles.sheetTitle}>
+              {hasPosition ? "Increase Your Bet" : "Place Your Bet"}
+            </Text>
+            {walletBalance != null && (
+              <Text style={styles.sheetBalanceHint}>
+                Available: {walletBalance.toLocaleString()} pts
+              </Text>
+            )}
+          </View>
           <Pressable onPress={onClose} style={styles.sheetCloseBtn} hitSlop={12}>
             <Text style={styles.sheetCloseBtnText}>Done</Text>
           </Pressable>
@@ -847,6 +872,16 @@ function BettingSheet({
               </View>
             ) : null}
 
+            {/* Low-balance warning (T2: S68) — informational only, does not block Submit */}
+            {walletBalance != null && betAmount >= 50 && betAmount > walletBalance ? (
+              <View style={styles.lowBalanceWarning}>
+                <Ionicons name="warning-outline" size={14} color="#D97706" />
+                <Text style={styles.lowBalanceWarningText}>
+                  You only have {walletBalance.toLocaleString()} pts available
+                </Text>
+              </View>
+            ) : null}
+
             {/* Reasoning field */}
             <Pressable
               style={styles.reasoningToggleRow}
@@ -915,6 +950,7 @@ type MultiChoiceBettingSheetProps = {
   onRefresh: () => void;
   onBetSuccess: () => void;
   bottomInset: number;
+  walletBalance: number | null;
 };
 
 function MultiChoiceBettingSheet({
@@ -925,6 +961,7 @@ function MultiChoiceBettingSheet({
   onRefresh,
   onBetSuccess,
   bottomInset,
+  walletBalance,
 }: MultiChoiceBettingSheetProps) {
   const styles = useThemedStyles(makeStyles);
   const { colors } = useTheme();
@@ -1004,7 +1041,14 @@ function MultiChoiceBettingSheet({
         <View style={styles.sheetHandle} />
 
         <View style={styles.sheetHeader}>
-          <Text style={styles.sheetTitle}>Choose an Option</Text>
+          <View style={styles.sheetTitleWrap}>
+            <Text style={styles.sheetTitle}>Choose an Option</Text>
+            {walletBalance != null && (
+              <Text style={styles.sheetBalanceHint}>
+                Available: {walletBalance.toLocaleString()} pts
+              </Text>
+            )}
+          </View>
           <Pressable onPress={onClose} style={styles.sheetCloseBtn} hitSlop={12}>
             <Text style={styles.sheetCloseBtnText}>Done</Text>
           </Pressable>
@@ -1099,6 +1143,16 @@ function MultiChoiceBettingSheet({
                 if (text) setAmount("");
               }}
             />
+
+            {/* Low-balance warning (T2: S68) — informational only, does not block Submit */}
+            {walletBalance != null && betAmount >= 50 && betAmount > walletBalance ? (
+              <View style={styles.lowBalanceWarning}>
+                <Ionicons name="warning-outline" size={14} color="#D97706" />
+                <Text style={styles.lowBalanceWarningText}>
+                  You only have {walletBalance.toLocaleString()} pts available
+                </Text>
+              </View>
+            ) : null}
 
             {betError ? <Text style={styles.betError}>{betError}</Text> : null}
 
@@ -3765,10 +3819,18 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     justifyContent: "space-between",
     marginBottom: spacing.xl,
   },
+  sheetTitleWrap: {
+    flex: 1,
+  },
   sheetTitle: {
     fontSize: 20,
     fontWeight: "700",
     color: t.colors.text,
+  },
+  sheetBalanceHint: {
+    marginTop: 3,
+    fontSize: 13,
+    color: t.colors.textMuted,
   },
   sheetCloseBtn: {
     paddingHorizontal: spacing.md,
@@ -3778,6 +3840,21 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     fontSize: 15,
     fontWeight: "600",
     color: t.colors.accent,
+  },
+  lowBalanceWarning: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    marginTop: spacing.sm,
+    backgroundColor: "#FFFBEB",
+    borderRadius: radius.sm,
+    padding: spacing.sm,
+  },
+  lowBalanceWarningText: {
+    flex: 1,
+    fontSize: 13,
+    color: "#D97706",
+    fontWeight: "600",
   },
   sheetSuccessSection: {
     paddingVertical: spacing.xl,

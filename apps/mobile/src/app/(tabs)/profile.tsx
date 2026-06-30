@@ -498,6 +498,7 @@ function ActivitySection({
   isFullyBrandNew: boolean;
   router: ReturnType<typeof useRouter>;
 }) {
+  const { colors } = useTheme();
   const s = useThemedStyles(makeStyles);
   const actS = useThemedStyles(makeActivitySectionStyles);
 
@@ -526,8 +527,16 @@ function ActivitySection({
         {displayItems.map((item) => (
           <ActivityRow key={`${item.kind}-${item.id}`} item={item} router={router} />
         ))}
-        {/* No "See all activity" link — there is no /activity route yet (deferred), so we
-            don't ship a button to nowhere. The preview caps at ACTIVITY_CAP items. */}
+        {/* T4: "See all my bets" link — only when there are bet items in the activity */}
+        {betItems.length > 0 && (
+          <Pressable
+            style={({ pressed }) => [actS.seeAllBetsRow, pressed && actS.seeAllBetsRowPressed]}
+            onPress={() => router.push("/(tabs)/markets?tab=mybets")}
+          >
+            <Text style={actS.seeAllBetsText}>See all my bets</Text>
+            <Ionicons name="chevron-forward" size={14} color={colors.accent} />
+          </Pressable>
+        )}
       </View>
     </>
   );
@@ -540,6 +549,24 @@ const makeActivitySectionStyles = (t: ThemeContextValue) =>
       color: t.colors.textMuted,
       lineHeight: 19,
       paddingVertical: spacing.md,
+    },
+    seeAllBetsRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      paddingVertical: spacing.md,
+      gap: 4,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: t.colors.borderMuted,
+      marginTop: spacing.xs,
+    },
+    seeAllBetsRowPressed: {
+      backgroundColor: t.colors.surfaceMuted,
+    },
+    seeAllBetsText: {
+      flex: 1,
+      fontSize: 13,
+      fontWeight: "600",
+      color: t.colors.accent,
     },
   });
 
@@ -605,7 +632,7 @@ function MarketsSection({
                 style={({ pressed }) => [mktS.seeAllRow, pressed && mktS.seeAllRowPressed]}
                 onPress={() => router.push("/(tabs)/markets")}
               >
-                <Text style={mktS.seeAllText}>See all markets</Text>
+                <Text style={mktS.seeAllText}>See all my markets</Text>
                 <Ionicons name="chevron-forward" size={14} color={colors.accent} />
               </Pressable>
             )}
@@ -635,9 +662,9 @@ function MarketsSection({
             {totalWatchlist > MARKETS_CAP && (
               <Pressable
                 style={({ pressed }) => [mktS.seeAllRow, pressed && mktS.seeAllRowPressed]}
-                onPress={() => router.push("/(tabs)/markets")}
+                onPress={() => router.push("/(tabs)/markets?tab=saved")}
               >
-                <Text style={mktS.seeAllText}>See all markets</Text>
+                <Text style={mktS.seeAllText}>See all saved</Text>
                 <Ionicons name="chevron-forward" size={14} color={colors.accent} />
               </Pressable>
             )}
@@ -1536,6 +1563,13 @@ export default function ProfileScreen() {
             <Text style={styles.displayName}>{user.username}</Text>
             <Text style={styles.handle}>{`@${user.username}`}</Text>
             {analystHeadline}
+            {user.wallet?.balance != null && (
+              <View style={styles.balancePill}>
+                <Text style={styles.balancePillText}>
+                  {user.wallet.balance.toLocaleString()} pts
+                </Text>
+              </View>
+            )}
           </View>
         </View>
       </View>
@@ -1820,6 +1854,21 @@ const makeStyles = (t: ThemeContextValue) =>
       fontSize: 13,
       fontWeight: "500",
       color: t.colors.textMuted,
+    },
+
+    // ── Balance pill (T1) ──
+    balancePill: {
+      alignSelf: "flex-start",
+      marginTop: 5,
+      backgroundColor: t.colors.accentSoft,
+      borderRadius: radius.pill,
+      paddingHorizontal: 9,
+      paddingVertical: 3,
+    },
+    balancePillText: {
+      fontSize: 12,
+      fontWeight: "700",
+      color: t.colors.accent,
     },
 
     // ── Generic card ──

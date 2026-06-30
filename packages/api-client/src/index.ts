@@ -34,6 +34,7 @@ import type {
   ApiMarketDetail,
   ApiMarketSummary,
   ApiMyProfile,
+  ApiMyPositionsResponse,
   ApiTopExpertEntry,
   ApiNewsFeedItem,
   ApiNotification,
@@ -315,6 +316,17 @@ export function createApiClient(options: ApiClientOptions) {
     getMyMarkets() {
       return request<{ createdPolls: ApiMyProfile["createdPolls"]; votes: ApiMyProfile["votes"] }>(
         "/api/profile/me/markets",
+        undefined,
+        { auth: true }
+      );
+    },
+    /**
+     * Fetch the authenticated user's full positions list (no take:10 cap).
+     * Use this to power the "My Bets" screen. Auth: required.
+     */
+    getMyPositions() {
+      return request<ApiMyPositionsResponse>(
+        "/api/profile/me/positions",
         undefined,
         { auth: true }
       );

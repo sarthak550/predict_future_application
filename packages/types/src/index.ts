@@ -786,6 +786,15 @@ export type ApiPositionSummary = {
   };
 };
 
+/**
+ * Response from GET /api/profile/me/positions.
+ * Returns the authenticated user's complete positions list.
+ */
+export type ApiMyPositionsResponse = {
+  positions: ApiPositionSummary[];
+  total: number;
+};
+
 export type ApiPredictionSuggestion = {
   title: string;
   category?: AppMarketCategory;

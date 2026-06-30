@@ -1,5 +1,6 @@
 import { Feather } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -16,7 +17,7 @@ import {
 
 import { GradientHeader } from "@/components/gradient-header";
 
-import type { ApiDiscoverGroup, ApiGroupSummary, ApiMarketSummary, ApiPollListItem } from "@predict-future/types";
+import type { ApiDiscoverGroup, ApiGroupSummary, ApiMarketSummary, ApiMyPositionsResponse, ApiPollListItem, ApiPositionSummary } from "@predict-future/types";
 import { radius, spacing } from "@predict-future/ui-tokens";
 import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
@@ -33,7 +34,7 @@ import { mobileApi } from "@/lib/api";
 // ── constants ───────────────────────────────────────────────────────
 
 type MarketMode = "public" | "private" | "polls";
-type StatusTab = "all" | "live" | "ended" | "settled" | "saved";
+type StatusTab = "all" | "live" | "ended" | "settled" | "saved" | "mybets";
 type MarketSort = "new" | "rank" | "close_at" | "volume";
 
 // Merged view-selector chips: each chip sets both statusTab + sort atomically.
@@ -52,6 +53,7 @@ const VIEW_CHIPS: ViewChip[] = [
   { label: "Settled",      statusTab: "settled", sort: "new"      },
   { label: "Cancelled",    statusTab: "ended",   sort: "new"      },
   { label: "Saved",        statusTab: "saved",   sort: "new"      },
+  { label: "My Bets",      statusTab: "mybets",  sort: "new"      },
 ];
 
 // CATEGORIES is provided by the shared CategoryFilterBar via FILTER_BAR_CATEGORIES.
@@ -65,6 +67,8 @@ function matchesStatusTab(status: string | undefined, tab: StatusTab) {
   if (tab === "all") return true;
   if (tab === "live") return LIVE_STATUSES.has(s);
   if (tab === "ended") return ENDED_STATUSES.has(s);
+  // "saved" and "mybets" use their own data sources — this path is not reached for them.
+  if (tab === "saved" || tab === "mybets") return true;
   return SETTLED_STATUSES.has(s);
 }
 
@@ -85,6 +89,13 @@ export default function MarketsScreen() {
   const { colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
   const router = useRouter();
+
+  // ── Deep-link param: ?tab=saved or ?tab=mybets ────────────────────
+  // Read once on mount to pre-select the chip. We use a ref to ensure
+  // we only apply it once and never fight with manual chip switching.
+  const deepLinkParams = useLocalSearchParams<{ tab?: string }>();
+  const deepLinkApplied = useRef(false);
+
   const [mode, setMode] = useState<MarketMode>("public");
   const [statusTab, setStatusTab] = useState<StatusTab>("all");
   const [category, setCategory] = useState<CategoryKey>("ALL");
@@ -94,6 +105,21 @@ export default function MarketsScreen() {
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [sort, setSort] = useState<MarketSort>("new");
+
+  // Apply deep-link tab param once on mount.
+  useEffect(() => {
+    if (deepLinkApplied.current) return;
+    deepLinkApplied.current = true;
+    const tab = deepLinkParams.tab;
+    if (tab === "saved") {
+      setStatusTab("saved");
+      setSort("new");
+    } else if (tab === "mybets") {
+      setStatusTab("mybets");
+      setSort("new");
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Reset category filter when switching status tabs (category filter only applies on "live")
   useEffect(() => {
@@ -260,6 +286,41 @@ export default function MarketsScreen() {
     }
   }, [mode, statusTab, loadSavedMarkets]);
 
+  // ── my bets ───────────────────────────────────────────────────────
+
+  const [myBetsPositions, setMyBetsPositions] = useState<ApiPositionSummary[]>([]);
+  const [myBetsLoading, setMyBetsLoading] = useState(false);
+  const [myBetsError, setMyBetsError] = useState<string | null>(null);
+
+  const loadMyBets = useCallback(async () => {
+    setMyBetsLoading(true);
+    setMyBetsError(null);
+    try {
+      const res: ApiMyPositionsResponse = await mobileApi.getMyPositions();
+      // Dedupe by market.id: a user can hold multiple positions on one market,
+      // but the list view shows one row per market (latest position wins).
+      const seen = new Set<string>();
+      const deduped: ApiPositionSummary[] = [];
+      for (const p of res.positions) {
+        if (!seen.has(p.market.id)) {
+          seen.add(p.market.id);
+          deduped.push(p);
+        }
+      }
+      setMyBetsPositions(deduped);
+    } catch {
+      setMyBetsError("Unable to load your bets.");
+    } finally {
+      setMyBetsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (mode === "public" && statusTab === "mybets") {
+      void loadMyBets();
+    }
+  }, [mode, statusTab, loadMyBets]);
+
   // ── search ────────────────────────────────────────────────────────
 
   const searchFetcher = useCallback(
@@ -348,13 +409,17 @@ export default function MarketsScreen() {
     mode === "public"
       ? statusTab === "saved"
         ? savedLoading
-        : publicQuery.loading
+        : statusTab === "mybets"
+          ? myBetsLoading
+          : publicQuery.loading
       : groupMarketsLoading || groupsQuery.loading;
   const error =
     mode === "public"
       ? statusTab === "saved"
         ? savedError
-        : publicQuery.error
+        : statusTab === "mybets"
+          ? myBetsError
+          : publicQuery.error
       : groupsQuery.error;
   const queryStatus = mode === "public" ? publicQuery.status : groupsQuery.status;
 
@@ -368,6 +433,10 @@ export default function MarketsScreen() {
         seen.add(m.id);
         return true;
       });
+    }
+    if (statusTab === "mybets") {
+      // My Bets: already deduped and sorted in loadMyBets — return as-is.
+      return [];
     }
     let result = allMarkets.filter((m) => matchesStatusTab(m.status, statusTab));
     if (mode === "public" && (statusTab === "live" || statusTab === "all") && category !== "ALL") {
@@ -390,12 +459,14 @@ export default function MarketsScreen() {
       });
     }
     return deduped;
-  }, [allMarkets, savedMarkets, statusTab, category, mode]);
+  }, [allMarkets, savedMarkets, myBetsPositions, statusTab, category, mode]);
 
   const handleRefresh = useCallback(() => {
     if (mode === "public") {
       if (statusTab === "saved") {
         void loadSavedMarkets();
+      } else if (statusTab === "mybets") {
+        void loadMyBets();
       } else {
         publicQuery.refetch();
         // Refresh community surfaces independently
@@ -407,7 +478,7 @@ export default function MarketsScreen() {
       groupsQuery.refetch();
       fetchAllGroupMarkets();
     }
-  }, [mode, statusTab, publicQuery, pollsQuery, groupsQuery, fetchAllGroupMarkets, loadSavedMarkets, loadDiscoverGroups]);
+  }, [mode, statusTab, publicQuery, pollsQuery, groupsQuery, fetchAllGroupMarkets, loadSavedMarkets, loadDiscoverGroups, loadMyBets]);
 
   // ── render ────────────────────────────────────────────────────────
 
@@ -426,7 +497,7 @@ export default function MarketsScreen() {
     );
   }
 
-  if (loading && allMarkets.length === 0 && queryStatus !== "success") {
+  if (loading && allMarkets.length === 0 && queryStatus !== "success" && statusTab !== "mybets" && statusTab !== "saved") {
     return (
       <View style={styles.centerState}>
         <ActivityIndicator size="large" color={colors.accent} />
@@ -596,126 +667,304 @@ export default function MarketsScreen() {
       ) : null}
 
       {/* ── Market list ── */}
-      <FlatList
-        data={isSearchMode ? (searchQuery_result.data?.markets ?? []) : filteredMarkets}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.listContent}
-        refreshControl={
-          <RefreshControl refreshing={loading} onRefresh={handleRefresh} tintColor={colors.accent} />
-        }
-        ListHeaderComponent={
-          /* S55-T7: spotlight + rail live in My Groups sub-tab (Discover communities
-              section). Explore stays pure markets; communities still surface
-              contextually via the Hosted-by chip on every group-linked market card. */
-          !isSearchMode && mode === "private" && discoverGroups.length > 0 ? (
-            <View style={styles.discoverSection}>
-              <Text style={styles.discoverSectionHeader}>Discover communities</Text>
-              <CommunitiesList groups={discoverGroups} limit={5} />
-            </View>
-          ) : null
-        }
-        onEndReachedThreshold={0.3}
-        onEndReached={() => {
-          if (mode === "public" && !isSearchMode) {
-            handlePublicEndReached();
+      {statusTab === "mybets" ? (
+        /* My Bets: dedicated list of BetMarketRows (different shape, not ApiMarketSummary) */
+        <FlatList
+          data={myBetsPositions}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.listContent}
+          refreshControl={
+            <RefreshControl refreshing={myBetsLoading} onRefresh={handleRefresh} tintColor={colors.accent} />
           }
-        }}
-        ListFooterComponent={
-          mode === "public" && !isSearchMode && publicHasMore && publicLoading ? (
-            <View style={styles.footerSpinner}>
-              <ActivityIndicator size="small" color={colors.accent} />
-            </View>
-          ) : (
-            // S55-T7: subtle bottom-of-feed CTA into community discovery
-            // (the My Groups sub-tab also surfaces spotlight + rail there).
-            !isSearchMode && mode === "public" && statusTab === "live" ? (
-              <Pressable
-                style={({ pressed }) => [
-                  styles.discoverCommunitiesCta,
-                  pressed && { opacity: 0.7 },
-                ]}
-                onPress={() => { setMode("private"); setStatusTab("live"); }}
-                accessibilityRole="button"
-                accessibilityLabel="Browse communities to join"
-              >
-                <Feather name="users" size={14} color={colors.accent} />
-                <Text style={styles.discoverCommunitiesCtaText}>
-                  Find a community to join
+          renderItem={({ item }) => <BetMarketRow position={item} router={router} />}
+          ListEmptyComponent={
+            myBetsLoading ? (
+              <View style={styles.centerState}>
+                <ActivityIndicator color={colors.accent} />
+              </View>
+            ) : myBetsError ? (
+              <View style={styles.emptyCard}>
+                <Text style={styles.emptyTitle}>Something went wrong</Text>
+                <Text style={styles.emptyText}>{myBetsError}</Text>
+                <Pressable onPress={handleRefresh} style={styles.retry}>
+                  <Text style={styles.retryLabel}>Retry</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <View style={styles.emptyCard}>
+                <Text style={styles.emptyTitle}>No bets yet</Text>
+                <Text style={styles.emptyText}>
+                  You haven&apos;t placed any bets yet — explore markets to get started.
                 </Text>
-                <Feather name="arrow-right" size={14} color={colors.accent} />
-              </Pressable>
-            ) : null
-          )
-        }
-        renderItem={({ item }) => <MarketSummaryCard item={item} />}
-        ListEmptyComponent={
-          isSearchMode ? (
-            searchLoading ? null : (
-              <View style={[styles.emptyCard, { alignItems: "center" }]}>
-                <Text style={styles.emptyTitle}>
-                  {`No markets found for "${debouncedQuery}"`}
-                </Text>
-                <Pressable onPress={() => setSearchQuery("")} style={[styles.retry, { marginTop: 12 }]}>
-                  <Text style={styles.retryLabel}>Clear search</Text>
+                <Pressable
+                  onPress={() => { setStatusTab("all"); setSort("new"); }}
+                  style={[styles.retry, { marginTop: 12 }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Browse all markets"
+                >
+                  <Text style={styles.retryLabel}>Browse Markets</Text>
                 </Pressable>
               </View>
             )
-          ) : error ? (
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyTitle}>Something went wrong</Text>
-              <Text style={styles.emptyText}>{error}</Text>
-              <Pressable onPress={handleRefresh} style={styles.retry}>
-                <Text style={styles.retryLabel}>Retry</Text>
-              </Pressable>
-            </View>
-          ) : category !== "ALL" ? (
-            // Category-filtered empty state with Show All CTA
-            <View style={[styles.emptyCard, { alignItems: "center" }]}>
-              <Text style={styles.emptyTitle}>
-                {`No markets in ${FILTER_BAR_CATEGORIES.find((c) => c.key === category)?.label ?? category}`}
-              </Text>
-              <Text style={styles.emptyText}>
-                No live markets in this category right now.
-              </Text>
-              <Pressable
-                onPress={() => setCategory("ALL")}
-                style={[styles.retry, { marginTop: 12 }]}
-                accessibilityRole="button"
-                accessibilityLabel="Show all categories"
-              >
-                <Text style={styles.retryLabel}>Show All</Text>
-              </Pressable>
-            </View>
-          ) : statusTab === "saved" ? (
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyTitle}>No saved markets</Text>
-              <Text style={styles.emptyText}>
-                Tap the bookmark icon on any market to save it for later.
-              </Text>
-            </View>
-          ) : (
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyTitle}>
-                {mode === "private" && !selectedGroupId
-                  ? "Pick a group"
-                  : statusTab === "live"
-                    ? "No live markets"
-                    : statusTab === "ended"
-                      ? "No cancelled markets"
-                      : "No settled markets"}
-              </Text>
-              <Text style={styles.emptyText}>
-                {mode === "private" && !selectedGroupId
-                  ? "Select a group above to browse its markets."
-                  : "Check back later."}
-              </Text>
-            </View>
-          )
-        }
-      />
+          }
+        />
+      ) : (
+        <FlatList
+          data={isSearchMode ? (searchQuery_result.data?.markets ?? []) : filteredMarkets}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.listContent}
+          refreshControl={
+            <RefreshControl refreshing={loading} onRefresh={handleRefresh} tintColor={colors.accent} />
+          }
+          ListHeaderComponent={
+            /* S55-T7: spotlight + rail live in My Groups sub-tab (Discover communities
+                section). Explore stays pure markets; communities still surface
+                contextually via the Hosted-by chip on every group-linked market card. */
+            !isSearchMode && mode === "private" && discoverGroups.length > 0 ? (
+              <View style={styles.discoverSection}>
+                <Text style={styles.discoverSectionHeader}>Discover communities</Text>
+                <CommunitiesList groups={discoverGroups} limit={5} />
+              </View>
+            ) : null
+          }
+          onEndReachedThreshold={0.3}
+          onEndReached={() => {
+            if (mode === "public" && !isSearchMode) {
+              handlePublicEndReached();
+            }
+          }}
+          ListFooterComponent={
+            mode === "public" && !isSearchMode && publicHasMore && publicLoading ? (
+              <View style={styles.footerSpinner}>
+                <ActivityIndicator size="small" color={colors.accent} />
+              </View>
+            ) : (
+              // S55-T7: subtle bottom-of-feed CTA into community discovery
+              // (the My Groups sub-tab also surfaces spotlight + rail there).
+              !isSearchMode && mode === "public" && statusTab === "live" ? (
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.discoverCommunitiesCta,
+                    pressed && { opacity: 0.7 },
+                  ]}
+                  onPress={() => { setMode("private"); setStatusTab("live"); }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Browse communities to join"
+                >
+                  <Feather name="users" size={14} color={colors.accent} />
+                  <Text style={styles.discoverCommunitiesCtaText}>
+                    Find a community to join
+                  </Text>
+                  <Feather name="arrow-right" size={14} color={colors.accent} />
+                </Pressable>
+              ) : null
+            )
+          }
+          renderItem={({ item }) => <MarketSummaryCard item={item} />}
+          ListEmptyComponent={
+            isSearchMode ? (
+              searchLoading ? null : (
+                <View style={[styles.emptyCard, { alignItems: "center" }]}>
+                  <Text style={styles.emptyTitle}>
+                    {`No markets found for "${debouncedQuery}"`}
+                  </Text>
+                  <Pressable onPress={() => setSearchQuery("")} style={[styles.retry, { marginTop: 12 }]}>
+                    <Text style={styles.retryLabel}>Clear search</Text>
+                  </Pressable>
+                </View>
+              )
+            ) : error ? (
+              <View style={styles.emptyCard}>
+                <Text style={styles.emptyTitle}>Something went wrong</Text>
+                <Text style={styles.emptyText}>{error}</Text>
+                <Pressable onPress={handleRefresh} style={styles.retry}>
+                  <Text style={styles.retryLabel}>Retry</Text>
+                </Pressable>
+              </View>
+            ) : category !== "ALL" ? (
+              // Category-filtered empty state with Show All CTA
+              <View style={[styles.emptyCard, { alignItems: "center" }]}>
+                <Text style={styles.emptyTitle}>
+                  {`No markets in ${FILTER_BAR_CATEGORIES.find((c) => c.key === category)?.label ?? category}`}
+                </Text>
+                <Text style={styles.emptyText}>
+                  No live markets in this category right now.
+                </Text>
+                <Pressable
+                  onPress={() => setCategory("ALL")}
+                  style={[styles.retry, { marginTop: 12 }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Show all categories"
+                >
+                  <Text style={styles.retryLabel}>Show All</Text>
+                </Pressable>
+              </View>
+            ) : statusTab === "saved" ? (
+              <View style={styles.emptyCard}>
+                <Text style={styles.emptyTitle}>No saved markets</Text>
+                <Text style={styles.emptyText}>
+                  Tap the bookmark icon on any market to save it for later.
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.emptyCard}>
+                <Text style={styles.emptyTitle}>
+                  {mode === "private" && !selectedGroupId
+                    ? "Pick a group"
+                    : statusTab === "live"
+                      ? "No live markets"
+                      : statusTab === "ended"
+                        ? "No cancelled markets"
+                        : "No settled markets"}
+                </Text>
+                <Text style={styles.emptyText}>
+                  {mode === "private" && !selectedGroupId
+                    ? "Select a group above to browse its markets."
+                    : "Check back later."}
+                </Text>
+              </View>
+            )
+          }
+        />
+      )}
     </View>
   );
 }
+
+// ── BetMarketRow ────────────────────────────────────────────────────
+
+const BET_STATUS_META: Record<string, { label: string; color: string; bg: string }> = {
+  OPEN:                { label: "Live",     color: "#059669", bg: "#ECFDF5" },
+  CLOSED:              { label: "Closed",   color: "#D97706", bg: "#FFFBEB" },
+  AWAITING_RESOLUTION: { label: "Pending",  color: "#7C3AED", bg: "#F5F3FF" },
+  RESOLVING:           { label: "Resolving",color: "#0369A1", bg: "#EFF6FF" },
+  RESOLVED:            { label: "Resolved", color: "#64748B", bg: "#F1F5F9" },
+  CANCELLED:           { label: "Cancelled",color: "#94A3B8", bg: "#F8FAFC" },
+  DRAFT:               { label: "Pending",  color: "#92400E", bg: "#FEF3C7" },
+  PENDING_REVIEW:      { label: "Pending",  color: "#92400E", bg: "#FEF3C7" },
+};
+
+function BetMarketRow({
+  position,
+  router,
+}: {
+  position: ApiPositionSummary;
+  router: ReturnType<typeof useRouter>;
+}) {
+  const { colors } = useTheme();
+  const betRowStyles = useThemedStyles(makeBetRowStyles);
+
+  const statusMeta =
+    BET_STATUS_META[position.market.status] ?? {
+      label: position.market.status,
+      color: colors.textMuted,
+      bg: colors.background,
+    };
+
+  const sideColor =
+    position.side === "YES"
+      ? "#059669"
+      : position.side === "NO"
+        ? "#DC2626"
+        : colors.textMuted;
+
+  const isResolved = position.market.status === "RESOLVED";
+  const won =
+    isResolved &&
+    position.market.winningSide != null &&
+    position.market.winningSide === position.side;
+  const lost =
+    isResolved &&
+    position.market.winningSide != null &&
+    position.market.winningSide !== position.side;
+
+  return (
+    <Pressable
+      style={({ pressed }) => [betRowStyles.row, pressed && betRowStyles.rowPressed]}
+      onPress={() => router.push(`/market/${position.market.id}`)}
+      accessibilityRole="button"
+    >
+      <View style={betRowStyles.rowBody}>
+        <Text style={betRowStyles.title} numberOfLines={2}>
+          {position.market.title}
+        </Text>
+        <View style={betRowStyles.metaRow}>
+          {/* Side badge */}
+          <View style={[betRowStyles.sideBadge, { backgroundColor: sideColor + "20" }]}>
+            <Text style={[betRowStyles.sideBadgeText, { color: sideColor }]}>
+              {position.side ?? "?"}
+            </Text>
+          </View>
+          {/* Stake */}
+          <Text style={betRowStyles.stake}>
+            {position.amount.toLocaleString()} pts
+          </Text>
+          {/* Market status pill */}
+          <View style={[betRowStyles.statusPill, { backgroundColor: statusMeta.bg }]}>
+            <Text style={[betRowStyles.statusPillText, { color: statusMeta.color }]}>
+              {statusMeta.label}
+            </Text>
+          </View>
+          {/* Win/loss icon for resolved markets */}
+          {won && <Ionicons name="checkmark-circle" size={15} color="#059669" />}
+          {lost && <Ionicons name="close-circle" size={15} color="#DC2626" />}
+        </View>
+      </View>
+      <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+    </Pressable>
+  );
+}
+
+const makeBetRowStyles = (t: ThemeContextValue) =>
+  StyleSheet.create({
+    row: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: spacing.md,
+      backgroundColor: t.colors.surface,
+      borderRadius: radius.lg,
+      padding: spacing.md,
+    },
+    rowPressed: { opacity: 0.75 },
+    rowBody: { flex: 1 },
+    title: {
+      fontSize: 14,
+      fontWeight: "600",
+      color: t.colors.text,
+      lineHeight: 19,
+      marginBottom: 6,
+    },
+    metaRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      flexWrap: "wrap",
+      gap: spacing.sm,
+    },
+    sideBadge: {
+      paddingHorizontal: 8,
+      paddingVertical: 2,
+      borderRadius: radius.pill,
+    },
+    sideBadgeText: {
+      fontSize: 11,
+      fontWeight: "800",
+      letterSpacing: 0.3,
+    },
+    stake: {
+      fontSize: 12,
+      fontWeight: "600",
+      color: t.colors.textMuted,
+    },
+    statusPill: {
+      paddingHorizontal: 7,
+      paddingVertical: 2,
+      borderRadius: radius.pill,
+    },
+    statusPillText: {
+      fontSize: 10,
+      fontWeight: "700",
+    },
+  });
 
 // ── Polls Screen ────────────────────────────────────────────────────
 
