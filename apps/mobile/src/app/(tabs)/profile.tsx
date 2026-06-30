@@ -210,17 +210,18 @@ function TierProgressSection({
     );
   }
 
-  const currentPct = Math.round(tierProgress.currentAccuracy * 100);
-  const neededPct = Math.round(tierProgress.accuracyNeeded * 100);
   const totalPredictions = tierProgress.predictionsNeeded - tierProgress.predictionsToGo;
   const predFraction =
     tierProgress.predictionsNeeded > 0
       ? Math.min(1, totalPredictions / tierProgress.predictionsNeeded)
       : 1;
-  const accFraction =
-    tierProgress.accuracyNeeded > 0
-      ? Math.min(1, tierProgress.currentAccuracy / tierProgress.accuracyNeeded)
+
+  const cur = tierProgress.currentNetPoints;
+  const pnlFraction =
+    tierProgress.pnlNeeded > 0
+      ? Math.max(0, Math.min(1, cur / tierProgress.pnlNeeded))
       : 1;
+  const pnlLabel = `Net PnL: ${cur >= 0 ? "+" : ""}${cur}/${tierProgress.pnlNeeded} pts`;
 
   return (
     <View style={tierProgressStyles.barsWrap}>
@@ -238,14 +239,12 @@ function TierProgressSection({
         </View>
       </View>
       <View style={tierProgressStyles.barItem}>
-        <Text style={tierProgressStyles.barLabel}>
-          {`Accuracy: ${currentPct}%/${neededPct}%`}
-        </Text>
+        <Text style={tierProgressStyles.barLabel}>{pnlLabel}</Text>
         <View style={tierProgressStyles.trackOuter}>
           <View
             style={[
               tierProgressStyles.trackFill,
-              { width: `${Math.round(accFraction * 100)}%` },
+              { width: `${Math.round(pnlFraction * 100)}%` },
             ]}
           />
         </View>
@@ -1313,6 +1312,10 @@ export default function ProfileScreen() {
   const [showPhoneModal, setShowPhoneModal] = useState(false);
   const phoneVerifyChecked = useRef(false);
 
+  // ── Tier PnL notice banner state ──
+  const [tierPnlNoticeDismissed, setTierPnlNoticeDismissed] = useState<boolean>(true);
+  const tierPnlNoticeChecked = useRef(false);
+
   // ── Notification unread badge ──
   const [notifUnreadCount, setNotifUnreadCount] = useState(0);
 
@@ -1360,6 +1363,22 @@ export default function ProfileScreen() {
       } catch {
         setPhoneVerifyDismissed(true);
         phoneVerifyChecked.current = true;
+      }
+    })();
+  }, [userId]);
+
+  // ── Check if tier PnL notice banner should show ──
+  useEffect(() => {
+    if (!userId || tierPnlNoticeChecked.current) return;
+    void (async () => {
+      try {
+        const key = `tier_pnl_notice_dismissed`;
+        const dismissed = await AsyncStorage.getItem(key);
+        setTierPnlNoticeDismissed(dismissed === "true");
+        tierPnlNoticeChecked.current = true;
+      } catch {
+        setTierPnlNoticeDismissed(true);
+        tierPnlNoticeChecked.current = true;
       }
     })();
   }, [userId]);
@@ -1450,9 +1469,10 @@ export default function ProfileScreen() {
   if (hasAnyPredictions && user.analystTier) {
     const tierLabel =
       ANALYST_TIER_LABELS[user.analystTier as AppAnalystTier] ?? user.analystTier;
+    const netPts = user.stats?.totalNetPoints ?? 0;
     analystHeadline = (
       <Text style={styles.analystHeadline}>
-        {tierLabel} · {accuracyScore.toFixed(0)}% accuracy
+        {tierLabel} · {netPts >= 0 ? "+" : ""}{netPts} net pts
       </Text>
     );
   } else if (!hasAnyPredictions) {
@@ -1564,6 +1584,20 @@ export default function ProfileScreen() {
           watchlist={watchlist}
           router={router}
         />
+
+        {/* Tier PnL migration notice */}
+        {!tierPnlNoticeDismissed && (
+          <TierPnlNoticeCard
+            onDismiss={async () => {
+              try {
+                await AsyncStorage.setItem("tier_pnl_notice_dismissed", "true");
+              } catch {
+                // Ignore storage errors.
+              }
+              setTierPnlNoticeDismissed(true);
+            }}
+          />
+        )}
 
         {/* Phone Verify card */}
         {user.phoneVerified === false && !phoneVerifyDismissed && (
@@ -1700,7 +1734,7 @@ export default function ProfileScreen() {
               try {
                 await Share.share({
                   title: "My Predict Future Portfolio",
-                  message: `Check out my Predict Future portfolio: ${portfolioUrl}\n\n${accuracyScore.toFixed(0)}% accuracy · ${positions.length} predictions`,
+                  message: `Check out my Predict Future portfolio: ${portfolioUrl}\n\n${user.stats?.totalNetPoints != null && user.stats.totalNetPoints >= 0 ? "+" : ""}${user.stats?.totalNetPoints ?? 0} net pts · ${positions.length} predictions`,
                 });
               } catch {
                 // User cancelled or share unavailable.
@@ -2152,6 +2186,56 @@ const makeInviteStyles = (t: ThemeContextValue) =>
     },
     shareBtnText: { fontSize: 14, fontWeight: "700", color: "#FFFFFF" },
     stats: { marginTop: spacing.sm, fontSize: 12, color: t.colors.textMuted, textAlign: "center" },
+  });
+
+// ── TierPnlNoticeCard ─────────────────────────────────────────────────────────
+
+function TierPnlNoticeCard({ onDismiss }: { onDismiss: () => void | Promise<void> }) {
+  const { colors } = useTheme();
+  const cardStyles = useThemedStyles(makeTierPnlCardStyles);
+  return (
+    <View style={cardStyles.card}>
+      <View style={cardStyles.headerRow}>
+        <Ionicons name="trending-up-outline" size={16} color={colors.accent} />
+        <Text style={cardStyles.title}>Analyst tiers updated</Text>
+        <Pressable
+          onPress={onDismiss}
+          hitSlop={12}
+          style={({ pressed }) => [cardStyles.dismissBtn, pressed && { opacity: 0.6 }]}
+        >
+          <Ionicons name="close" size={15} color={colors.textMuted} />
+        </Pressable>
+      </View>
+      <Text style={cardStyles.body}>
+        Analyst tiers now reflect your net performance (points won), not accuracy. Your tier has been updated to match your lifetime net PnL.
+      </Text>
+    </View>
+  );
+}
+
+const makeTierPnlCardStyles = (t: ThemeContextValue) =>
+  StyleSheet.create({
+    card: {
+      marginTop: spacing.md,
+      backgroundColor: t.colors.surface,
+      borderRadius: radius.lg,
+      padding: spacing.lg,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: t.colors.border,
+    },
+    headerRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: spacing.sm,
+      marginBottom: spacing.xs,
+    },
+    title: { flex: 1, fontSize: 14, fontWeight: "700", color: t.colors.text },
+    dismissBtn: { padding: 2 },
+    body: {
+      fontSize: 13,
+      color: t.colors.textMuted,
+      lineHeight: 19,
+    },
   });
 
 // ── PhoneVerifyCard (S25-T6) ──────────────────────────────────────────────────

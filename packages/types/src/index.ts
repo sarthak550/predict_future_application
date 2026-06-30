@@ -819,11 +819,14 @@ export type ApiTierProgress = {
   predictionsNeeded: number;
   /** Predictions still needed to reach the threshold (0 when met). */
   predictionsToGo: number;
-  /** Accuracy fraction required for the next tier (e.g. 0.55 = 55%). */
-  accuracyNeeded: number;
-  /** User's current accuracy fraction. */
-  currentAccuracy: number;
-  /** True when both predictions and accuracy thresholds are met. */
+  /** Net PnL (integer points) required to unlock the next tier. */
+  pnlNeeded: number;
+  /**
+   * The user's current lifetime net PnL in points.
+   * Can be negative when cumulative losses exceed wins.
+   */
+  currentNetPoints: number;
+  /** True when both predictions and net PnL thresholds are met (and verified if required). */
   isEligible: boolean;
 };
 

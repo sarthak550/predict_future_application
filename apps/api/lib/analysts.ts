@@ -5,34 +5,35 @@ import { prisma } from "./prisma";
 /**
  * Tier thresholds for the Analyst Tier system.
  *
- * ROOKIE        default (everyone starts here)
- * ANALYST       totalPredictions >= 10  AND avgAccuracyScore >= 0.55
- * SENIOR_ANALYST totalPredictions >= 50  AND avgAccuracyScore >= 0.60
- * CHIEF_ANALYST  totalPredictions >= 200 AND avgAccuracyScore >= 0.65 AND isVerifiedAnalyst = true
+ * ROOKIE         default — also catches anyone with totalNetPoints below the
+ *                ANALYST gate, including analysts with negative lifetime PnL.
+ * ANALYST        totalPredictions >= 10  AND totalNetPoints >= 200
+ * SENIOR_ANALYST totalPredictions >= 50  AND totalNetPoints >= 1000
+ * CHIEF_ANALYST  totalPredictions >= 200 AND totalNetPoints >= 4000 AND isVerifiedAnalyst = true
  */
 
 interface TierInput {
   totalPredictions: number;
-  accuracyScore: number;
+  totalNetPoints: number;
   isVerifiedAnalyst: boolean;
 }
 
 export function computeTierFromStats(input: TierInput): AnalystTier {
-  const { totalPredictions, accuracyScore, isVerifiedAnalyst } = input;
+  const { totalPredictions, totalNetPoints, isVerifiedAnalyst } = input;
 
   if (
     isVerifiedAnalyst &&
     totalPredictions >= 200 &&
-    accuracyScore >= 0.65
+    totalNetPoints >= 4000
   ) {
     return AnalystTier.CHIEF_ANALYST;
   }
 
-  if (totalPredictions >= 50 && accuracyScore >= 0.60) {
+  if (totalPredictions >= 50 && totalNetPoints >= 1000) {
     return AnalystTier.SENIOR_ANALYST;
   }
 
-  if (totalPredictions >= 10 && accuracyScore >= 0.55) {
+  if (totalPredictions >= 10 && totalNetPoints >= 200) {
     return AnalystTier.ANALYST;
   }
 
@@ -51,7 +52,7 @@ export async function computeAnalystTier(userId: string): Promise<AnalystTier> {
       stats: {
         select: {
           totalPredictions: true,
-          accuracyScore: true,
+          totalNetPoints: true,
         },
       },
     },
@@ -61,7 +62,7 @@ export async function computeAnalystTier(userId: string): Promise<AnalystTier> {
 
   return computeTierFromStats({
     totalPredictions: user.stats?.totalPredictions ?? 0,
-    accuracyScore: user.stats?.accuracyScore ?? 0,
+    totalNetPoints: user.stats?.totalNetPoints ?? 0,
     isVerifiedAnalyst: user.isVerifiedAnalyst,
   });
 }
@@ -108,7 +109,7 @@ export async function updateAnalystTiersBatch(userIds: string[]): Promise<number
       stats: {
         select: {
           totalPredictions: true,
-          accuracyScore: true,
+          totalNetPoints: true,
         },
       },
     },
@@ -119,7 +120,7 @@ export async function updateAnalystTiersBatch(userIds: string[]): Promise<number
     userId: u.id,
     newTier: computeTierFromStats({
       totalPredictions: u.stats?.totalPredictions ?? 0,
-      accuracyScore: u.stats?.accuracyScore ?? 0,
+      totalNetPoints: u.stats?.totalNetPoints ?? 0,
       isVerifiedAnalyst: u.isVerifiedAnalyst,
     }),
   }));

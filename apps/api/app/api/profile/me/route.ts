@@ -8,19 +8,19 @@ import type { AnalystTier } from "@prisma/client";
 const TIER_THRESHOLDS: Array<{
   tier: AnalystTier;
   predictionsNeeded: number;
-  accuracyNeeded: number;
+  pnlNeeded: number;
   requiresVerified: boolean;
 }> = [
-  { tier: "CHIEF_ANALYST", predictionsNeeded: 200, accuracyNeeded: 0.65, requiresVerified: true },
-  { tier: "SENIOR_ANALYST", predictionsNeeded: 50,  accuracyNeeded: 0.60, requiresVerified: false },
-  { tier: "ANALYST",        predictionsNeeded: 10,  accuracyNeeded: 0.55, requiresVerified: false },
-  { tier: "ROOKIE",         predictionsNeeded: 0,   accuracyNeeded: 0,    requiresVerified: false },
+  { tier: "CHIEF_ANALYST", predictionsNeeded: 200, pnlNeeded: 4000, requiresVerified: true },
+  { tier: "SENIOR_ANALYST", predictionsNeeded: 50,  pnlNeeded: 1000, requiresVerified: false },
+  { tier: "ANALYST",        predictionsNeeded: 10,  pnlNeeded: 200,  requiresVerified: false },
+  { tier: "ROOKIE",         predictionsNeeded: 0,   pnlNeeded: 0,    requiresVerified: false },
 ];
 
 function computeTierProgress(
   currentTier: AnalystTier,
   totalPredictions: number,
-  currentAccuracy: number,
+  totalNetPoints: number,
   isVerifiedAnalyst: boolean
 ) {
   // CHIEF_ANALYST is the top tier — no next tier
@@ -30,8 +30,8 @@ function computeTierProgress(
       nextTier: null as AnalystTier | null,
       predictionsNeeded: 200,
       predictionsToGo: 0,
-      accuracyNeeded: 0.65,
-      currentAccuracy,
+      pnlNeeded: 4000,
+      currentNetPoints: totalNetPoints,
       isEligible: false,
     };
   }
@@ -42,14 +42,14 @@ function computeTierProgress(
   const nextTier = tierOrder[currentIdx + 1] as AnalystTier;
   const nextThreshold = TIER_THRESHOLDS.find((t) => t.tier === nextTier)!;
 
-  // Skip CHIEF_ANALYST if not verified (show SENIOR_ANALYST as next if not verified)
-  const effectiveNextTier =
-    nextTier === "CHIEF_ANALYST" && !isVerifiedAnalyst ? nextTier : nextTier;
+  // Preserve effective next tier (currently a straight promotion; the variable
+  // is kept for future CHIEF_ANALYST gating logic without breaking structure).
+  const effectiveNextTier = nextTier;
 
   const predictionsToGo = Math.max(0, nextThreshold.predictionsNeeded - totalPredictions);
   const isEligible =
     totalPredictions >= nextThreshold.predictionsNeeded &&
-    currentAccuracy >= nextThreshold.accuracyNeeded &&
+    totalNetPoints >= nextThreshold.pnlNeeded &&
     (!nextThreshold.requiresVerified || isVerifiedAnalyst);
 
   return {
@@ -57,8 +57,8 @@ function computeTierProgress(
     nextTier: effectiveNextTier,
     predictionsNeeded: nextThreshold.predictionsNeeded,
     predictionsToGo,
-    accuracyNeeded: nextThreshold.accuracyNeeded,
-    currentAccuracy,
+    pnlNeeded: nextThreshold.pnlNeeded,
+    currentNetPoints: totalNetPoints,
     isEligible,
   };
 }
@@ -187,11 +187,10 @@ export async function GET(request: Request) {
   const resolvedMarketCount = resolvedMarketIds.size;
 
   const totalPredictions = user.stats?.totalPredictions ?? 0;
-  const currentAccuracy = user.accuracyScore ?? 0;
   const tierProgress = computeTierProgress(
     user.analystTier,
     totalPredictions,
-    currentAccuracy,
+    user.stats?.totalNetPoints ?? 0,
     user.isVerifiedAnalyst
   );
 

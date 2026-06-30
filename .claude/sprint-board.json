@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "currentSprint": 66,
+  "currentSprint": 67,
   "tickets": [
     {
       "id": "S7-T1",
@@ -3914,6 +3914,17 @@
       "title": "Profile: Track Record section visual polish + empty states",
       "description": "Polish the Track Record section (wrapping PerformanceCard) and all empty state treatments for the new single-scroll layout.\n\n**Track Record section:**\n- Wrap `PerformanceCard` in a `<SectionHeader title=\"Track Record\" />` + card container.\n- The `PerformanceCard` already renders cleanly in light mode \u2014 the main changes here are:\n  a. `pnlRow` padding: increase from `spacing.lg` to `paddingVertical: 20, paddingHorizontal: spacing.lg` for more breathing room.\n  b. `pnlNumber` fontSize: keep 36 but letterSpacing: -1 (tighter, more refined).\n  c. `pillGrid` background pills: change `backgroundColor` from `t.colors.background` to `t.colors.surfaceMuted` (very subtle blue tint \u2014 `#EFF6FF` in light mode). This is the Analysts=blue brand tint.\n  d. `pillValue` fontSize: 20 (up from 18) for the stat numbers to breathe more.\n  e. `pillLabel` fontSize: 11 (up from 10), letterSpacing: 0.4.\n  f. Category breakdown collapse: default to `catExpanded: true` for new single-scroll (no reason to hide it behind a tap when there's room to scroll).\n  g. Host stats collapse: keep `hostExpanded: false` default (host stats are secondary).\n\n**PerformanceSkeletonCard:**\n- Replace the skeleton CTA text \"Make 3 predictions to unlock your stats\" with \"Your stats will appear here once your first prediction resolves.\" (More informative, less gamified pressure.)\n\n**GetStartedCard (brand-new users):**\n- Visual update: card background stays `t.colors.surface`, but change the heading to \"Welcome, let's get started\" and subtitle to \"Your track record and achievements will build here.\" (More aspirational, less corporate.)\n- The three action rows (Make prediction / Explore markets / Join a group) are unchanged.\n\n**Empty state for Achievements section (handled by T3 returning null):** no change needed here.\n\n**New user journey (isFullyBrandNew=true) summary in single scroll:**\nGetStartedCard \u2192 (no Achievements section) \u2192 (no Activity section) \u2192 (no Markets section if empty) \u2192 Social card (Quests / Leagues / etc.) \u2192 Share \u2192 Invite\n\nThis is correct and intentional: a brand-new user sees the welcome card, then immediately the community navigation (Quests, Leaderboard, Groups) which gives them things to do. Don't add any other padding or placeholder cards here.\n\n**Acceptance criteria:**\n1. `PerformanceCard` stat pills use `surfaceMuted` background (blue tint in light mode).\n2. Category breakdown defaults to expanded in single-scroll layout.\n3. Skeleton card copy is updated.\n4. GetStartedCard heading/subtitle is updated.\n5. `pillValue` is 20px, `pillLabel` is 11px with 0.4 letterSpacing.\n6. No TypeScript errors.",
       "priority": "medium",
+      "status": "done",
+      "qaVerdict": "pass",
+      "failureNotes": null,
+      "createdAt": "2026-06-30"
+    },
+    {
+      "id": "S67-T1",
+      "sprint": 67,
+      "title": "Analyst tier credential: accuracy gate -> lifetime net-PnL gate",
+      "description": "Per user decision, the Analyst tier credential is now gated on lifetime net PnL (totalNetPoints), not accuracy %, to reward conviction/stakes. New ladder (user-approved 'accessible' thresholds): ANALYST >=10 preds & >=+200 net pts; SENIOR >=50 & >=+1000; CHIEF >=200 & >=+4000 & verified; ROOKIE default (negative PnL stays Rookie). No schema migration (totalNetPoints already stored). Changed: analysts.ts computeTierFromStats + both select sites; profile/me TIER_THRESHOLDS (pnlNeeded) + computeTierProgress (currentNetPoints); ApiTierProgress type; mobile TierProgressSection (Net PnL bar, negative clamp), analyst headline + share copy (net pts); accuracy RETAINED as a Track Record stat. Added admin /api/admin/users/recalc-tiers route (CRON_SECRET-or-admin, cursor-paginated) to recompute all users on deploy, + a one-time dismissible Profile notice. Hardened recalc auth against empty CRON_SECRET. QA PASS 8/8.",
+      "priority": "high",
       "status": "done",
       "qaVerdict": "pass",
       "failureNotes": null,
