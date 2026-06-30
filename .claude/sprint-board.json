@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "currentSprint": 64,
+  "currentSprint": 65,
   "tickets": [
     {
       "id": "S7-T1",
@@ -3851,6 +3851,17 @@
       "status": "done",
       "qaVerdict": "pass",
       "failureNotes": null,
+      "createdAt": "2026-06-30"
+    },
+    {
+      "id": "S65-T1",
+      "sprint": 65,
+      "title": "Profile declutter: new Settings screen + extract config cards",
+      "description": "Move infrequent config off the Profile page into a new /settings stack route (gear icon in header). Created settings.tsx (Appearance/Theme, Replay Tutorial, Anonymous mode, Group notification default, Log Out) and extracted AnonymousToggleCard + GroupNotifDefaultCard into their own self-contained component files; Settings fetches getMyProfile independently to seed displayMode + defaultGroupNotificationLevel with the same optimistic-sync pattern. Header gained gear (->/settings) + bell (->/notifications, unread badge); Actions card slimmed to Share portfolio + Invite Friends; Log Out moved to Settings. Self-verified (tsc 0, files confirmed); formal QA folds into the S66 LinkedIn-style restyle which re-touches the same surfaces.",
+      "priority": "high",
+      "status": "done",
+      "qaVerdict": null,
+      "failureNotes": "Self-verified (tsc 0 + grep); integrated QA in S66.",
       "createdAt": "2026-06-30"
     }
   ]

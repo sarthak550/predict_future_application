@@ -11,7 +11,6 @@ import {
   ScrollView,
   Share,
   StyleSheet,
-  Switch,
   Text,
   TextInput,
   View,
@@ -19,8 +18,6 @@ import {
 import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { resetOnboarding } from "@/components/onboarding-walkthrough";
-import { ThemeToggleRow } from "@/components/theme-toggle";
 
 import type {
   ApiCategoryStat,
@@ -35,8 +32,6 @@ import type {
   AppAnalystTier,
   AppLeagueTier,
   AppMarketStatus,
-  AppUserDisplayMode,
-  GroupNotifLevel,
 } from "@predict-future/types";
 import { formatPoints, formatRelativeTime } from "@predict-future/utils";
 import { radius, spacing } from "@predict-future/ui-tokens";
@@ -339,7 +334,7 @@ function buildVoteItems(votes: VoteItem[]): ActivityItem[] {
 
 export default function ProfileScreen() {
   const router = useRouter();
-  const { session, status: sessionStatus, signOut } = useSession();
+  const { session, status: sessionStatus } = useSession();
   const { colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
   const userId = session?.userId;
@@ -354,17 +349,6 @@ export default function ProfileScreen() {
 
   // ── Notification unread badge (S30-T4) ──
   const [notifUnreadCount, setNotifUnreadCount] = useState(0);
-
-  // ── Anonymous mode toggle state (S26-T5) ──
-  // Initialised from the profile response; optimistically updated on toggle.
-  const [displayMode, setDisplayModeState] = useState<AppUserDisplayMode>("USERNAME");
-  // Track whether we have synced displayMode from the server response yet.
-  const displayModeSynced = useRef(false);
-
-  // ── S58: Global group notification default ──
-  // Stored in AsyncStorage. Applied to new group memberships on join.
-  const GROUPS_NOTIF_KEY = "@groups_notif_default";
-  const [groupNotifDefault, setGroupNotifDefaultState] = useState<GroupNotifLevel>("ALL");
 
   const fetcher = useCallback(
     () => mobileApi.getMyProfile(),
@@ -412,55 +396,6 @@ export default function ProfileScreen() {
     [userId],
     { enabled }
   );
-
-  // ── Sync displayMode from server on first data load ──
-  useEffect(() => {
-    if (displayModeSynced.current) return;
-    const serverMode = data?.user?.displayMode as AppUserDisplayMode | undefined;
-    if (serverMode) {
-      setDisplayModeState(serverMode);
-      displayModeSynced.current = true;
-    }
-  }, [data]);
-
-  // ── S59-T2: Server-authoritative group notification default ──
-  // On first data load: sync server value to local state.
-  // Migration path: if server is ALL (schema default) AND AsyncStorage has a non-ALL
-  // value, PATCH the server with the stored value and delete the AsyncStorage key.
-  const notifMigrated = useRef(false);
-  useEffect(() => {
-    if (notifMigrated.current) return;
-    const serverLevel = (data?.user as { defaultGroupNotificationLevel?: GroupNotifLevel } | undefined)
-      ?.defaultGroupNotificationLevel;
-    if (!serverLevel) return;
-
-    notifMigrated.current = true;
-    // Sync local state to whatever the server says.
-    setGroupNotifDefaultState(serverLevel);
-
-    // Migration: if server is ALL (default), check if AsyncStorage has a richer value.
-    if (serverLevel === "ALL") {
-      AsyncStorage.getItem(GROUPS_NOTIF_KEY).then(async (stored) => {
-        if (stored === "MENTIONS_ONLY" || stored === "NONE") {
-          try {
-            await mobileApi.updateUserNotificationDefaults({
-              defaultGroupNotificationLevel: stored as GroupNotifLevel,
-            });
-            setGroupNotifDefaultState(stored as GroupNotifLevel);
-          } catch {
-            // Migration failure is non-fatal — server value stays ALL.
-          } finally {
-            // Delete the AsyncStorage key regardless of whether PATCH succeeded.
-            // One-way migration; we never write back to AsyncStorage after this.
-            await AsyncStorage.removeItem(GROUPS_NOTIF_KEY).catch(() => { /* ignore */ });
-          }
-        } else if (stored !== null) {
-          // Key exists but matches server or is stale — clean up.
-          await AsyncStorage.removeItem(GROUPS_NOTIF_KEY).catch(() => { /* ignore */ });
-        }
-      }).catch(() => { /* ignore AsyncStorage errors */ });
-    }
-  }, [data]);
 
   // ── Check if phone verify card should show ──
   useEffect(() => {
@@ -561,20 +496,6 @@ export default function ProfileScreen() {
     void refetchQuests();
   }
 
-  function handleLogOut() {
-    Alert.alert("Sign out", "Are you sure?", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Sign Out",
-        style: "destructive",
-        onPress: () => {
-          signOut();
-          router.replace("/(auth)/sign-in");
-        },
-      },
-    ]);
-  }
-
   // ── Quests summary ──
   const quests = questsData?.quests ?? [];
   const questsCompletedCount = quests.filter((q) => q.completed).length;
@@ -590,6 +511,34 @@ export default function ProfileScreen() {
     <View style={styles.screen}>
       {/* ── Sticky Profile Header (outside ScrollView — stays pinned while body scrolls) ── */}
       <View style={styles.headerCard}>
+        {/* ── Icon bar: gear + bell (S65-T2) ── */}
+        <View style={styles.iconBar}>
+          {/* Bell — navigates to notifications with unread badge */}
+          <View style={styles.iconBtnWrap}>
+            <Pressable
+              style={({ pressed }) => [styles.iconBtn, pressed && { opacity: 0.6 }]}
+              onPress={() => { setNotifUnreadCount(0); router.push("/notifications"); }}
+              hitSlop={8}
+            >
+              <Ionicons name="notifications-outline" size={22} color="#FFFFFF" />
+            </Pressable>
+            {notifUnreadCount > 0 && (
+              <View style={styles.notifBadge}>
+                <Text style={styles.notifBadgeText}>
+                  {notifUnreadCount > 99 ? "99+" : String(notifUnreadCount)}
+                </Text>
+              </View>
+            )}
+          </View>
+          {/* Gear — navigates to Settings screen */}
+          <Pressable
+            style={({ pressed }) => [styles.iconBtn, pressed && { opacity: 0.6 }]}
+            onPress={() => router.push("/settings")}
+            hitSlop={8}
+          >
+            <Ionicons name="settings-outline" size={22} color="#FFFFFF" />
+          </Pressable>
+        </View>
         <View style={styles.headerTop}>
           <View style={styles.avatarCircle}>
             <Text style={styles.avatarText}>
@@ -809,51 +758,7 @@ export default function ProfileScreen() {
           )}
         </View>
 
-        {/* ── Invite Friends card (S24-T6) ── */}
-        {referralData && (
-          <InviteFriendsCard referral={referralData} />
-        )}
-
-        {/* ── Anonymous mode toggle (S26-T5) ── */}
-        <AnonymousToggleCard
-          displayMode={displayMode}
-          userId={user.id}
-          onToggle={async (enabled) => {
-            const newMode: AppUserDisplayMode = enabled ? "ANONYMOUS" : "USERNAME";
-            // Optimistic update.
-            setDisplayModeState(newMode);
-            try {
-              await mobileApi.setDisplayMode(newMode);
-            } catch {
-              // Revert on error.
-              setDisplayModeState(enabled ? "USERNAME" : "ANONYMOUS");
-              Alert.alert(
-                "Could not update",
-                "Failed to change display mode. Please try again.",
-                [{ text: "OK" }]
-              );
-            }
-          }}
-        />
-
-        {/* ── S59-T2: Group notifications default — now server-authoritative ── */}
-        <GroupNotifDefaultCard
-          current={groupNotifDefault}
-          onChange={async (level) => {
-            const previous = groupNotifDefault;
-            setGroupNotifDefaultState(level);
-            try {
-              await mobileApi.updateUserNotificationDefaults({
-                defaultGroupNotificationLevel: level,
-              });
-            } catch {
-              setGroupNotifDefaultState(previous);
-              Alert.alert("Could not save", "Failed to save group notification preference.");
-            }
-          }}
-        />
-
-        {/* ── Actions ── */}
+        {/* ── Share portfolio (S65-T3) ── */}
         <View style={styles.actionsCard}>
           <ActionRow
             icon="share-social-outline"
@@ -873,52 +778,12 @@ export default function ProfileScreen() {
               }
             }}
           />
-          <View style={styles.actionDivider} />
-          {/* Notifications row with unread badge (S30-T4) */}
-          <Pressable
-            style={styles.actionRow}
-            onPress={() => { setNotifUnreadCount(0); router.push("/notifications"); }}
-          >
-            <Ionicons name="notifications-outline" size={20} color={colors.text} />
-            <View style={styles.actionTextWrap}>
-              <Text style={styles.actionLabel}>Notifications</Text>
-            </View>
-            {notifUnreadCount > 0 && (
-              <View style={styles.notifBadge}>
-                <Text style={styles.notifBadgeText}>
-                  {notifUnreadCount > 99 ? "99+" : String(notifUnreadCount)}
-                </Text>
-              </View>
-            )}
-            <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
-          </Pressable>
-          <View style={styles.actionDivider} />
-          {/* Dark mode / appearance control */}
-          <ThemeToggleRow />
-          <View style={styles.actionDivider} />
-          <ActionRow
-            icon="help-circle-outline"
-            label="Replay Tutorial"
-            sublabel="Re-run the first-run walkthrough"
-            onPress={async () => {
-              await resetOnboarding();
-              Alert.alert(
-                "Tutorial reset",
-                "Re-open the app or switch tabs to see the walkthrough again.",
-                [{ text: "OK" }]
-              );
-            }}
-          />
         </View>
 
-        {/* ── Log Out ── */}
-        <Pressable
-          style={({ pressed }) => [styles.logoutBtn, pressed && styles.logoutPressed]}
-          onPress={handleLogOut}
-        >
-          <Ionicons name="log-out-outline" size={18} color={colors.danger} />
-          <Text style={styles.logoutText}>Log Out</Text>
-        </Pressable>
+        {/* ── Invite Friends card (S24-T6) ── */}
+        {referralData && (
+          <InviteFriendsCard referral={referralData} />
+        )}
       </ScrollView>
     </View>
   );
@@ -1911,6 +1776,20 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     paddingHorizontal: spacing.xl,
     paddingVertical: spacing.lg,
   },
+  // ── Icon bar (S65-T2): gear + bell at top-right of header card ──
+  iconBar: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    alignItems: "center",
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  iconBtnWrap: {
+    position: "relative",
+  },
+  iconBtn: {
+    padding: 4,
+  },
   headerTop: { flexDirection: "row", alignItems: "center", gap: spacing.lg },
   avatarCircle: {
     width: 52,
@@ -2121,24 +2000,22 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   actionTextWrap: { flex: 1 },
   actionLabel: { fontSize: 15, fontWeight: "600", color: t.colors.text },
   actionSublabel: { fontSize: 12, color: t.colors.textMuted, marginTop: 2 },
-  actionDivider: {
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: t.colors.border,
-    marginHorizontal: spacing.md,
-  },
-  // Notification unread badge (S30-T4)
+  // Notification unread badge — absolutely positioned over the bell icon
   notifBadge: {
+    position: "absolute",
+    top: -4,
+    right: -4,
     backgroundColor: "#EF4444",
     borderRadius: 999,
-    minWidth: 20,
-    height: 20,
+    minWidth: 16,
+    height: 16,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 5,
+    paddingHorizontal: 3,
   },
   notifBadgeText: {
     color: "#FFFFFF",
-    fontSize: 11,
+    fontSize: 9,
     fontWeight: "700",
   },
 
@@ -2224,22 +2101,8 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     marginRight: spacing.sm,
   },
 
-  // ── Log out ──
-  logoutBtn: {
-    marginTop: spacing.lg,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: spacing.sm,
-    paddingVertical: spacing.md,
-    borderRadius: radius.lg,
-    backgroundColor: t.colors.surface,
-    borderWidth: 1,
-    borderColor: t.colors.border,
-  },
-  logoutPressed: { opacity: 0.7 },
-  logoutText: { fontSize: 15, fontWeight: "600", color: t.colors.danger },
 });
+
 
 // ── InviteFriendsCard ─────────────────────────────────────────────────────────
 
@@ -2374,234 +2237,6 @@ const makeInviteStyles = (t: ThemeContextValue) => StyleSheet.create({
     fontSize: 12,
     color: t.colors.textMuted,
     textAlign: "center",
-  },
-});
-
-// ── AnonymousToggleCard (S26-T5) ─────────────────────────────────────────────
-
-/**
- * "Show as anonymous" toggle card.
- *
- * When enabled the user's calls appear as "AnonymousAnalyst_XXXXXX" on all
- * public-facing surfaces (leaderboard, market detail, comments, etc.). Their
- * accuracy record, league tier, and quest rewards continue to accrue to their
- * real account regardless of this setting.
- *
- * Own-view exception: the user always sees their real username on this screen.
- */
-function AnonymousToggleCard({
-  displayMode,
-  userId: _userId,
-  onToggle,
-}: {
-  displayMode: AppUserDisplayMode;
-  userId: string;
-  onToggle: (enabled: boolean) => Promise<void>;
-}) {
-  const { colors } = useTheme();
-  const anonStyles = useThemedStyles(makeAnonStyles);
-  const isAnonymous = displayMode === "ANONYMOUS";
-
-  function handleValueChange(value: boolean) {
-    if (value) {
-      // Show confirmation dialog before enabling anonymous mode.
-      Alert.alert(
-        "Show as anonymous?",
-        "Your calls will appear as AnonymousAnalyst_XXXXXX on leaderboards, comments, and market details. Your accuracy record still accrues to your account and is fully preserved when you switch back.",
-        [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: "Enable",
-            style: "default",
-            onPress: () => { void onToggle(true); },
-          },
-        ]
-      );
-    } else {
-      void onToggle(false);
-    }
-  }
-
-  return (
-    <View style={anonStyles.card}>
-      <View style={anonStyles.row}>
-        <View style={anonStyles.iconWrap}>
-          <Ionicons name="eye-off-outline" size={18} color={colors.textMuted} />
-        </View>
-        <View style={anonStyles.textWrap}>
-          <Text style={anonStyles.label}>Show as anonymous</Text>
-          <Text style={anonStyles.sublabel}>
-            {isAnonymous
-              ? "Public view: AnonymousAnalyst_XXXXXX (tap to reveal)"
-              : "Your real username is visible publicly"}
-          </Text>
-        </View>
-        <Switch
-          value={isAnonymous}
-          onValueChange={handleValueChange}
-          trackColor={{ false: colors.border, true: colors.accent }}
-          thumbColor="#FFFFFF"
-        />
-      </View>
-      {isAnonymous && (
-        <Text style={anonStyles.hint}>
-          Your calls will appear as AnonymousAnalyst_XXXXXX. Your accuracy and
-          track record still count.
-        </Text>
-      )}
-    </View>
-  );
-}
-
-const makeAnonStyles = (t: ThemeContextValue) => StyleSheet.create({
-  card: {
-    backgroundColor: t.colors.surface,
-    borderRadius: radius.lg,
-    marginTop: spacing.lg,
-    padding: spacing.lg,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: t.colors.border,
-  },
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.md,
-  },
-  iconWrap: {
-    width: 32,
-    alignItems: "center",
-  },
-  textWrap: {
-    flex: 1,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: t.colors.text,
-  },
-  sublabel: {
-    fontSize: 12,
-    color: t.colors.textMuted,
-    marginTop: 2,
-  },
-  hint: {
-    marginTop: spacing.sm,
-    fontSize: 12,
-    color: t.colors.textMuted,
-    lineHeight: 17,
-    paddingLeft: 32 + spacing.md,
-  },
-});
-
-// ── S58: GroupNotifDefaultCard ────────────────────────────────────────────────
-
-const GROUP_NOTIF_OPTIONS: Array<{ label: string; sublabel: string; value: GroupNotifLevel }> = [
-  {
-    label: "All activity",
-    sublabel: "Get notified for all group events",
-    value: "ALL",
-  },
-  {
-    label: "Mentions only",
-    sublabel: "Only when you are mentioned",
-    value: "MENTIONS_ONLY",
-  },
-  {
-    label: "Off",
-    sublabel: "No group notifications",
-    value: "NONE",
-  },
-];
-
-function GroupNotifDefaultCard({
-  current,
-  onChange,
-}: {
-  current: GroupNotifLevel;
-  onChange: (level: GroupNotifLevel) => Promise<void>;
-}) {
-  const { colors } = useTheme();
-  const groupNotifStyles = useThemedStyles(makeGroupNotifStyles);
-
-  function handlePress() {
-    const opts = GROUP_NOTIF_OPTIONS.map((o) => ({
-      text: current === o.value ? `${o.label} (current)` : o.label,
-      onPress: () => { void onChange(o.value); },
-    }));
-    Alert.alert(
-      "Group notification default",
-      "Applies to groups you join after changing this setting.",
-      [...opts, { text: "Cancel", style: "cancel" as const }]
-    );
-  }
-
-  const currentLabel =
-    GROUP_NOTIF_OPTIONS.find((o) => o.value === current)?.label ?? "All activity";
-
-  return (
-    <View style={groupNotifStyles.card}>
-      <Text style={groupNotifStyles.sectionTitle}>Groups</Text>
-      <Pressable style={groupNotifStyles.row} onPress={handlePress}>
-        <View style={groupNotifStyles.iconWrap}>
-          <Ionicons name="people-outline" size={18} color={colors.textMuted} />
-        </View>
-        <View style={groupNotifStyles.textWrap}>
-          <Text style={groupNotifStyles.label}>Group notifications default</Text>
-          <Text style={groupNotifStyles.sublabel}>
-            Applies to groups you join after changing this setting.
-          </Text>
-        </View>
-        <Text style={groupNotifStyles.value}>{currentLabel}</Text>
-        <Ionicons name="chevron-forward" size={14} color={colors.textMuted} />
-      </Pressable>
-    </View>
-  );
-}
-
-const makeGroupNotifStyles = (t: ThemeContextValue) => StyleSheet.create({
-  card: {
-    backgroundColor: t.colors.surface,
-    borderRadius: radius.lg,
-    marginTop: spacing.lg,
-    padding: spacing.lg,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: t.colors.border,
-  },
-  sectionTitle: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: t.colors.textMuted,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-    marginBottom: spacing.sm,
-  },
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm,
-  },
-  iconWrap: {
-    width: 32,
-    alignItems: "center",
-  },
-  textWrap: {
-    flex: 1,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: t.colors.text,
-  },
-  sublabel: {
-    fontSize: 12,
-    color: t.colors.textMuted,
-    marginTop: 2,
-  },
-  value: {
-    fontSize: 13,
-    color: t.colors.textMuted,
-    fontWeight: "500",
-    marginRight: 4,
   },
 });
 

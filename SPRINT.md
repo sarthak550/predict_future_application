@@ -912,6 +912,14 @@
 | S62-T7 | HIGH | pending | Mobile re-platform: wire finance/poll/[id].tsx and MpcPollPackCard onto Poll model |
 | S62-T8 | MED | pending | Data cleanup: DELETE or migrate Sprint 61 demo Market-based RBI rows |
 
+## Sprint 65
+
+| ID | Priority | Status | Title |
+|---|---|---|---|
+| S65-T1 | HIGH | done (self-verified; QA folds into S66) | Profile declutter: new Settings screen (gear) + extract config cards; header gear+bell |
+
+_Profile config (Appearance, Anonymous mode, Group notifications, Replay tutorial, Log out) moved to a new /settings screen; Profile header gained gear (→/settings) + bell (→/notifications). Foundation for the S66 LinkedIn-style restyle._
+
 ## Sprint 64
 
 | ID | Priority | Status | Title |
