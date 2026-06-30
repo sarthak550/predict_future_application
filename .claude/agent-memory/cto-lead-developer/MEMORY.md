@@ -40,3 +40,4 @@
 - [project_sprint59.md](project_sprint59.md) — S59: GroupModerationAction audit table, server notif defaults, group market push, bulk approve/reject, featured flag — all 6 tickets qa-review
 - [project_sprint61.md](project_sprint61.md) — S61 RBI Pulse backend: T0 create-pack, T3 resolve-pack, T4 structuredData reads, T6 ApiMpcPollPack type + groupFlagshipEventsIntoPacks helper — pure reuse, no schema migration
 - [project_sprint62.md](project_sprint62.md) — S62 T1: PollStatus enum + Poll/PollOption/PollVote models + additive UserStat poll fields; db push (shadow DB P3006 pattern)
+- [project_sprint68.md](project_sprint68.md) — S68 Profile/Markets bundle: T1 balance pill, T2 bet panel balance/warning, T3 positions endpoint+mybets chip+deep-link, T4 see-all-my-bets, T5 watchlist routing
