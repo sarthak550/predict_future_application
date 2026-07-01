@@ -30,6 +30,11 @@ interface CategoryStat {
   totalPredictions: number;
 }
 
+// Render on-demand (per request). This page reads live per-user data from the DB,
+// so it must NOT be statically prerendered at build time — otherwise `next build`
+// tries to hit the database with no connection available (breaks Docker/CI builds).
+export const dynamic = "force-dynamic";
+
 // ---------------------------------------------------------------------------
 // Metadata (og: / twitter: head tags)
 // ---------------------------------------------------------------------------

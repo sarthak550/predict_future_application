@@ -69,6 +69,10 @@ function freshnessScore(publishedAt: Date): number {
   return Math.pow(0.5, ageHours / 24);
 }
 
+// Serves live DB data — render dynamically so `next build` does not statically
+// evaluate this route (which would hit the DB with no connection at build time).
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   const window = getMarketWindow();
 

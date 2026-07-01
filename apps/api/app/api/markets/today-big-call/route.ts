@@ -12,6 +12,10 @@ import { getIstDateString } from "@/lib/quests/engine";
  */
 // NOTE (S50): Feed tab no longer calls this endpoint. Retained for future editorial
 // surfaces and push cron. Do not deprecate without CEO sign-off.
+// Serves live DB data — render dynamically so `next build` does not statically
+// evaluate this route (which would hit the DB with no connection at build time).
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   const dateStr = getIstDateString();
   const [yyyy, mm, dd] = dateStr.split("-").map(Number) as [number, number, number];

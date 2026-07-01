@@ -25,6 +25,10 @@ const MIN_RESOLVED = 3;
  *
  * If fewer than 3 experts meet the MIN_RESOLVED threshold, returns [].
  */
+// Serves live DB data — render dynamically so `next build` does not statically
+// evaluate this route (which would hit the DB with no connection at build time).
+export const dynamic = "force-dynamic";
+
 export const revalidate = 3600;
 
 export async function GET(): Promise<NextResponse<ApiTopExpertEntry[]>> {

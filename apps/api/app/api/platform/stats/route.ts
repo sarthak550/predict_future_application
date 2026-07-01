@@ -24,6 +24,10 @@ const statsCache = new Map<string, CacheEntry>();
 
 // ── Route handler ──────────────────────────────────────────────────────────────
 
+// Serves live DB data — render dynamically so `next build` does not statically
+// evaluate this route (which would hit the DB with no connection at build time).
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   const CACHE_KEY = "platform-stats";
 

@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
+// Serves live DB data — render dynamically so `next build` does not statically
+// evaluate this route (which would hit the DB with no connection at build time).
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   const opinions = await prisma.expertOpinion.findMany({
     where: {

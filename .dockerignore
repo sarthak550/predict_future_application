@@ -16,8 +16,13 @@
 **/.DS_Store
 *.log
 
-# Mobile app — not part of the API image
-apps/mobile
+# Mobile app — not part of the API image, EXCEPT its package.json, which the
+# Dockerfile needs for the workspace-aware `npm ci` (apps/mobile is a workspace member).
+# `apps/mobile/*` excludes the contents but leaves the dir traversable so the
+# `!` re-include for package.json is honored (a blanket `apps/mobile` exclude would
+# make the re-include impossible and break `COPY apps/mobile/package.json`).
+apps/mobile/*
+!apps/mobile/package.json
 expo_go_backup
 
 # Docs / scratch
