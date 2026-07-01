@@ -1,5 +1,10 @@
 # Deploying the API to AWS App Runner
 
+> **Launching on a zero budget?** This App Runner path costs ~$5–25/mo (no free tier).
+> For a **$0-for-12-months** launch on the AWS free tier (EC2 `t3.micro`), use
+> **[`DEPLOY_AWS_FREE_TIER.md`](./DEPLOY_AWS_FREE_TIER.md)** instead. App Runner is the
+> easier, paid option to graduate to once you can afford it.
+
 Always-on, autoscaling, managed-HTTPS hosting for `apps/api` (Next.js 14). Your data
 layer (Neon Postgres, Upstash Redis, Vercel Blob, Groq/Gemini, MSG91) is already
 external and stays put — App Runner just runs the server and connects to it via env vars.

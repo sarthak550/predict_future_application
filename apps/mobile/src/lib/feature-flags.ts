@@ -20,3 +20,15 @@
  * Set to false to revert to the old row-based design.
  */
 export const USE_POST_CARD = true;
+
+/**
+ * Phone-verification prompt (S25-T6).
+ *
+ * OFF for launch: phone OTP needs MSG91 + DLT template/sender approval, which is
+ * still pending. Login is email + password and does NOT require a verified phone,
+ * so the optional "+100 pts — verify your phone" card is hidden entirely to avoid
+ * dangling users into a flow that can't complete.
+ *
+ * Flip back to true once MSG91_TEMPLATE_ID + MSG91_SENDER_ID (DLT) are live in prod.
+ */
+export const SHOW_PHONE_VERIFY = false;

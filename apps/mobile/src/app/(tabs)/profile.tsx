@@ -38,6 +38,7 @@ import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/t
 
 import { useApiQuery } from "@/hooks/useApiQuery";
 import { mobileApi } from "@/lib/api";
+import { SHOW_PHONE_VERIFY } from "@/lib/feature-flags";
 import { useSession } from "@/providers/session-provider";
 import { useWatchlist, type WatchlistItem } from "@/providers/watchlist-provider";
 
@@ -1633,8 +1634,8 @@ export default function ProfileScreen() {
           />
         )}
 
-        {/* Phone Verify card */}
-        {user.phoneVerified === false && !phoneVerifyDismissed && (
+        {/* Phone Verify card — hidden for launch (SHOW_PHONE_VERIFY=false: OTP needs DLT approval) */}
+        {SHOW_PHONE_VERIFY && user.phoneVerified === false && !phoneVerifyDismissed && (
           <PhoneVerifyCard
             userId={userId}
             onVerifyNow={() => setShowPhoneModal(true)}
