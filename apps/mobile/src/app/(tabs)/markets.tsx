@@ -34,7 +34,7 @@ import { mobileApi } from "@/lib/api";
 // ── constants ───────────────────────────────────────────────────────
 
 type MarketMode = "public" | "private" | "polls";
-type StatusTab = "all" | "live" | "ended" | "settled" | "saved" | "mybets";
+type StatusTab = "all" | "live" | "ended" | "settled" | "saved" | "mybets" | "mine";
 type MarketSort = "new" | "rank" | "close_at" | "volume";
 
 // Merged view-selector chips: each chip sets both statusTab + sort atomically.
@@ -54,6 +54,7 @@ const VIEW_CHIPS: ViewChip[] = [
   { label: "Cancelled",    statusTab: "ended",   sort: "new"      },
   { label: "Saved",        statusTab: "saved",   sort: "new"      },
   { label: "My Bets",      statusTab: "mybets",  sort: "new"      },
+  { label: "My Markets",   statusTab: "mine",    sort: "new"      },
 ];
 
 // CATEGORIES is provided by the shared CategoryFilterBar via FILTER_BAR_CATEGORIES.
@@ -68,7 +69,7 @@ function matchesStatusTab(status: string | undefined, tab: StatusTab) {
   if (tab === "live") return LIVE_STATUSES.has(s);
   if (tab === "ended") return ENDED_STATUSES.has(s);
   // "saved" and "mybets" use their own data sources — this path is not reached for them.
-  if (tab === "saved" || tab === "mybets") return true;
+  if (tab === "saved" || tab === "mybets" || tab === "mine") return true;
   return SETTLED_STATUSES.has(s);
 }
 
@@ -116,6 +117,9 @@ export default function MarketsScreen() {
       setSort("new");
     } else if (tab === "mybets") {
       setStatusTab("mybets");
+      setSort("new");
+    } else if (tab === "mine") {
+      setStatusTab("mine");
       setSort("new");
     }
   }, [deepLinkParams.tab]);
@@ -285,6 +289,31 @@ export default function MarketsScreen() {
     }
   }, [mode, statusTab, loadSavedMarkets]);
 
+  // ── my created markets ────────────────────────────────────────────
+
+  const [myCreatedMarkets, setMyCreatedMarkets] = useState<ApiMarketSummary[]>([]);
+  const [myCreatedLoading, setMyCreatedLoading] = useState(false);
+  const [myCreatedError, setMyCreatedError] = useState<string | null>(null);
+
+  const loadMyCreatedMarkets = useCallback(async () => {
+    setMyCreatedLoading(true);
+    setMyCreatedError(null);
+    try {
+      const res = await mobileApi.getMyCreatedMarkets({ limit: 50 });
+      setMyCreatedMarkets(res.markets);
+    } catch {
+      setMyCreatedError("Unable to load your markets.");
+    } finally {
+      setMyCreatedLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (mode === "public" && statusTab === "mine") {
+      void loadMyCreatedMarkets();
+    }
+  }, [mode, statusTab, loadMyCreatedMarkets]);
+
   // ── my bets ───────────────────────────────────────────────────────
 
   const [myBetsPositions, setMyBetsPositions] = useState<ApiPositionSummary[]>([]);
@@ -410,7 +439,9 @@ export default function MarketsScreen() {
         ? savedLoading
         : statusTab === "mybets"
           ? myBetsLoading
-          : publicQuery.loading
+          : statusTab === "mine"
+            ? myCreatedLoading
+            : publicQuery.loading
       : groupMarketsLoading || groupsQuery.loading;
   const error =
     mode === "public"
@@ -418,7 +449,9 @@ export default function MarketsScreen() {
         ? savedError
         : statusTab === "mybets"
           ? myBetsError
-          : publicQuery.error
+          : statusTab === "mine"
+            ? myCreatedError
+            : publicQuery.error
       : groupsQuery.error;
   const queryStatus = mode === "public" ? publicQuery.status : groupsQuery.status;
 
@@ -428,6 +461,15 @@ export default function MarketsScreen() {
       // Saved tab: use savedMarkets directly (already fetched from dedicated endpoint)
       const seen = new Set<string>();
       return savedMarkets.filter((m) => {
+        if (seen.has(m.id)) return false;
+        seen.add(m.id);
+        return true;
+      });
+    }
+    if (statusTab === "mine") {
+      // My Markets: created markets from the dedicated endpoint.
+      const seen = new Set<string>();
+      return myCreatedMarkets.filter((m) => {
         if (seen.has(m.id)) return false;
         seen.add(m.id);
         return true;
@@ -458,7 +500,7 @@ export default function MarketsScreen() {
       });
     }
     return deduped;
-  }, [allMarkets, savedMarkets, myBetsPositions, statusTab, category, mode]);
+  }, [allMarkets, savedMarkets, myCreatedMarkets, myBetsPositions, statusTab, category, mode]);
 
   const handleRefresh = useCallback(() => {
     if (mode === "public") {
@@ -466,6 +508,8 @@ export default function MarketsScreen() {
         void loadSavedMarkets();
       } else if (statusTab === "mybets") {
         void loadMyBets();
+      } else if (statusTab === "mine") {
+        void loadMyCreatedMarkets();
       } else {
         publicQuery.refetch();
         // Refresh community surfaces independently
@@ -496,7 +540,7 @@ export default function MarketsScreen() {
     );
   }
 
-  if (loading && allMarkets.length === 0 && queryStatus !== "success" && statusTab !== "mybets" && statusTab !== "saved") {
+  if (loading && allMarkets.length === 0 && queryStatus !== "success" && statusTab !== "mybets" && statusTab !== "saved" && statusTab !== "mine") {
     return (
       <View style={styles.centerState}>
         <ActivityIndicator size="large" color={colors.accent} />
@@ -803,6 +847,13 @@ export default function MarketsScreen() {
                 <Text style={styles.emptyTitle}>No saved markets</Text>
                 <Text style={styles.emptyText}>
                   Tap the bookmark icon on any market to save it for later.
+                </Text>
+              </View>
+            ) : statusTab === "mine" ? (
+              <View style={styles.emptyCard}>
+                <Text style={styles.emptyTitle}>No markets yet</Text>
+                <Text style={styles.emptyText}>
+                  Markets you create will show up here.
                 </Text>
               </View>
             ) : (

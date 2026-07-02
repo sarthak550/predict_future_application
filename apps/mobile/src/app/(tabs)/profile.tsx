@@ -631,7 +631,7 @@ function MarketsSection({
             {totalCreated > MARKETS_CAP && (
               <Pressable
                 style={({ pressed }) => [mktS.seeAllRow, pressed && mktS.seeAllRowPressed]}
-                onPress={() => router.push("/(tabs)/markets")}
+                onPress={() => router.push("/(tabs)/markets?tab=mine")}
               >
                 <Text style={mktS.seeAllText}>See all my markets</Text>
                 <Ionicons name="chevron-forward" size={14} color={colors.accent} />

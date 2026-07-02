@@ -1279,6 +1279,19 @@ export function createApiClient(options: ApiClientOptions) {
       );
     },
 
+    /** The authenticated user's OWN created markets (for the "My Markets" filter). */
+    getMyCreatedMarkets(query?: { limit?: number; cursor?: string }) {
+      return request<{
+        markets: ApiMarketSummary[];
+        nextCursor: string | null;
+        hasMore: boolean;
+      }>(
+        "/api/users/me/created-markets",
+        query,
+        { auth: true }
+      );
+    },
+
     // ─── Flagship Events (S32-T1) ─────────────────────────────────────────────
 
     /**
