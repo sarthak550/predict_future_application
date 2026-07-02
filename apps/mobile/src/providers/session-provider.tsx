@@ -48,12 +48,15 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   // Track whether this is the first signIn within the session to guard
   // against stale closure captures when the isNewUser flag is consumed.
   const isNewUserRef = useRef(false);
+  // Synchronous mirror of `session` used to make signOut idempotent (see below).
+  const sessionRef = useRef<Session | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     void resolveInitialSession().then((next) => {
       if (cancelled) return;
       if (next) setApiTokenCache(next.token);
+      sessionRef.current = next;
       setSession(next);
       setStatus(next ? "authenticated" : "unauthenticated");
     });
@@ -70,6 +73,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         token: args.token,
       };
       setApiTokenCache(args.token);
+      sessionRef.current = next;
       setSession(next);
       setStatus("authenticated");
 
@@ -90,6 +94,12 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   );
 
   const signOut = useCallback(() => {
+    // Idempotent: a burst of in-flight 401/404s can each fire the auth-failure
+    // handler below. Without this guard, signOut → router.replace("/(auth)/sign-in")
+    // runs repeatedly, remounting the sign-in screen ("refreshing while typing").
+    // Reading a synchronous ref (not state) blocks re-entrant calls in the same tick.
+    if (!sessionRef.current) return;
+    sessionRef.current = null;
     setApiTokenCache(null);
     setSession(null);
     setStatus("unauthenticated");
