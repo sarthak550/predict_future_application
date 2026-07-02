@@ -94,7 +94,6 @@ export default function MarketsScreen() {
   // Read once on mount to pre-select the chip. We use a ref to ensure
   // we only apply it once and never fight with manual chip switching.
   const deepLinkParams = useLocalSearchParams<{ tab?: string }>();
-  const deepLinkApplied = useRef(false);
 
   const [mode, setMode] = useState<MarketMode>("public");
   const [statusTab, setStatusTab] = useState<StatusTab>("all");
@@ -106,10 +105,11 @@ export default function MarketsScreen() {
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [sort, setSort] = useState<MarketSort>("new");
 
-  // Apply deep-link tab param once on mount.
+  // Apply the deep-link tab param whenever it CHANGES (not just on first mount).
+  // The Markets tab is persistent, so a once-on-mount guard would ignore the param
+  // on later taps — "See all saved" (?tab=saved) / "See all my bets" (?tab=mybets)
+  // would then land on the default "All" view instead of the intended filter.
   useEffect(() => {
-    if (deepLinkApplied.current) return;
-    deepLinkApplied.current = true;
     const tab = deepLinkParams.tab;
     if (tab === "saved") {
       setStatusTab("saved");
@@ -118,8 +118,7 @@ export default function MarketsScreen() {
       setStatusTab("mybets");
       setSort("new");
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [deepLinkParams.tab]);
 
   // Reset category filter when switching status tabs (category filter only applies on "live")
   useEffect(() => {
