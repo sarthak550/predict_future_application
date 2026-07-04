@@ -1204,10 +1204,11 @@ export function NewsFeedCard({ item, viewportHeight, showHint, onVoted }: Props)
 
   const categoryColor = CATEGORY_COLORS[item.category] ?? CATEGORY_COLORS.GENERAL;
 
+  // Share as text + the source link. (Share.share's `url` field is iOS-only, so we
+  // put the link in the message — this works on Android too, where we ship.)
   const handleShare = () =>
     void Share.share({
-      message: `${item.headline} — ${item.sourceUrl}`,
-      url: item.sourceUrl,
+      message: `${item.headline}\n\nvia Predict Future\n${item.sourceUrl}`,
     });
 
   /** Overlays rendered on top of both the image and placeholder. */
@@ -1307,7 +1308,7 @@ export function NewsFeedCard({ item, viewportHeight, showHint, onVoted }: Props)
               <Pressable
                 style={styles.financeChip}
                 onPress={() =>
-                  router.push(`/story/${item.id}?takesFirst=1` as Parameters<typeof router.push>[0])
+                  router.push(`/story/${item.id}` as Parameters<typeof router.push>[0])
                 }
                 hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
               >

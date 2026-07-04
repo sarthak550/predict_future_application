@@ -32,7 +32,6 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { captureRef } from "react-native-view-shot";
 
 import type {
   ApiExpertOpinionItem,
@@ -384,20 +383,21 @@ export function ExpertOpinionPostCard({
   }, [onFollowToggle, followPending, opinion.expertId, isFollowed]);
 
   // ── Share handler ──
+  // Shares the opinion as text + the source article link. (The old screenshot
+  // approach used Share.share({url}), which is iOS-only — on Android the url was
+  // silently dropped, so nothing useful was shared. Text + link works on both.)
   const handleShare = useCallback(async () => {
-    if (sharing || !shareViewRef.current) return;
+    if (sharing) return;
     setSharing(true);
-    const currentRef = shareViewRef.current;
     try {
-      const uri = await captureRef(currentRef, {
-        format: "png",
-        quality: 0.95,
-        result: "tmpfile",
-      });
-      await Share.share({
-        url: uri,
-        message: `${opinion.expertName} is ${dirConfig.label} on ${opinion.instrument ?? opinion.instrumentTicker ?? "the market"}. Check it out on Predict Future.`,
-      });
+      const instrument = opinion.instrument ?? opinion.instrumentTicker ?? "the market";
+      const message = [
+        `${opinion.expertName || opinion.expertOrganization} is ${dirConfig.label} on ${instrument}.`,
+        opinion.quote ? `\n\n"${opinion.quote}"` : "",
+        `\n\nvia Predict Future`,
+        opinion.sourceUrl ? `\n${opinion.sourceUrl}` : "",
+      ].join("");
+      await Share.share({ message });
     } catch {
       // user dismissed share sheet — no-op
     } finally {
@@ -587,7 +587,7 @@ export function ExpertOpinionPostCard({
       {siblings.length > 0 && opinion.storyId && (
         <Pressable
           onPress={() =>
-            router.push(`/story/${opinion.storyId}?takesFirst=1` as Parameters<typeof router.push>[0])
+            router.push(`/story/${opinion.storyId}` as Parameters<typeof router.push>[0])
           }
           style={styles.siblingsLink}
           hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
