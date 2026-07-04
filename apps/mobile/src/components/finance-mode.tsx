@@ -221,30 +221,36 @@ function MpcPollPackCard({ polls }: { polls: ApiPoll[] }) {
 
   return (
     <>
-      {/* Shared section header — rendered ONCE above all poll cards */}
-      <View style={mpcStyles.sectionHeader}>
-        <View style={mpcStyles.headerRow}>
-          <View style={mpcStyles.rbiChip}>
-            <Text style={mpcStyles.rbiChipText}>RBI MPC</Text>
-          </View>
-          <View style={mpcStyles.countdownChip}>
-            <Text style={mpcStyles.countdownText}>{countdown}</Text>
-          </View>
-          <Text style={mpcStyles.meetingDate}>{meetingDate}</Text>
-        </View>
-        <Text style={mpcStyles.heroTitle}>Predict the RBI Decision</Text>
-        <Text style={mpcStyles.heroSub}>
-          {totalParticipants > 0
-            ? `${totalParticipants.toLocaleString()} predictions so far — cast yours free`
-            : "Be among the first to predict — free, no strings attached"}
-        </Text>
-      </View>
-
-      {/* One card per poll — each has its own full-width CTA */}
+      {/* One card per poll — each has its own full-width CTA.
+          The shared header (RBI chip, countdown, date, title, subtitle) is
+          JOINED INTO the first card only; cards 2+ are standalone poll cards. */}
       {polls.map((poll, idx) => {
         const accent = Q_BADGE_COLORS[idx % Q_BADGE_COLORS.length];
+        const isFirst = idx === 0;
         return (
           <View key={poll.id} style={mpcStyles.card}>
+            {/* Header block — rendered only on the first card */}
+            {isFirst && (
+              <>
+                <View style={mpcStyles.headerRow}>
+                  <View style={mpcStyles.rbiChip}>
+                    <Text style={mpcStyles.rbiChipText}>RBI MPC</Text>
+                  </View>
+                  <View style={mpcStyles.countdownChip}>
+                    <Text style={mpcStyles.countdownText}>{countdown}</Text>
+                  </View>
+                  <Text style={mpcStyles.meetingDate}>{meetingDate}</Text>
+                </View>
+                <Text style={mpcStyles.heroTitle}>Predict the RBI Decision</Text>
+                <Text style={mpcStyles.heroSub}>
+                  {totalParticipants > 0
+                    ? `${totalParticipants.toLocaleString()} predictions so far — cast yours free`
+                    : "Be among the first to predict — free, no strings attached"}
+                </Text>
+                <View style={mpcStyles.divider} />
+              </>
+            )}
+
             {/* Q badge + question title */}
             <View style={mpcStyles.questionHeader}>
               <View style={[mpcStyles.qBadge, { backgroundColor: accent.bg, borderColor: accent.border }]}>
@@ -279,23 +285,7 @@ function MpcPollPackCard({ polls }: { polls: ApiPoll[] }) {
 }
 
 const makeMpcStyles = (t: ThemeContextValue) => StyleSheet.create({
-  // S70-T4: Free-standing section header above the poll cards
-  sectionHeader: {
-    marginHorizontal: spacing.lg,
-    marginTop: spacing.xs,
-    marginBottom: spacing.xs,
-    backgroundColor: t.colors.surface,
-    borderRadius: radius.lg,
-    borderWidth: 1.5,
-    borderColor: "#FECACA",
-    padding: spacing.md,
-    shadowColor: MPC_RBI_COLOR,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.10,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  // ── Individual poll card ───────────────────────────────────────────────────
+  // ── Poll card — used for all polls including the first (which embeds the header) ──
   card: {
     marginHorizontal: spacing.lg,
     marginTop: spacing.xs,

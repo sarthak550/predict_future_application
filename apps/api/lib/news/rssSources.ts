@@ -219,6 +219,77 @@ const defaultRssSources: RssSource[] = [
     fallbackCategory: "BUSINESS",
     isActive: true
   },
+  // ── Global sources (Sprint 71) — included when indiaOnly=false ───────────────
+  // All verified returning items 2026-07. These are listed in GLOBAL_ONLY_SOURCES
+  // in queries.ts so they are excluded when the India toggle is ON.
+  // Stored sourceName values come from each feed's channel.title element — verify
+  // against prod after the first ingest cycle and correct GLOBAL_ONLY_SOURCES if any
+  // channel titles differ from the display names used here.
+  {
+    id: "al-jazeera",
+    name: "Al Jazeera",
+    url: "https://www.aljazeera.com/xml/rss/all.xml",
+    categoryHint: "GENERAL",
+    fallbackCategory: "GENERAL",
+    isActive: true,
+  },
+  {
+    id: "guardian-world",
+    name: "The Guardian",
+    url: "https://www.theguardian.com/world/rss",
+    categoryHint: "GENERAL",
+    fallbackCategory: "GENERAL",
+    isActive: true,
+  },
+  {
+    id: "france24",
+    name: "France 24",
+    url: "https://www.france24.com/en/rss",
+    categoryHint: "GENERAL",
+    fallbackCategory: "GENERAL",
+    isActive: true,
+  },
+  {
+    id: "npr-news",
+    name: "NPR",
+    url: "https://feeds.npr.org/1001/rss.xml",
+    categoryHint: "GENERAL",
+    fallbackCategory: "GENERAL",
+    isActive: true,
+  },
+  {
+    id: "sky-news-world",
+    name: "Sky News",
+    url: "https://feeds.skynews.com/feeds/rss/world.xml",
+    categoryHint: "GENERAL",
+    fallbackCategory: "GENERAL",
+    isActive: true,
+  },
+  {
+    id: "cnn-top",
+    name: "CNN",
+    url: "http://rss.cnn.com/rss/edition.rss",
+    categoryHint: "GENERAL",
+    fallbackCategory: "GENERAL",
+    isActive: true,
+  },
+  {
+    id: "variety",
+    name: "Variety",
+    url: "https://variety.com/feed/",
+    categoryHint: "ENTERTAINMENT",
+    fallbackCategory: "ENTERTAINMENT",
+    isActive: true,
+  },
+  {
+    id: "espn-soccer",
+    name: "ESPN Soccer",
+    url: "https://www.espn.com/espn/rss/soccer/news",
+    categoryHint: "SPORTS",
+    fallbackCategory: "SPORTS",
+    isActive: true,
+  },
+
   // Bloomberg's public sitemap is a news sitemap (XML), not a standard RSS feed.
   // The sitemap_news.xml format is not compatible with rss-parser and would need
   // custom parsing. Adding as inactive until a Bloomberg-compatible RSS or API

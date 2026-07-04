@@ -346,9 +346,16 @@ async function generatePollsInBackground(items: NormalizedNewsItem[], actorId: s
   console.info(`[news:ai-polls] done — ${generated}/${stories.length} polls created`);
 }
 
-// Maximum stories to summarize in a single background pass. Kept small to avoid
-// exhausting Groq free-tier quota during a large ingestion run.
-const MAX_SUMMARIES_PER_BATCH = 10;
+// Maximum stories to summarize in a single background pass.
+// Raised from 10 → 40 (S71-T2) so newly-ingested bursts get full summaries.
+// Note: GEMINI_API_KEY is not set in prod, so Gemini fallback is unavailable.
+// Going much above 40 risks Groq 429s — the 1500ms inter-batch pause below
+// provides additional spacing. Tune back down if rate-limit errors recur.
+const MAX_SUMMARIES_PER_BATCH = 40;
+
+// Milliseconds to wait between SUMMARY_CONCURRENCY-wide batches. Reduces the
+// risk of hitting Groq's per-minute token limit when the batch size is large.
+const SUMMARY_BATCH_PAUSE_MS = 1500;
 
 /**
  * Phase 2b: Generate AI summaries for newly-ingested stories whose summary is
@@ -412,10 +419,25 @@ export async function generateSummariesInBackground(
 
   const SUMMARY_CONCURRENCY = 3;
   let summarized = 0;
+  let rateLimited = false;
 
   for (let i = 0; i < eligible.length; i += SUMMARY_CONCURRENCY) {
+    // Early-exit: if any batch item hit a 429, stop issuing further calls —
+    // remaining calls would fail immediately and waste quota.
+    if (rateLimited) {
+      console.warn("[news:summarizer] rate-limited — stopping early to preserve quota");
+      break;
+    }
+
+    // Pause between batches (after the first) to avoid hitting Groq per-minute limits.
+    // With MAX_SUMMARIES_PER_BATCH=40 and SUMMARY_CONCURRENCY=3 this gives ~1.5s
+    // of breathing room between each burst of 3 concurrent requests.
+    if (i > 0) {
+      await new Promise<void>((r) => setTimeout(r, SUMMARY_BATCH_PAUSE_MS));
+    }
+
     const batch = eligible.slice(i, i + SUMMARY_CONCURRENCY);
-    await Promise.allSettled(
+    const results = await Promise.allSettled(
       batch.map(async (story) => {
         try {
           const { text: bodyText, error: bodyError } = await fetchArticleBody(story.sourceUrl);
@@ -440,10 +462,17 @@ export async function generateSummariesInBackground(
           console.info(`[news:summarizer] updated summary for "${story.headline.slice(0, 60)}"`);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          console.warn(`[news:summarizer] failed for "${story.headline.slice(0, 60)}": ${msg.slice(0, 200)}`);
+          // Detect rate-limit responses so we stop burning quota on doomed calls.
+          if (msg.toLowerCase().includes("rate limit") || msg.includes("429")) {
+            rateLimited = true;
+            console.warn("[news:summarizer] 429 rate limit — flagging for early exit");
+          } else {
+            console.warn(`[news:summarizer] failed for "${story.headline.slice(0, 60)}": ${msg.slice(0, 200)}`);
+          }
         }
       })
     );
+    void results; // allSettled: failures already handled inside the map
   }
 
   console.info(`[news:summarizer] done — ${summarized}/${eligible.length} summaries written`);

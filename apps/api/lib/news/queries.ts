@@ -9,27 +9,94 @@ const visibleNewsStatuses: StoryStatus[] = [...new Set<StoryStatus>([...approved
 /**
  * Source names for RSS feeds that carry purely global content with no India
  * angle. When `indiaOnly=true` is passed, stories from these sources are
- * excluded from the feed.
+ * excluded from the feed. When `indiaOnly=false`, these form the "global pool"
+ * for the balanced-mix two-pool query.
  *
  * Important distinctions:
  *   - "BBC World" (global feed, excluded) ≠ "BBC" (India-relevant via Google News, kept)
  *   - "CNBC" (global US feed, excluded) ≠ "CNBC TV18" (India business, kept)
  *
- * These names must exactly match the `sourceName` field stored on Story rows.
+ * These names must exactly match the `sourceName` field stored on Story rows,
+ * which is the RSS feed's channel.title element. The 8 new Sprint-71 sources are
+ * best-guess channel titles — verify against prod after the first ingest cycle
+ * and correct any mismatches:
+ *   - Al Jazeera feed → may store as "Al Jazeera English" or "Al Jazeera"
+ *   - The Guardian   → may store as "Guardian" or "The Guardian"
+ *   - France 24      → may store as "France 24" or "France24 - International News 24/7"
+ *   - NPR            → may store as "NPR" or "NPR News"
+ *   - Sky News       → may store as "Sky News" or "Sky News World"
+ *   - CNN            → may store as "CNN" or "CNN.com - RSS Channel - HP Hero"
+ *   - Variety        → may store as "Variety" or "Variety – News"
+ *   - ESPN Soccer    → may store as "ESPN Soccer" or "ESPN.com - Soccer"
  */
 export const GLOBAL_ONLY_SOURCES = [
+  // Original 6
   "BBC World",
   "ESPN",
   "TechCrunch",
   "CNBC",
   "The Verge",
   "Ars Technica",
+  // Sprint 71 additions — verify channel.title values after first ingest
+  "Al Jazeera",
+  "Al Jazeera English",
+  "The Guardian",
+  "Guardian",
+  "France 24",
+  "France24",
+  "NPR",
+  "NPR News",
+  "Sky News",
+  "Sky News World",
+  "CNN",
+  "Variety",
+  "ESPN Soccer",
 ] as const;
 
 /** Prisma where-fragment to exclude global-only sources when `indiaOnly` is true. */
 function indiaOnlyWhere(indiaOnly: boolean | undefined): Prisma.StoryWhereInput {
   if (!indiaOnly) return {};
   return { sourceName: { notIn: [...GLOBAL_ONLY_SOURCES] } };
+}
+
+/**
+ * Interleave two sorted arrays ~50/50 by picking alternately from whichever
+ * array has the more-recent head item (or from the non-exhausted array once one
+ * is empty). Returns at most `limit` items.
+ *
+ * Cursor note: the two-pool approach means the server-side cursor cannot be a
+ * single stable position across both pools. Instead the caller passes a single
+ * cursor decoded from the last item of the previous page (oldest publishedAt in
+ * the prior result), and BOTH pools apply that same `publishedAt < cursor.date`
+ * filter before being interleaved. This means:
+ *   - Page boundaries are approximate — a page may have 8–12 global items out
+ *     of 20 rather than exactly 10, depending on source publication density.
+ *   - The feed is infinite-scroll; no random-access page numbers are needed, so
+ *     approximate pagination is acceptable.
+ *   - Duplicate-free: each item appears in exactly one pool (by the IN/notIn
+ *     partition on sourceName), so there is no risk of the same story in both.
+ */
+function interleaveByRecency<T extends { publishedAt: Date; id: string }>(
+  globalItems: T[],
+  indiaItems: T[],
+  limit: number
+): T[] {
+  const result: T[] = [];
+  let gi = 0;
+  let ii = 0;
+  while (result.length < limit && (gi < globalItems.length || ii < indiaItems.length)) {
+    const g = globalItems[gi];
+    const i = indiaItems[ii];
+    if (!g) { result.push(i); ii++; continue; }
+    if (!i) { result.push(g); gi++; continue; }
+    // Pick the more-recent item; tie-break by id desc for stable ordering
+    if (g.publishedAt > i.publishedAt || (g.publishedAt.getTime() === i.publishedAt.getTime() && g.id > i.id)) {
+      result.push(g); gi++;
+    } else {
+      result.push(i); ii++;
+    }
+  }
+  return result;
 }
 
 // Feed category merges: "Business" absorbs Finance (+ the vestigial Company tag),
@@ -285,7 +352,7 @@ export async function getPublishedNewsPage(input?: {
   cursor?: string | null;
   userId?: string | null;
   requireExpertOpinions?: boolean;
-  /** When true, exclude the 6 pure-global RSS source names from results. */
+  /** When true, exclude the pure-global RSS source names from results. */
   indiaOnly?: boolean;
 } & OpinionFilterInput) {
   const limit = Math.max(1, Math.min(50, input?.limit ?? 10));
@@ -299,23 +366,58 @@ export async function getPublishedNewsPage(input?: {
   const sortNullFilter: Prisma.StoryWhereInput =
     sortField === "latestResolvedAt" ? { latestResolvedAt: { not: null } } : {};
 
-  const items = await prisma.story.findMany({
-    where: {
-      status: { in: visibleNewsStatuses },
-      ...(input?.category ? categoryWhere(input.category) : {}),
-      ...(input?.excludeCategory ? { category: { not: input.excludeCategory } } : {}),
-      ...indiaOnlyWhere(input?.indiaOnly),
-      ...expertOpinionsFilter,
-      ...sortNullFilter,
-      ...(buildCursorWhere(decodedCursor, sortField) ?? {})
-    },
-    orderBy: [{ [sortField]: "desc" }, { id: "desc" }] as Prisma.StoryOrderByWithRelationInput[],
-    include: newsFeedInclude(),
-    take: limit + 1
-  });
+  const sharedWhere: Prisma.StoryWhereInput = {
+    status: { in: visibleNewsStatuses },
+    ...(input?.category ? categoryWhere(input.category) : {}),
+    ...(input?.excludeCategory ? { category: { not: input.excludeCategory } } : {}),
+    ...expertOpinionsFilter,
+    ...sortNullFilter,
+    ...(buildCursorWhere(decodedCursor, sortField) ?? {}),
+  };
+  const orderBy = [{ [sortField]: "desc" }, { id: "desc" }] as Prisma.StoryOrderByWithRelationInput[];
 
-  const hasMore = items.length > limit;
-  const slice = items.slice(0, limit);
+  let slice: Awaited<ReturnType<typeof prisma.story.findMany<{ include: ReturnType<typeof newsFeedInclude> }>>>;
+  let hasMore: boolean;
+
+  if (input?.indiaOnly === false) {
+    // ── Balanced-mix two-pool query (S71-T1c) ─────────────────────────────────
+    // Over-fetch each pool (2× limit) so the interleave has enough candidates
+    // from both sides even if one pool is momentarily sparse.
+    const overFetch = limit * 2;
+    const [globalItems, indiaItems] = await Promise.all([
+      prisma.story.findMany({
+        where: { ...sharedWhere, sourceName: { in: [...GLOBAL_ONLY_SOURCES] } },
+        orderBy,
+        include: newsFeedInclude(),
+        take: overFetch,
+      }),
+      prisma.story.findMany({
+        where: { ...sharedWhere, sourceName: { notIn: [...GLOBAL_ONLY_SOURCES] } },
+        orderBy,
+        include: newsFeedInclude(),
+        take: overFetch,
+      }),
+    ]);
+
+    // Interleave the two pools by recency; take limit+1 to detect hasMore.
+    const interleaved = interleaveByRecency(globalItems, indiaItems, limit + 1);
+    hasMore = interleaved.length > limit;
+    slice = interleaved.slice(0, limit);
+  } else {
+    // ── Default / India-only path (unchanged behaviour) ───────────────────────
+    const items = await prisma.story.findMany({
+      where: {
+        ...sharedWhere,
+        ...indiaOnlyWhere(input?.indiaOnly),
+      },
+      orderBy,
+      include: newsFeedInclude(),
+      take: limit + 1,
+    });
+    hasMore = items.length > limit;
+    slice = items.slice(0, limit);
+  }
+
   const lastItem = slice.at(-1);
   const cursorDateFor = (item: typeof slice[number]): Date =>
     sortField === "latestResolvedAt"

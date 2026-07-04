@@ -2,8 +2,8 @@
 
 > Human-readable view of `.claude/sprint-board.json`. Auto-maintained by the CEO/CTO/QA agents — do not edit by hand.
 
-**Current sprint:** 70
-**Status:** Sprint 70 LOADED (4 tickets pending). Sprint 69 in-progress (India toggle). Sprint 68 QA COMPLETE (1/1, incl. runtime) — Points balance restored on Profile (header pill) + bet panel ("Available: X pts" + low-balance hint) after the S66 redesign dropped it; new "My Bets" surface (dedicated /api/profile/me/positions endpoint — profile/me caps at 10 — + Markets-tab "My Bets" chip with BetMarketRow + dedupe + ?tab= deep-links + Profile "See all my bets" link); watchlist "More" now deep-links to the Saved filter. QA confirmed endpoint auth/cross-user isolation at runtime. Sprint 67 QA COMPLETE (1/1) — Analyst tier credential switched from an accuracy gate to a lifetime net-PnL gate (≥10 preds & ≥+200 pts → Analyst; +1000 → Senior; +4000 + verified → Chief; negative PnL → Rookie). Rewards conviction/stakes per user decision; accuracy kept as a displayed Track Record stat. No schema migration (totalNetPoints already stored). Admin recalc-tiers route (CRON_SECRET-or-admin) + one-time Profile notice for existing users; ⚠️ RUN the recalc on deploy so stored tiers reflect the new gate. Sprint 66 QA COMPLETE (5/5) — Profile redesigned into a LinkedIn-style single elegant scroll. Sprint 65 QA COMPLETE (1/1) — Settings screen extracted. Sprint 64 QA COMPLETE (2/2). Sprint 63 QA COMPLETE (2/2). Sprint 62 loaded — Poll/Market Separation Phase 1. Sprint 60 in progress — Scorecard integrity hardening. Sprint 59 QA COMPLETE (6/6). Sprint 58 QA COMPLETE (8/8). Sprint 57 QA COMPLETE (5/5). Sprint 56 QA COMPLETE (9/9). Sprint 55 QA COMPLETE (8/8). Sprint 54 QA COMPLETE (8/8). Sprint 53 QA COMPLETE (6/6). Sprint 52 QA COMPLETE (4/4). Sprint 51 COMPLETE (5/5). Sprint 50 COMPLETE (6/6). Sprint 49 COMPLETE (9/9). Sprints 43–48 COMPLETE. Sprints 38–42 COMPLETE (security/correctness hardening, 54 tickets). Sprints 12, 25–34 COMPLETE.
+**Current sprint:** 71
+**Status:** Sprint 71 LOADED (2 tickets pending) — backend-only: balanced India+global mix when toggle is OFF (8 new global RSS sources + GLOBAL_ONLY_SOURCES expansion + two-pool interleave), and summarizer cap raised 10→40 with inter-batch pacing and 429 early-exit guard. Sprint 70 LOADED (4 tickets pending). Sprint 69 in-progress (India toggle). Sprint 68 QA COMPLETE (1/1, incl. runtime) — Points balance restored on Profile (header pill) + bet panel ("Available: X pts" + low-balance hint) after the S66 redesign dropped it; new "My Bets" surface (dedicated /api/profile/me/positions endpoint — profile/me caps at 10 — + Markets-tab "My Bets" chip with BetMarketRow + dedupe + ?tab= deep-links + Profile "See all my bets" link); watchlist "More" now deep-links to the Saved filter. QA confirmed endpoint auth/cross-user isolation at runtime. Sprint 67 QA COMPLETE (1/1) — Analyst tier credential switched from an accuracy gate to a lifetime net-PnL gate (≥10 preds & ≥+200 pts → Analyst; +1000 → Senior; +4000 + verified → Chief; negative PnL → Rookie). Rewards conviction/stakes per user decision; accuracy kept as a displayed Track Record stat. No schema migration (totalNetPoints already stored). Admin recalc-tiers route (CRON_SECRET-or-admin) + one-time Profile notice for existing users; ⚠️ RUN the recalc on deploy so stored tiers reflect the new gate. Sprint 66 QA COMPLETE (5/5) — Profile redesigned into a LinkedIn-style single elegant scroll. Sprint 65 QA COMPLETE (1/1) — Settings screen extracted. Sprint 64 QA COMPLETE (2/2). Sprint 63 QA COMPLETE (2/2). Sprint 62 loaded — Poll/Market Separation Phase 1. Sprint 60 in progress — Scorecard integrity hardening. Sprint 59 QA COMPLETE (6/6). Sprint 58 QA COMPLETE (8/8). Sprint 57 QA COMPLETE (5/5). Sprint 56 QA COMPLETE (9/9). Sprint 55 QA COMPLETE (8/8). Sprint 54 QA COMPLETE (8/8). Sprint 53 QA COMPLETE (6/6). Sprint 52 QA COMPLETE (4/4). Sprint 51 COMPLETE (5/5). Sprint 50 COMPLETE (6/6). Sprint 49 COMPLETE (9/9). Sprints 43–48 COMPLETE. Sprints 38–42 COMPLETE (security/correctness hardening, 54 tickets). Sprints 12, 25–34 COMPLETE.
 
 ---
 
@@ -919,6 +919,17 @@
 | S69-T1 | HIGH | 🔨 in-progress | Feed: India toggle — user-controlled news region filter (Switch in header, AsyncStorage-persisted, indiaOnly API param) |
 
 _SPEC CORRECTED by founder (2026-07-04): No Global chip. A physical labeled "India" Switch lives in the Feed header right slot, default ON. Persists across app restarts. ON → indiaOnly=true (excludes BBC World / ESPN / TechCrunch / CNBC / The Verge / Ars Technica). OFF → full mix. ANDs with category chips. No schema migration._
+
+---
+
+## Sprint 71
+
+| ID | Priority | Status | Title |
+|---|---|---|---|
+| S71-T1 | HIGH | pending | Feed: balanced India+global mix when toggle is OFF + 8 new global RSS sources |
+| S71-T2 | HIGH | pending | News summarizer: raise MAX_SUMMARIES_PER_BATCH 10→40 with inter-batch pacing |
+
+_Backend-only — no APK rebuild. T1: adds Al Jazeera, Guardian World, France 24, NPR News, Sky News, Variety, CNN, ESPN Soccer to rssSources.ts; expands GLOBAL_ONLY_SOURCES to 14 entries; implements two-pool interleave so indiaOnly=false yields ~50/50 India vs global in any 20-item window. T2: raises summarizer cap to 40, adds 1500ms inter-batch pacing, and adds 429 early-exit guard; Groq only (GEMINI_API_KEY not in prod); fixes-forward for new stories only, no backfill._
 
 ---
 
