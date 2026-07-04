@@ -109,6 +109,12 @@ export type NewsQuery = {
   expertOpinionAnalyst?: string;
   /** "ANALYST" → isSourceAttribution=false; "PUBLICATION" → isSourceAttribution=true. */
   expertOpinionSourceType?: "ANALYST" | "PUBLICATION";
+  /**
+   * When true, exclude stories from the 6 pure-global RSS sources (BBC World, ESPN,
+   * TechCrunch, CNBC, The Verge, Ars Technica) — shows only India-relevant news.
+   * When false or absent, full global mix is returned.
+   */
+  indiaOnly?: boolean;
 };
 
 export type PublicMarketsQuery = {

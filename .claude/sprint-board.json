@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "currentSprint": 68,
+  "currentSprint": 69,
   "tickets": [
     {
       "id": "S7-T1",
@@ -3934,12 +3934,23 @@
       "id": "S68-T1",
       "sprint": 68,
       "title": "Profile/Markets bundle: points balance (Profile + bet panel), My Bets view, watchlist 'More' fix",
-      "description": "(1) Restored the points balance (regression from the S66 redesign): balance pill in the Profile header + 'Available: X pts' in the bet panel (both sheets) with an informational low-balance warning. (2) New 'My Bets' surface: dedicated GET /api/profile/me/positions endpoint (auth-scoped, returns FULL positions — profile/me capped at 10), api-client getMyPositions + ApiMyPositionsResponse type, a 'My Bets' chip on the Markets tab (BetMarketRow: title/side/stake/status/win-loss, dedupe by market.id, empty state), ?tab=saved/?tab=mybets deep-link param (consumed once), and a 'See all my bets' link in Profile Recent Activity. (3) Watchlist 'More' now deep-links to the Saved filter ('See all saved'); 'My Markets' overflow relabeled. No schema migration. QA PASS incl. runtime (401 unauth, cross-user isolation, shape, dedupe).",
+      "description": "(1) Restored the points balance (regression from the S66 redesign): balance pill in the Profile header + 'Available: X pts' in the bet panel (both sheets) with an informational low-balance warning. (2) New 'My Bets' surface: dedicated GET /api/profile/me/positions endpoint (auth-scoped, returns FULL positions \u2014 profile/me capped at 10), api-client getMyPositions + ApiMyPositionsResponse type, a 'My Bets' chip on the Markets tab (BetMarketRow: title/side/stake/status/win-loss, dedupe by market.id, empty state), ?tab=saved/?tab=mybets deep-link param (consumed once), and a 'See all my bets' link in Profile Recent Activity. (3) Watchlist 'More' now deep-links to the Saved filter ('See all saved'); 'My Markets' overflow relabeled. No schema migration. QA PASS incl. runtime (401 unauth, cross-user isolation, shape, dedupe).",
       "priority": "high",
       "status": "done",
       "qaVerdict": "pass",
       "failureNotes": null,
       "createdAt": "2026-06-30"
+    },
+    {
+      "id": "S69-T1",
+      "sprint": 69,
+      "title": "Feed: India toggle \u2014 user-controlled news region filter",
+      "description": "## Corrected Spec (founder override 2026-07-04)\n\nThe original ticket described a \"Global chip\" approach. The founder explicitly rejected that and mandated a LITERAL TOGGLE.\n\n## What was built\n\nA physical Switch (labeled \"India\") in the Feed header's right slot. Default ON. Persisted via AsyncStorage.\n\n### Behavior\n- ON  \u2192 sends `indiaOnly=true` to `/api/news` \u2192 excludes the 6 global-only RSS sources.\n- OFF \u2192 sends `indiaOnly=false` \u2192 full global+India mix.\n- ANDs with the active category chip. Re-fetches on every toggle change.\n\n### GLOBAL_ONLY_SOURCES (in `apps/api/lib/news/queries.ts`)\n```\n[\"BBC World\", \"ESPN\", \"TechCrunch\", \"CNBC\", \"The Verge\", \"Ars Technica\"]\n```\nNote: \"CNBC TV18\" (India) and \"BBC\" (India-relevant via Google News) are NOT in this list.\n\n### Files changed\n1. `apps/api/lib/news/queries.ts` \u2014 `GLOBAL_ONLY_SOURCES` const + `indiaOnlyWhere()` helper + `indiaOnly` param on both page functions.\n2. `apps/api/app/api/news/route.ts` \u2014 parse `indiaOnly` from searchParams (default `false` for backward-compat); thread to both query functions.\n3. `packages/api-client/src/index.ts` \u2014 `indiaOnly?: boolean` added to `NewsQuery` type.\n4. `apps/mobile/src/app/(tabs)/feed.tsx` \u2014 India Switch in header right slot; AsyncStorage persistence; `indiaOnlyRef` for stable loadPage closure; `handleIndiaToggle` resets pagination and re-fetches.\n\n### No schema migration, no DB changes.\n\n## Definition of Done\n1. Toggle visible at top of Feed, above category chips, in the header.\n2. Default ON on first install.\n3. Preference persists across app restarts.\n4. ON \u2192 `indiaOnly=true` in API call, excludes 6 global sources.\n5. OFF \u2192 `indiaOnly=false`, full mix.\n6. Works across all category chips.\n7. TypeScript-clean in all three packages.\n8. Finance/analyst surfaces untouched.",
+      "priority": "high",
+      "status": "in-progress",
+      "qaVerdict": null,
+      "failureNotes": null,
+      "createdAt": "2026-07-04"
     }
   ]
 }

@@ -6,6 +6,7 @@ import {
   Pressable,
   RefreshControl,
   StyleSheet,
+  Switch,
   Text,
   useWindowDimensions,
   View,
@@ -188,6 +189,24 @@ export default function FeedScreen() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items.length > 0]);
 
+  // India toggle — persisted to AsyncStorage; defaults to true (India-first identity).
+  const INDIA_ONLY_PREF_KEY = "feed_india_only_pref";
+  const [indiaOnly, setIndiaOnly] = useState(true);
+  // Stable ref so loadPage always reads the latest value without a stale closure.
+  const indiaOnlyRef = useRef(true);
+
+  // Load persisted India toggle preference on mount.
+  useEffect(() => {
+    AsyncStorage.getItem(INDIA_ONLY_PREF_KEY).then((stored) => {
+      // "false" is the only value that disables; anything else (null/missing/"true") keeps ON.
+      if (stored === "false") {
+        indiaOnlyRef.current = false;
+        setIndiaOnly(false);
+      }
+    }).catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Stable refs to avoid re-creating loadPage
   const cursorRef = useRef<string | null>(null);
   const hasMoreRef = useRef(true);
@@ -217,6 +236,7 @@ export default function FeedScreen() {
       const query: Parameters<typeof mobileApi.getNews>[0] = {
         limit: PAGE_SIZE,
         cursor: mode === "append" ? cursorRef.current : null,
+        indiaOnly: indiaOnlyRef.current,
       };
 
       if (cat !== "ALL") {
@@ -333,6 +353,18 @@ export default function FeedScreen() {
     void loadPage("replace");
   }
 
+  function handleIndiaToggle(value: boolean) {
+    indiaOnlyRef.current = value;
+    setIndiaOnly(value);
+    AsyncStorage.setItem(INDIA_ONLY_PREF_KEY, String(value)).catch(() => {});
+    // Reset pagination and re-fetch with new filter
+    setItems([]);
+    cursorRef.current = null;
+    hasMoreRef.current = true;
+    inFlightRef.current = false;
+    void loadPage("replace");
+  }
+
   const cardHeight = useMemo(
     () => Math.max(480, height - TAB_BAR_HEIGHT - CATEGORY_BAR_HEIGHT),
     [height]
@@ -351,7 +383,23 @@ export default function FeedScreen() {
 
   return (
     <View style={styles.screen}>
-      <GradientHeader title="Feed" />
+      <GradientHeader
+        title="Feed"
+        right={
+          <View style={styles.indiaToggleRow}>
+            <Text style={styles.indiaToggleLabel}>India</Text>
+            <Switch
+              value={indiaOnly}
+              onValueChange={handleIndiaToggle}
+              trackColor={{ false: "rgba(255,255,255,0.25)", true: "#2563EB" }}
+              thumbColor="#FFFFFF"
+              ios_backgroundColor="rgba(255,255,255,0.25)"
+              accessibilityLabel="India news filter"
+              accessibilityHint="When on, the feed shows only India-relevant news stories"
+            />
+          </View>
+        }
+      />
 
       {/* Category filter bar — sticky above the feed cards.
           StreakBadge is appended at the trailing end of the same scroll row. */}
@@ -541,6 +589,19 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     fontSize: 12,
     color: t.colors.accent,
     fontWeight: "600",
+  },
+
+  // India toggle — rendered in the GradientHeader right slot
+  indiaToggleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  indiaToggleLabel: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "rgba(255,255,255,0.92)",
+    letterSpacing: 0.1,
   },
 
   // Category bar — wraps the shared CategoryFilterBar

@@ -74,6 +74,9 @@ export async function GET(request: Request) {
       searchParams.get("requireExpertOpinions")
     ) ?? false;
     const personalized = parseBoolParam("personalized", searchParams.get("personalized")) ?? false;
+    // indiaOnly defaults to false at the API layer for backward-compatibility.
+    // The mobile client sets the default to true and persists the user's preference.
+    const indiaOnly = parseBoolParam("indiaOnly", searchParams.get("indiaOnly")) ?? false;
 
     const expertOpinionClusterId = searchParams.get("expertOpinionClusterId") || undefined;
     const expertOpinionDirection = parseEnumParam(
@@ -118,6 +121,7 @@ export async function GET(request: Request) {
         cursor,
         userId,
         requireExpertOpinions,
+        indiaOnly,
         ...opinionFilters,
       });
     } else {
@@ -128,6 +132,7 @@ export async function GET(request: Request) {
         cursor,
         userId,
         requireExpertOpinions,
+        indiaOnly,
         ...opinionFilters,
       });
     }

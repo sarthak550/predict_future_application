@@ -6,6 +6,32 @@ import { approvedStoryStatuses } from "@/lib/validations/news";
 
 const visibleNewsStatuses: StoryStatus[] = [...new Set<StoryStatus>([...approvedStoryStatuses, "PUBLISHED"])];
 
+/**
+ * Source names for RSS feeds that carry purely global content with no India
+ * angle. When `indiaOnly=true` is passed, stories from these sources are
+ * excluded from the feed.
+ *
+ * Important distinctions:
+ *   - "BBC World" (global feed, excluded) ≠ "BBC" (India-relevant via Google News, kept)
+ *   - "CNBC" (global US feed, excluded) ≠ "CNBC TV18" (India business, kept)
+ *
+ * These names must exactly match the `sourceName` field stored on Story rows.
+ */
+export const GLOBAL_ONLY_SOURCES = [
+  "BBC World",
+  "ESPN",
+  "TechCrunch",
+  "CNBC",
+  "The Verge",
+  "Ars Technica",
+] as const;
+
+/** Prisma where-fragment to exclude global-only sources when `indiaOnly` is true. */
+function indiaOnlyWhere(indiaOnly: boolean | undefined): Prisma.StoryWhereInput {
+  if (!indiaOnly) return {};
+  return { sourceName: { notIn: [...GLOBAL_ONLY_SOURCES] } };
+}
+
 // Feed category merges: "Business" absorbs Finance (+ the vestigial Company tag),
 // and "Tech" absorbs the vestigial Product tag — matching the consolidated Feed
 // chips. Applied only to the positive category filter; excludeCategory is untouched.
@@ -259,6 +285,8 @@ export async function getPublishedNewsPage(input?: {
   cursor?: string | null;
   userId?: string | null;
   requireExpertOpinions?: boolean;
+  /** When true, exclude the 6 pure-global RSS source names from results. */
+  indiaOnly?: boolean;
 } & OpinionFilterInput) {
   const limit = Math.max(1, Math.min(50, input?.limit ?? 10));
   const decodedCursor = decodeNewsCursor(input?.cursor);
@@ -276,6 +304,7 @@ export async function getPublishedNewsPage(input?: {
       status: { in: visibleNewsStatuses },
       ...(input?.category ? categoryWhere(input.category) : {}),
       ...(input?.excludeCategory ? { category: { not: input.excludeCategory } } : {}),
+      ...indiaOnlyWhere(input?.indiaOnly),
       ...expertOpinionsFilter,
       ...sortNullFilter,
       ...(buildCursorWhere(decodedCursor, sortField) ?? {})
@@ -385,6 +414,8 @@ export async function getPersonalizedNewsPage(input: {
   cursor?: string | null;
   userId: string;
   requireExpertOpinions?: boolean;
+  /** When true, exclude the 6 pure-global RSS source names from results. */
+  indiaOnly?: boolean;
 } & OpinionFilterInput): Promise<NewsCursorPage> {
   const limit = Math.max(1, Math.min(50, input.limit ?? 10));
   const decodedCursor = decodeNewsCursor(input.cursor);
@@ -433,6 +464,7 @@ export async function getPersonalizedNewsPage(input: {
     status: { in: visibleNewsStatuses },
     ...(input.category ? categoryWhere(input.category) : {}),
     ...(input.excludeCategory ? { category: { not: input.excludeCategory } } : {}),
+    ...indiaOnlyWhere(input.indiaOnly),
     ...expertOpinionsFilter,
     ...sortNullFilter,
     ...(buildCursorWhere(decodedCursor, sortField) ?? {}),
