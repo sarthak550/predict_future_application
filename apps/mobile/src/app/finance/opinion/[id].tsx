@@ -343,7 +343,7 @@ export default function OpinionDetailScreen() {
   if (!opinionId || opinionQuery.status === "loading") {
     return (
       <View style={styles.center}>
-        <Stack.Screen options={{ title: "Opinion" }} />
+        <Stack.Screen options={{ headerShown: true, title: "Opinion" }} />
         <ActivityIndicator color={colors.accent} />
       </View>
     );
@@ -352,7 +352,7 @@ export default function OpinionDetailScreen() {
   if (opinionQuery.status === "error" || !opinionQuery.data) {
     return (
       <View style={styles.center}>
-        <Stack.Screen options={{ title: "Opinion" }} />
+        <Stack.Screen options={{ headerShown: true, title: "Opinion" }} />
         <Text style={styles.errorText}>{opinionQuery.error ?? "Couldn't load opinion."}</Text>
         <Pressable onPress={opinionQuery.refetch} style={styles.retryBtn}>
           <Text style={styles.retryBtnText}>Retry</Text>
@@ -372,7 +372,7 @@ export default function OpinionDetailScreen() {
       contentContainerStyle={{ paddingBottom: insets.bottom + spacing.xl }}
       refreshControl={<RefreshControl refreshing={false} onRefresh={refetchAll} />}
     >
-      <Stack.Screen options={{ title: "Expert Opinion" }} />
+      <Stack.Screen options={{ headerShown: true, title: "Expert Opinion" }} />
 
       {/* Expert header — tappable, opens expert profile */}
       <Pressable

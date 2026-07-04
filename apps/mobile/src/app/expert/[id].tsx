@@ -278,7 +278,7 @@ export default function ExpertProfileScreen() {
   if (loading) {
     return (
       <View style={expertProfileStyles.center}>
-        <Stack.Screen options={{ title: "Expert Profile" }} />
+        <Stack.Screen options={{ headerShown: true, title: "Expert Profile" }} />
         <ActivityIndicator size="large" color={colors.accent} />
       </View>
     );
@@ -287,7 +287,7 @@ export default function ExpertProfileScreen() {
   if (error || !profile) {
     return (
       <View style={expertProfileStyles.center}>
-        <Stack.Screen options={{ title: "Expert Profile" }} />
+        <Stack.Screen options={{ headerShown: true, title: "Expert Profile" }} />
         <Text style={expertProfileStyles.errorText}>{error ?? "Expert not found."}</Text>
       </View>
     );
@@ -298,7 +298,7 @@ export default function ExpertProfileScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <Stack.Screen options={{ title: displayName, headerBackTitle: "Back" }} />
+      <Stack.Screen options={{ headerShown: true, title: displayName, headerBackTitle: "Back" }} />
       <FlatList
         keyExtractor={(c) => c.id}
         ListHeaderComponent={

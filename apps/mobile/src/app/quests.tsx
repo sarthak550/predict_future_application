@@ -288,7 +288,7 @@ export default function QuestsScreen() {
   if (!enabled) {
     return (
       <View style={[styles.screen, styles.center]}>
-        <Stack.Screen options={{ title: "Daily Quests" }} />
+        <Stack.Screen options={{ headerShown: true, title: "Daily Quests" }} />
         <Text style={styles.emptyText}>Sign in to see your daily quests.</Text>
       </View>
     );
@@ -298,7 +298,7 @@ export default function QuestsScreen() {
   if (loading && !data) {
     return (
       <View style={[styles.screen, styles.center]}>
-        <Stack.Screen options={{ title: "Daily Quests" }} />
+        <Stack.Screen options={{ headerShown: true, title: "Daily Quests" }} />
         <ActivityIndicator size="large" color={colors.accent} />
       </View>
     );
@@ -308,7 +308,7 @@ export default function QuestsScreen() {
   if (error && !data) {
     return (
       <View style={[styles.screen, styles.center]}>
-        <Stack.Screen options={{ title: "Daily Quests" }} />
+        <Stack.Screen options={{ headerShown: true, title: "Daily Quests" }} />
         <Text style={styles.errorText}>{error}</Text>
         <Pressable onPress={handleRefresh} style={styles.retryBtn}>
           <Text style={styles.retryLabel}>Retry</Text>
@@ -333,7 +333,7 @@ export default function QuestsScreen() {
 
   return (
     <View style={styles.screen}>
-      <Stack.Screen options={{ title: "Daily Quests" }} />
+      <Stack.Screen options={{ headerShown: true, title: "Daily Quests" }} />
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         refreshControl={

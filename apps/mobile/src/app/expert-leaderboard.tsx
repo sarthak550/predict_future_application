@@ -185,6 +185,7 @@ export default function ExpertLeaderboardScreen() {
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <Stack.Screen
         options={{
+          headerShown: true,
           title: "Top Finance Experts",
           headerRight: () => (
             <Pressable
