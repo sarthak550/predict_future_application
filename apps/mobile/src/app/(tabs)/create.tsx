@@ -14,6 +14,7 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Ionicons } from "@expo/vector-icons";
 
@@ -222,6 +223,7 @@ function CreateWizard({
   const router = useRouter();
   const { colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
+  const insets = useSafeAreaInsets();
   const [stepIdx, setStepIdx] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [successState, setSuccessState] = useState<SuccessState | null>(null);
@@ -521,7 +523,7 @@ function CreateWizard({
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
         <ScrollView
-          contentContainerStyle={[styles.scrollContent, styles.successContainer]}
+          contentContainerStyle={[styles.scrollContent, styles.successContainer, { paddingTop: insets.top + spacing.xl }]}
           keyboardShouldPersistTaps="handled"
         >
           {/* Checkmark icon */}
@@ -584,7 +586,7 @@ function CreateWizard({
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + spacing.xl }]}
         keyboardShouldPersistTaps="handled"
       >
         {/* Progress */}

@@ -1387,7 +1387,7 @@ export function createApiClient(options: ApiClientOptions) {
      * Market-based `getPolls` above. Mobile groups the result by `packId`.
      */
     getPollPacks(query?: { packId?: string; status?: "open" | "closed" | "resolved" | "all" }) {
-      return request<{ polls: ApiPoll[] }>("/api/polls/packs", query);
+      return request<{ polls: ApiPoll[] }>("/api/polls/packs", query, { auth: true });
     },
 
     /**

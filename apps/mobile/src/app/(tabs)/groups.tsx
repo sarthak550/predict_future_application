@@ -6,13 +6,13 @@ import {
   FlatList,
   Pressable,
   RefreshControl,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 
 import { radius, spacing } from "@predict-future/ui-tokens";
@@ -637,7 +637,7 @@ export default function GroupsScreen() {
 
   if (sessionStatus === "loading") {
     return (
-      <SafeAreaView style={styles.screen}>
+      <SafeAreaView edges={["top", "left", "right"]} style={styles.screen}>
         <View style={styles.centerState}>
           <ActivityIndicator color={colors.accent} size="large" />
         </View>
@@ -648,7 +648,7 @@ export default function GroupsScreen() {
   // ── Render ─────────────────────────────────────────────────────────
 
   return (
-    <SafeAreaView style={styles.screen}>
+    <SafeAreaView edges={["top", "left", "right"]} style={styles.screen}>
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.content}
