@@ -395,7 +395,8 @@ export function ExpertOpinionPostCard({
         `${opinion.expertName || opinion.expertOrganization} is ${dirConfig.label} on ${instrument}.`,
         opinion.quote ? `\n\n"${opinion.quote}"` : "",
         `\n\nvia Predict Future`,
-        opinion.sourceUrl ? `\n${opinion.sourceUrl}` : "",
+        // https App Link on our domain → opens this opinion inside the app.
+        `\nhttps://predictfuture-api.duckdns.org/finance/opinion/${opinion.id}`,
       ].join("");
       await Share.share({ message });
     } catch {

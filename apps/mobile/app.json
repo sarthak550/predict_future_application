@@ -68,6 +68,18 @@
             "BROWSABLE",
             "DEFAULT"
           ]
+        },
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            { "scheme": "https", "host": "predictfuture-api.duckdns.org", "pathPrefix": "/story" },
+            { "scheme": "https", "host": "predictfuture-api.duckdns.org", "pathPrefix": "/finance/opinion" }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
         }
       ]
     },

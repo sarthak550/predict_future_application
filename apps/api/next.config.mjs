@@ -21,6 +21,14 @@ const nextConfig = {
     // resolution conflicts with monorepo workspace setup on Vercel.
     ignoreDuringBuilds: true,
   },
+  async rewrites() {
+    return [
+      // Android App Links association file — served from an API route so it works
+      // in the standalone build (public/ isn't copied). Enables shared https links
+      // (/story/*, /finance/opinion/*) to open the installed app directly.
+      { source: "/.well-known/assetlinks.json", destination: "/api/assetlinks" },
+    ];
+  },
   transpilePackages: [
     "@predict-future/api-client",
     "@predict-future/auth-shared",

@@ -1204,11 +1204,12 @@ export function NewsFeedCard({ item, viewportHeight, showHint, onVoted }: Props)
 
   const categoryColor = CATEGORY_COLORS[item.category] ?? CATEGORY_COLORS.GENERAL;
 
-  // Share as text + the source link. (Share.share's `url` field is iOS-only, so we
-  // put the link in the message — this works on Android too, where we ship.)
+  // Share text + an app-deep-link (https App Link on our domain) so tapping opens
+  // the story inside the app. (Share.share's `url` field is iOS-only; the link goes
+  // in the message so it works on Android, where we ship.)
   const handleShare = () =>
     void Share.share({
-      message: `${item.headline}\n\nvia Predict Future\n${item.sourceUrl}`,
+      message: `${item.headline}\n\nvia Predict Future\nhttps://predictfuture-api.duckdns.org/story/${item.id}`,
     });
 
   /** Overlays rendered on top of both the image and placeholder. */
