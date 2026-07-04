@@ -13,7 +13,8 @@ import {
 import { findPotentialDuplicateMarket } from "@/lib/markets/deduplication";
 import {
   calculateBondMetrics,
-  evaluateTrustedHostEligibility,
+  // First-release: public trusted-host eligibility gate disabled (see below).
+  // evaluateTrustedHostEligibility,
   getDefaultTrustedHostBondCapAmount,
   normalizeChallengeWindowHours,
   normalizeGracePeriodHours,
@@ -121,16 +122,20 @@ export async function createPredictionMarket(input: {
     allowedGroupMemberIds = membership.group.memberships.map((item) => item.userId);
   }
 
-  if (visibility === MarketVisibility.PUBLIC && input.payload.resolutionMode === ResolutionMode.TRUSTED_HOST) {
-    const eligibility = evaluateTrustedHostEligibility({
-      user: actor,
-      stats: actor.stats
-    });
-
-    if (!eligibility.eligible) {
-      throw new Error(eligibility.reasons[0] ?? "You are not eligible for public trusted-host markets.");
-    }
-  }
+  // First-release override: the public trusted-host eligibility gate is disabled so
+  // ALL users can create public markets (removes the launch blocker where new users
+  // couldn't reach a wider audience). Re-enable by uncommenting this block AND its
+  // import above to reinstate the host-quality bar.
+  // if (visibility === MarketVisibility.PUBLIC && input.payload.resolutionMode === ResolutionMode.TRUSTED_HOST) {
+  //   const eligibility = evaluateTrustedHostEligibility({
+  //     user: actor,
+  //     stats: actor.stats
+  //   });
+  //
+  //   if (!eligibility.eligible) {
+  //     throw new Error(eligibility.reasons[0] ?? "You are not eligible for public trusted-host markets.");
+  //   }
+  // }
 
   const duplicate = await findPotentialDuplicateMarket({
     title: input.payload.title,

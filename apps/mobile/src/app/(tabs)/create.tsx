@@ -234,10 +234,9 @@ function CreateWizard({
   const [advancedMode, setAdvancedMode] = useState(false);
 
   // --- Form state ---
-  // Default to PRIVATE when user is ineligible to host public markets
-  const [visibility, setVisibility] = useState<Visibility>(() =>
-    eligibility !== null && eligibility.eligible === false ? "PRIVATE" : "PUBLIC"
-  );
+  // First-release: default every user to "Everyone" (PUBLIC) so audience selection
+  // is never a blocker. (Was: default PRIVATE when ineligible to host public markets.)
+  const [visibility, setVisibility] = useState<Visibility>("PUBLIC");
   const [groupId, setGroupId] = useState<string | null>(null);
   const [marketType, setMarketType] = useState<MarketType>("BINARY");
   const [category, setCategory] = useState<AppMarketCategory>(initialCategory ?? "GENERAL");
@@ -646,7 +645,9 @@ function CreateWizard({
             groups={groups}
             userId={userId}
             refetchGroups={refetchGroups}
-            eligible={eligibility?.eligible ?? true}
+            // First-release: everyone can host public markets (eligibility gate off),
+            // so the "Everyone" option is always selectable — no blocker for new users.
+            eligible={true}
             eligibilityReasons={eligibility?.reasons ?? []}
           />
         )}
