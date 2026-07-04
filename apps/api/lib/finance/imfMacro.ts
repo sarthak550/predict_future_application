@@ -5,10 +5,9 @@
  *   - GDP Growth (NGDP_RPCH): real GDP growth rate %
  *   - CPI Inflation (PCPIPCH): consumer price inflation %
  *
- * The IMF API returns annual projections for past and future years. We pick the
- * latest year for which the value is non-null (the API includes future projections
- * alongside historical data, so "latest non-null" gives the most recent confirmed
- * or IMF-projected figure, typically the current or next calendar year).
+ * The IMF API returns annual figures for past AND future years (projections run out
+ * to ~2031). We pick the value for the CURRENT calendar year — the meaningful
+ * "current" figure — NOT the max year (which would surface a far-future projection).
  *
  * Defensive design mirrors rbiRates.ts:
  *   - try/catch around every fetch — never throws, returns null on any failure
@@ -34,10 +33,11 @@ export type ImfMacroData = {
  * Parses the IMF DataMapper JSON response for a single indicator.
  * JSON shape: `{ "values": { "<INDICATOR>": { "IND": { "2024": 8.2, "2025": 6.5, ... } } } }`
  *
- * Returns `{ value, year }` for the latest non-null year within the plausible range,
+ * Returns `{ value, year }` for the CURRENT calendar year within the plausible range
+ * (falling back to the nearest available year — preferring actuals/past on ties),
  * or `null` if no valid data point is found.
  */
-function parseLatestYear(
+function parseCurrentYear(
   json: unknown,
   indicatorKey: string,
   minVal: number,
@@ -52,22 +52,30 @@ function parseLatestYear(
   const byCountry = (byIndicator as Record<string, unknown>)["IND"];
   if (typeof byCountry !== "object" || byCountry === null) return null;
 
-  // Sort years descending, pick the latest one with a valid non-null value.
   const yearMap = byCountry as Record<string, unknown>;
-  const sortedYears = Object.keys(yearMap)
+  const nowYear = new Date().getUTCFullYear();
+
+  // Keep only years with a valid, in-range value; then choose the one closest to the
+  // current year (tie-break prefers the past/actual over a future projection).
+  const validYears = Object.keys(yearMap)
     .map(Number)
     .filter((y) => !Number.isNaN(y))
-    .sort((a, b) => b - a);
+    .filter((y) => {
+      const raw = yearMap[String(y)];
+      if (raw === null || raw === undefined) return false;
+      const v = Number(raw);
+      return Number.isFinite(v) && v >= minVal && v <= maxVal;
+    })
+    .sort((a, b) => {
+      const da = Math.abs(a - nowYear);
+      const db = Math.abs(b - nowYear);
+      if (da !== db) return da - db;
+      return (a > nowYear ? 1 : 0) - (b > nowYear ? 1 : 0);
+    });
 
-  for (const year of sortedYears) {
-    const raw = yearMap[String(year)];
-    if (raw === null || raw === undefined) continue;
-    const val = Number(raw);
-    if (!Number.isFinite(val)) continue;
-    if (val < minVal || val > maxVal) continue;
-    return { value: val, year };
-  }
-  return null;
+  if (validYears.length === 0) return null;
+  const year = validYears[0];
+  return { value: Number(yearMap[String(year)]), year };
 }
 
 async function fetchWithTimeout(url: string): Promise<unknown> {
@@ -111,8 +119,8 @@ export async function fetchImfMacro(): Promise<ImfMacroData | null> {
     cpiJson = null;
   }
 
-  const gdpResult = gdpJson ? parseLatestYear(gdpJson, "NGDP_RPCH", -20, 30) : null;
-  const cpiResult = cpiJson ? parseLatestYear(cpiJson, "PCPIPCH", -10, 50) : null;
+  const gdpResult = gdpJson ? parseCurrentYear(gdpJson, "NGDP_RPCH", -20, 30) : null;
+  const cpiResult = cpiJson ? parseCurrentYear(cpiJson, "PCPIPCH", -10, 50) : null;
 
   if (!gdpResult && !cpiResult) {
     console.warn("[imfMacro] both GDP and CPI fetches produced no usable data");
