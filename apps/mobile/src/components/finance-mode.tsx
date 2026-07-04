@@ -20,6 +20,7 @@ import type {
   ApiFlagshipEvent,
   ApiFinanceBigCallOpinion,
   ApiFinanceExpertSentiment,
+  ApiFinanceMacroResponse,
   ApiFinanceMarketsResponse,
   ApiInstrumentCatalogItem,
   ApiMyCallsDigest,
@@ -1705,9 +1706,216 @@ const makeLensStyles = (t: ThemeContextValue) => StyleSheet.create({
   pillTextActive: { color: "#FFFFFF" },
 });
 
+// ─── India Macro card (rates-events tab) ──────────────────────────────────────
+// Non-collapsible combined card: RBI Policy rates (Repo/CRR/SLR) + IMF Projections
+// (GDP Growth, CPI Inflation). Data served from the /api/finance/macro warm store.
+// Gracefully omits missing values; hides entirely when all data is null.
+function IndiaMacroCard({
+  data,
+  loading,
+}: {
+  data: ApiFinanceMacroResponse | null;
+  loading: boolean;
+}) {
+  const pulseStyles = useThemedStyles(makePulseStyles);
+  const macroStyles = useThemedStyles(makeMacroStyles);
+  const { colors } = useTheme();
+
+  // Skeleton tiles shown while loading
+  if (loading) {
+    return (
+      <View
+        style={[
+          pulseStyles.card,
+          { marginHorizontal: 16, marginTop: 8, marginBottom: 4, padding: 12 },
+        ]}
+      >
+        {/* Skeleton header */}
+        <View style={macroStyles.headerRow}>
+          <View style={[macroStyles.skeletonBlock, { width: 90, height: 13 }]} />
+          <View style={[macroStyles.skeletonBlock, { width: 70, height: 11 }]} />
+        </View>
+        {/* Skeleton RBI section */}
+        <View style={[macroStyles.sectionLabel, { borderBottomWidth: 0, marginTop: 10 }]}>
+          <View style={[macroStyles.skeletonBlock, { width: 60, height: 10 }]} />
+        </View>
+        <View style={macroStyles.tileRow}>
+          {[1, 2, 3].map((i) => (
+            <View key={i} style={[macroStyles.tile, { flex: 1, alignItems: "center" }]}>
+              <View style={[macroStyles.skeletonBlock, { width: 30, height: 9, marginBottom: 4 }]} />
+              <View style={[macroStyles.skeletonBlock, { width: 44, height: 14 }]} />
+            </View>
+          ))}
+        </View>
+        {/* Skeleton IMF section */}
+        <View style={[macroStyles.sectionLabel, { borderBottomWidth: 0, marginTop: 10 }]}>
+          <View style={[macroStyles.skeletonBlock, { width: 100, height: 10 }]} />
+        </View>
+        <View style={macroStyles.tileRow}>
+          {[1, 2].map((i) => (
+            <View key={i} style={[macroStyles.tile, { flex: 1, alignItems: "center" }]}>
+              <View style={[macroStyles.skeletonBlock, { width: 50, height: 9, marginBottom: 4 }]} />
+              <View style={[macroStyles.skeletonBlock, { width: 44, height: 14 }]} />
+            </View>
+          ))}
+        </View>
+      </View>
+    );
+  }
+
+  // Build the RBI tiles — only show tiles with a non-null value
+  const rbiTiles: { label: string; value: number }[] = [];
+  if (data?.rbi?.repoRate != null) rbiTiles.push({ label: "Repo", value: data.rbi.repoRate });
+  if (data?.rbi?.crr != null)      rbiTiles.push({ label: "CRR",  value: data.rbi.crr });
+  if (data?.rbi?.slr != null)      rbiTiles.push({ label: "SLR",  value: data.rbi.slr });
+
+  // Build the IMF tiles
+  const imfTiles: { label: string; value: string }[] = [];
+  if (data?.imf?.gdpGrowth != null)    imfTiles.push({ label: "GDP Growth",  value: `${data.imf.gdpGrowth.toFixed(1)}%` });
+  if (data?.imf?.cpiInflation != null) imfTiles.push({ label: "Inflation",   value: `${data.imf.cpiInflation.toFixed(1)}%` });
+
+  // If both groups are empty, render nothing — no empty chrome
+  if (rbiTiles.length === 0 && imfTiles.length === 0) return null;
+
+  // Format asOf as "d Mon" (e.g. "4 Jul")
+  let asOfText: string | null = null;
+  if (data?.asOf) {
+    try {
+      asOfText = new Date(data.asOf).toLocaleDateString("en-IN", {
+        day: "numeric",
+        month: "short",
+      });
+    } catch {
+      asOfText = null;
+    }
+  }
+
+  // IMF section label: "IMF Projection, {year}" using the GDP year (or CPI year as fallback)
+  const imfYear = data?.imf?.gdpGrowthYear ?? data?.imf?.cpiInflationYear ?? new Date().getFullYear();
+  const imfLabel = `IMF Projection, ${imfYear}`;
+
+  return (
+    <View
+      style={[
+        pulseStyles.card,
+        { marginHorizontal: 16, marginTop: 8, marginBottom: 4, padding: 12 },
+      ]}
+    >
+      {/* Header row */}
+      <View style={macroStyles.headerRow}>
+        <Text style={macroStyles.cardTitle}>India Macro</Text>
+        {asOfText ? (
+          <Text style={macroStyles.asOfText}>Updated {asOfText}</Text>
+        ) : null}
+      </View>
+
+      {/* RBI Policy group */}
+      {rbiTiles.length > 0 && (
+        <>
+          <View style={macroStyles.sectionLabel}>
+            <Text style={macroStyles.sectionLabelText}>RBI Policy</Text>
+          </View>
+          <View style={macroStyles.tileRow}>
+            {rbiTiles.map((t) => (
+              <View key={t.label} style={[macroStyles.tile, { flex: 1 }]}>
+                <Text style={macroStyles.tileLabel}>{t.label}</Text>
+                <Text style={macroStyles.tileValue}>{t.value.toFixed(2)}%</Text>
+              </View>
+            ))}
+          </View>
+        </>
+      )}
+
+      {/* IMF Projection group */}
+      {imfTiles.length > 0 && (
+        <>
+          <View style={[macroStyles.sectionLabel, { marginTop: rbiTiles.length > 0 ? 10 : 0 }]}>
+            <Text style={macroStyles.sectionLabelText}>{imfLabel}</Text>
+          </View>
+          <View style={macroStyles.tileRow}>
+            {imfTiles.map((t) => (
+              <View key={t.label} style={[macroStyles.tile, { flex: 1 }]}>
+                <Text style={macroStyles.tileLabel}>{t.label}</Text>
+                <Text style={macroStyles.tileValue}>{t.value}</Text>
+              </View>
+            ))}
+          </View>
+        </>
+      )}
+    </View>
+  );
+}
+
+/** Styles exclusive to IndiaMacroCard. */
+const makeMacroStyles = (t: ThemeContextValue) =>
+  StyleSheet.create({
+    headerRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      marginBottom: 8,
+    },
+    cardTitle: {
+      fontSize: 13,
+      fontWeight: "500" as const,
+      color: t.colors.text,
+    },
+    asOfText: {
+      fontSize: 11,
+      color: t.colors.textMuted,
+    },
+    // Section label — full-width with 1px hairline bottom border acting as divider
+    sectionLabel: {
+      borderBottomWidth: 1,
+      borderBottomColor: t.colors.border,
+      paddingBottom: 4,
+      marginBottom: 8,
+    },
+    sectionLabelText: {
+      fontSize: 10,
+      fontWeight: "700" as const,
+      color: t.colors.textMuted,
+      textTransform: "uppercase" as const,
+      letterSpacing: 0.5,
+    },
+    tileRow: {
+      flexDirection: "row",
+      gap: 8,
+    },
+    tile: {
+      alignItems: "center",
+      paddingVertical: 6,
+      paddingHorizontal: 4,
+      borderRadius: 8,
+      backgroundColor: "#EFF6FF",
+      borderWidth: 1,
+      borderColor: "#BFDBFE",
+      gap: 2,
+    },
+    tileLabel: {
+      fontSize: 9,
+      fontWeight: "700" as const,
+      color: "#1E40AF",
+      textTransform: "uppercase" as const,
+      letterSpacing: 0.4,
+    },
+    tileValue: {
+      fontSize: 13,
+      fontWeight: "800" as const,
+      color: t.colors.text,
+    },
+    // Loading skeleton block
+    skeletonBlock: {
+      borderRadius: 4,
+      backgroundColor: t.colors.surfaceMuted,
+    },
+  });
+
 // ─── Always-visible RBI Rates card (rates-events tab) ─────────────────────────
 // Renders the RBI current rates grid as a standalone non-collapsible card.
 // Must call hooks in its own body (themed styles).
+// NOTE: This component is retained but no longer used in the Rates & Events tab
+// (replaced by IndiaMacroCard in S72). Safe to delete in a future cleanup sprint.
 function RbiRatesCard({ rbiRates }: { rbiRates: RbiCurrentRates }) {
   const pulseStyles = useThemedStyles(makePulseStyles);
 
@@ -1881,6 +2089,12 @@ export function FinanceMode({
   // failure here never blocks the main Finance load. Groups the returned polls
   // by packId and surfaces the first open pack (3 polls: Repo / CRR / SLR).
   const [rbiPollPack, setRbiPollPack] = useState<ApiPoll[] | null>(null);
+
+  // S72: India Macro panel — warm store data from /api/finance/macro.
+  // null = loading; non-null = data or 404 (both prevent showing stale nothing).
+  // Hydrated from AsyncStorage cache first, then refreshed from API.
+  const [macroData, setMacroData] = useState<ApiFinanceMacroResponse | null>(null);
+  const [macroLoading, setMacroLoading] = useState(true);
 
   // S35-T1: Active instrument filter — toggled by tapping ticker chips
   const [activeInstrumentFilter, setActiveInstrumentFilter] = useState<string | null>(null);
@@ -2438,6 +2652,53 @@ export function FinanceMode({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [topWeeklyRefetchEpoch]);
 
+  // S72: India Macro panel — fetches from /api/finance/macro warm store.
+  // SWR pattern: hydrate from AsyncStorage cache immediately, then refresh from API.
+  // Re-fires on topWeeklyRefetchEpoch (shared pull-to-refresh epoch counter).
+  const MACRO_CACHE_KEY = "finance:macro:v1";
+  useEffect(() => {
+    let cancelled = false;
+
+    // 1. Hydrate from cache first for instant render
+    void AsyncStorage.getItem(MACRO_CACHE_KEY)
+      .then((raw) => {
+        if (!raw || cancelled) return;
+        try {
+          const cached = JSON.parse(raw) as ApiFinanceMacroResponse;
+          if (!cancelled) {
+            setMacroData(cached);
+            setMacroLoading(false);
+          }
+        } catch {
+          // Malformed cache — ignore, fresh fetch will fix it
+        }
+      })
+      .catch(() => {
+        // Cache read failure is non-fatal
+      });
+
+    // 2. Fresh fetch from API
+    mobileApi.getFinanceMacro()
+      .then((fresh) => {
+        if (cancelled) return;
+        setMacroData(fresh);
+        setMacroLoading(false);
+        void AsyncStorage.setItem(MACRO_CACHE_KEY, JSON.stringify(fresh)).catch(() => {
+          // Cache write failure is non-fatal
+        });
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        // 404 = cron hasn't seeded yet; other errors = network/server issue.
+        // Either way, keep showing cached data or nothing (don't crash).
+        console.warn("[finance-mode] getFinanceMacro failed (macro card hidden or stale):", err);
+        setMacroLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [topWeeklyRefetchEpoch]);
+
   // S28-T1: Build expert name map from loaded financeNews
   useEffect(() => {
     const map: Record<string, { name: string; org: string }> = {};
@@ -2591,16 +2852,12 @@ export function FinanceMode({
         </View>
 
         {/* Rates & Events tab content — always-visible cards (no PulseRibbon, no collapse).
-            Render order: RBI Rates card → Policy Calendar card → MpcPollPackCard.
+            S72 render order: IndiaMacroCard → PolicyCalendarCard → MpcPollPackCard.
             Rendered ONLY when showScope === "rates-events". */}
         {showScope === "rates-events" && (
           <>
-            {/* RBI Rates card — only shown when at least one rate is finite */}
-            {rbiPollPack != null && (() => {
-              const rates = ((rbiPollPack[0].structuredData as Record<string, unknown> | null)
-                ?.currentRates as RbiCurrentRates | null | undefined) ?? null;
-              return rates != null ? <RbiRatesCard rbiRates={rates} /> : null;
-            })()}
+            {/* S72: India Macro card — combined RBI rates + IMF projections from warm store */}
+            <IndiaMacroCard data={macroData} loading={macroLoading} />
 
             {/* Policy Calendar card — always visible; "See expert takes" switches to Expert Opinions tab */}
             <PolicyCalendarCard

@@ -1775,3 +1775,31 @@ export type ApiPollPack = {
   packId: string;
   polls: ApiPoll[];
 };
+
+// ─── India Macro: GET /api/finance/macro ─────────────────────────────────────
+
+/** RBI policy rates group returned by the macro endpoint. */
+export type ApiMacroRbi = {
+  repoRate: number | null;
+  crr: number | null;
+  slr: number | null;
+};
+
+/** IMF macro projections group returned by the macro endpoint. */
+export type ApiMacroImf = {
+  gdpGrowth: number | null;
+  gdpGrowthYear: number | null;
+  cpiInflation: number | null;
+  cpiInflationYear: number | null;
+};
+
+/**
+ * Response shape for GET /api/finance/macro.
+ * `asOf` is the ISO timestamp of the most recent fetch (used for "Updated d Mon" microcopy).
+ * Individual values may be null if the cron has not yet fetched them.
+ */
+export type ApiFinanceMacroResponse = {
+  rbi: ApiMacroRbi;
+  imf: ApiMacroImf;
+  asOf: string | null;
+};

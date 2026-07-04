@@ -2,8 +2,8 @@
 
 > Human-readable view of `.claude/sprint-board.json`. Auto-maintained by the CEO/CTO/QA agents — do not edit by hand.
 
-**Current sprint:** 71
-**Status:** Sprint 71 LOADED (2 tickets pending) — backend-only: balanced India+global mix when toggle is OFF (8 new global RSS sources + GLOBAL_ONLY_SOURCES expansion + two-pool interleave), and summarizer cap raised 10→40 with inter-batch pacing and 429 early-exit guard. Sprint 70 LOADED (4 tickets pending). Sprint 69 in-progress (India toggle). Sprint 68 QA COMPLETE (1/1, incl. runtime) — Points balance restored on Profile (header pill) + bet panel ("Available: X pts" + low-balance hint) after the S66 redesign dropped it; new "My Bets" surface (dedicated /api/profile/me/positions endpoint — profile/me caps at 10 — + Markets-tab "My Bets" chip with BetMarketRow + dedupe + ?tab= deep-links + Profile "See all my bets" link); watchlist "More" now deep-links to the Saved filter. QA confirmed endpoint auth/cross-user isolation at runtime. Sprint 67 QA COMPLETE (1/1) — Analyst tier credential switched from an accuracy gate to a lifetime net-PnL gate (≥10 preds & ≥+200 pts → Analyst; +1000 → Senior; +4000 + verified → Chief; negative PnL → Rookie). Rewards conviction/stakes per user decision; accuracy kept as a displayed Track Record stat. No schema migration (totalNetPoints already stored). Admin recalc-tiers route (CRON_SECRET-or-admin) + one-time Profile notice for existing users; ⚠️ RUN the recalc on deploy so stored tiers reflect the new gate. Sprint 66 QA COMPLETE (5/5) — Profile redesigned into a LinkedIn-style single elegant scroll. Sprint 65 QA COMPLETE (1/1) — Settings screen extracted. Sprint 64 QA COMPLETE (2/2). Sprint 63 QA COMPLETE (2/2). Sprint 62 loaded — Poll/Market Separation Phase 1. Sprint 60 in progress — Scorecard integrity hardening. Sprint 59 QA COMPLETE (6/6). Sprint 58 QA COMPLETE (8/8). Sprint 57 QA COMPLETE (5/5). Sprint 56 QA COMPLETE (9/9). Sprint 55 QA COMPLETE (8/8). Sprint 54 QA COMPLETE (8/8). Sprint 53 QA COMPLETE (6/6). Sprint 52 QA COMPLETE (4/4). Sprint 51 COMPLETE (5/5). Sprint 50 COMPLETE (6/6). Sprint 49 COMPLETE (9/9). Sprints 43–48 COMPLETE. Sprints 38–42 COMPLETE (security/correctness hardening, 54 tickets). Sprints 12, 25–34 COMPLETE.
+**Current sprint:** 72
+**Status:** Sprint 72 LOADED (4 tickets pending) — India Macro panel: MacroSnapshot store + IMF fetcher (T1, CRIT), IMF cron + /api/finance/macro-indicators endpoint + ApiMacroIndicatorsResponse type (T2, CRIT), IndiaMacroCard component + Rates & Events tab rewire (T3, HIGH), seed script (T4, HIGH). Replaces the RbiRatesCard's poll-description dependency with a clean store; adds GDP Growth + CPI Inflation from IMF DataMapper to the Rates & Events tab alongside the RBI trio (Repo, CRR, SLR). Sprint 71 LOADED (2 tickets pending) — backend-only: balanced India+global mix when toggle is OFF (8 new global RSS sources + GLOBAL_ONLY_SOURCES expansion + two-pool interleave), and summarizer cap raised 10→40 with inter-batch pacing and 429 early-exit guard. Sprint 70 LOADED (4 tickets pending). Sprint 69 in-progress (India toggle). Sprint 68 QA COMPLETE (1/1, incl. runtime). Sprint 67 QA COMPLETE (1/1). Sprint 66 QA COMPLETE (5/5) — Profile redesigned into a LinkedIn-style single elegant scroll. Sprint 65 QA COMPLETE (1/1). Sprint 64 QA COMPLETE (2/2). Sprint 63 QA COMPLETE (2/2). Sprint 62 loaded — Poll/Market Separation Phase 1. Sprint 60 in progress — Scorecard integrity hardening. Sprint 59 QA COMPLETE (6/6). Sprint 58 QA COMPLETE (8/8). Sprint 57 QA COMPLETE (5/5). Sprint 56 QA COMPLETE (9/9). Sprint 55 QA COMPLETE (8/8). Sprint 54 QA COMPLETE (8/8). Sprint 53 QA COMPLETE (6/6). Sprint 52 QA COMPLETE (4/4). Sprint 51 COMPLETE (5/5). Sprint 50 COMPLETE (6/6). Sprint 49 COMPLETE (9/9). Sprints 43–48 COMPLETE. Sprints 38–42 COMPLETE (security/correctness hardening, 54 tickets). Sprints 12, 25–34 COMPLETE.
 
 ---
 
@@ -919,6 +919,19 @@
 | S69-T1 | HIGH | 🔨 in-progress | Feed: India toggle — user-controlled news region filter (Switch in header, AsyncStorage-persisted, indiaOnly API param) |
 
 _SPEC CORRECTED by founder (2026-07-04): No Global chip. A physical labeled "India" Switch lives in the Feed header right slot, default ON. Persists across app restarts. ON → indiaOnly=true (excludes BBC World / ESPN / TechCrunch / CNBC / The Verge / Ars Technica). OFF → full mix. ANDs with category chips. No schema migration._
+
+---
+
+## Sprint 72
+
+| ID | Priority | Status | Title |
+|---|---|---|---|
+| S72-T1 | CRIT | 🔍 qa-review | Backend: MacroSnapshot store + IMF fetcher |
+| S72-T2 | CRIT | 🔍 qa-review | Backend: IMF macro cron + /api/finance/macro-indicators endpoint |
+| S72-T3 | HIGH | 🔍 qa-review | Mobile: IndiaMacroCard component + Rates & Events tab rewire |
+| S72-T4 | HIGH | 🔍 qa-review | Backend: seed MacroSnapshot with one live fetch on deploy |
+
+_Both reship + APK rebuild required. T1/T2 are backend (reship): MacroSnapshot Prisma table, IMF DataMapper fetcher (gdpGrowthPct + cpiInflationPct), daily imf-macro cron, /api/finance/macro-indicators public endpoint, ApiMacroIndicatorsResponse type + api-client method. T3 is mobile (APK): new IndiaMacroCard (Repo+CRR+SLR trio + GDP Growth + Inflation, with skeleton, asOf header, IMF section label), replaces old rbiPollPack-dependent RbiRatesCard in the Rates & Events tab. T4 is a one-time seed script (reship, run once on deploy). PolicyCalendarCard and MpcPollPackCard unchanged._
 
 ---
 

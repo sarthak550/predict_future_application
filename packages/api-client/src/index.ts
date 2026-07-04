@@ -67,6 +67,8 @@ import type {
   ApiPollDetail,
   ApiPollPack,
   AppPollStatus,
+  // S72: India Macro panel
+  ApiFinanceMacroResponse,
 } from "@predict-future/types";
 
 export type { ApiLeaderboardTimeWindow };
@@ -846,6 +848,16 @@ export function createApiClient(options: ApiClientOptions) {
       return request<import("@predict-future/types").ApiFinanceBigCallResponse>(
         `/api/finance/big-call`
       );
+    },
+
+    // ─── Finance: India Macro panel (S72) ─────────────────────────────────
+    /**
+     * Returns the latest MacroSnapshot from the warm store.
+     * Served from the DB (not live-fetched from IMF/RBI on request).
+     * Returns 404 if the cron has not yet seeded the first snapshot.
+     */
+    getFinanceMacro() {
+      return request<ApiFinanceMacroResponse>(`/api/finance/macro`);
     },
 
     /** Fetch a single ExpertOpinion's full detail by id. */

@@ -1410,3 +1410,32 @@ model GroupNotificationPreference {
   @@unique([groupId, userId])
   @@index([userId])
 }
+
+/// Warm store for the latest India Macro snapshot.
+/// A single row (key = "singleton") is upserted on each cron run.
+/// Fields are nullable so we can do keep-last-known-good updates:
+/// only overwrite a field when the new fetch returned a valid value.
+model MacroSnapshot {
+  id              String    @id @default(cuid())
+  /// Singleton discriminator — always "singleton".
+  key             String    @unique @default("singleton")
+
+  // RBI policy rates (scraped from rbi.org.in)
+  repoRate        Float?
+  crr             Float?
+  slr             Float?
+  sdf             Float?
+  msf             Float?
+  bankRate        Float?
+  rbiFetchedAt    DateTime?
+
+  // IMF DataMapper projections for India
+  gdpGrowth       Float?
+  gdpGrowthYear   Int?
+  cpiInflation    Float?
+  cpiInflationYear Int?
+  imfFetchedAt    DateTime?
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
