@@ -188,8 +188,11 @@ const Q_BADGE_COLORS: Array<{ bg: string; border: string; text: string }> = [
 ];
 
 /**
- * RBI MPC pack card — renders each poll in the pack as a prediction question
- * (Q1 = Repo Rate, Q2 = CRR, Q3 = SLR). Always expanded — no collapse mechanism.
+ * S70-T4: RBI MPC pack — ONE shared section header + ONE card per poll.
+ * The shared header (chip, countdown, date, title, subtitle) renders once above
+ * the cards so it's scannable without repeating context on every card.
+ * Each poll gets its own card with Q badge, question, description, option chips,
+ * and its own full-width CTA button.
  */
 function MpcPollPackCard({ polls }: { polls: ApiPoll[] }) {
   const mpcStyles = useThemedStyles(makeMpcStyles);
@@ -217,69 +220,67 @@ function MpcPollPackCard({ polls }: { polls: ApiPoll[] }) {
   const totalParticipants = Math.max(...polls.map((p) => p.totalVotes));
 
   return (
-    <View style={mpcStyles.card}>
-      {/* Non-tappable header */}
-      <View style={mpcStyles.headerRow}>
-        <View style={mpcStyles.rbiChip}>
-          <Text style={mpcStyles.rbiChipText}>RBI MPC</Text>
+    <>
+      {/* Shared section header — rendered ONCE above all poll cards */}
+      <View style={mpcStyles.sectionHeader}>
+        <View style={mpcStyles.headerRow}>
+          <View style={mpcStyles.rbiChip}>
+            <Text style={mpcStyles.rbiChipText}>RBI MPC</Text>
+          </View>
+          <View style={mpcStyles.countdownChip}>
+            <Text style={mpcStyles.countdownText}>{countdown}</Text>
+          </View>
+          <Text style={mpcStyles.meetingDate}>{meetingDate}</Text>
         </View>
-        <View style={mpcStyles.countdownChip}>
-          <Text style={mpcStyles.countdownText}>{countdown}</Text>
-        </View>
-        <Text style={mpcStyles.meetingDate}>{meetingDate}</Text>
+        <Text style={mpcStyles.heroTitle}>Predict the RBI Decision</Text>
+        <Text style={mpcStyles.heroSub}>
+          {totalParticipants > 0
+            ? `${totalParticipants.toLocaleString()} predictions so far — cast yours free`
+            : "Be among the first to predict — free, no strings attached"}
+        </Text>
       </View>
 
-      {/* Title — always visible, non-tappable */}
-      <Text style={mpcStyles.heroTitle}>Predict the RBI Decision</Text>
-
-      <Text style={mpcStyles.heroSub}>
-        {totalParticipants > 0
-          ? `${totalParticipants.toLocaleString()} predictions so far — cast yours free`
-          : "Be among the first to predict — free, no strings attached"}
-      </Text>
-
-      {/* Question blocks — one per poll in the pack */}
+      {/* One card per poll — each has its own full-width CTA */}
       {polls.map((poll, idx) => {
         const accent = Q_BADGE_COLORS[idx % Q_BADGE_COLORS.length];
         return (
-          <View key={poll.id}>
-            <View style={mpcStyles.divider} />
-            <Pressable
-              onPress={() => navigateToPoll(poll.id)}
-              style={mpcStyles.questionBlock}
-            >
-              <View style={mpcStyles.questionHeader}>
-                <View style={[mpcStyles.qBadge, { backgroundColor: accent.bg, borderColor: accent.border }]}>
-                  <Text style={[mpcStyles.qBadgeText, { color: accent.text }]}>Q{idx + 1}</Text>
-                </View>
-                <Text style={mpcStyles.questionTitle} numberOfLines={2}>{poll.question}</Text>
+          <View key={poll.id} style={mpcStyles.card}>
+            {/* Q badge + question title */}
+            <View style={mpcStyles.questionHeader}>
+              <View style={[mpcStyles.qBadge, { backgroundColor: accent.bg, borderColor: accent.border }]}>
+                <Text style={[mpcStyles.qBadgeText, { color: accent.text }]}>Q{idx + 1}</Text>
               </View>
-              {poll.description ? (
-                <Text style={mpcStyles.questionDescription}>{poll.description}</Text>
-              ) : null}
-              <MpcOptionChips
-                poll={poll}
-                onPickOption={(pId, oId) => navigateToPoll(pId, oId)}
-              />
+              <Text style={mpcStyles.questionTitle} numberOfLines={2}>{poll.question}</Text>
+            </View>
+
+            {/* Optional description */}
+            {poll.description ? (
+              <Text style={mpcStyles.questionDescription}>{poll.description}</Text>
+            ) : null}
+
+            {/* Option chips */}
+            <MpcOptionChips
+              poll={poll}
+              onPickOption={(pId, oId) => navigateToPoll(pId, oId)}
+            />
+
+            {/* Per-card full-width CTA */}
+            <Pressable
+              style={mpcStyles.ctaBtn}
+              onPress={() => navigateToPoll(poll.id)}
+            >
+              <Text style={mpcStyles.ctaBtnText}>Predict now — it&apos;s free</Text>
             </Pressable>
           </View>
         );
       })}
-
-      {/* Footer CTA */}
-      <Pressable
-        style={mpcStyles.ctaBtn}
-        onPress={() => navigateToPoll(firstPoll.id)}
-      >
-        <Text style={mpcStyles.ctaBtnText}>Predict now — it&apos;s free</Text>
-      </Pressable>
-    </View>
+    </>
   );
 }
 
 const makeMpcStyles = (t: ThemeContextValue) => StyleSheet.create({
-  // ── Predict card ──────────────────────────────────────────────────────────
-  card: {
+  // S70-T4: Free-standing section header above the poll cards
+  sectionHeader: {
     marginHorizontal: spacing.lg,
     marginTop: spacing.xs,
     marginBottom: spacing.xs,
@@ -293,6 +294,23 @@ const makeMpcStyles = (t: ThemeContextValue) => StyleSheet.create({
     shadowOpacity: 0.10,
     shadowRadius: 8,
     elevation: 4,
+  },
+  // ── Individual poll card ───────────────────────────────────────────────────
+  card: {
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.xs,
+    marginBottom: spacing.xs,
+    backgroundColor: t.colors.surface,
+    borderRadius: radius.lg,
+    borderWidth: 1.5,
+    borderColor: "#FECACA",
+    padding: spacing.md,
+    gap: 8,
+    shadowColor: MPC_RBI_COLOR,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.07,
+    shadowRadius: 4,
+    elevation: 2,
   },
   headerRow: {
     flexDirection: "row",
@@ -360,9 +378,6 @@ const makeMpcStyles = (t: ThemeContextValue) => StyleSheet.create({
     height: 1,
     backgroundColor: t.colors.surfaceMuted,
     marginVertical: spacing.sm,
-  },
-  questionBlock: {
-    gap: 8,
   },
   questionHeader: {
     flexDirection: "row",
@@ -1107,19 +1122,22 @@ function WeekToggleCard({
   digest,
   sentiment,
   onPressCalls,
+  selectedDirectionFilter,
+  onSentimentDirectionPress,
 }: {
   digest: ApiMyCallsDigest | null;
   sentiment: ApiFinanceExpertSentiment | null;
   onPressCalls: () => void;
+  selectedDirectionFilter: DirectionFilter;
+  onSentimentDirectionPress: (dir: "BULLISH" | "BEARISH" | "NEUTRAL") => void;
 }) {
   const digestStyles = useThemedStyles(makeDigestStyles);
   const hasCalls = digest !== null && (digest.hits + digest.misses + digest.pending) > 0;
   const hasSentiment = sentiment !== null && sentiment.totalCount > 0;
 
-  // Default view: calls if user has activity, else sentiment.
-  const [view, setViewState] = useState<"calls" | "sentiment">(
-    hasCalls ? "calls" : "sentiment"
-  );
+  // S70-T2: Default view is always "calls" so the empty state CTA ("Vote on an
+  // analyst call in the feed to start.") is the first thing a new user sees.
+  const [view, setViewState] = useState<"calls" | "sentiment">("calls");
 
   // S51-T3: Expand/collapse state — defaults to compact strip (false).
   // Persisted per-device (no userId in scope); renders collapsed before AsyncStorage
@@ -1149,28 +1167,37 @@ function WeekToggleCard({
     void AsyncStorage.setItem("finance_section_expanded_yourweek", String(next));
   }, [expanded]);
 
-  // Hide entire card if both data sources are empty
-  if (!hasCalls && !hasSentiment) return null;
-
-  // S51-T3: Compact strip — single line with hits/misses/pending counts.
+  // S70-T2: Compact strip — shows counts when data exists, italic prompt when empty.
   if (!expanded) {
+    const stripContent = hasCalls ? (
+      <Text style={digestStyles.compactStripText}>
+        {"Your week: "}
+        <Text style={{ color: "#16a34a", fontWeight: "700" }}>{digest!.hits} right</Text>
+        {" · "}
+        <Text style={{ color: "#dc2626", fontWeight: "700" }}>{digest!.misses} wrong</Text>
+        {" · "}
+        <Text style={digestStyles.statNeutral}>{digest!.pending} pending</Text>
+      </Text>
+    ) : (
+      <Text style={digestStyles.compactStripTextEmpty}>
+        {"Your week: track your accuracy here  ›"}
+      </Text>
+    );
+
     return (
       <Pressable
         style={digestStyles.compactStrip}
         onPress={toggleExpanded}
         accessibilityRole="button"
         accessibilityState={{ expanded: false }}
-        accessibilityLabel={`Your week: ${digest?.hits ?? 0} correct, ${digest?.misses ?? 0} wrong, ${digest?.pending ?? 0} pending. Tap to expand.`}
+        accessibilityLabel={
+          hasCalls
+            ? `Your week: ${digest!.hits} correct, ${digest!.misses} wrong, ${digest!.pending} pending. Tap to expand.`
+            : "Your week: tap to expand and start tracking your accuracy."
+        }
       >
-        <Text style={digestStyles.compactStripText}>
-          {"Your week: "}
-          <Text style={{ color: "#16a34a", fontWeight: "700" }}>{digest?.hits ?? 0} right</Text>
-          {" · "}
-          <Text style={{ color: "#dc2626", fontWeight: "700" }}>{digest?.misses ?? 0} wrong</Text>
-          {" · "}
-          <Text style={digestStyles.statNeutral}>{digest?.pending ?? 0} pending</Text>
-        </Text>
-        <Text style={digestStyles.compactStripChevron}>›</Text>
+        {stripContent}
+        {hasCalls && <Text style={digestStyles.compactStripChevron}>›</Text>}
       </Pressable>
     );
   }
@@ -1183,16 +1210,16 @@ function WeekToggleCard({
     <View style={digestStyles.card}>
       {/* Toggle pills row + ▲ collapse chevron (S51-T5) */}
       <View style={digestStyles.toggleRow}>
+        {/* S70-T2: Neither pill is disabled in the empty state — user must be
+            able to see both sub-views even when they have no data yet. */}
         <Pressable
           style={[digestStyles.toggleBtn, view === "calls" && digestStyles.toggleBtnActive]}
           onPress={() => setView("calls")}
-          disabled={!hasCalls}
         >
           <Text
             style={[
               digestStyles.toggleText,
               view === "calls" && digestStyles.toggleTextActive,
-              !hasCalls && { opacity: 0.4 },
             ]}
           >
             Your Week
@@ -1201,13 +1228,11 @@ function WeekToggleCard({
         <Pressable
           style={[digestStyles.toggleBtn, view === "sentiment" && digestStyles.toggleBtnActive]}
           onPress={() => setView("sentiment")}
-          disabled={!hasSentiment}
         >
           <Text
             style={[
               digestStyles.toggleText,
               view === "sentiment" && digestStyles.toggleTextActive,
-              !hasSentiment && { opacity: 0.4 },
             ]}
           >
             Market Sentiment
@@ -1226,20 +1251,64 @@ function WeekToggleCard({
         </Pressable>
       </View>
 
-      {/* View body */}
-      {view === "calls" && digest ? (
-        <Pressable onPress={onPressCalls}>
-          <WeekCallsBody digest={digest} />
-          <Text style={digestStyles.tapHint}>Tap to see all your calls</Text>
-        </Pressable>
-      ) : view === "sentiment" && sentiment ? (
-        <SentimentBody sentiment={sentiment} />
+      {/* View body — S70-T2: always render a meaningful state, never blank */}
+      {view === "calls" ? (
+        hasCalls && digest ? (
+          <Pressable onPress={onPressCalls}>
+            <WeekCallsBody digest={digest} />
+            <Text style={digestStyles.tapHint}>Tap to see all your calls</Text>
+          </Pressable>
+        ) : (
+          /* S70-T2: Empty calls state — show 0/0/0 blocks + motivating CTA */
+          <Pressable onPress={onPressCalls}>
+            <WeekCallsBodyEmpty />
+          </Pressable>
+        )
       ) : (
-        <Text style={digestStyles.emptyText}>
-          {view === "calls" ? "Vote on a call to populate." : "No sentiment data yet."}
-        </Text>
+        hasSentiment && sentiment ? (
+          <SentimentBody
+            sentiment={sentiment}
+            selectedDirection={selectedDirectionFilter}
+            onDirectionPress={onSentimentDirectionPress}
+          />
+        ) : (
+          <Text style={digestStyles.emptyText}>
+            No analyst calls logged this week yet.
+          </Text>
+        )
       )}
     </View>
+  );
+}
+
+/** S70-T2: Zero-state calls body — displays 0/0/0 blocks + motivating copy. */
+function WeekCallsBodyEmpty() {
+  const digestStyles = useThemedStyles(makeDigestStyles);
+  return (
+    <>
+      <View style={digestStyles.statRow}>
+        <View style={digestStyles.statBlock}>
+          <Text style={[digestStyles.statCount, { color: "#16a34a" }]}>0</Text>
+          <Text style={digestStyles.statLabel}>Correct</Text>
+        </View>
+        <View style={digestStyles.statDivider} />
+        <View style={digestStyles.statBlock}>
+          <Text style={[digestStyles.statCount, { color: "#dc2626" }]}>0</Text>
+          <Text style={digestStyles.statLabel}>Wrong</Text>
+        </View>
+        <View style={digestStyles.statDivider} />
+        <View style={digestStyles.statBlock}>
+          <Text style={[digestStyles.statCount, digestStyles.statNeutral]}>0</Text>
+          <Text style={digestStyles.statLabel}>Pending</Text>
+        </View>
+      </View>
+      <Text style={digestStyles.emptyCallsAccuracy}>
+        Your weekly accuracy — updated as calls you react to get resolved.
+      </Text>
+      <Text style={digestStyles.emptyCallsCta}>
+        Vote on an analyst call in the feed to start.
+      </Text>
+    </>
   );
 }
 
@@ -1284,30 +1353,68 @@ function WeekCallsBody({ digest }: { digest: ApiMyCallsDigest }) {
   );
 }
 
-function SentimentBody({ sentiment }: { sentiment: ApiFinanceExpertSentiment }) {
+function SentimentBody({
+  sentiment,
+  selectedDirection,
+  onDirectionPress,
+}: {
+  sentiment: ApiFinanceExpertSentiment;
+  /** S70-T3: Currently active direction filter — highlights the matching block. */
+  selectedDirection: DirectionFilter;
+  /** S70-T3: Called when user taps a direction block; parent handles filter + scroll. */
+  onDirectionPress: (dir: "BULLISH" | "BEARISH" | "NEUTRAL") => void;
+}) {
   const digestStyles = useThemedStyles(makeDigestStyles);
   const bullPct = Math.round(sentiment.bullishPercent);
   const bearPct = Math.round(sentiment.bearishPercent);
   const neutPct = Math.round(sentiment.neutralPercent);
+
+  // S70-T3: Visual active-state helper — subtle tint when this direction is selected.
+  const blockStyle = (dir: "BULLISH" | "BEARISH" | "NEUTRAL") =>
+    selectedDirection === dir
+      ? [digestStyles.statBlock, digestStyles.statBlockActive]
+      : digestStyles.statBlock;
+
   return (
     <>
       <View style={digestStyles.statRow}>
-        <View style={digestStyles.statBlock}>
+        {/* BULLISH block — tappable */}
+        <Pressable
+          style={({ pressed }) => [blockStyle("BULLISH"), pressed && { opacity: 0.75 }]}
+          onPress={() => onDirectionPress("BULLISH")}
+          accessibilityRole="button"
+          accessibilityLabel={`Filter by Bullish (${bullPct}%)`}
+        >
           <Text style={[digestStyles.statCount, { color: "#16a34a" }]}>{bullPct}%</Text>
           <Text style={digestStyles.statLabel}>BULLISH</Text>
-        </View>
+        </Pressable>
+
         <View style={digestStyles.statDivider} />
-        <View style={digestStyles.statBlock}>
+
+        {/* BEARISH block — tappable */}
+        <Pressable
+          style={({ pressed }) => [blockStyle("BEARISH"), pressed && { opacity: 0.75 }]}
+          onPress={() => onDirectionPress("BEARISH")}
+          accessibilityRole="button"
+          accessibilityLabel={`Filter by Bearish (${bearPct}%)`}
+        >
           <Text style={[digestStyles.statCount, { color: "#dc2626" }]}>{bearPct}%</Text>
           <Text style={digestStyles.statLabel}>BEARISH</Text>
-        </View>
+        </Pressable>
+
+        {/* NEUTRAL block — only rendered when neutPct > 0 */}
         {neutPct > 0 && (
           <>
             <View style={digestStyles.statDivider} />
-            <View style={digestStyles.statBlock}>
+            <Pressable
+              style={({ pressed }) => [blockStyle("NEUTRAL"), pressed && { opacity: 0.75 }]}
+              onPress={() => onDirectionPress("NEUTRAL")}
+              accessibilityRole="button"
+              accessibilityLabel={`Filter by Neutral (${neutPct}%)`}
+            >
               <Text style={[digestStyles.statCount, digestStyles.statNeutral]}>{neutPct}%</Text>
               <Text style={digestStyles.statLabel}>Neutral</Text>
-            </View>
+            </Pressable>
           </>
         )}
       </View>
@@ -1319,7 +1426,7 @@ function SentimentBody({ sentiment }: { sentiment: ApiFinanceExpertSentiment }) 
         <View style={[digestStyles.barFill, { flex: bearPct || 0.01, backgroundColor: "#dc2626" }]} />
       </View>
       <Text style={digestStyles.tapHint}>
-        Across {sentiment.totalCount} analyst {sentiment.totalCount === 1 ? "call" : "calls"} this week
+        Across {sentiment.totalCount} analyst {sentiment.totalCount === 1 ? "call" : "calls"} this week — tap a direction to filter
       </Text>
     </>
   );
@@ -1444,6 +1551,35 @@ const makeDigestStyles = (t: ThemeContextValue) => StyleSheet.create({
     fontSize: 18,
     color: t.colors.textSubtle,
     lineHeight: 20,
+  },
+  // S70-T2: italic muted text shown in compact strip when there's no call data yet
+  compactStripTextEmpty: {
+    fontSize: 13,
+    color: t.colors.textMuted,
+    fontStyle: "italic",
+    flex: 1,
+  },
+  // S70-T2: empty calls body — accuracy explanation line (muted)
+  emptyCallsAccuracy: {
+    fontSize: 12,
+    color: t.colors.textMuted,
+    marginTop: 8,
+    lineHeight: 17,
+  },
+  // S70-T2: empty calls body — motivating CTA line (blue, bold)
+  emptyCallsCta: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#2563EB",
+    marginTop: 4,
+    lineHeight: 17,
+  },
+  // S70-T3: active direction block — subtle tint to indicate selection
+  statBlockActive: {
+    backgroundColor: t.colors.surfaceMuted,
+    borderRadius: 8,
+    paddingVertical: 4,
+    paddingHorizontal: 6,
   },
 });
 
@@ -1719,10 +1855,8 @@ function PolicyCalendarCard({
 }
 
 export function FinanceMode({
-  onNavigateToFeed,
   initialClusterId,
 }: {
-  onNavigateToFeed?: () => void;
   /** When provided (e.g. via deep-link from opinion detail cluster chip), pre-applies cluster filter. */
   initialClusterId?: string | null;
 }) {
@@ -2420,6 +2554,17 @@ export function FinanceMode({
         digest={callsDigest}
         sentiment={analystSentiment}
         onPressCalls={() => router.push("/finance/my-calls" as Parameters<typeof router.push>[0])}
+        selectedDirectionFilter={selectedDirectionFilter}
+        onSentimentDirectionPress={(dir) => {
+          // S70-T3: toggle filter (tap again to clear), switch to expert-opinions,
+          // and scroll down to the expert section so the filter result is visible.
+          setSelectedDirectionFilter((prev) => (prev === dir ? null : dir));
+          setShowScope("expert-opinions");
+          setTimeout(
+            () => scrollViewRef.current?.scrollTo({ y: expertSectionY.current, animated: true }),
+            200
+          );
+        }}
       />
 
       {/* Personal Accuracy Chip removed — "Start voting — track your accuracy"
