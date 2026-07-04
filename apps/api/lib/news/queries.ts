@@ -6,6 +6,20 @@ import { approvedStoryStatuses } from "@/lib/validations/news";
 
 const visibleNewsStatuses: StoryStatus[] = [...new Set<StoryStatus>([...approvedStoryStatuses, "PUBLISHED"])];
 
+// Feed category merges: "Business" absorbs Finance (+ the vestigial Company tag),
+// and "Tech" absorbs the vestigial Product tag — matching the consolidated Feed
+// chips. Applied only to the positive category filter; excludeCategory is untouched.
+const CATEGORY_GROUPS: Partial<Record<MarketCategory, MarketCategory[]>> = {
+  BUSINESS: ["BUSINESS", "FINANCE", "COMPANY"],
+  TECH: ["TECH", "PRODUCT"],
+};
+
+/** Prisma where-fragment for a category filter, expanding merged Feed groups. */
+function categoryWhere(category: MarketCategory): Prisma.StoryWhereInput {
+  const group = CATEGORY_GROUPS[category];
+  return group ? { category: { in: group } } : { category };
+}
+
 export type PlainNewsItem = {
   id: string;
   title: string;
@@ -260,7 +274,7 @@ export async function getPublishedNewsPage(input?: {
   const items = await prisma.story.findMany({
     where: {
       status: { in: visibleNewsStatuses },
-      ...(input?.category ? { category: input.category } : {}),
+      ...(input?.category ? categoryWhere(input.category) : {}),
       ...(input?.excludeCategory ? { category: { not: input.excludeCategory } } : {}),
       ...expertOpinionsFilter,
       ...sortNullFilter,
@@ -417,7 +431,7 @@ export async function getPersonalizedNewsPage(input: {
 
   const baseWhere: Prisma.StoryWhereInput = {
     status: { in: visibleNewsStatuses },
-    ...(input.category ? { category: input.category } : {}),
+    ...(input.category ? categoryWhere(input.category) : {}),
     ...(input.excludeCategory ? { category: { not: input.excludeCategory } } : {}),
     ...expertOpinionsFilter,
     ...sortNullFilter,

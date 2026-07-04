@@ -38,7 +38,17 @@ const CATEGORY_BAR_HEIGHT = 52;
 const INSIGHT_INTERVAL = 4;
 
 
-const FEED_CATEGORIES = FILTER_BAR_CATEGORIES;
+// Feed-specific chips (the Markets tab keeps the full FILTER_BAR_CATEGORIES).
+// Finance/Company fold into Business and Product folds into Tech server-side;
+// General has no chip (those stories still appear under "All").
+const FEED_CATEGORIES: typeof FILTER_BAR_CATEGORIES = [
+  { key: "ALL", label: "All" },
+  { key: "SPORTS", label: "Sports" },
+  { key: "BUSINESS", label: "Business" },
+  { key: "TECH", label: "Tech" },
+  { key: "ENTERTAINMENT", label: "Entertainment" },
+  { key: "WEATHER", label: "Weather" },
+];
 
 const ANALYST_TIER_LABELS: Record<AppAnalystTier, string> = {
   ROOKIE: "Rookie",
