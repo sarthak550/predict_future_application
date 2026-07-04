@@ -264,6 +264,11 @@ function CreateWizard({
   const [challengeWindowHours, setChallengeWindowHours] = useState(12);
   const [gracePeriodHours, setGracePeriodHours] = useState(48);
 
+  // Resolution method — when true (default), the resolution rule is "same as description".
+  // When false, the user provides a custom resolution rule text.
+  const [resolutionSameAsDesc, setResolutionSameAsDesc] = useState<boolean>(true);
+  const [customResolutionText, setCustomResolutionText] = useState<string>("");
+
   // Flagship event — admin-only toggle for FINANCE markets
   const [isFlagshipEvent, setIsFlagshipEvent] = useState<boolean>(false);
   const [flagshipEventAt, setFlagshipEventAt] = useState<Date | null>(null);
@@ -327,6 +332,8 @@ function CreateWizard({
       category,
       title,
       description,
+      resolutionSameAsDesc,
+      customResolutionText,
       closeAt: closeAt.toISOString(),
       resolveAt: resolveAt.toISOString(),
       unit,
@@ -376,6 +383,8 @@ function CreateWizard({
     if (typeof draft.challengeWindowHours === "number") setChallengeWindowHours(draft.challengeWindowHours);
     if (typeof draft.gracePeriodHours === "number") setGracePeriodHours(draft.gracePeriodHours);
     if (typeof draft.advancedMode === "boolean") setAdvancedMode(draft.advancedMode);
+    if (typeof draft.resolutionSameAsDesc === "boolean") setResolutionSameAsDesc(draft.resolutionSameAsDesc);
+    if (typeof draft.customResolutionText === "string") setCustomResolutionText(draft.customResolutionText);
   }
 
   // Navigation
@@ -436,7 +445,9 @@ function CreateWizard({
         closeAt: closeAt.toISOString(),
         resolveAt: resolveAt.toISOString(),
         resolutionMode: "HOST",
-        resolutionRuleText: description,
+        // null = "same as description" (stored as null server-side, rendered accordingly).
+        // A non-empty custom text is sent as-is.
+        resolutionRuleText: resolutionSameAsDesc ? null : (customResolutionText.trim() || null),
         resolutionSourceType: "MANUAL",
         resolutionSourceName: "Host resolution",
         ...(visibility === "PRIVATE" && groupId
@@ -676,6 +687,10 @@ function CreateWizard({
             setMaxValue={setMaxValue}
             mcOptions={mcOptions}
             setMcOptions={setMcOptions}
+            resolutionSameAsDesc={resolutionSameAsDesc}
+            setResolutionSameAsDesc={setResolutionSameAsDesc}
+            customResolutionText={customResolutionText}
+            setCustomResolutionText={setCustomResolutionText}
           />
         )}
         {currentStep === "host_settings" && (
@@ -766,6 +781,8 @@ function CreateWizard({
             commissionBps={commissionBps}
             challengeWindowHours={challengeWindowHours}
             gracePeriodHours={gracePeriodHours}
+            resolutionSameAsDesc={resolutionSameAsDesc}
+            customResolutionText={customResolutionText}
           />
         )}
 
@@ -926,7 +943,7 @@ function StepAudience({
                 Everyone
               </Text>
               <Text style={[styles.optionDesc, visibility === "PUBLIC" && styles.optionDescActive]}>
-                Anyone can see and predict. Goes through moderation.
+                Anyone can see and predict. Goes live immediately.
               </Text>
             </View>
           </View>
@@ -938,7 +955,7 @@ function StepAudience({
             <View style={styles.optionContent}>
               <Text style={[styles.optionTitle, styles.optionTitleMuted]}>Everyone</Text>
               <Text style={[styles.optionDesc]}>
-                Anyone can see and predict. Goes through moderation.
+                Anyone can see and predict. Goes live immediately.
               </Text>
               {eligibilityReasons.length > 0 ? (
                 eligibilityReasons.map((r) => (
@@ -1339,6 +1356,10 @@ function StepQuestion({
   setMaxValue,
   mcOptions,
   setMcOptions,
+  resolutionSameAsDesc,
+  setResolutionSameAsDesc,
+  customResolutionText,
+  setCustomResolutionText,
 }: {
   marketType: MarketType;
   title: string;
@@ -1353,6 +1374,10 @@ function StepQuestion({
   setMaxValue: (v: string) => void;
   mcOptions: string[];
   setMcOptions: (opts: string[]) => void;
+  resolutionSameAsDesc: boolean;
+  setResolutionSameAsDesc: (v: boolean) => void;
+  customResolutionText: string;
+  setCustomResolutionText: (v: string) => void;
 }) {
   const { colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
@@ -1498,6 +1523,38 @@ function StepQuestion({
             ) : null;
           })()}
         </>
+      )}
+
+      {/* Resolution method */}
+      <View style={[styles.resolutionToggleRow, { marginTop: spacing.xl }]}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.label}>Resolution method</Text>
+          <Text style={styles.hint}>
+            {resolutionSameAsDesc
+              ? "Resolution rules are the same as your description above."
+              : "Enter custom resolution rules below."}
+          </Text>
+        </View>
+        <Pressable
+          style={[styles.togglePill, resolutionSameAsDesc && styles.togglePillActive]}
+          onPress={() => setResolutionSameAsDesc(!resolutionSameAsDesc)}
+          hitSlop={8}
+        >
+          <Text style={[styles.togglePillText, resolutionSameAsDesc && styles.togglePillTextActive]}>
+            {resolutionSameAsDesc ? "Same as description" : "Custom"}
+          </Text>
+        </Pressable>
+      </View>
+      {!resolutionSameAsDesc && (
+        <TextInput
+          style={[styles.input, styles.textArea]}
+          placeholder="Describe exactly how and when this market will be resolved. E.g. Resolves YES if the official announcement is made before the close date."
+          placeholderTextColor={colors.textMuted}
+          value={customResolutionText}
+          onChangeText={setCustomResolutionText}
+          multiline
+          maxLength={1000}
+        />
       )}
     </View>
   );
@@ -2096,6 +2153,8 @@ function StepReview({
   commissionBps,
   challengeWindowHours,
   gracePeriodHours,
+  resolutionSameAsDesc,
+  customResolutionText,
 }: {
   visibility: Visibility;
   marketType: MarketType;
@@ -2110,6 +2169,8 @@ function StepReview({
   commissionBps: number;
   challengeWindowHours: number;
   gracePeriodHours: number;
+  resolutionSameAsDesc: boolean;
+  customResolutionText: string;
 }) {
   const styles = useThemedStyles(makeStyles);
   function fmtDate(d: Date) {
@@ -2146,7 +2207,14 @@ function StepReview({
 
         <View style={styles.reviewDivider} />
 
-        <Text style={styles.reviewMeta}>Resolution: Host Decides</Text>
+        <Text style={styles.reviewMeta}>
+          Resolution: Host Decides
+          {resolutionSameAsDesc
+            ? " (same as description)"
+            : customResolutionText.trim()
+              ? " (custom rules)"
+              : " (same as description)"}
+        </Text>
         <Text style={styles.reviewMeta}>Closes: {fmtDate(closeAt)}</Text>
         <Text style={styles.reviewMeta}>Resolves: {fmtDate(resolveAt)}</Text>
 
@@ -2169,7 +2237,7 @@ function StepReview({
       {visibility === "PUBLIC" && (
         <View style={styles.moderationNotice}>
           <Text style={styles.moderationNoticeText}>
-            Public markets go through moderation before going live. You'll receive a notification once it's approved.
+            Your public market will go live immediately once submitted.
           </Text>
         </View>
       )}
@@ -2690,6 +2758,35 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     fontSize: 12,
     color: "#92400E",
     lineHeight: 18,
+  },
+
+  // Resolution method toggle (question step)
+  resolutionToggleRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: spacing.md,
+  },
+  togglePill: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: t.colors.border,
+    backgroundColor: t.colors.surface,
+    alignSelf: "flex-start",
+    marginTop: spacing.lg,
+  },
+  togglePillActive: {
+    borderColor: t.colors.accent,
+    backgroundColor: t.colors.accent + "1A",
+  },
+  togglePillText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: t.colors.textMuted,
+  },
+  togglePillTextActive: {
+    color: t.colors.accent,
   },
 
   // Draft saved indicator

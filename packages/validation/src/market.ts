@@ -54,7 +54,7 @@ const baseMarketSchema = z.object({
   resolutionSourceType: z.nativeEnum(ResolutionSourceType).optional(),
   resolutionSourceName: z.string().max(120).optional().or(z.literal("")),
   resolutionSourceUrl: optionalUrl,
-  resolutionRuleText: z.string().max(1000).optional().or(z.literal("")),
+  resolutionRuleText: z.string().max(1000).nullable().optional().or(z.literal("")),
   fallbackRuleText: z.string().max(1000).optional().or(z.literal("")),
   unit: z.string().max(24).optional().or(z.literal("")),
   minValue: z.coerce.number().min(0).optional(),

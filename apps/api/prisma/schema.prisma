@@ -448,7 +448,7 @@ model Market {
   resolutionSourceType           ResolutionSourceType
   resolutionSourceName           String
   resolutionSourceUrl            String?
-  resolutionRuleText             String
+  resolutionRuleText             String?
   fallbackRuleText               String?
   unit                           String?
   minValue                       Float?

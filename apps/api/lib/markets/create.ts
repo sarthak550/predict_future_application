@@ -152,10 +152,14 @@ export async function createPredictionMarket(input: {
     );
   }
 
+  // First-release choice: public markets go live immediately without a review queue.
+  // To re-enable moderation review for public markets, remove the
+  // `|| visibility === MarketVisibility.PUBLIC` line below.
   const autoApproved =
     actor.role === "ADMIN" ||
     actor.role === "MODERATOR" ||
-    visibility === MarketVisibility.PRIVATE;
+    visibility === MarketVisibility.PRIVATE ||
+    visibility === MarketVisibility.PUBLIC;
   const status = autoApproved ? MarketStatus.OPEN : MarketStatus.DRAFT;
   const resolutionFields = deriveResolutionFields(input.payload);
   const marketScope =
@@ -230,7 +234,9 @@ export async function createPredictionMarket(input: {
         resolutionSourceType: resolutionFields.resolutionSourceType,
         resolutionSourceName: resolutionFields.resolutionSourceName,
         resolutionSourceUrl: resolutionFields.resolutionSourceUrl,
-        resolutionRuleText: input.payload.resolutionRuleText ?? "Resolved by market host.",
+        // A null/empty resolutionRuleText means "same as description" — stored as null
+        // so the detail screen can render the appropriate label instead of duplicating text.
+        resolutionRuleText: input.payload.resolutionRuleText?.trim() || null,
         fallbackRuleText: resolutionFields.fallbackRuleText ?? null,
         unit: input.payload.unit || null,
         minValue: input.payload.minValue ?? null,

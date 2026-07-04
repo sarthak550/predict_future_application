@@ -1897,15 +1897,22 @@ function MarketBody({
         </View>
       ) : null}
 
-      {/* Resolution info */}
-      {market.resolutionRuleText ? (
+      {/* Resolution info — always shown when the market has a description.
+          A null resolutionRuleText means "same as description" (stored as null server-side). */}
+      {market.description ? (
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Resolution Rules</Text>
-          <LinkifiedText
-            text={market.resolutionRuleText}
-            style={styles.subtitle}
-            linkStyle={{ color: colors.accent, textDecorationLine: "underline" }}
-          />
+          {market.resolutionRuleText ? (
+            <LinkifiedText
+              text={market.resolutionRuleText}
+              style={styles.subtitle}
+              linkStyle={{ color: colors.accent, textDecorationLine: "underline" }}
+            />
+          ) : (
+            <Text style={[styles.subtitle, { color: colors.textMuted, fontStyle: "italic" }]}>
+              Same as description
+            </Text>
+          )}
         </View>
       ) : null}
 
