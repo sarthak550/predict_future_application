@@ -16,7 +16,7 @@ const defaultRssSources: RssSource[] = [
     url: "https://news.google.com/rss?hl=en-IN&gl=IN&ceid=IN:en",
     categoryHint: "GENERAL",
     fallbackCategory: "GENERAL",
-    isActive: false
+    isActive: true
   },
   {
     id: "bbc-world",
@@ -56,7 +56,7 @@ const defaultRssSources: RssSource[] = [
     url: "https://news.google.com/rss/search?q=technology&hl=en-IN&gl=IN&ceid=IN:en",
     categoryHint: "TECH",
     fallbackCategory: "TECH",
-    isActive: false
+    isActive: true
   },
   {
     id: "reuters-world",
@@ -80,6 +80,52 @@ const defaultRssSources: RssSource[] = [
     url: "https://feeds.arstechnica.com/arstechnica/index",
     categoryHint: "TECH",
     fallbackCategory: "TECH",
+    isActive: true
+  },
+
+  // ── India-focused general / sports / entertainment / tech feeds ──
+  // Added to fix US/global skew: previously Sports = US ESPN only, Entertainment
+  // had no dedicated source, General = BBC/Reuters. These give India-first coverage
+  // per category. Google News "search" format is used (the "topic/BUSINESS" format
+  // was deprecated by Google and returns empty). Verified returning items 2026-07.
+  {
+    id: "ndtv-top",
+    name: "NDTV",
+    url: "https://feeds.feedburner.com/ndtvnews-top-stories",
+    categoryHint: "GENERAL",
+    fallbackCategory: "GENERAL",
+    isActive: true
+  },
+  {
+    id: "espncricinfo",
+    name: "ESPNcricinfo",
+    url: "https://www.espncricinfo.com/rss/content/story/feeds/0.xml",
+    categoryHint: "SPORTS",
+    fallbackCategory: "SPORTS",
+    isActive: true
+  },
+  {
+    id: "gnews-in-sports",
+    name: "Google News India Sports",
+    url: "https://news.google.com/rss/search?q=india%20sports%20cricket&hl=en-IN&gl=IN&ceid=IN:en",
+    categoryHint: "SPORTS",
+    fallbackCategory: "SPORTS",
+    isActive: true
+  },
+  {
+    id: "gnews-in-entertainment",
+    name: "Google News India Entertainment",
+    url: "https://news.google.com/rss/search?q=bollywood%20entertainment&hl=en-IN&gl=IN&ceid=IN:en",
+    categoryHint: "ENTERTAINMENT",
+    fallbackCategory: "ENTERTAINMENT",
+    isActive: true
+  },
+  {
+    id: "gnews-in-business",
+    name: "Google News India Business",
+    url: "https://news.google.com/rss/search?q=india%20business%20markets&hl=en-IN&gl=IN&ceid=IN:en",
+    categoryHint: "BUSINESS",
+    fallbackCategory: "BUSINESS",
     isActive: true
   },
 
