@@ -82,7 +82,13 @@ async function fetchWithTimeout(url: string): Promise<unknown> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const res = await fetch(url, { signal: controller.signal });
+    // IMF's CDN 403s Node's default fetch UA (undici) and browser UAs, but allows
+    // curl-style clients. Send a curl UA so server-side fetches from the container
+    // aren't blocked. (Verified: "curl/8.5.0" → 200, "node"/"undici"/"Mozilla" → 403.)
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: { "User-Agent": "curl/8.5.0" },
+    });
     if (!res.ok) {
       throw new Error(`HTTP ${res.status}`);
     }
