@@ -1,7 +1,7 @@
 /**
  * Finance AI extraction pipeline — expert opinion extraction from Indian finance news articles.
  *
- * Tries Groq first (faster/cheaper), falls back to Gemini if Groq is unavailable or rate-limited.
+ * Tries Gemini first (paid, reliable), falls back to Groq if Gemini errors out.
  * Mirrors the dual-provider pattern in gemini.ts (poll generation).
  */
 
@@ -523,7 +523,29 @@ export async function extractExpertOpinionsFromStory(story: {
   const input = { title: story.title, content: story.content };
   const titleSlice = story.title.slice(0, 60);
 
-  // Try Groq first (faster, cheaper)
+  // Try Gemini first (paid tier — reliable, avoids Groq free-tier 429/413 limits).
+  if (geminiKey) {
+    try {
+      const opinions = await callGeminiForExtraction(geminiKey, input);
+      if (opinions.length === 0) {
+        console.info(
+          `[Finance AI] No opinions extracted from "${titleSlice}" via Gemini — possible reasons: no named analyst, no forward call, or below confidence floor`
+        );
+      } else {
+        console.info(
+          `[Finance AI] Extracted ${opinions.length} opinion(s) via Gemini from "${titleSlice}..."`
+        );
+      }
+      return opinions;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(
+        `[Finance AI] Gemini failed for story ${story.id}, falling back to Groq: ${msg.slice(0, 200)}`
+      );
+    }
+  }
+
+  // Fall back to Groq (free tier — may rate-limit; only reached if Gemini errored).
   if (groqKey) {
     for (let i = 0; i < GROQ_MODELS.length; i++) {
       try {
@@ -548,26 +570,6 @@ export async function extractExpertOpinionsFromStory(story: {
         console.warn(`[Finance AI] Groq ${GROQ_MODELS[i]} failed: ${msg.slice(0, 200)}`);
         // Try next Groq model on parse / 5xx errors too
       }
-    }
-  }
-
-  // Fall back to Gemini
-  if (geminiKey) {
-    try {
-      const opinions = await callGeminiForExtraction(geminiKey, input);
-      if (opinions.length === 0) {
-        console.info(
-          `[Finance AI] No opinions extracted from "${titleSlice}" via Gemini — possible reasons: no named analyst, no forward call, or below confidence floor`
-        );
-      } else {
-        console.info(
-          `[Finance AI] Extracted ${opinions.length} opinion(s) via Gemini from "${titleSlice}..."`
-        );
-      }
-      return opinions;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[Finance AI] Gemini fallback also failed for story ${story.id}: ${msg}`);
     }
   }
 
