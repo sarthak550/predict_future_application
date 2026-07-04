@@ -255,13 +255,13 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
 
   // Binary buttons
   btnRow: { marginTop: spacing.md, flexDirection: "row", gap: spacing.sm },
-  yesBtn: { flex: 1, alignItems: "center", paddingVertical: spacing.lg, borderRadius: radius.md, backgroundColor: "#ecfdf5", borderWidth: 1, borderColor: "#a7f3d0" },
-  noBtn: { flex: 1, alignItems: "center", paddingVertical: spacing.lg, borderRadius: radius.md, backgroundColor: "#fff1f2", borderWidth: 1, borderColor: "#fecdd3" },
+  yesBtn: { flex: 1, alignItems: "center", paddingVertical: spacing.lg, borderRadius: radius.md, backgroundColor: "#16A34A", borderWidth: 1, borderColor: "#16A34A" },
+  noBtn: { flex: 1, alignItems: "center", paddingVertical: spacing.lg, borderRadius: radius.md, backgroundColor: "#DC2626", borderWidth: 1, borderColor: "#DC2626" },
   btnPressed: { opacity: 0.7 },
-  yesBtnLabel: { fontSize: 12, fontWeight: "800", letterSpacing: 0.5, color: "#059669" },
-  yesBtnPct: { fontSize: 24, fontWeight: "700", color: "#059669", marginTop: 2 },
-  noBtnLabel: { fontSize: 12, fontWeight: "800", letterSpacing: 0.5, color: "#e11d48" },
-  noBtnPct: { fontSize: 24, fontWeight: "700", color: "#e11d48", marginTop: 2 },
+  yesBtnLabel: { fontSize: 12, fontWeight: "800", letterSpacing: 0.5, color: "#FFFFFF" },
+  yesBtnPct: { fontSize: 24, fontWeight: "700", color: "#FFFFFF", marginTop: 2 },
+  noBtnLabel: { fontSize: 12, fontWeight: "800", letterSpacing: 0.5, color: "#FFFFFF" },
+  noBtnPct: { fontSize: 24, fontWeight: "700", color: "#FFFFFF", marginTop: 2 },
   hint: { marginTop: spacing.sm, textAlign: "center", fontSize: 12, color: t.colors.textMuted },
 
   // Result row

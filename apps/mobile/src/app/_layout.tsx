@@ -93,7 +93,7 @@ function ThemedShell() {
       />
       <SafeAreaView
         style={[styles.safeArea, { backgroundColor: themeColors.background }]}
-        edges={Platform.OS === "android" ? ["top", "left", "right"] : ["left", "right"]}
+        edges={["left", "right"]}
       >
         <Stack
           screenOptions={{

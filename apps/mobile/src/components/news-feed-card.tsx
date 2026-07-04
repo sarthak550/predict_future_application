@@ -1307,7 +1307,7 @@ export function NewsFeedCard({ item, viewportHeight, showHint, onVoted }: Props)
               <Pressable
                 style={styles.financeChip}
                 onPress={() =>
-                  router.push(`/story/${item.id}` as Parameters<typeof router.push>[0])
+                  router.push(`/story/${item.id}?takesFirst=1` as Parameters<typeof router.push>[0])
                 }
                 hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
               >

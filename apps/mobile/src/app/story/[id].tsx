@@ -131,6 +131,24 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   expertSection: {
     marginTop: spacing.lg,
   },
+  // ── takesFirst condensed header ──
+  condensedHeader: {
+    paddingHorizontal: spacing.xl,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.md,
+  },
+  condensedHeadline: {
+    fontSize: 17,
+    lineHeight: 24,
+    fontWeight: "700",
+    color: t.colors.text,
+    marginBottom: spacing.sm,
+  },
+  condensedSourceLink: {
+    fontSize: 13,
+    color: t.colors.accent,
+    fontWeight: "600",
+  },
   expertSectionHeader: {
     flexDirection: "row",
     alignItems: "center",
@@ -185,8 +203,9 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
 });
 
 export default function StoryScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, takesFirst } = useLocalSearchParams<{ id: string; takesFirst?: string }>();
   const styles = useThemedStyles(makeStyles);
+  const isTakesFirst = takesFirst === "1";
   const [story, setStory] = useState<ApiStory | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -209,7 +228,7 @@ export default function StoryScreen() {
         err instanceof Error &&
         "status" in (err as { status?: number }) &&
         (err as { status?: number }).status === 404;
-      setError(isNotFound ? "Story not found." : "Failed to load story. Please try again.");
+      setError(isNotFound ? "Story not found." : "Failed to load safeStory. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -264,14 +283,97 @@ export default function StoryScreen() {
     );
   }
 
-  const hasExpertOpinions = story.expertOpinions.length > 0;
+  // story is guaranteed non-null by the guards above — capture as const for inner closures.
+  const safeStory = story;
+  const hasExpertOpinions = safeStory.expertOpinions.length > 0;
+
+  // ── Shared helper: render the expert takes list ───────────────────────────
+
+  function renderExpertTakes() {
+    if (!hasExpertOpinions) return null;
+    const grouped: { key: string; opinions: typeof safeStory.expertOpinions }[] = [];
+    const seen = new Map<string, number>();
+    for (const op of safeStory.expertOpinions) {
+      const idx = seen.get(op.expertId);
+      if (idx !== undefined) {
+        grouped[idx].opinions.push(op);
+      } else {
+        seen.set(op.expertId, grouped.length);
+        grouped.push({ key: op.expertId, opinions: [op] });
+      }
+    }
+    return grouped.map(({ key, opinions }) => (
+      <ExpertOpinionCard
+        key={key}
+        opinions={opinions}
+        storyHeadline={safeStory.headline}
+        storyId={safeStory.id}
+        articlePublishedAt={safeStory.publishedAt}
+      />
+    ));
+  }
+
+  // ── takesFirst mode: condensed header → takes section leads ──────────────
+
+  if (isTakesFirst) {
+    return (
+      <>
+        <Stack.Screen
+          options={{
+            headerShown: true,
+            title: "Expert Takes",
+            headerBackTitle: "Back",
+          }}
+        />
+        <ScrollView
+          style={styles.container}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Condensed header: 2-line headline + source link */}
+          <View style={styles.condensedHeader}>
+            <Text style={styles.condensedHeadline} numberOfLines={2}>
+              {safeStory.headline}
+            </Text>
+            <Pressable onPress={() => void Linking.openURL(safeStory.sourceUrl)}>
+              <Text style={styles.condensedSourceLink}>
+                {safeStory.sourceName} · Read full story →
+              </Text>
+            </Pressable>
+          </View>
+
+          {/* Expert Takes section — leads immediately */}
+          <View style={styles.expertSection}>
+            <View style={styles.expertSectionHeader}>
+              <Text style={styles.expertSectionTitle}>Expert Takes</Text>
+              {hasExpertOpinions && (
+                <Text style={styles.expertSectionCount}>
+                  {safeStory.expertOpinions.length}{" "}
+                  {safeStory.expertOpinions.length === 1 ? "take" : "takes"}
+                </Text>
+              )}
+            </View>
+            {hasExpertOpinions ? renderExpertTakes() : (
+              <Text style={{ paddingHorizontal: spacing.xl, color: "#888", fontSize: 14 }}>
+                No expert takes yet.
+              </Text>
+            )}
+          </View>
+
+          <View style={{ height: 40 }} />
+        </ScrollView>
+      </>
+    );
+  }
+
+  // ── Default mode: full-article render ─────────────────────────────────────
 
   return (
     <>
       <Stack.Screen
         options={{
           headerShown: true,
-          title: story.sourceName,
+          title: safeStory.sourceName,
           headerBackTitle: "Back",
         }}
       />
@@ -281,9 +383,9 @@ export default function StoryScreen() {
         showsVerticalScrollIndicator={false}
       >
         {/* Hero image */}
-        {story.imageUrl ? (
+        {safeStory.imageUrl ? (
           <Image
-            source={{ uri: story.imageUrl }}
+            source={{ uri: safeStory.imageUrl }}
             style={styles.heroImage}
             resizeMode="cover"
           />
@@ -295,26 +397,26 @@ export default function StoryScreen() {
 
         <View style={styles.contentPad}>
           {/* Category chip */}
-          <Text style={styles.categoryChip}>{story.category}</Text>
+          <Text style={styles.categoryChip}>{safeStory.category}</Text>
 
           {/* Headline */}
-          <Text style={styles.headline}>{story.headline}</Text>
+          <Text style={styles.headline}>{safeStory.headline}</Text>
 
           {/* Meta row: source + published date */}
           <Pressable
             style={styles.metaRow}
-            onPress={() => void Linking.openURL(story.sourceUrl)}
+            onPress={() => void Linking.openURL(safeStory.sourceUrl)}
           >
-            <Text style={styles.sourceName}>{story.sourceName}</Text>
+            <Text style={styles.sourceName}>{safeStory.sourceName}</Text>
             <Text style={styles.readMore}>Read original →</Text>
             <View style={{ flex: 1 }} />
             <Text style={styles.publishedAt}>
-              {formatRelativeTime(story.publishedAt)}
+              {formatRelativeTime(safeStory.publishedAt)}
             </Text>
           </Pressable>
 
           {/* Summary / body */}
-          <Text style={styles.summary}>{story.summary}</Text>
+          <Text style={styles.summary}>{safeStory.summary}</Text>
         </View>
 
         {/* Expert Takes section */}
@@ -323,33 +425,11 @@ export default function StoryScreen() {
             <View style={styles.expertSectionHeader}>
               <Text style={styles.expertSectionTitle}>Expert Takes</Text>
               <Text style={styles.expertSectionCount}>
-                {story.expertOpinions.length}{" "}
-                {story.expertOpinions.length === 1 ? "take" : "takes"}
+                {safeStory.expertOpinions.length}{" "}
+                {safeStory.expertOpinions.length === 1 ? "take" : "takes"}
               </Text>
             </View>
-
-            {(() => {
-              const grouped: { key: string; opinions: typeof story.expertOpinions }[] = [];
-              const seen = new Map<string, number>();
-              for (const op of story.expertOpinions) {
-                const idx = seen.get(op.expertId);
-                if (idx !== undefined) {
-                  grouped[idx].opinions.push(op);
-                } else {
-                  seen.set(op.expertId, grouped.length);
-                  grouped.push({ key: op.expertId, opinions: [op] });
-                }
-              }
-              return grouped.map(({ key, opinions }) => (
-                <ExpertOpinionCard
-                  key={key}
-                  opinions={opinions}
-                  storyHeadline={story.headline}
-                  storyId={story.id}
-                  articlePublishedAt={story.publishedAt}
-                />
-              ));
-            })()}
+            {renderExpertTakes()}
           </View>
         )}
 

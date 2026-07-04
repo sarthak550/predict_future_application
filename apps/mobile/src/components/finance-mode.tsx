@@ -133,6 +133,17 @@ function getCountdownLabel(flagshipEventAt: string): string {
 
 const MPC_RBI_COLOR = "#DC2626"; // same as EVENT_TYPE_COLORS["RBI"]
 
+/**
+ * MpcOptionChips — renders vote options for an RBI MPC poll card.
+ *
+ * T3 (lock): when `poll.userVote` is set, all chips become non-tappable;
+ *   the chosen option shows a checkmark + blue fill; others are 45% opacity.
+ *   A "Prediction locked" label appears below the chips.
+ *
+ * T4 (always-visible breakdown): regardless of vote state, show a bar + %
+ *   row under each option so the crowd distribution is always visible.
+ *   When totalVotes===0, bars are empty and the voter-count line is hidden.
+ */
 function MpcOptionChips({
   poll,
   onPickOption,
@@ -141,42 +152,123 @@ function MpcOptionChips({
   onPickOption: (pollId: string, optionId: string) => void;
 }) {
   const mpcStyles = useThemedStyles(makeMpcStyles);
+  const { colors } = useTheme();
   const options = poll.options ?? [];
   if (options.length === 0) return null;
 
   const totalVotes = poll.totalVotes > 0 ? poll.totalVotes : options.reduce((s, o) => s + o.voteCount, 0);
+  const userVote = poll.userVote ?? null;
+  const isLocked = userVote !== null;
 
   return (
-    <View style={mpcStyles.chipsWrap}>
-      {options.map((opt) => {
-        const pct = totalVotes > 0 ? Math.round((opt.voteCount / totalVotes) * 100) : 0;
-        const maxPct = totalVotes > 0
-          ? Math.max(...options.map((o) => Math.round((o.voteCount / totalVotes) * 100)))
-          : 0;
-        const isLeading = totalVotes > 0 && pct === maxPct;
-        return (
-          <Pressable
-            key={opt.id}
-            style={({ pressed }) => [
-              mpcStyles.chip,
-              isLeading && mpcStyles.chipLeading,
-              pressed && { opacity: 0.75 },
-            ]}
-            onPress={() => onPickOption(poll.id, opt.id)}
-            accessibilityRole="button"
-            accessibilityLabel={`Predict ${opt.label}${pct > 0 ? `, ${pct}% crowd` : ""}`}
-          >
-            <Text style={[mpcStyles.chipText, isLeading && mpcStyles.chipTextLeading]} numberOfLines={1}>
-              {opt.label}
-            </Text>
-            {totalVotes > 0 && (
-              <Text style={[mpcStyles.chipPct, isLeading && mpcStyles.chipPctLeading]}>
+    <View>
+      {/* ── Option chips (tappable when not locked) ── */}
+      <View style={mpcStyles.chipsWrap}>
+        {options.map((opt) => {
+          const pct = totalVotes > 0 ? Math.round((opt.voteCount / totalVotes) * 100) : 0;
+          const isChosen = isLocked && userVote.optionId === opt.id;
+
+          if (isLocked) {
+            // Non-tappable locked state
+            return (
+              <View
+                key={opt.id}
+                style={[
+                  mpcStyles.chip,
+                  isChosen ? mpcStyles.chipChosen : mpcStyles.chipUnchosen,
+                ]}
+                accessibilityLabel={`${opt.label}${pct > 0 ? `, ${pct}% crowd` : ""}${isChosen ? ", your prediction" : ""}`}
+              >
+                <Text
+                  style={[
+                    mpcStyles.chipText,
+                    isChosen ? mpcStyles.chipTextChosen : mpcStyles.chipTextUnchosen,
+                  ]}
+                  numberOfLines={1}
+                >
+                  {opt.label}
+                </Text>
+                {isChosen ? (
+                  <Text style={mpcStyles.chipCheckmark}>✓</Text>
+                ) : totalVotes > 0 ? (
+                  <Text style={mpcStyles.chipPctUnchosen}>{pct}%</Text>
+                ) : null}
+              </View>
+            );
+          }
+
+          // Tappable — normal leading-highlight behaviour
+          const maxPct = totalVotes > 0
+            ? Math.max(...options.map((o) => Math.round((o.voteCount / totalVotes) * 100)))
+            : 0;
+          const isLeading = totalVotes > 0 && pct === maxPct;
+          return (
+            <Pressable
+              key={opt.id}
+              style={({ pressed }) => [
+                mpcStyles.chip,
+                isLeading && mpcStyles.chipLeading,
+                pressed && { opacity: 0.75 },
+              ]}
+              onPress={() => onPickOption(poll.id, opt.id)}
+              accessibilityRole="button"
+              accessibilityLabel={`Predict ${opt.label}${pct > 0 ? `, ${pct}% crowd` : ""}`}
+            >
+              <Text style={[mpcStyles.chipText, isLeading && mpcStyles.chipTextLeading]} numberOfLines={1}>
+                {opt.label}
+              </Text>
+              {totalVotes > 0 && (
+                <Text style={[mpcStyles.chipPct, isLeading && mpcStyles.chipPctLeading]}>
+                  {pct}%
+                </Text>
+              )}
+            </Pressable>
+          );
+        })}
+      </View>
+
+      {/* ── T4: Always-visible vote breakdown bar rows ── */}
+      <View style={mpcStyles.breakdownWrap}>
+        {options.map((opt) => {
+          const pct = totalVotes > 0 ? Math.round((opt.voteCount / totalVotes) * 100) : 0;
+          const fillPct = totalVotes > 0 ? (opt.voteCount / totalVotes) * 100 : 0;
+          const isChosen = isLocked && userVote?.optionId === opt.id;
+          return (
+            <View key={opt.id} style={mpcStyles.breakdownRow}>
+              <Text
+                style={[mpcStyles.breakdownLabel, isChosen && mpcStyles.breakdownLabelChosen]}
+                numberOfLines={1}
+              >
+                {opt.label}
+              </Text>
+              <View style={mpcStyles.breakdownBarTrack}>
+                <View
+                  style={[
+                    mpcStyles.breakdownBarFill,
+                    isChosen && mpcStyles.breakdownBarFillChosen,
+                    { width: `${fillPct}%` as `${number}%` },
+                  ]}
+                />
+              </View>
+              <Text style={[mpcStyles.breakdownPct, isChosen && mpcStyles.breakdownPctChosen]}>
                 {pct}%
               </Text>
-            )}
-          </Pressable>
-        );
-      })}
+            </View>
+          );
+        })}
+        {totalVotes > 0 && (
+          <Text style={mpcStyles.voterCount}>
+            {totalVotes.toLocaleString("en-IN")} {totalVotes === 1 ? "person" : "people"} voted
+          </Text>
+        )}
+      </View>
+
+      {/* ── T3: Prediction locked label ── */}
+      {isLocked && (
+        <Text style={[mpcStyles.lockedLabel, { color: colors.textMuted }]}>
+          Prediction locked
+        </Text>
+      )}
     </View>
   );
 }
@@ -422,6 +514,16 @@ const makeMpcStyles = (t: ThemeContextValue) => StyleSheet.create({
     backgroundColor: "#FEF2F2",
     borderColor: "#FECACA",
   },
+  // T3: Locked states
+  chipChosen: {
+    backgroundColor: "#2563EB",
+    borderColor: "#2563EB",
+  },
+  chipUnchosen: {
+    backgroundColor: t.colors.surfaceMuted,
+    borderColor: t.colors.border,
+    opacity: 0.45,
+  },
   chipText: {
     fontSize: 12,
     fontWeight: "600",
@@ -431,6 +533,19 @@ const makeMpcStyles = (t: ThemeContextValue) => StyleSheet.create({
     color: "#991B1B",
     fontWeight: "700",
   },
+  chipTextChosen: {
+    color: "#FFFFFF",
+    fontWeight: "700",
+  },
+  chipTextUnchosen: {
+    color: t.colors.text,
+  },
+  chipCheckmark: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#FFFFFF",
+    marginLeft: 2,
+  },
   chipPct: {
     fontSize: 10,
     fontWeight: "700",
@@ -438,6 +553,71 @@ const makeMpcStyles = (t: ThemeContextValue) => StyleSheet.create({
   },
   chipPctLeading: {
     color: "#DC2626",
+  },
+  chipPctUnchosen: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: t.colors.textSubtle,
+  },
+  // T3: Locked label
+  lockedLabel: {
+    fontSize: 11,
+    fontWeight: "600",
+    fontStyle: "italic",
+    marginTop: 6,
+    textAlign: "center",
+  },
+  // T4: Always-visible vote breakdown
+  breakdownWrap: {
+    marginTop: 10,
+    gap: 6,
+  },
+  breakdownRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  breakdownLabel: {
+    fontSize: 11,
+    color: t.colors.textMuted,
+    width: 80,
+    flexShrink: 0,
+  },
+  breakdownLabelChosen: {
+    color: "#2563EB",
+    fontWeight: "700",
+  },
+  breakdownBarTrack: {
+    flex: 1,
+    height: 4,
+    backgroundColor: t.colors.surfaceMuted,
+    borderRadius: 2,
+    overflow: "hidden",
+  },
+  breakdownBarFill: {
+    height: "100%",
+    borderRadius: 2,
+    backgroundColor: t.colors.textSubtle,
+  },
+  breakdownBarFillChosen: {
+    backgroundColor: "#2563EB",
+  },
+  breakdownPct: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: t.colors.textMuted,
+    width: 32,
+    textAlign: "right",
+    flexShrink: 0,
+  },
+  breakdownPctChosen: {
+    color: "#2563EB",
+  },
+  voterCount: {
+    fontSize: 10,
+    color: t.colors.textSubtle,
+    marginTop: 4,
+    textAlign: "right",
   },
   ctaBtn: {
     marginTop: spacing.md,

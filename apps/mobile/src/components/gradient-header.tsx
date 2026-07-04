@@ -1,20 +1,17 @@
 /**
  * GradientHeader — the shared brand header for top-level tab screens.
  *
- * One component so every tab reads as the same product (not just Finance), and so
- * the safe-area inset is handled in exactly one place:
- *   • iOS    — the root SafeAreaView does NOT inset the top, so the header pads
- *              `insets.top` itself → the gradient bleeds full-width under the notch.
- *   • Android — the root SafeAreaView already insets the top, so the header must
- *              NOT add it again (that double-padding was the "blank space" bug);
- *              a small `spacing.xs` is all that's needed below the status-bar strip.
+ * The root SafeAreaView in _layout.tsx only insets left/right (no top on any
+ * platform), so this component is the sole owner of the top inset on all platforms:
+ *   • iOS    — pads `insets.top` so the gradient bleeds under the notch.
+ *   • Android — pads `insets.top` so the gradient clears the translucent status bar.
  *
  * Pass a `title`, an optional `subtitle`, and an optional `right` node (search pill,
  * icon buttons). Keep it to a single compact row so it never wastes vertical space.
  */
 
 import { type ReactNode } from "react";
-import { Platform, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { spacing } from "@predict-future/ui-tokens";
@@ -29,8 +26,9 @@ type GradientHeaderProps = {
 
 export function GradientHeader({ title, subtitle, right }: GradientHeaderProps) {
   const insets = useSafeAreaInsets();
-  // Android already cleared the status bar at the root; iOS clears the notch here.
-  const paddingTop = Platform.OS === "android" ? spacing.xs : insets.top;
+  // The root SafeAreaView no longer owns the top inset — this header is the sole
+  // owner on all platforms so content clears the status bar exactly once.
+  const paddingTop = insets.top;
 
   return (
     <BrandGradient variant="brand" style={[styles.wrap, { paddingTop }]}>

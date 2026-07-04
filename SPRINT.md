@@ -2,8 +2,8 @@
 
 > Human-readable view of `.claude/sprint-board.json`. Auto-maintained by the CEO/CTO/QA agents — do not edit by hand.
 
-**Current sprint:** 72
-**Status:** Sprint 72 LOADED (4 tickets pending) — India Macro panel: MacroSnapshot store + IMF fetcher (T1, CRIT), IMF cron + /api/finance/macro-indicators endpoint + ApiMacroIndicatorsResponse type (T2, CRIT), IndiaMacroCard component + Rates & Events tab rewire (T3, HIGH), seed script (T4, HIGH). Replaces the RbiRatesCard's poll-description dependency with a clean store; adds GDP Growth + CPI Inflation from IMF DataMapper to the Rates & Events tab alongside the RBI trio (Repo, CRR, SLR). Sprint 71 LOADED (2 tickets pending) — backend-only: balanced India+global mix when toggle is OFF (8 new global RSS sources + GLOBAL_ONLY_SOURCES expansion + two-pool interleave), and summarizer cap raised 10→40 with inter-batch pacing and 429 early-exit guard. Sprint 70 LOADED (4 tickets pending). Sprint 69 in-progress (India toggle). Sprint 68 QA COMPLETE (1/1, incl. runtime). Sprint 67 QA COMPLETE (1/1). Sprint 66 QA COMPLETE (5/5) — Profile redesigned into a LinkedIn-style single elegant scroll. Sprint 65 QA COMPLETE (1/1). Sprint 64 QA COMPLETE (2/2). Sprint 63 QA COMPLETE (2/2). Sprint 62 loaded — Poll/Market Separation Phase 1. Sprint 60 in progress — Scorecard integrity hardening. Sprint 59 QA COMPLETE (6/6). Sprint 58 QA COMPLETE (8/8). Sprint 57 QA COMPLETE (5/5). Sprint 56 QA COMPLETE (9/9). Sprint 55 QA COMPLETE (8/8). Sprint 54 QA COMPLETE (8/8). Sprint 53 QA COMPLETE (6/6). Sprint 52 QA COMPLETE (4/4). Sprint 51 COMPLETE (5/5). Sprint 50 COMPLETE (6/6). Sprint 49 COMPLETE (9/9). Sprints 43–48 COMPLETE. Sprints 38–42 COMPLETE (security/correctness hardening, 54 tickets). Sprints 12, 25–34 COMPLETE.
+**Current sprint:** 73
+**Status:** Sprint 73 LOADED (4 tickets pending) — mobile-only UI polish: expert-takes-first layout on Story screen (T1, HIGH), YES/NO button dark-mode contrast fix in market detail + QuickPredict (T2, HIGH), RBI MPC poll lock-after-vote + voted state on pack card (T3, HIGH, minor backend touch), always-visible vote breakdown on MPC pack card + detail screen (T4, HIGH). Sprint 72 in progress (4 tickets, India Macro MacroSnapshot panel). Sprint 71 backend-only (2 tickets, feed balance + summarizer). Sprint 70 LOADED (4 tickets pending). Sprint 69 in-progress (India toggle). Sprint 68 QA COMPLETE (1/1, incl. runtime). Sprint 67 QA COMPLETE (1/1). Sprint 66 QA COMPLETE (5/5) — Profile redesigned into a LinkedIn-style single elegant scroll. Sprint 65 QA COMPLETE (1/1). Sprint 64 QA COMPLETE (2/2). Sprint 63 QA COMPLETE (2/2). Sprint 62 loaded — Poll/Market Separation Phase 1. Sprint 60 in progress — Scorecard integrity hardening. Sprint 59 QA COMPLETE (6/6). Sprint 58 QA COMPLETE (8/8). Sprint 57 QA COMPLETE (5/5). Sprint 56 QA COMPLETE (9/9). Sprint 55 QA COMPLETE (8/8). Sprint 54 QA COMPLETE (8/8). Sprint 53 QA COMPLETE (6/6). Sprint 52 QA COMPLETE (4/4). Sprint 51 COMPLETE (5/5). Sprint 50 COMPLETE (6/6). Sprint 49 COMPLETE (9/9). Sprints 43–48 COMPLETE. Sprints 38–42 COMPLETE (security/correctness hardening, 54 tickets). Sprints 12, 25–34 COMPLETE.
 
 ---
 
@@ -919,6 +919,19 @@
 | S69-T1 | HIGH | 🔨 in-progress | Feed: India toggle — user-controlled news region filter (Switch in header, AsyncStorage-persisted, indiaOnly API param) |
 
 _SPEC CORRECTED by founder (2026-07-04): No Global chip. A physical labeled "India" Switch lives in the Feed header right slot, default ON. Persists across app restarts. ON → indiaOnly=true (excludes BBC World / ESPN / TechCrunch / CNBC / The Verge / Ars Technica). OFF → full mix. ANDs with category chips. No schema migration._
+
+---
+
+## Sprint 73
+
+| ID | Priority | Status | Title |
+|---|---|---|---|
+| S73-T1 | HIGH | pending | Story screen: expert-takes-first layout when arriving from feed link |
+| S73-T2 | HIGH | pending | Market detail + QuickPredict: fix YES/NO button contrast in dark mode |
+| S73-T3 | HIGH | pending | RBI MPC polls: lock after voting + show voted state on pack card |
+| S73-T4 | HIGH | pending | RBI MPC polls: always-visible vote breakdown (total voters + per-option %) |
+
+_Mobile-only sprint (T3 has one minor backend touch: pack-list API must return userVote per poll for auth'd users). T1: route-param-gated condensed header on story screen; no hero image + compact headline+source-link when ?takesFirst=1; callers in expert-opinion-post-card.tsx + news-feed-card.tsx updated. T2: solid fill YES=#16A34A/NO=#DC2626 + white text in market/[id].tsx sideBtnYes/No and quick-predict.tsx yesBtn/noBtn — replaces pastel backgrounds that break in dark mode. T3: ApiPoll gains userVote field, pack-card chips become non-tappable once voted, chosen option gets checkmark + 'Your choice', CTA hidden, detail screen re-vote gated in submit handler. T4: MpcOptionChips gets label+bar+% row layout always visible (before + after voting); detail screen VoteConsensus ungated from hasVoted. Implement T3 before T4 (T4 builds on top)._
 
 ---
 

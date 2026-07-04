@@ -532,7 +532,7 @@ export default function PollDetailScreen() {
           <SisterMarketCta onPress={goToSister} />
         )}
 
-        {/* Vote summary / consensus */}
+        {/* Vote summary / consensus — always visible (T4: ungate from hasVoted) */}
         <VoteConsensus
           market={market}
           isMultiChoice={isMultiChoice}
@@ -563,7 +563,7 @@ export default function PollDetailScreen() {
         </View>
       ) : null}
 
-      {/* Vote sheet */}
+      {/* Vote sheet — pass hasVoted so submit() guards against double-voting */}
       <PollVoteSheet
         visible={voteSheetOpen}
         onClose={() => setVoteSheetOpen(false)}
@@ -571,6 +571,7 @@ export default function PollDetailScreen() {
         isPollApi={isPollApi}
         market={market}
         isMultiChoice={isMultiChoice}
+        hasVoted={hasVoted}
         preselectOptionId={typeof preselect === "string" ? preselect : null}
         onSuccess={() => {
           setVoteSheetOpen(false);
@@ -607,6 +608,13 @@ function SisterMarketCta({ onPress }: { onPress: () => void }) {
 
 // ─── Vote Consensus (S61-T2: You vs the crowd) ───────────────────────────────
 
+/**
+ * VoteConsensus — T4: always visible (no longer gated behind hasVoted).
+ *
+ * Shows each option as: [label (80px) | proportional fill bar | pct (32px)].
+ * When totalVotes===0, bars are empty and the voter-count line is hidden.
+ * When the user has voted, their option is highlighted amber; crowd fave is indigo.
+ */
 function VoteConsensus({
   market,
   isMultiChoice,
@@ -622,19 +630,10 @@ function VoteConsensus({
 }) {
   const styles = useThemedStyles(makeStyles);
 
-  if (!hasVoted) {
-    return (
-      <View style={styles.card}>
-        <Text style={styles.sectionLabel}>Live consensus</Text>
-        <Text style={styles.consensusEmpty}>Cast your prediction to reveal the crowd consensus.</Text>
-      </View>
-    );
-  }
-
   if (isMultiChoice) {
     const options = market.options ?? [];
     // Use totalStaked as vote count (each free poll vote counts as 1 stake).
-    const total = options.reduce((sum, o) => sum + Math.max(o.totalStaked, 1), 0);
+    const total = options.reduce((sum, o) => sum + o.totalStaked, 0);
 
     // Find the crowd favourite (option with highest share).
     const crowdLeaderId = options.reduce<string | null>(
@@ -646,15 +645,17 @@ function VoteConsensus({
       null
     );
 
+    const sectionTitle = hasVoted ? "You vs the crowd" : "Live consensus";
+
     const isYouVsCrowd =
+      hasVoted &&
       userOptionId !== null &&
       crowdLeaderId !== null &&
       userOptionId !== crowdLeaderId;
 
     return (
       <View style={styles.card}>
-        {/* S61-T2: "You vs the crowd" header */}
-        <Text style={styles.sectionLabel}>You vs the crowd</Text>
+        <Text style={styles.sectionLabel}>{sectionTitle}</Text>
         {isYouVsCrowd && (
           <Text style={styles.youVsCrowdNote}>
             You picked differently from the crowd — that&apos;s what makes it interesting.
@@ -662,9 +663,10 @@ function VoteConsensus({
         )}
 
         {options.map((opt) => {
-          const pct = total > 0 ? (Math.max(opt.totalStaked, 1)) / total : 0;
-          const mine = opt.id === userOptionId;
-          const isCrowdFave = opt.id === crowdLeaderId;
+          const fillPct = total > 0 ? (opt.totalStaked / total) * 100 : 0;
+          const displayPct = Math.round(fillPct);
+          const mine = hasVoted && opt.id === userOptionId;
+          const isCrowdFave = opt.id === crowdLeaderId && total > 0;
           return (
             <View key={opt.id} style={styles.mcRow}>
               <View style={styles.mcRowHeader}>
@@ -677,13 +679,13 @@ function VoteConsensus({
                       <Text style={styles.yourPickBadgeText}>Your pick</Text>
                     </View>
                   )}
-                  {isCrowdFave && !mine && (
+                  {isCrowdFave && !mine && hasVoted && (
                     <View style={styles.crowdFaveBadge}>
                       <Text style={styles.crowdFaveBadgeText}>Crowd</Text>
                     </View>
                   )}
                 </View>
-                <Text style={[styles.mcPct, mine && styles.mcPctMine]}>{Math.round(pct * 100)}%</Text>
+                <Text style={[styles.mcPct, mine && styles.mcPctMine]}>{displayPct}%</Text>
               </View>
               <View style={styles.mcBar}>
                 <View
@@ -691,7 +693,7 @@ function VoteConsensus({
                     styles.mcBarFill,
                     mine && styles.mcBarFillMine,
                     isCrowdFave && !mine && styles.mcBarFillCrowd,
-                    { width: `${Math.round(pct * 100)}%` },
+                    { width: `${fillPct}%` as `${number}%` },
                   ]}
                 />
               </View>
@@ -699,23 +701,25 @@ function VoteConsensus({
           );
         })}
 
-        {market.totalParticipants != null && market.totalParticipants > 0 && (
+        {total > 0 && (
           <Text style={styles.participantNote}>
-            Based on {market.totalParticipants.toLocaleString()} predictions
+            {total.toLocaleString("en-IN")} {total === 1 ? "prediction" : "predictions"}
           </Text>
         )}
       </View>
     );
   }
 
-  // Binary — use same crowd-vs-you layout.
+  // Binary — use same layout.
   const yesPct = 0.5; // placeholder until API returns raw counts for binary markets
   return (
     <View style={styles.card}>
-      <Text style={styles.sectionLabel}>You vs the crowd</Text>
-      <View style={[styles.sideTag, userSide === "YES" ? styles.sideTagYes : styles.sideTagNo]}>
-        <Text style={styles.sideTagText}>You predicted: {userSide}</Text>
-      </View>
+      <Text style={styles.sectionLabel}>{hasVoted ? "You vs the crowd" : "Live consensus"}</Text>
+      {hasVoted && userSide && (
+        <View style={[styles.sideTag, userSide === "YES" ? styles.sideTagYes : styles.sideTagNo]}>
+          <Text style={styles.sideTagText}>You predicted: {userSide}</Text>
+        </View>
+      )}
       <Text style={[styles.consensusEmpty, { marginTop: spacing.sm }]}>
         Consensus updates as more votes come in. {Math.round(yesPct * 100)}% YES so far.
       </Text>
@@ -786,6 +790,7 @@ function PollVoteSheet({
   isPollApi,
   market,
   isMultiChoice,
+  hasVoted,
   preselectOptionId,
   onSuccess,
 }: {
@@ -801,6 +806,8 @@ function PollVoteSheet({
   isPollApi: boolean;
   market: PollResponse["market"];
   isMultiChoice: boolean;
+  /** T3: if true, submit() is a hard no-op — prevents re-voting after lock. */
+  hasVoted: boolean;
   preselectOptionId: string | null;
   onSuccess: () => void;
 }) {
@@ -821,6 +828,11 @@ function PollVoteSheet({
       : null;
 
   async function submit() {
+    // T3 hard lock: if the user has already voted, silently no-op.
+    if (hasVoted) {
+      onClose();
+      return;
+    }
     if (submitting) return;
     if (isMultiChoice && !selectedOptionId) {
       setError("Pick an option to predict.");

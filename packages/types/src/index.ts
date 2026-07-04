@@ -1733,9 +1733,13 @@ export type ApiPollOption = {
 };
 
 /**
- * A Poll as returned by GET /api/polls (list) and
- * GET /api/polls/[pollId] (without the caller's vote).
+ * A Poll as returned by GET /api/polls (list), GET /api/polls/packs,
+ * and GET /api/polls/[pollId] (without the caller's vote).
  * Suitable for rendering cards and carousels.
+ *
+ * `userVote` is present only when the caller is authenticated and has voted.
+ * The packs endpoint does a left-join on PollVote so mobile can lock chips
+ * without fetching each poll detail individually.
  */
 export type ApiPoll = {
   id: string;
@@ -1752,6 +1756,8 @@ export type ApiPoll = {
   createdAt: string;
   options: ApiPollOption[];
   totalVotes: number;
+  /** Present when the authenticated caller has already voted on this poll. */
+  userVote?: { optionId: string; lockedAt: string | null } | null;
 };
 
 /**

@@ -587,7 +587,7 @@ export function ExpertOpinionPostCard({
       {siblings.length > 0 && opinion.storyId && (
         <Pressable
           onPress={() =>
-            router.push(`/story/${opinion.storyId}` as Parameters<typeof router.push>[0])
+            router.push(`/story/${opinion.storyId}?takesFirst=1` as Parameters<typeof router.push>[0])
           }
           style={styles.siblingsLink}
           hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}

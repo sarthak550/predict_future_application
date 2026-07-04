@@ -3104,29 +3104,29 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     borderWidth: 2,
   },
   sideBtnYes: {
-    borderColor: "#BBF7D0",
-    backgroundColor: "#F0FDF4",
+    borderColor: "#16A34A",
+    backgroundColor: "#16A34A",
   },
   sideBtnYesActive: {
-    borderColor: "#16A34A",
-    backgroundColor: "#DCFCE7",
+    borderColor: "#15803D",
+    backgroundColor: "#15803D",
   },
   sideBtnNo: {
-    borderColor: "#FECACA",
-    backgroundColor: "#FEF2F2",
+    borderColor: "#DC2626",
+    backgroundColor: "#DC2626",
   },
   sideBtnNoActive: {
-    borderColor: "#DC2626",
-    backgroundColor: "#FEE2E2",
+    borderColor: "#B91C1C",
+    backgroundColor: "#B91C1C",
   },
   sideBtnText: {
     fontSize: 18,
     fontWeight: "800",
     letterSpacing: 1,
-    color: t.colors.text,
+    color: "#FFFFFF",
   },
   sideBtnTextActive: {
-    color: t.colors.text,
+    color: "#FFFFFF",
   },
   sideProb: {
     marginTop: 4,
