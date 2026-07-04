@@ -163,7 +163,7 @@ DIRECTION SEMANTICS — read the call relative to the INSTRUMENT'S PRICE, not th
 When the call is an INDIRECT prediction (about a derivative like risk premium, volatility, yield, currency strength), tag the direction of the UNDERLYING INSTRUMENT'S PRICE that the analyst is implicitly forecasting. If you cannot confidently infer the instrument-price direction, REJECT the extraction.
 
 QUOTE QUALITY STANDARD:
-Write paraphrasedQuote as a 2-3 sentence summary that preserves the full substance of the analyst's view.
+Write paraphrasedQuote as a complete 40–80 word summary (minimum 40 words, maximum 80 — beyond 80 loses the reader). COMPLETENESS OF CONTEXT IS THE PRIORITY: never drop a key reason, price target, level, or timeframe just to stay short — trim wording, not substance. Preserve the full substance of the analyst's view.
 Include: the specific instrument(s) + direction + conviction level, the key reason(s) cited, the timeframe, and any price targets or risk factors mentioned.
 A reader who hasn't seen the article should come away with a clear, actionable understanding of the call.
 Do NOT truncate to a single vague sentence. Do NOT omit price targets or specific catalysts if present.

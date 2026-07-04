@@ -329,6 +329,12 @@ async function callGeminiRaw(
       generationConfig: {
         temperature: opts.temperature,
         maxOutputTokens: opts.maxOutputTokens,
+        // Disable "thinking" on Gemini 2.5 models: reasoning tokens otherwise
+        // consume the maxOutputTokens budget and truncate structured JSON output
+        // mid-string ("Unterminated string in JSON ..."). These are extraction /
+        // structured tasks that don't need chain-of-thought. thinkingBudget:0 also
+        // makes calls faster + cheaper. (Ignored by models without thinking.)
+        thinkingConfig: { thinkingBudget: 0 },
         ...(opts.responseMimeType ? { responseMimeType: opts.responseMimeType } : {}),
       },
     });
