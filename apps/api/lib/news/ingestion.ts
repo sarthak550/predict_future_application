@@ -209,14 +209,37 @@ async function upsertStoryWithMarket(tx: TxClient, input: StoryInput, actorId: s
 }
 
 export async function ingestStories(items: StoryInput[], actorId: string) {
-  return prisma.$transaction(async (tx) => {
-    const results = [];
+  const results: Array<Awaited<ReturnType<typeof upsertStoryWithMarket>>> = [];
+  const failures: Array<{ item: StoryInput; error: unknown }> = [];
 
-    for (const item of items) {
-      const result = await upsertStoryWithMarket(tx, item, actorId);
+  // Each story is ingested in its OWN short transaction rather than wrapping the
+  // entire batch in a single interactive transaction. A mega-transaction over
+  // hundreds of RSS items blows past Postgres/Neon transaction limits and fails
+  // with P2028 ("Transaction not found ... old closed transaction"), especially
+  // with cross-region DB latency. Per-item transactions stay well under the
+  // timeout and make ingestion resilient — one malformed story no longer aborts
+  // the whole run.
+  for (const item of items) {
+    try {
+      const result = await prisma.$transaction(
+        (tx) => upsertStoryWithMarket(tx, item, actorId),
+        { maxWait: 10000, timeout: 20000 }
+      );
       results.push(result);
+    } catch (error) {
+      console.error(
+        `[news:ingest] failed to ingest story from ${item.sourceName} (${item.sourceUrl}):`,
+        error
+      );
+      failures.push({ item, error });
     }
+  }
 
-    return results;
-  }, { maxWait: 30000, timeout: 30000 });
+  // If every item failed (e.g. a single-story admin ingest, or a systemic DB
+  // outage), surface the error to the caller instead of silently returning [].
+  if (results.length === 0 && failures.length > 0) {
+    throw failures[0].error;
+  }
+
+  return results;
 }

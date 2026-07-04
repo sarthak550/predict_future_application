@@ -59,12 +59,15 @@ const defaultRssSources: RssSource[] = [
     isActive: true
   },
   {
+    // Reuters Agency RSS was retired (feed now 404s). Disabled until a working
+    // Reuters endpoint is found; India/global GENERAL coverage comes from
+    // Google News (IN), BBC, and NDTV in the meantime.
     id: "reuters-world",
     name: "Reuters",
     url: "https://www.reutersagency.com/feed/?taxonomy=best-sectors&post_type=best",
     categoryHint: "GENERAL",
     fallbackCategory: "GENERAL",
-    isActive: true
+    isActive: false
   },
   {
     id: "the-verge",
