@@ -2,7 +2,7 @@ import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
 import { Platform, StyleSheet } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { colors } from "@predict-future/ui-tokens";
 
@@ -84,6 +84,7 @@ function PushTokenRegistrar() {
  */
 function ThemedShell() {
   const { colors: themeColors, isDark } = useTheme();
+  const insets = useSafeAreaInsets();
   return (
     <>
       <StatusBar
@@ -104,7 +105,9 @@ function ThemedShell() {
             headerStyle: { backgroundColor: themeColors.background },
             headerTintColor: themeColors.text,
             headerTitleStyle: { color: themeColors.text },
-            headerShadowVisible: false,
+            // Edge-to-edge (Expo 54) + translucent status bar: reserve the status-bar
+            // height in the header so the back button isn't under the clock/battery.
+            headerStatusBarHeight: insets.top,
           }}
         />
       </SafeAreaView>
