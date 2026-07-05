@@ -3164,7 +3164,10 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   sideProb: {
     marginTop: 4,
     fontSize: 13,
-    color: t.colors.textMuted,
+    // Sits on the solid green/red button, so a dimmed white reads in both modes
+    // (was textMuted grey → invisible on the colored fill).
+    color: "rgba(255,255,255,0.9)",
+    fontWeight: "600",
   },
   lockedSideRow: {
     flexDirection: "row",

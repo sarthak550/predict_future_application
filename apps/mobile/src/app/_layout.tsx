@@ -99,6 +99,12 @@ function ThemedShell() {
           screenOptions={{
             headerShown: false,
             contentStyle: { backgroundColor: themeColors.background },
+            // Theme-aware nav header (was defaulting to a white bar in dark mode).
+            // Applies to every screen that sets headerShown: true.
+            headerStyle: { backgroundColor: themeColors.background },
+            headerTintColor: themeColors.text,
+            headerTitleStyle: { color: themeColors.text },
+            headerShadowVisible: false,
           }}
         />
       </SafeAreaView>
