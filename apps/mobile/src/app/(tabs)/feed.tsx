@@ -13,6 +13,7 @@ import {
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 
 import type { ApiNewsFeedItem, AppAnalystTier, AppMarketCategory } from "@predict-future/types";
@@ -91,6 +92,7 @@ export default function FeedScreen() {
   const { colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
   const { height } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const router = useRouter();
   const { category: categoryParam } = useLocalSearchParams<{ category?: string }>();
@@ -365,8 +367,10 @@ export default function FeedScreen() {
   }
 
   const cardHeight = useMemo(
-    () => Math.max(480, height - TAB_BAR_HEIGHT - CATEGORY_BAR_HEIGHT),
-    [height]
+    // Tab bar is 72 + bottom safe-area inset, so subtract the inset too or the
+    // swipe cards run slightly under the (now taller) tab bar.
+    () => Math.max(480, height - TAB_BAR_HEIGHT - insets.bottom - CATEGORY_BAR_HEIGHT),
+    [height, insets.bottom]
   );
 
   const feedItems = useMemo(() => buildFeedItems(items), [items]);

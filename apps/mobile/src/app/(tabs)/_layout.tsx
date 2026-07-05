@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { StyleSheet } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { OnboardingWalkthrough } from "@/components/onboarding-walkthrough";
 import { StreakReminder } from "@/components/streak-reminder";
@@ -31,6 +32,9 @@ export default function TabsLayout() {
   const notificationCount = useNotificationBadge();
   const profileBadge = notificationCount > 0 ? notificationCount : undefined;
   const { colors, shadows } = useTheme();
+  // Add the system nav-bar inset so the tab bar sits ABOVE the Android gesture/
+  // 3-button nav (was hardcoded height:72 → overlapped the system nav).
+  const insets = useSafeAreaInsets();
 
   return (
     <>
@@ -42,9 +46,9 @@ export default function TabsLayout() {
           tabBarActiveTintColor: colors.accent,
           tabBarInactiveTintColor: colors.textMuted,
           tabBarStyle: {
-            height: 72,
+            height: 72 + insets.bottom,
             paddingTop: 8,
-            paddingBottom: 10,
+            paddingBottom: 10 + insets.bottom,
             backgroundColor: colors.surface,
             borderTopWidth: StyleSheet.hairlineWidth,
             borderTopColor: colors.border,
