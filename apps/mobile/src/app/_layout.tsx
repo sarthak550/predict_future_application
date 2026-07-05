@@ -1,8 +1,9 @@
+import { ThemeProvider as NavThemeProvider, DefaultTheme as NavDefaultTheme, DarkTheme as NavDarkTheme } from "@react-navigation/native";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
 import { Platform, StyleSheet } from "react-native";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 import { colors } from "@predict-future/ui-tokens";
 
@@ -84,7 +85,22 @@ function PushTokenRegistrar() {
  */
 function ThemedShell() {
   const { colors: themeColors, isDark } = useTheme();
-  const insets = useSafeAreaInsets();
+  // Theme the NAVIGATION (native-stack) so its headers adapt to dark mode via the
+  // proper mechanism — `colors.card` = header background, `colors.text` = tint/title.
+  // (Setting headerStyle directly broke the edge-to-edge status-bar inset; the nav
+  // theme lets the default header keep its correct status-bar handling AND go dark.)
+  const base = isDark ? NavDarkTheme : NavDefaultTheme;
+  const navTheme = {
+    ...base,
+    colors: {
+      ...base.colors,
+      primary: themeColors.accent,
+      background: themeColors.background,
+      card: themeColors.background,
+      text: themeColors.text,
+      border: themeColors.border,
+    },
+  };
   return (
     <>
       <StatusBar
@@ -92,25 +108,19 @@ function ThemedShell() {
         translucent={Platform.OS === "android"}
         backgroundColor="transparent"
       />
-      <SafeAreaView
-        style={[styles.safeArea, { backgroundColor: themeColors.background }]}
-        edges={["left", "right"]}
-      >
-        <Stack
-          screenOptions={{
-            headerShown: false,
-            contentStyle: { backgroundColor: themeColors.background },
-            // Theme-aware nav header (was defaulting to a white bar in dark mode).
-            // Applies to every screen that sets headerShown: true.
-            headerStyle: { backgroundColor: themeColors.background },
-            headerTintColor: themeColors.text,
-            headerTitleStyle: { color: themeColors.text },
-            // Edge-to-edge (Expo 54) + translucent status bar: reserve the status-bar
-            // height in the header so the back button isn't under the clock/battery.
-            headerStatusBarHeight: insets.top,
-          }}
-        />
-      </SafeAreaView>
+      <NavThemeProvider value={navTheme}>
+        <SafeAreaView
+          style={[styles.safeArea, { backgroundColor: themeColors.background }]}
+          edges={["left", "right"]}
+        >
+          <Stack
+            screenOptions={{
+              headerShown: false,
+              contentStyle: { backgroundColor: themeColors.background },
+            }}
+          />
+        </SafeAreaView>
+      </NavThemeProvider>
     </>
   );
 }
