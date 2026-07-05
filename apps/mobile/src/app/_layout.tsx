@@ -12,6 +12,7 @@ import { AppProviders } from "@/providers";
 import { useSession } from "@/providers/session-provider";
 import { useTheme } from "@/providers/theme-provider";
 import { LeagueBanner } from "@/components/league-banner";
+import { ThemedStackHeader } from "@/components/themed-stack-header";
 
 /**
  * Lazy-load expo-notifications. In Expo Go (SDK 53+) Android remote-push support
@@ -117,6 +118,10 @@ function ThemedShell() {
             screenOptions={{
               headerShown: false,
               contentStyle: { backgroundColor: themeColors.background },
+              // Custom header that reliably clears the status bar (native-stack's
+              // own header doesn't under Expo 54 edge-to-edge). Only renders on
+              // screens that set headerShown: true.
+              header: (props) => <ThemedStackHeader {...props} />,
             }}
           />
         </SafeAreaView>
