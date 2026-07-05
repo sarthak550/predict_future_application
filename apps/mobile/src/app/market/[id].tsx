@@ -23,7 +23,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { Session } from "@/providers/session-provider";
 
 import type { ApiAnalystPosition, ApiMarketDetail, ApiMarketSummary, ApiMyProfile, ApiProbabilityHistory } from "@predict-future/types";
-import { formatPercent, formatPoints, formatRelativeTime } from "@predict-future/utils";
+import { formatDateTime, formatPercent, formatPoints, formatRelativeTime } from "@predict-future/utils";
 import { radius, spacing } from "@predict-future/ui-tokens";
 
 import { useApiQuery } from "@/hooks/useApiQuery";
@@ -875,7 +875,7 @@ function BettingSheet({
             {/* Low-balance warning (T2: S68) — informational only, does not block Submit */}
             {walletBalance != null && betAmount >= 50 && betAmount > walletBalance ? (
               <View style={styles.lowBalanceWarning}>
-                <Ionicons name="warning-outline" size={14} color="#D97706" />
+                <Ionicons name="warning-outline" size={14} color={colors.warning as string} />
                 <Text style={styles.lowBalanceWarningText}>
                   You only have {walletBalance.toLocaleString()} pts available
                 </Text>
@@ -1147,7 +1147,7 @@ function MultiChoiceBettingSheet({
             {/* Low-balance warning (T2: S68) — informational only, does not block Submit */}
             {walletBalance != null && betAmount >= 50 && betAmount > walletBalance ? (
               <View style={styles.lowBalanceWarning}>
-                <Ionicons name="warning-outline" size={14} color="#D97706" />
+                <Ionicons name="warning-outline" size={14} color={colors.warning as string} />
                 <Text style={styles.lowBalanceWarningText}>
                   You only have {walletBalance.toLocaleString()} pts available
                 </Text>
@@ -1453,8 +1453,8 @@ const makeAnalystPosStyles = (t: ThemeContextValue) => StyleSheet.create({
     paddingVertical: 2,
     borderRadius: 4,
   },
-  pillYes: { backgroundColor: "#DCFCE7" },
-  pillNo: { backgroundColor: "#FEE2E2" },
+  pillYes: { backgroundColor: t.colors.successSoft },
+  pillNo: { backgroundColor: t.colors.dangerSoft },
   sidePillText: { fontSize: 11, fontWeight: "700", color: t.colors.text },
   username: {
     fontSize: 12,
@@ -1531,6 +1531,11 @@ function MarketBody({
     (market.status === "CLOSED" || market.status === "AWAITING_RESOLUTION") &&
     market.creator?.username != null &&
     market.creator.username === session?.username;
+
+  // Gate: host can only submit once resolveAt has passed. AWAITING_RESOLUTION
+  // naturally implies resolveAt is in the past, so this is only meaningful for
+  // CLOSED-but-pre-resolveAt markets.
+  const canResolve = !market.resolveAt || new Date() >= new Date(market.resolveAt);
 
   // Animated probability bar
   const animatedProb = useRef(new Animated.Value(yesProbability)).current;
@@ -1648,7 +1653,7 @@ function MarketBody({
     <View style={styles.container}>
       {showPendingReviewBanner ? (
         <View style={styles.pendingReviewBanner}>
-          <Ionicons name="time-outline" size={18} color="#92400E" />
+          <Ionicons name="time-outline" size={18} color={colors.warning as string} />
           <Text style={styles.pendingReviewBannerText}>
             Pending review — only you and moderators can see this market until it&apos;s approved.
           </Text>
@@ -1962,6 +1967,18 @@ function MarketBody({
               You are the host. Submit the official outcome below.
             </Text>
 
+            {/* Resolve window — shows when host can act */}
+            {market.resolveAt ? (
+              <View style={styles.resolveWindowRow}>
+                <Ionicons name="time-outline" size={14} color={styles.resolveWindowText.color as string} />
+                <Text style={styles.resolveWindowText}>
+                  {market.finalResolutionDeadline
+                    ? `Resolve window: ${formatDateTime(market.resolveAt)} → ${formatDateTime(market.finalResolutionDeadline)}`
+                    : `You can resolve from ${formatDateTime(market.resolveAt)}`}
+                </Text>
+              </View>
+            ) : null}
+
             {/* Commission preview */}
             {(market.hostCommissionBps ?? 0) > 0 ? (
               <View style={styles.commissionRow}>
@@ -2049,9 +2066,9 @@ function MarketBody({
             />
 
             <Pressable
-              style={[styles.resolveConfirmBtn, resolving && styles.btnDisabled]}
+              style={[styles.resolveConfirmBtn, (!canResolve || resolving) && styles.btnDisabled]}
               onPress={handleResolve}
-              disabled={resolving}
+              disabled={!canResolve || resolving}
             >
               {resolving ? (
                 <ActivityIndicator color="#fff" />
@@ -2059,6 +2076,13 @@ function MarketBody({
                 <Text style={styles.resolveConfirmText}>Confirm Resolution</Text>
               )}
             </Pressable>
+
+            {/* Timing hint — only shown when resolve time hasn't been reached yet */}
+            {!canResolve && market.resolveAt ? (
+              <Text style={styles.resolveNotYetHint}>
+                Resolvable from {formatDateTime(market.resolveAt)}
+              </Text>
+            ) : null}
           </View>
         )
       ) : null}
@@ -2274,7 +2298,7 @@ const makeRelatedStyles = (t: ThemeContextValue) => StyleSheet.create({
   probTrack: {
     height: 5,
     borderRadius: 3,
-    backgroundColor: "#FEE2E2",
+    backgroundColor: t.colors.dangerSoft,
     overflow: "hidden",
   },
   probFill: {
@@ -2558,22 +2582,23 @@ type CommentItem = {
 
 /** Small pill badge showing commenter's market position ('skin in the game'). */
 function PositionBadge({ pos }: { pos: CommenterPosition }) {
+  const { colors, isDark } = useTheme();
   let label: string;
   let bgColor: string;
   let textColor: string;
 
   if (pos.kind === "binary") {
     label = `Holds ${pos.side} — ${pos.amount} pts`;
-    bgColor = pos.side === "YES" ? "#D1FAE5" : "#FEE2E2";
-    textColor = pos.side === "YES" ? "#065F46" : "#991B1B";
+    bgColor = pos.side === "YES" ? colors.successSoft : colors.dangerSoft;
+    textColor = pos.side === "YES" ? colors.success : colors.danger;
   } else if (pos.kind === "multi-choice") {
     label = `Holds ${pos.optionLabel} — ${pos.amount} pts`;
-    bgColor = "#EDE9FE";
-    textColor = "#4C1D95";
+    bgColor = isDark ? "#1E1B38" : "#EDE9FE";
+    textColor = isDark ? "#A78BFA" : "#4C1D95";
   } else {
     label = `Predicted ${pos.value} — ${pos.amount} pts`;
-    bgColor = "#E0F2FE";
-    textColor = "#0C4A6E";
+    bgColor = colors.accentSoft;
+    textColor = colors.accent;
   }
 
   return (
@@ -2830,16 +2855,16 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.sm,
-    backgroundColor: "#FEF3C7",
+    backgroundColor: t.colors.warningSoft,
     borderLeftWidth: 4,
-    borderLeftColor: "#D97706",
+    borderLeftColor: t.colors.warning,
     borderRadius: radius.sm,
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.md,
   },
   pendingReviewBannerText: {
     flex: 1,
-    color: "#92400E",
+    color: t.colors.warning,
     fontSize: 13,
     lineHeight: 18,
     fontWeight: "500",
@@ -2866,7 +2891,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     paddingVertical: 3,
     borderRadius: radius.sm,
   },
-  badgeOpen: { backgroundColor: "#DCFCE7" },
+  badgeOpen: { backgroundColor: t.colors.successSoft },
   badgeClosed: { backgroundColor: t.colors.surfaceMuted },
   badgeText: {
     fontSize: 11,
@@ -2874,7 +2899,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     letterSpacing: 0.5,
     textTransform: "uppercase",
   },
-  badgeTextOpen: { color: "#16A34A" },
+  badgeTextOpen: { color: t.colors.success },
   badgeTextClosed: { color: t.colors.textMuted },
   categoryLabel: {
     fontSize: 11,
@@ -2927,7 +2952,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     marginTop: spacing.md,
     height: 8,
     borderRadius: radius.pill,
-    backgroundColor: "#E0E7FF",
+    backgroundColor: t.colors.accentSoft,
     position: "relative",
     overflow: "visible",
   },
@@ -2959,7 +2984,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   progressTrack: {
     height: 10,
     borderRadius: radius.pill,
-    backgroundColor: "#FEE2E2",
+    backgroundColor: t.colors.dangerSoft,
     overflow: "hidden",
   },
   progressFill: {
@@ -3047,12 +3072,13 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     paddingVertical: 4,
     borderRadius: radius.sm,
   },
-  sidePillYes: { backgroundColor: "#DCFCE7" },
-  sidePillNo: { backgroundColor: "#FEE2E2" },
-  sidePillNumeric: { backgroundColor: "#DBEAFE" },
+  sidePillYes: { backgroundColor: t.colors.successSoft },
+  sidePillNo: { backgroundColor: t.colors.dangerSoft },
+  sidePillNumeric: { backgroundColor: t.colors.accentSoft },
   sidePillText: {
     fontSize: 13,
     fontWeight: "700",
+    color: t.colors.text,
   },
   positionAmount: {
     fontSize: 14,
@@ -3268,38 +3294,38 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
 
   // ── Success state ──
   successCard: {
-    backgroundColor: "#F0FDF4",
+    backgroundColor: t.colors.successSoft,
     borderWidth: 1,
-    borderColor: "#BBF7D0",
+    borderColor: t.colors.success,
   },
   successTitle: {
     fontSize: 18,
     fontWeight: "700",
-    color: "#16A34A",
+    color: t.colors.success,
   },
   successText: {
     marginTop: spacing.sm,
     fontSize: 14,
     lineHeight: 20,
-    color: "#15803D",
+    color: t.colors.success,
   },
 
   // ── Poll notice ──
   pollCard: {
-    backgroundColor: "#EFF6FF",
+    backgroundColor: t.colors.accentSoft,
     borderWidth: 1,
-    borderColor: "#BFDBFE",
+    borderColor: t.isDark ? t.colors.accentDeep : "#BFDBFE",
   },
   pollTitle: {
     fontSize: 15,
     fontWeight: "700",
-    color: "#1D4ED8",
+    color: t.colors.accent,
     marginBottom: spacing.sm,
   },
   pollText: {
     fontSize: 14,
     lineHeight: 20,
-    color: "#1E40AF",
+    color: t.colors.accent,
   },
 
   // ── Closed ──
@@ -3392,14 +3418,14 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     borderRadius: radius.pill,
   },
   resolutionOutcomeBadgeYes: {
-    backgroundColor: "#DCFCE7",
+    backgroundColor: t.colors.successSoft,
     borderWidth: 1,
-    borderColor: "#86EFAC",
+    borderColor: t.colors.success,
   },
   resolutionOutcomeBadgeNo: {
-    backgroundColor: "#FEE2E2",
+    backgroundColor: t.colors.dangerSoft,
     borderWidth: 1,
-    borderColor: "#FCA5A5",
+    borderColor: t.colors.danger,
   },
   resolutionOutcomeBadgeNeutral: {
     backgroundColor: t.colors.surfaceMuted,
@@ -3412,10 +3438,10 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     letterSpacing: 0.5,
   },
   resolutionOutcomeBadgeTextYes: {
-    color: "#15803D",
+    color: t.colors.success,
   },
   resolutionOutcomeBadgeTextNo: {
-    color: "#DC2626",
+    color: t.isDark ? t.colors.danger : "#DC2626",
   },
   resolutionOutcomeBadgeTextNeutral: {
     color: t.colors.textMuted,
@@ -3424,14 +3450,14 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: 6,
     borderRadius: radius.pill,
-    backgroundColor: "#FEF3C7",
+    backgroundColor: t.colors.warningSoft,
     borderWidth: 1,
-    borderColor: "#FCD34D",
+    borderColor: t.colors.warning,
   },
   overturnedBadgeText: {
     fontSize: 12,
     fontWeight: "700",
-    color: "#92400E",
+    color: t.colors.warning,
   },
   resolutionMeta: {
     fontSize: 14,
@@ -3443,19 +3469,19 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   // ── Host resolution panel ──
   resolveCard: {
     borderWidth: 1.5,
-    borderColor: "#FDE68A",
-    backgroundColor: "#FFFBEB",
+    borderColor: t.colors.warning,
+    backgroundColor: t.colors.warningSoft,
   },
   resolveHostHint: {
     fontSize: 14,
-    color: "#92400E",
+    color: t.colors.warning,
     marginBottom: spacing.lg,
   },
   commissionRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    backgroundColor: "#FEF3C7",
+    backgroundColor: t.isDark ? "rgba(245,158,11,0.12)" : "#FEF3C7",
     borderRadius: radius.md,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
@@ -3463,25 +3489,45 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   },
   commissionLabel: {
     fontSize: 13,
-    color: "#92400E",
+    color: t.colors.warning,
     flex: 1,
     marginRight: spacing.sm,
   },
   commissionValue: {
     fontSize: 14,
     fontWeight: "800",
-    color: "#78350F",
+    color: t.colors.warning,
   },
   resolveNoteInput: {
     height: 80,
     paddingTop: spacing.sm,
     textAlignVertical: "top",
   },
+  resolveWindowRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    marginBottom: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  resolveWindowText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: "500",
+    color: t.colors.warning,
+    lineHeight: 18,
+  },
+  resolveNotYetHint: {
+    marginTop: spacing.sm,
+    fontSize: 12,
+    color: t.colors.textMuted,
+    textAlign: "center",
+  },
   resolveConfirmBtn: {
     marginTop: spacing.lg,
     paddingVertical: 16,
     borderRadius: radius.md,
-    backgroundColor: "#D97706",
+    backgroundColor: t.colors.warning,
     alignItems: "center",
   },
   resolveConfirmText: {
@@ -3490,14 +3536,14 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     color: "#fff",
   },
   resolveSuccessCard: {
-    backgroundColor: "#F0FDF4",
+    backgroundColor: t.colors.successSoft,
     borderWidth: 1,
-    borderColor: "#BBF7D0",
+    borderColor: t.colors.success,
   },
   resolveSuccessTitle: {
     fontSize: 16,
     fontWeight: "700",
-    color: "#16A34A",
+    color: t.colors.success,
     textAlign: "center",
   },
 
@@ -3686,9 +3732,9 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     paddingVertical: 3,
     borderRadius: radius.sm,
   },
-  stickyPosPillYes: { backgroundColor: "#DCFCE7" },
-  stickyPosPillNo: { backgroundColor: "#FEE2E2" },
-  stickyPosPillNumeric: { backgroundColor: "#DBEAFE" },
+  stickyPosPillYes: { backgroundColor: t.colors.successSoft },
+  stickyPosPillNo: { backgroundColor: t.colors.dangerSoft },
+  stickyPosPillNumeric: { backgroundColor: t.colors.accentSoft },
   stickyPosPillText: {
     fontSize: 12,
     fontWeight: "700",
@@ -3764,8 +3810,8 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     paddingVertical: 8,
     borderRadius: radius.pill,
   },
-  votedChipYes: { backgroundColor: "#DCFCE7" },
-  votedChipNo: { backgroundColor: "#FEE2E2" },
+  votedChipYes: { backgroundColor: t.colors.successSoft },
+  votedChipNo: { backgroundColor: t.colors.dangerSoft },
   votedChipText: {
     fontSize: 14,
     fontWeight: "700",
@@ -3778,8 +3824,8 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     paddingVertical: 6,
     borderRadius: radius.pill,
   },
-  outcomePillYes: { backgroundColor: "#DCFCE7" },
-  outcomePillNo: { backgroundColor: "#FEE2E2" },
+  outcomePillYes: { backgroundColor: t.colors.successSoft },
+  outcomePillNo: { backgroundColor: t.colors.dangerSoft },
   outcomePillText: {
     fontSize: 14,
     fontWeight: "700",
@@ -3853,14 +3899,14 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     alignItems: "center",
     gap: spacing.xs,
     marginTop: spacing.sm,
-    backgroundColor: "#FFFBEB",
+    backgroundColor: t.colors.warningSoft,
     borderRadius: radius.sm,
     padding: spacing.sm,
   },
   lowBalanceWarningText: {
     flex: 1,
     fontSize: 13,
-    color: "#D97706",
+    color: t.colors.warning,
     fontWeight: "600",
   },
   sheetSuccessSection: {
@@ -3870,13 +3916,13 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   sheetSuccessTitle: {
     fontSize: 22,
     fontWeight: "700",
-    color: "#16A34A",
+    color: t.colors.success,
     marginBottom: spacing.sm,
   },
   sheetSuccessText: {
     fontSize: 15,
     lineHeight: 22,
-    color: "#15803D",
+    color: t.colors.success,
     textAlign: "center",
   },
 
@@ -3907,12 +3953,12 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     marginBottom: spacing.lg,
   },
   payoffIconCircleWin: {
-    backgroundColor: "#DCFCE7",
+    backgroundColor: t.colors.successSoft,
     borderWidth: 3,
-    borderColor: "#16A34A",
+    borderColor: t.colors.success,
   },
   payoffIconCircleLoss: {
-    backgroundColor: "#FEE2E2",
+    backgroundColor: t.colors.dangerSoft,
     borderWidth: 3,
     borderColor: "#DC2626",
   },
@@ -3924,7 +3970,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   payoffHeadlineWin: {
     fontSize: 28,
     fontWeight: "900",
-    color: "#16A34A",
+    color: t.colors.success,
     textAlign: "center",
     marginBottom: spacing.sm,
   },
@@ -3938,7 +3984,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   payoffPointsDelta: {
     fontSize: 40,
     fontWeight: "900",
-    color: "#16A34A",
+    color: t.colors.success,
     textAlign: "center",
     marginBottom: spacing.md,
     letterSpacing: -1,
