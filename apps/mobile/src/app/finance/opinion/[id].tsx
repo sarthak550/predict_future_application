@@ -31,6 +31,7 @@ import { useApiQuery } from "@/hooks/useApiQuery";
 import { radius, spacing } from "@predict-future/ui-tokens";
 import { formatRelativeTime } from "@predict-future/utils";
 import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
+import { SectionHelp } from "@/components/section-help";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -478,7 +479,10 @@ export default function OpinionDetailScreen() {
 
       {/* Poll A — agreement */}
       <View style={styles.pollSection}>
-        <Text style={styles.pollTitle}>Do you agree with this call?</Text>
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+          <Text style={styles.pollTitle}>Do you agree with this call?</Text>
+          <SectionHelp helpKey="opinion-do-you-agree" />
+        </View>
         {isResolved && opinion.resolvedAt && (
           <View style={styles.votingClosedBanner}>
             <Feather name="lock" size={12} color={colors.textMuted} />

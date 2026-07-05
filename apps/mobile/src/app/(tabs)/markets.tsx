@@ -16,6 +16,7 @@ import {
 } from "react-native";
 
 import { GradientHeader } from "@/components/gradient-header";
+import { SectionHelp } from "@/components/section-help";
 
 import type { ApiDiscoverGroup, ApiGroupSummary, ApiMarketSummary, ApiMyPositionsResponse, ApiPollListItem, ApiPositionSummary } from "@predict-future/types";
 import { radius, spacing } from "@predict-future/ui-tokens";
@@ -553,22 +554,25 @@ export default function MarketsScreen() {
       <GradientHeader
         title="Explore"
         right={
-          <View style={styles.searchRow}>
-            <Feather name="search" size={16} color="rgba(255,255,255,0.85)" />
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Search markets..."
-              placeholderTextColor="rgba(255,255,255,0.6)"
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-            />
-            {searchLoading && mode === "public" ? (
-              <ActivityIndicator size="small" color="rgba(255,255,255,0.85)" />
-            ) : searchQuery.length > 0 ? (
-              <Pressable onPress={() => setSearchQuery("")} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <Feather name="x" size={16} color="rgba(255,255,255,0.85)" />
-              </Pressable>
-            ) : null}
+          <View style={styles.headerRight}>
+            <SectionHelp helpKey="markets-intro" variant="light" />
+            <View style={styles.searchRow}>
+              <Feather name="search" size={16} color="rgba(255,255,255,0.85)" />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Search markets..."
+                placeholderTextColor="rgba(255,255,255,0.6)"
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+              />
+              {searchLoading && mode === "public" ? (
+                <ActivityIndicator size="small" color="rgba(255,255,255,0.85)" />
+              ) : searchQuery.length > 0 ? (
+                <Pressable onPress={() => setSearchQuery("")} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Feather name="x" size={16} color="rgba(255,255,255,0.85)" />
+                </Pressable>
+              ) : null}
+            </View>
           </View>
         }
       />
@@ -1560,6 +1564,12 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
 
   // ── Search bar (white-on-gradient pill, lives inside GradientHeader right slot) ──
 
+  headerRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    flex: 1,
+  },
   searchRow: {
     flex: 1,
     maxWidth: 220,

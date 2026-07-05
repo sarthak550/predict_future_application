@@ -43,6 +43,10 @@ import { SHOW_PHONE_VERIFY } from "@/lib/feature-flags";
 import { useSession } from "@/providers/session-provider";
 import { useWatchlist, type WatchlistItem } from "@/providers/watchlist-provider";
 
+import { SectionHelp } from "@/components/section-help";
+import { HelpSheet } from "@/components/help-sheet";
+import { TOUR_ORDER } from "@/constants/help-content";
+
 // ── Status helpers ────────────────────────────────────────────────────────────
 
 const STATUS_META: Record<string, { label: string; color: string; bg: string }> = {
@@ -144,8 +148,16 @@ function buildVoteItems(votes: VoteItem[]): ActivityItem[] {
 
 // ── SectionHeader ─────────────────────────────────────────────────────────────
 
-function SectionHeader({ title }: { title: string }) {
+function SectionHeader({ title, helpKey }: { title: string; helpKey?: string }) {
   const s = useThemedStyles(makeSectionHeaderStyles);
+  if (helpKey) {
+    return (
+      <View style={s.row}>
+        <Text style={s.label}>{title}</Text>
+        <SectionHelp helpKey={helpKey} />
+      </View>
+    );
+  }
   return <Text style={s.label}>{title}</Text>;
 }
 
@@ -157,6 +169,14 @@ const makeSectionHeaderStyles = (t: ThemeContextValue) =>
       color: t.colors.textMuted,
       textTransform: "uppercase",
       letterSpacing: 0.8,
+      paddingTop: spacing.xl,
+      paddingBottom: spacing.xs,
+      paddingHorizontal: spacing.xl,
+    },
+    row: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
       paddingTop: spacing.xl,
       paddingBottom: spacing.xs,
       paddingHorizontal: spacing.xl,
@@ -413,7 +433,7 @@ function AchievementsSection({
 
   return (
     <>
-      <SectionHeader title="Achievements" />
+      <SectionHeader title="Achievements" helpKey="profile-achievements" />
       <View style={s.card}>
         {rows.map((row, idx) => (
           <React.Fragment key={row.key}>
@@ -514,7 +534,7 @@ function ActivitySection({
   if (displayItems.length === 0) {
     return (
       <>
-        <SectionHeader title="Recent Activity" />
+        <SectionHeader title="Recent Activity" helpKey="profile-recent-activity" />
         <View style={s.card}>
           <Text style={actS.emptyText}>No activity yet — head to Markets to make a prediction.</Text>
         </View>
@@ -599,7 +619,7 @@ function MarketsSection({
 
   return (
     <>
-      <SectionHeader title="Markets & Watchlist" />
+      <SectionHeader title="Markets & Watchlist" helpKey="profile-markets-watchlist" />
       <View style={mktS.card}>
         {/* My Markets */}
         {displayCreated.length > 0 && (
@@ -767,7 +787,7 @@ function StatsSection({
 
   return (
     <>
-      <SectionHeader title="Track Record" />
+      <SectionHeader title="Track Record" helpKey="profile-track-record" />
       {isFullyBrandNew ? (
         <GetStartedCard router={router} />
       ) : (
@@ -1349,6 +1369,9 @@ export default function ProfileScreen() {
   // ── Notification unread badge ──
   const [notifUnreadCount, setNotifUnreadCount] = useState(0);
 
+  // ── Help tour ──
+  const [tourVisible, setTourVisible] = useState(false);
+
   const fetcher = useCallback(() => mobileApi.getMyProfile(), []);
   const groupsFetcher = useCallback(() => mobileApi.getMyGroups(), []);
   const questsFetcher = useCallback(() => mobileApi.getQuestsToday(), []);
@@ -1664,7 +1687,7 @@ export default function ProfileScreen() {
         />
 
         {/* Social card: Quests / Leagues / Leaderboard / Groups */}
-        <SectionHeader title="Explore" />
+        <SectionHeader title="Explore" helpKey="profile-explore" />
         <View style={styles.socialCard}>
           <Pressable
             style={({ pressed }) => [styles.socialRow, pressed && { opacity: 0.75 }]}
@@ -1758,7 +1781,29 @@ export default function ProfileScreen() {
           ) : (
             <Text style={styles.socialEmptyHint}>Tap to join with an invite code</Text>
           )}
+
+          <View style={styles.socialDivider} />
+
+          <Pressable
+            style={({ pressed }) => [styles.socialRow, pressed && { opacity: 0.75 }]}
+            onPress={() => setTourVisible(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Take the app tour"
+          >
+            <Ionicons name="map-outline" size={20} color={colors.accent} />
+            <Text style={styles.socialRowLabel}>Take the tour</Text>
+            <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+          </Pressable>
         </View>
+
+        {/* App tour HelpSheet — mounted at ProfileScreen level so it persists
+            through the full tour sequence without unmounting between steps */}
+        <HelpSheet
+          visible={tourVisible}
+          helpKey={TOUR_ORDER[0]!}
+          tourKeys={TOUR_ORDER}
+          onClose={() => setTourVisible(false)}
+        />
 
         {/* Share portfolio */}
         <View style={styles.actionsCard}>

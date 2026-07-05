@@ -34,6 +34,7 @@ import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/t
 import { GradientButton } from "@/components/gradient-button";
 import { VerifiedBadge } from "@/components/verified-badge";
 import { LinkifiedText } from "@/components/linkified-text";
+import { SectionHelp } from "@/components/section-help";
 
 type UserPosition = {
   id: string;
@@ -715,9 +716,12 @@ function BettingSheet({
         {/* Header */}
         <View style={styles.sheetHeader}>
           <View style={styles.sheetTitleWrap}>
-            <Text style={styles.sheetTitle}>
-              {hasPosition ? "Increase Your Bet" : "Place Your Bet"}
-            </Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+              <Text style={styles.sheetTitle}>
+                {hasPosition ? "Increase Your Bet" : "Place Your Bet"}
+              </Text>
+              <SectionHelp helpKey="market-bet-sheet" />
+            </View>
             {walletBalance != null && (
               <Text style={styles.sheetBalanceHint}>
                 Available: {walletBalance.toLocaleString()} pts
@@ -1661,15 +1665,18 @@ function MarketBody({
       ) : null}
       {/* Market info */}
       <View style={styles.card}>
-        <View style={styles.topRow}>
-          <View style={[styles.badge, isOpen ? styles.badgeOpen : styles.badgeClosed]}>
-            <Text style={[styles.badgeText, isOpen ? styles.badgeTextOpen : styles.badgeTextClosed]}>
-              {market.status}
-            </Text>
+        <View style={[styles.topRow, { justifyContent: "space-between" }]}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            <View style={[styles.badge, isOpen ? styles.badgeOpen : styles.badgeClosed]}>
+              <Text style={[styles.badgeText, isOpen ? styles.badgeTextOpen : styles.badgeTextClosed]}>
+                {market.status}
+              </Text>
+            </View>
+            {market.category ? (
+              <Text style={styles.categoryLabel}>{market.category}</Text>
+            ) : null}
           </View>
-          {market.category ? (
-            <Text style={styles.categoryLabel}>{market.category}</Text>
-          ) : null}
+          <SectionHelp helpKey="market-header-card" />
         </View>
 
         <Text style={styles.cardTitle}>{market.title}</Text>
@@ -1786,7 +1793,10 @@ function MarketBody({
       {/* Existing positions / vote */}
       {hasPosition ? (
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Your Position</Text>
+          <View style={styles.sectionTitleRow}>
+            <Text style={styles.sectionTitleText}>Your Position</Text>
+            <SectionHelp helpKey="market-your-position" />
+          </View>
           {positions.map((pos) => (
             <View key={pos.id} style={styles.positionRow}>
               {pos.side ? (
@@ -1906,7 +1916,10 @@ function MarketBody({
           A null resolutionRuleText means "same as description" (stored as null server-side). */}
       {market.description ? (
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Resolution Rules</Text>
+          <View style={styles.sectionTitleRow}>
+            <Text style={styles.sectionTitleText}>Resolution Rules</Text>
+            <SectionHelp helpKey="market-resolution-rules" />
+          </View>
           {market.resolutionRuleText ? (
             <LinkifiedText
               text={market.resolutionRuleText}
@@ -1962,7 +1975,10 @@ function MarketBody({
           </View>
         ) : (
           <View style={[styles.card, styles.resolveCard]}>
-            <Text style={styles.sectionTitle}>Resolve Market</Text>
+            <View style={styles.sectionTitleRow}>
+              <Text style={styles.sectionTitleText}>Resolve Market</Text>
+              <SectionHelp helpKey="market-resolve-panel" />
+            </View>
             <Text style={styles.resolveHostHint}>
               You are the host. Submit the official outcome below.
             </Text>
@@ -2124,7 +2140,10 @@ function ResolutionSection({
   return (
     <>
       <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Resolution</Text>
+        <View style={styles.sectionTitleRow}>
+          <Text style={styles.sectionTitleText}>Resolution</Text>
+          <SectionHelp helpKey="market-resolved-rationale" />
+        </View>
 
         {/* Outcome badge row */}
         <View style={styles.resolutionHeaderRow}>
@@ -2170,7 +2189,10 @@ function ResolutionSection({
       {/* Rationale card — only if non-empty */}
       {resolution.rationale.trim().length > 0 ? (
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Resolution Rationale</Text>
+          <View style={styles.sectionTitleRow}>
+            <Text style={styles.sectionTitleText}>Resolution Rationale</Text>
+            <SectionHelp helpKey="market-resolved-rationale" />
+          </View>
           <Text style={styles.subtitle}>{resolution.rationale}</Text>
           {/* View on origin platform (S31-T4) */}
           {originPlatform != null && resolutionSourceUrl ? (
@@ -2226,7 +2248,10 @@ function RelatedMarketsRail({ currentMarketId, title }: { currentMarketId: strin
 
   return (
     <View style={styles.card}>
-      <Text style={styles.sectionTitle}>Related Markets</Text>
+      <View style={styles.sectionTitleRow}>
+        <Text style={styles.sectionTitleText}>Related Markets</Text>
+        <SectionHelp helpKey="market-related-markets" />
+      </View>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -2446,7 +2471,10 @@ function ProbabilityChart({
   return (
     <View style={styles.probChartCard}>
       <View style={styles.probChartHeader}>
-        <Text style={styles.probChartTitle}>Consensus shift</Text>
+        <View style={styles.sectionTitleRow}>
+          <Text style={[styles.probChartTitle, { marginBottom: 0 }]}>Consensus shift</Text>
+          <SectionHelp helpKey="market-consensus-shift" />
+        </View>
         <View style={styles.probChartHeadlineRow}>
           <Text style={styles.probChartHeadlinePct}>{currentPct}% YES</Text>
           <Text style={styles.probChartHeadlineDate}>{headlineDate}</Text>
@@ -2720,9 +2748,12 @@ function CommentsSection({
 
   return (
     <View style={styles.card}>
-      <Text style={styles.sectionTitle}>
-        Comments ({localComments.length})
-      </Text>
+      <View style={styles.sectionTitleRow}>
+        <Text style={styles.sectionTitleText}>
+          Comments ({localComments.length})
+        </Text>
+        <SectionHelp helpKey="market-comments" />
+      </View>
 
       {/* Toast overlay */}
       {toastMessage != null && (
@@ -3060,6 +3091,17 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     fontWeight: "700",
     color: t.colors.text,
     marginBottom: spacing.md,
+  },
+  sectionTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: spacing.md,
+  },
+  sectionTitleText: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: t.colors.text,
   },
   positionRow: {
     flexDirection: "row",

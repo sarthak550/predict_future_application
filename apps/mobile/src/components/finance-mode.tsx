@@ -38,6 +38,7 @@ import { ApiClientError } from "@predict-future/api-client";
 
 import { ExpertOpinionCard } from "@/components/expert-opinion-card";
 import { CombinedAnalystCard } from "@/components/combined-analyst-card";
+import { SectionHelp } from "@/components/section-help";
 import { mobileApi } from "@/lib/api";
 import { withRetry } from "@/lib/retry";
 import { isNSEHoliday } from "@/constants/nse-holidays-2026";
@@ -334,7 +335,10 @@ function MpcPollPackCard({ polls }: { polls: ApiPoll[] }) {
                   </View>
                   <Text style={mpcStyles.meetingDate}>{meetingDate}</Text>
                 </View>
-                <Text style={mpcStyles.heroTitle}>Predict the RBI Decision</Text>
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                  <Text style={mpcStyles.heroTitle}>Predict the RBI Decision</Text>
+                  <SectionHelp helpKey="finance-rbi-mpc-poll" />
+                </View>
                 <Text style={mpcStyles.heroSub}>
                   {totalParticipants > 0
                     ? `${totalParticipants.toLocaleString()} predictions so far — cast yours free`
@@ -795,6 +799,7 @@ function FlagshipEventsCarousel({ events }: { events: ApiFlagshipEvent[] }) {
     <View style={flagshipStyles.section}>
       <View style={flagshipStyles.headerRow}>
         <Text style={flagshipStyles.sectionHeader}>{"🔥 Policy & Big Events"}</Text>
+        <SectionHelp helpKey="finance-flagship-events-carousel" />
       </View>
       {events.length === 0 ? (
         <View style={flagshipStyles.emptyCard}>
@@ -1420,6 +1425,7 @@ function WeekToggleCard({
         >
           <Text style={digestStyles.collapseBtnText}>▲</Text>
         </Pressable>
+        <SectionHelp helpKey="finance-your-week-card" />
       </View>
 
       {/* View body — S70-T2: always render a meaningful state, never blank */}
@@ -1984,9 +1990,12 @@ function IndiaMacroCard({
       {/* Header row */}
       <View style={macroStyles.headerRow}>
         <Text style={macroStyles.cardTitle}>India Macro</Text>
-        {asOfText ? (
-          <Text style={macroStyles.asOfText}>Updated {asOfText}</Text>
-        ) : null}
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          {asOfText ? (
+            <Text style={macroStyles.asOfText}>Updated {asOfText}</Text>
+          ) : null}
+          <SectionHelp helpKey="finance-india-macro-card" />
+        </View>
       </View>
 
       {/* RBI Policy group */}
@@ -2155,14 +2164,17 @@ function PolicyCalendarCard({
       ]}
     >
       {/* Card heading */}
-      <Text
-        style={[
-          pulseStyles.ratesCardLabel,
-          { paddingHorizontal: 12, paddingBottom: 8, fontSize: 14, fontWeight: "800" },
-        ]}
-      >
-        💼 Policy Calendar
-      </Text>
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 12, paddingBottom: 8 }}>
+        <Text
+          style={[
+            pulseStyles.ratesCardLabel,
+            { fontSize: 14, fontWeight: "800" },
+          ]}
+        >
+          💼 Policy Calendar
+        </Text>
+        <SectionHelp helpKey="finance-policy-calendar" />
+      </View>
 
       {clusters.length === 0 ? (
         <View style={{ paddingHorizontal: 12, paddingBottom: 12 }}>
@@ -3029,6 +3041,7 @@ export function FinanceMode({
               </Pressable>
             );
           })}
+          <SectionHelp helpKey="finance-scope-tabs" />
         </View>
 
         {/* Rates & Events tab content — always-visible cards (no PulseRibbon, no collapse).
@@ -3180,6 +3193,7 @@ export function FinanceMode({
               </Pressable>
             );
           })()}
+          <SectionHelp helpKey="finance-sort-filter-chips" />
         </View>
 
         {(() => {
@@ -3412,9 +3426,12 @@ export function FinanceMode({
 
               {/* Subheader when viewing Market Analysis */}
               {showScope === "market-analysis" && selectedDirectionFilter !== "VERIFIED" && (
-                <Text style={financeStyles.sectionSubheader}>
-                  Notes from publications like J.P. Morgan, ET Money, Goldman Sachs
-                </Text>
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: spacing.lg, marginBottom: 4 }}>
+                  <Text style={[financeStyles.sectionSubheader, { flex: 1, marginBottom: 0 }]}>
+                    Notes from publications like J.P. Morgan, ET Money, Goldman Sachs
+                  </Text>
+                  <SectionHelp helpKey="finance-market-analysis" />
+                </View>
               )}
 
               {/* Cards */}

@@ -19,6 +19,7 @@ import { mobileApi } from "@/lib/api";
 import { withRetry } from "@/lib/retry";
 import { getExpertInitials, getExpertInitialsColor } from "@/utils/expertAvatar";
 import { AnalystCredibilityBadge } from "@/components/analyst-credibility-badge";
+import { SectionHelp } from "@/components/section-help";
 
 
 const DIRECTION_LABEL: Record<string, string> = {
@@ -313,13 +314,18 @@ export default function ExpertProfileScreen() {
                 </View>
               )}
               <View style={expertProfileStyles.nameBlock}>
-                <AnalystCredibilityBadge
-                  name={displayName}
-                  organization={profile.name && profile.organization ? profile.organization : undefined}
-                  hitRate={profile.credibilityScore}
-                  resolvedCount={profile.resolvedCount}
-                  size="md"
-                />
+                <View style={{ flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between" }}>
+                  <View style={{ flex: 1 }}>
+                    <AnalystCredibilityBadge
+                      name={displayName}
+                      organization={profile.name && profile.organization ? profile.organization : undefined}
+                      hitRate={profile.credibilityScore}
+                      resolvedCount={profile.resolvedCount}
+                      size="md"
+                    />
+                  </View>
+                  <SectionHelp helpKey="expert-credibility-header" />
+                </View>
                 {profile.credibilityScore === null && (
                   <View style={expertProfileStyles.provisionalBadge}>
                     <Text style={expertProfileStyles.provisionalText}>
@@ -331,34 +337,42 @@ export default function ExpertProfileScreen() {
             </View>
 
             {/* Stats row */}
-            <View style={expertProfileStyles.statsRow}>
-              <View style={expertProfileStyles.statTile}>
-                <Text style={expertProfileStyles.statValue}>{profile.totalOpinions}</Text>
-                <Text style={expertProfileStyles.statLabel}>Total Calls</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.lg }}>
+              <View style={[expertProfileStyles.statsRow, { flex: 1, marginBottom: 0 }]}>
+                <View style={expertProfileStyles.statTile}>
+                  <Text style={expertProfileStyles.statValue}>{profile.totalOpinions}</Text>
+                  <Text style={expertProfileStyles.statLabel}>Total Calls</Text>
+                </View>
+                <View style={expertProfileStyles.statTile}>
+                  <Text style={expertProfileStyles.statValue}>{profile.resolvedCount}</Text>
+                  <Text style={expertProfileStyles.statLabel}>Resolved</Text>
+                </View>
+                <View style={expertProfileStyles.statTile}>
+                  <Text style={expertProfileStyles.statValue}>
+                    {profile.credibilityScore !== null
+                      ? `${Math.round(profile.credibilityScore * 100)}%`
+                      : "—"}
+                  </Text>
+                  <Text style={expertProfileStyles.statLabel}>Hit Rate</Text>
+                </View>
+                <View style={expertProfileStyles.statTile}>
+                  <Text style={expertProfileStyles.statValue}>
+                    {profile.followerCount >= 1000
+                      ? `${(profile.followerCount / 1000).toFixed(1)}k`
+                      : profile.followerCount}
+                  </Text>
+                  <Text style={expertProfileStyles.statLabel}>Followers</Text>
+                </View>
               </View>
-              <View style={expertProfileStyles.statTile}>
-                <Text style={expertProfileStyles.statValue}>{profile.resolvedCount}</Text>
-                <Text style={expertProfileStyles.statLabel}>Resolved</Text>
-              </View>
-              <View style={expertProfileStyles.statTile}>
-                <Text style={expertProfileStyles.statValue}>
-                  {profile.credibilityScore !== null
-                    ? `${Math.round(profile.credibilityScore * 100)}%`
-                    : "—"}
-                </Text>
-                <Text style={expertProfileStyles.statLabel}>Hit Rate</Text>
-              </View>
-              <View style={expertProfileStyles.statTile}>
-                <Text style={expertProfileStyles.statValue}>
-                  {profile.followerCount >= 1000
-                    ? `${(profile.followerCount / 1000).toFixed(1)}k`
-                    : profile.followerCount}
-                </Text>
-                <Text style={expertProfileStyles.statLabel}>Followers</Text>
+              <View style={{ alignSelf: "flex-start", paddingLeft: 4 }}>
+                <SectionHelp helpKey="expert-stats-row" />
               </View>
             </View>
 
-            <Text style={expertProfileStyles.sectionTitle}>Calls</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.sm }}>
+              <Text style={[expertProfileStyles.sectionTitle, { marginBottom: 0 }]}>Calls</Text>
+              <SectionHelp helpKey="expert-calls" />
+            </View>
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
