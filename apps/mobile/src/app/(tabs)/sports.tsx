@@ -182,14 +182,14 @@ export default function SportsScreen() {
 
   const renderHeader = () => (
     <>
-      {/* League filter chips — always shown when leagues are available */}
-      {leagues.length > 0 && (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.leagueChips}
-          contentContainerStyle={styles.leagueChipsContent}
-        >
+      {/* Chip row — All + News ALWAYS render (so News is reachable even before
+          scores load / off-season); per-league chips appear once scores exist. */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.leagueChips}
+        contentContainerStyle={styles.leagueChipsContent}
+      >
           {/* All chip */}
           <Pressable
             style={[styles.leagueChip, !selectedLeague && styles.leagueChipActive]}
@@ -233,8 +233,7 @@ export default function SportsScreen() {
               {l.hasLive && <View style={styles.chipLiveDot} />}
             </Pressable>
           ))}
-        </ScrollView>
-      )}
+      </ScrollView>
 
       {/* Scores section — hidden in News mode */}
       {!isNewsMode && (

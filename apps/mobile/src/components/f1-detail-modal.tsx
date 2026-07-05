@@ -568,16 +568,23 @@ export function F1DetailModal({ match, onClose }: Props) {
   // cannot stack up concurrent requests.
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
+    let stopped = false;
 
     const schedule = () => {
       timer = setTimeout(() => {
         // Re-fetch quietly (no loading spinner — data is already visible).
-        void loadDetail().finally(schedule);
+        // Guard re-arm against unmount-mid-fetch so the chain can't outlive the modal.
+        void loadDetail().finally(() => {
+          if (!stopped) schedule();
+        });
       }, 15_000);
     };
     schedule();
 
-    return () => clearTimeout(timer);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
   }, [loadDetail]);
 
   const handleRefresh = async () => {
