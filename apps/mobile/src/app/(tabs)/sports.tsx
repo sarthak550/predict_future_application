@@ -54,6 +54,13 @@ function formatMatchTime(startTime: string): string {
   return date.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }) + `, ${time}`;
 }
 
+/**
+ * Sentinel value for the "News" chip — not a real league name, just a mode
+ * identifier. We use a plain string constant (not null) so it is distinct from
+ * the "All" state (null) and from any real league name.
+ */
+const NEWS_MODE = "__NEWS__";
+
 export default function SportsScreen() {
   const { height } = useWindowDimensions();
   const { colors } = useTheme();
@@ -63,6 +70,7 @@ export default function SportsScreen() {
   const [news, setNews] = useState<ApiNewsFeedItem[]>([]);
   const [loadingNews, setLoadingNews] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  // null = "All", NEWS_MODE = News tab, otherwise a real league name
   const [selectedLeague, setSelectedLeague] = useState<string | null>(null);
   const [selectedMatch, setSelectedMatch] = useState<ApiLiveScore | null>(null);
   const [selectedStory, setSelectedStory] = useState<ApiNewsFeedItem | null>(null);
@@ -110,11 +118,36 @@ export default function SportsScreen() {
     void fetchNews();
   }, [fetchScores, fetchNews]);
 
+  // Derive live count from current scores for dynamic poll cadence.
+  // We re-read this inside the effect via a ref so the interval value can
+  // change without re-registering the entire effect.
+  const scoresRef = useRef<ApiLiveScore[]>([]);
+  useEffect(() => { scoresRef.current = scores; }, [scores]);
+  const selectedLeagueRef = useRef<string | null>(null);
+  useEffect(() => { selectedLeagueRef.current = selectedLeague; }, [selectedLeague]);
+
   useEffect(() => {
     fetchScores();
     fetchNews();
-    const interval = setInterval(fetchScores, 30_000);
-    return () => clearInterval(interval);
+
+    // Poll cadence: skip entirely in News mode; 15s when any live match, 30s otherwise.
+    let interval: ReturnType<typeof setInterval>;
+    const schedule = () => {
+      const isNewsMode = selectedLeagueRef.current === NEWS_MODE;
+      if (isNewsMode) {
+        // Reschedule check in 30s in case the user switches back to scores mode
+        interval = setTimeout(schedule, 30_000);
+        return;
+      }
+      const hasLive = scoresRef.current.some((s) => s.status === "in");
+      const delay = hasLive ? 15_000 : 30_000;
+      interval = setTimeout(() => {
+        void fetchScores();
+        schedule();
+      }, delay);
+    };
+    schedule();
+    return () => clearTimeout(interval);
   }, [fetchScores, fetchNews]);
 
   const onRefresh = useCallback(async () => {
@@ -137,7 +170,11 @@ export default function SportsScreen() {
     a.hasLive === b.hasLive ? 0 : a.hasLive ? -1 : 1
   );
 
-  const filteredScores = selectedLeague
+  const isNewsMode = selectedLeague === NEWS_MODE;
+  // News mode shows full-height feed cards that snap like the main Feed.
+  const newsCardHeight = Math.max(480, height - 140);
+
+  const filteredScores = selectedLeague && !isNewsMode
     ? scores.filter((s) => s.league === selectedLeague)
     : scores;
 
@@ -145,7 +182,7 @@ export default function SportsScreen() {
 
   const renderHeader = () => (
     <>
-      {/* League filter chips */}
+      {/* League filter chips — always shown when leagues are available */}
       {leagues.length > 0 && (
         <ScrollView
           horizontal
@@ -153,6 +190,7 @@ export default function SportsScreen() {
           style={styles.leagueChips}
           contentContainerStyle={styles.leagueChipsContent}
         >
+          {/* All chip */}
           <Pressable
             style={[styles.leagueChip, !selectedLeague && styles.leagueChipActive]}
             onPress={() => setSelectedLeague(null)}
@@ -161,6 +199,23 @@ export default function SportsScreen() {
               All
             </Text>
           </Pressable>
+
+          {/* News chip — immediately after All */}
+          <Pressable
+            style={[styles.leagueChip, isNewsMode && styles.leagueChipActive]}
+            onPress={() => setSelectedLeague(isNewsMode ? null : NEWS_MODE)}
+          >
+            <Feather
+              name="rss"
+              size={12}
+              color={isNewsMode ? colors.surface : colors.text}
+            />
+            <Text style={[styles.leagueChipText, isNewsMode && styles.leagueChipTextActive]}>
+              News
+            </Text>
+          </Pressable>
+
+          {/* League chips */}
           {leagues.map((l) => (
             <Pressable
               key={l.league}
@@ -181,32 +236,34 @@ export default function SportsScreen() {
         </ScrollView>
       )}
 
-      {/* Scores section */}
-      {loadingScores ? (
-        <View style={styles.loadingBox}>
-          <ActivityIndicator color={colors.accent} />
-          <Text style={styles.loadingText}>Loading scores...</Text>
-        </View>
-      ) : filteredScores.length === 0 ? (
-        <View style={styles.emptyScores}>
-          <Feather name="moon" size={24} color={colors.textMuted} />
-          <Text style={styles.emptyScoresText}>No games right now</Text>
-          <Text style={styles.emptyScoresSub}>Check back when matches are scheduled</Text>
-        </View>
-      ) : (
-        <View style={styles.scoresSection}>
-          {filteredScores.map((score) => (
-            <ScoreCard
-              key={score.id}
-              score={score}
-              onPress={() => setSelectedMatch(score)}
-            />
-          ))}
-        </View>
+      {/* Scores section — hidden in News mode */}
+      {!isNewsMode && (
+        loadingScores ? (
+          <View style={styles.loadingBox}>
+            <ActivityIndicator color={colors.accent} />
+            <Text style={styles.loadingText}>Loading scores...</Text>
+          </View>
+        ) : filteredScores.length === 0 ? (
+          <View style={styles.emptyScores}>
+            <Feather name="moon" size={24} color={colors.textMuted} />
+            <Text style={styles.emptyScoresText}>No games right now</Text>
+            <Text style={styles.emptyScoresSub}>Check back when matches are scheduled</Text>
+          </View>
+        ) : (
+          <View style={styles.scoresSection}>
+            {filteredScores.map((score) => (
+              <ScoreCard
+                key={score.id}
+                score={score}
+                onPress={() => setSelectedMatch(score)}
+              />
+            ))}
+          </View>
+        )
       )}
 
-      {/* Sports news header */}
-      {news.length > 0 && (
+      {/* "Sports News" divider — shown in All/league mode only (News mode has no divider) */}
+      {!isNewsMode && news.length > 0 && (
         <View style={styles.newsHeader}>
           <Feather name="rss" size={14} color={colors.text} />
           <Text style={styles.newsHeaderText}>Sports News</Text>
@@ -254,6 +311,11 @@ export default function SportsScreen() {
         data={news}
         keyExtractor={(item) => item.id}
         showsVerticalScrollIndicator={false}
+        // News mode snaps card-to-card like the main Feed (Inshorts-style); scores
+        // mode scrolls normally. snapToInterval ignores the (small) chip-row header.
+        snapToInterval={isNewsMode ? newsCardHeight : undefined}
+        snapToAlignment={isNewsMode ? "start" : undefined}
+        decelerationRate={isNewsMode ? 0.985 : undefined}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />
         }
@@ -270,9 +332,18 @@ export default function SportsScreen() {
             </View>
           )
         }
-        renderItem={({ item }) => (
-          <SportsNewsCard item={item} onPress={() => setSelectedStory(item)} />
-        )}
+        renderItem={({ item }) =>
+          isNewsMode ? (
+            // News mode: use the same full-feed card as the main Feed for visual
+            // consistency. StoryModal renders the NewsFeedCard in detail view too.
+            <NewsFeedCard
+              item={item}
+              viewportHeight={newsCardHeight}
+            />
+          ) : (
+            <SportsNewsCard item={item} onPress={() => setSelectedStory(item)} />
+          )
+        }
         contentContainerStyle={styles.listContent}
       />
 

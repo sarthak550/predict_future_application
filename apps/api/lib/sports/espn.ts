@@ -52,11 +52,27 @@ export type LiveScore = {
 type CacheEntry = {
   scores: LiveScore[];
   fetchedAt: number;
+  /** True when any score in this entry had status "in" at fetch time. */
+  hasLive: boolean;
 };
 
-const CACHE_TTL_MS = 30 * 1000; // 30 seconds for more real-time scores
+/**
+ * TTL thresholds for the in-memory score cache.
+ *
+ * - LIVE  (≥1 match in progress): 8 s — fresh enough for live updates without
+ *   hammering the upstream free API on every mobile poll.
+ * - IDLE  (all pre/post):         60 s — relaxed; scores don't change between
+ *   games so there is no point refreshing frequently.
+ */
+const CACHE_TTL_LIVE_MS = 8 * 1000;   //  8 seconds when any match is live
+const CACHE_TTL_IDLE_MS = 60 * 1000;  // 60 seconds when no matches are live
 
 const scoreCache = new Map<string, CacheEntry>();
+
+/** Returns the effective TTL for a cache entry based on its live state. */
+function cacheTtlFor(entry: CacheEntry): number {
+  return entry.hasLive ? CACHE_TTL_LIVE_MS : CACHE_TTL_IDLE_MS;
+}
 
 // ---- Sport definitions (stable — sports don't change, leagues are discovered) ----
 
@@ -78,7 +94,7 @@ function buildHeaderUrl(sportKey: string): string {
 async function fetchSportScores(sport: { key: string; display: string }): Promise<LiveScore[]> {
   const cacheKey = `header:${sport.key}`;
   const cached = scoreCache.get(cacheKey);
-  if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
+  if (cached && Date.now() - cached.fetchedAt < cacheTtlFor(cached)) {
     return cached.scores;
   }
 
@@ -169,7 +185,8 @@ async function fetchSportScores(sport: { key: string; display: string }): Promis
       }
     }
 
-    scoreCache.set(cacheKey, { scores, fetchedAt: Date.now() });
+    const hasLive = scores.some((s) => s.status === "in");
+    scoreCache.set(cacheKey, { scores, fetchedAt: Date.now(), hasLive });
     return scores;
   } catch (err) {
     console.warn(
@@ -210,7 +227,7 @@ type OpenF1Session = {
 async function fetchF1Scores(): Promise<LiveScore[]> {
   const cacheKey = "openf1";
   const cached = scoreCache.get(cacheKey);
-  if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
+  if (cached && Date.now() - cached.fetchedAt < cacheTtlFor(cached)) {
     return cached.scores;
   }
 
@@ -308,7 +325,8 @@ async function fetchF1Scores(): Promise<LiveScore[]> {
       });
     }
 
-    scoreCache.set(cacheKey, { scores, fetchedAt: Date.now() });
+    const hasLive = scores.some((s) => s.status === "in");
+    scoreCache.set(cacheKey, { scores, fetchedAt: Date.now(), hasLive });
     return scores;
   } catch (err) {
     console.warn("[sports:f1] failed to fetch:", err instanceof Error ? err.message : err);

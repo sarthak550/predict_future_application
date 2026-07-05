@@ -7,9 +7,12 @@ import { NextRequest, NextResponse } from "next/server";
  * Cached in-memory for 30 seconds.
  */
 
-type CacheEntry = { data: unknown; fetchedAt: number };
+type CacheEntry = { data: unknown; fetchedAt: number; isLive: boolean };
 const cache = new Map<string, CacheEntry>();
-const CACHE_TTL_MS = 30_000;
+/** In-progress matches: 8 s (same cadence as the scores endpoint). */
+const CACHE_TTL_LIVE_MS = 8_000;
+/** Pre/post matches: 30 s — lineups/scorecards don't change between refreshes. */
+const CACHE_TTL_IDLE_MS = 30_000;
 
 /**
  * Leagues are now discovered dynamically via the ESPN scoreboard header.
@@ -78,9 +81,13 @@ export async function GET(
 
     const cacheKey = `${leagueId}:${eventId}`;
     const cached = cache.get(cacheKey);
-    if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
+    const cacheTtl = cached?.isLive ? CACHE_TTL_LIVE_MS : CACHE_TTL_IDLE_MS;
+    if (cached && Date.now() - cached.fetchedAt < cacheTtl) {
+      const cacheControl = cached.isLive
+        ? "public, s-maxage=5, stale-while-revalidate=3"
+        : "public, s-maxage=30, stale-while-revalidate=60";
       return NextResponse.json(cached.data, {
-        headers: { "Cache-Control": "public, s-maxage=30, stale-while-revalidate=60" },
+        headers: { "Cache-Control": cacheControl },
       });
     }
 
@@ -102,10 +109,14 @@ export async function GET(
       ? transformFootballSummary(raw, eventId, leagueId)
       : transformEspnSummary(raw, eventId, leagueId);
 
-    cache.set(cacheKey, { data, fetchedAt: Date.now() });
+    const isLive = (data as { status?: string }).status === "in";
+    cache.set(cacheKey, { data, fetchedAt: Date.now(), isLive });
+    const responseCacheControl = isLive
+      ? "public, s-maxage=5, stale-while-revalidate=3"
+      : "public, s-maxage=30, stale-while-revalidate=60";
 
     return NextResponse.json(data, {
-      headers: { "Cache-Control": "public, s-maxage=30, stale-while-revalidate=60" },
+      headers: { "Cache-Control": responseCacheControl },
     });
   } catch (error) {
     console.error("[sports:match] error:", error);

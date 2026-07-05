@@ -241,9 +241,8 @@ export default function FeedScreen() {
 
       if (cat !== "ALL") {
         query.category = cat as AppMarketCategory;
-      } else {
-        query.excludeCategory = "SPORTS";
       }
+      // ALL: no category filter — sports news appears alongside everything else.
 
       const response = await mobileApi.getNews(query);
       if (!mountedRef.current) return;

@@ -563,6 +563,23 @@ export function F1DetailModal({ match, onClose }: Props) {
     };
   }, [loadDetail]);
 
+  // Auto-refresh every 15 s while the modal is open.
+  // We use a self-scheduling setTimeout (not setInterval) so a slow fetch
+  // cannot stack up concurrent requests.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+
+    const schedule = () => {
+      timer = setTimeout(() => {
+        // Re-fetch quietly (no loading spinner — data is already visible).
+        void loadDetail().finally(schedule);
+      }, 15_000);
+    };
+    schedule();
+
+    return () => clearTimeout(timer);
+  }, [loadDetail]);
+
   const handleRefresh = async () => {
     setIsRefreshing(true);
     setDetail(null);
