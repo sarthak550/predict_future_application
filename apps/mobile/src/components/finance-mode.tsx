@@ -41,6 +41,7 @@ import { CombinedAnalystCard } from "@/components/combined-analyst-card";
 import { mobileApi } from "@/lib/api";
 import { withRetry } from "@/lib/retry";
 import { isNSEHoliday } from "@/constants/nse-holidays-2026";
+import { SpotlightTour, makeTourStep } from "@/components/spotlight-tour";
 
 const FOLLOWED_ANALYSTS_KEY = "finance:followedAnalysts";
 const FEED_DEFAULT_CACHE_KEY = "finance:feed:default";
@@ -2234,9 +2235,15 @@ function PolicyCalendarCard({
 
 export function FinanceMode({
   initialClusterId,
+  tourVisible = false,
+  onTourClose,
 }: {
   /** When provided (e.g. via deep-link from opinion detail cluster chip), pre-applies cluster filter. */
   initialClusterId?: string | null;
+  /** When true, show the spotlight tour overlay */
+  tourVisible?: boolean;
+  /** Called when the tour is dismissed */
+  onTourClose?: () => void;
 }) {
   const financeStyles = useThemedStyles(makeFinanceStyles);
   const controlsStyles = useThemedStyles(makeControlsStyles);
@@ -2390,6 +2397,12 @@ export function FinanceMode({
   // ScrollView ref and expert section Y offset for scroll-to navigation (S18-T2 / T4)
   const scrollViewRef = useRef<ScrollView>(null);
   const expertSectionY = useRef<number>(0);
+
+  // ── Tour section refs ─────────────────────────────────────────────────────────
+  const tourScopeTabsRef = useRef<View>(null);
+  const tourWeekCardRef = useRef<View>(null);
+  const tourChipRowRef = useRef<View>(null);
+  const tourExpertFeedRef = useRef<View>(null);
 
   // Cluster filter state: when set, only opinions with matching eventClusterId are shown (S18-T4)
   // Initial value can come from a deep-link param (e.g. tapping the cluster chip on opinion detail).
@@ -2981,6 +2994,7 @@ export function FinanceMode({
       {/* S38: Merged Your Week + Market Sentiment toggle card.
           Replaces the old standalone WeeklyCallsDigestCard. Sentiment moved out
           of the PulseRibbon and merged here under a toggle. */}
+      <View ref={tourWeekCardRef} collapsable={false}>
       <WeekToggleCard
         digest={callsDigest}
         sentiment={analystSentiment}
@@ -2997,6 +3011,7 @@ export function FinanceMode({
           );
         }}
       />
+      </View>
 
       {/* Personal Accuracy Chip removed — "Start voting — track your accuracy"
           didn't have a clear meaning. Accuracy stats live on the user's profile
@@ -3004,13 +3019,15 @@ export function FinanceMode({
 
       {/* Section 3: Expert Opinions + Market Analysis (NOW THE HERO FEED) */}
       <View
+        ref={tourExpertFeedRef}
+        collapsable={false}
         style={financeStyles.unclusteredSection}
         onLayout={(e) => { expertSectionY.current = e.nativeEvent.layout.y; }}
       >
         {/* S38 v3: 3 tabs (content TYPE — exclusive). Verified + Resolved
             moved to filter chips since they're qualifiers, not content types.
             "Rates & Events" shows always-visible RBI Rates, Policy Calendar, and MPC polls. */}
-        <View style={controlsStyles.tabsRow}>
+        <View ref={tourScopeTabsRef} collapsable={false} style={controlsStyles.tabsRow}>
           {([
             { key: "expert-opinions" as const, label: "Expert Opinions" },
             { key: "market-analysis" as const, label: "Market Analysis" },
@@ -3066,7 +3083,7 @@ export function FinanceMode({
         {/* S38: Sort + active-filter chip strip — replaces the 3 separate rows
             (MY ANALYSTS row + instrument banner + cluster banner) AND hosts the
             Sort dropdown so it doesn't crowd the Show tabs row above. */}
-        <View style={controlsStyles.chipRow}>
+        <View ref={tourChipRowRef} collapsable={false} style={controlsStyles.chipRow}>
           {/* Sort chip — leads the row so it's always visible */}
           <Pressable
             style={controlsStyles.sortChip}
@@ -3918,6 +3935,29 @@ export function FinanceMode({
         </View>
       )}
     </PulseSheet>
+
+    {/* Spotlight tour — steps cover the 4 main Finance sections */}
+    <SpotlightTour
+      visible={tourVisible}
+      steps={[
+        makeTourStep("finance-scope-tabs", tourScopeTabsRef, {
+          scrollIntoView: () =>
+            scrollViewRef.current?.scrollTo({ y: expertSectionY.current, animated: true }),
+        }),
+        makeTourStep("finance-your-week-card", tourWeekCardRef, {
+          scrollIntoView: () => scrollViewRef.current?.scrollTo({ y: 0, animated: true }),
+        }),
+        makeTourStep("finance-sort-filter-chips", tourChipRowRef, {
+          scrollIntoView: () =>
+            scrollViewRef.current?.scrollTo({ y: expertSectionY.current, animated: true }),
+        }),
+        makeTourStep("finance-expert-opinions-feed", tourExpertFeedRef, {
+          scrollIntoView: () =>
+            scrollViewRef.current?.scrollTo({ y: expertSectionY.current, animated: true }),
+        }),
+      ]}
+      onClose={() => onTourClose?.()}
+    />
 
     </>
   );

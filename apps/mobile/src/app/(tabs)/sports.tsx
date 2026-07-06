@@ -23,6 +23,8 @@ import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/t
 import { F1DetailModal } from "@/components/f1-detail-modal";
 import { NewsFeedCard } from "@/components/news-feed-card";
 import { mobileApi } from "@/lib/api";
+import { SpotlightTour, makeTourStep } from "@/components/spotlight-tour";
+import { TourButton } from "@/components/tour-button";
 
 const LEAGUE_ICONS: Record<string, React.ComponentProps<typeof Feather>["name"]> = {
   IPL: "target",
@@ -76,6 +78,12 @@ export default function SportsScreen() {
   const [selectedStory, setSelectedStory] = useState<ApiNewsFeedItem | null>(null);
   const [error, setError] = useState<string | null>(null);
   const mountedRef = useRef(true);
+
+  // ── Tour ──────────────────────────────────────────────────────────
+  const [tourVisible, setTourVisible] = useState(false);
+  const leagueChipsRef = useRef<View>(null);
+  const scoresSectionRef = useRef<View>(null);
+  const newsHeaderRef = useRef<View>(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -180,10 +188,17 @@ export default function SportsScreen() {
 
   const liveCount = scores.filter((s) => s.status === "in").length;
 
+  const tourSteps = [
+    makeTourStep("sports-league-chips", leagueChipsRef),
+    makeTourStep("sports-scores", scoresSectionRef),
+    makeTourStep("sports-news", newsHeaderRef),
+  ];
+
   const renderHeader = () => (
     <>
       {/* Chip row — All + News ALWAYS render (so News is reachable even before
           scores load / off-season); per-league chips appear once scores exist. */}
+      <View ref={leagueChipsRef} collapsable={false}>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -234,22 +249,23 @@ export default function SportsScreen() {
             </Pressable>
           ))}
       </ScrollView>
+      </View>
 
       {/* Scores section — hidden in News mode */}
       {!isNewsMode && (
         loadingScores ? (
-          <View style={styles.loadingBox}>
+          <View ref={scoresSectionRef} collapsable={false} style={styles.loadingBox}>
             <ActivityIndicator color={colors.accent} />
             <Text style={styles.loadingText}>Loading scores...</Text>
           </View>
         ) : filteredScores.length === 0 ? (
-          <View style={styles.emptyScores}>
+          <View ref={scoresSectionRef} collapsable={false} style={styles.emptyScores}>
             <Feather name="moon" size={24} color={colors.textMuted} />
             <Text style={styles.emptyScoresText}>No games right now</Text>
             <Text style={styles.emptyScoresSub}>Check back when matches are scheduled</Text>
           </View>
         ) : (
-          <View style={styles.scoresSection}>
+          <View ref={scoresSectionRef} collapsable={false} style={styles.scoresSection}>
             {filteredScores.map((score) => (
               <ScoreCard
                 key={score.id}
@@ -263,7 +279,7 @@ export default function SportsScreen() {
 
       {/* "Sports News" divider — shown in All/league mode only (News mode has no divider) */}
       {!isNewsMode && news.length > 0 && (
-        <View style={styles.newsHeader}>
+        <View ref={newsHeaderRef} collapsable={false} style={styles.newsHeader}>
           <Feather name="rss" size={14} color={colors.text} />
           <Text style={styles.newsHeaderText}>Sports News</Text>
         </View>
@@ -304,6 +320,7 @@ export default function SportsScreen() {
             <Text style={styles.liveText}>{liveCount} LIVE</Text>
           </View>
         )}
+        <TourButton onPress={() => setTourVisible(true)} variant="default" />
       </View>
 
       <FlatList
@@ -356,6 +373,12 @@ export default function SportsScreen() {
         item={selectedStory}
         cardHeight={height * 0.88}
         onClose={() => setSelectedStory(null)}
+      />
+
+      <SpotlightTour
+        visible={tourVisible}
+        steps={tourSteps}
+        onClose={() => setTourVisible(false)}
       />
     </View>
   );

@@ -42,6 +42,8 @@ import { mobileApi } from "@/lib/api";
 import { SHOW_PHONE_VERIFY } from "@/lib/feature-flags";
 import { useSession } from "@/providers/session-provider";
 import { useWatchlist, type WatchlistItem } from "@/providers/watchlist-provider";
+import { SpotlightTour, makeTourStep } from "@/components/spotlight-tour";
+import { TourButton } from "@/components/tour-button";
 
 // ── Status helpers ────────────────────────────────────────────────────────────
 
@@ -1337,6 +1339,21 @@ export default function ProfileScreen() {
   const userId = session?.userId;
   const watchlist = useWatchlist();
 
+  // ── Tour ──────────────────────────────────────────────────────────
+  const [tourVisible, setTourVisible] = useState(false);
+  const profileScrollRef = useRef<ScrollView>(null);
+  const trackRecordRef = useRef<View>(null);
+  const achievementsRef = useRef<View>(null);
+  const recentActivityRef = useRef<View>(null);
+  const marketsWatchlistRef = useRef<View>(null);
+  const exploreRef = useRef<View>(null);
+
+  // Content-space y offsets captured via onLayout (relative to ScrollView content).
+  const achievementsLayoutY = useRef(0);
+  const recentActivityLayoutY = useRef(0);
+  const marketsWatchlistLayoutY = useRef(0);
+  const exploreLayoutY = useRef(0);
+
   // ── Phone verify prompt state ──
   const [phoneVerifyDismissed, setPhoneVerifyDismissed] = useState<boolean>(true);
   const [showPhoneModal, setShowPhoneModal] = useState(false);
@@ -1553,6 +1570,7 @@ export default function ProfileScreen() {
           >
             <Ionicons name="settings-outline" size={22} color={colors.textMuted} />
           </Pressable>
+          <TourButton onPress={() => setTourVisible(true)} variant="default" />
         </View>
 
         {/* Avatar + name block */}
@@ -1579,6 +1597,7 @@ export default function ProfileScreen() {
 
       {/* ── Single scrollable body (T2: all sections unconditional) ── */}
       <ScrollView
+        ref={profileScrollRef}
         style={styles.scrollBody}
         contentContainerStyle={styles.scrollContent}
         refreshControl={
@@ -1590,6 +1609,7 @@ export default function ProfileScreen() {
         }
       >
         {/* Track Record (T2 + T5) */}
+        <View ref={trackRecordRef} collapsable={false}>
         <StatsSection
           pnl={pnl}
           categoryStats={categoryStats}
@@ -1598,29 +1618,36 @@ export default function ProfileScreen() {
           accuracyScore={accuracyScore}
           isFullyBrandNew={isFullyBrandNew}
         />
+        </View>
 
         {/* Achievements (T3) */}
+        <View ref={achievementsRef} collapsable={false} onLayout={(e) => { achievementsLayoutY.current = e.nativeEvent.layout.y; }}>
         <AchievementsSection
           user={user}
           leagueData={leagueData}
           onUpgradeTap={() => router.push("/(tabs)/markets")}
           onLeagueTap={() => router.push("/leagues")}
         />
+        </View>
 
         {/* Recent Activity (T4) */}
+        <View ref={recentActivityRef} collapsable={false} onLayout={(e) => { recentActivityLayoutY.current = e.nativeEvent.layout.y; }}>
         <ActivitySection
           betItems={betItems}
           voteItems={voteActivityItems}
           isFullyBrandNew={isFullyBrandNew}
           router={router}
         />
+        </View>
 
         {/* Markets & Watchlist (T4) */}
+        <View ref={marketsWatchlistRef} collapsable={false} onLayout={(e) => { marketsWatchlistLayoutY.current = e.nativeEvent.layout.y; }}>
         <MarketsSection
           createdMarkets={createdMarkets.slice(0, 8) as Array<{ id: string; title: string; status: AppMarketStatus }>}
           watchlist={watchlist}
           router={router}
         />
+        </View>
 
         {/* Tier PnL migration notice */}
         {!tierPnlNoticeDismissed && (
@@ -1664,6 +1691,7 @@ export default function ProfileScreen() {
         />
 
         {/* Social card: Quests / Leagues / Leaderboard / Groups */}
+        <View ref={exploreRef} collapsable={false} onLayout={(e) => { exploreLayoutY.current = e.nativeEvent.layout.y; }}>
         <SectionHeader title="Explore" />
         <View style={styles.socialCard}>
           <Pressable
@@ -1760,6 +1788,8 @@ export default function ProfileScreen() {
           )}
         </View>
 
+        </View>{/* end exploreRef */}
+
         {/* Share portfolio */}
         <View style={styles.actionsCard}>
           <ActionRow
@@ -1783,6 +1813,32 @@ export default function ProfileScreen() {
         {/* Invite Friends */}
         {referralData && <InviteFriendsCard referral={referralData} />}
       </ScrollView>
+
+      <SpotlightTour
+        visible={tourVisible}
+        steps={[
+          makeTourStep("profile-track-record", trackRecordRef, {
+            scrollIntoView: () => profileScrollRef.current?.scrollTo({ y: 0, animated: true }),
+          }),
+          makeTourStep("profile-achievements", achievementsRef, {
+            scrollIntoView: () =>
+              profileScrollRef.current?.scrollTo({ y: Math.max(0, achievementsLayoutY.current - 80), animated: true }),
+          }),
+          makeTourStep("profile-recent-activity", recentActivityRef, {
+            scrollIntoView: () =>
+              profileScrollRef.current?.scrollTo({ y: Math.max(0, recentActivityLayoutY.current - 80), animated: true }),
+          }),
+          makeTourStep("profile-markets-watchlist", marketsWatchlistRef, {
+            scrollIntoView: () =>
+              profileScrollRef.current?.scrollTo({ y: Math.max(0, marketsWatchlistLayoutY.current - 80), animated: true }),
+          }),
+          makeTourStep("profile-explore", exploreRef, {
+            scrollIntoView: () =>
+              profileScrollRef.current?.scrollTo({ y: Math.max(0, exploreLayoutY.current - 80), animated: true }),
+          }),
+        ]}
+        onClose={() => setTourVisible(false)}
+      />
     </View>
   );
 }

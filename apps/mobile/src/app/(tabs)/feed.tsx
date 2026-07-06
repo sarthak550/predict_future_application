@@ -11,6 +11,8 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
+import { SpotlightTour, makeTourStep } from "@/components/spotlight-tour";
+import { TourButton } from "@/components/tour-button";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -99,6 +101,13 @@ export default function FeedScreen() {
   const { session, status: authStatus } = useSession();
   const listRef = useRef<FlatList<NewsListItem>>(null);
   const [streakCount, setStreakCount] = useState(0);
+
+  // ── Tour ──────────────────────────────────────────────────────────────────────
+  const [tourVisible, setTourVisible] = useState(false);
+  // Refs for the sections we want to spotlight
+  const indiaToggleRef = useRef<View>(null);
+  const categoryBarRef = useRef<View>(null);
+  const feedListRef = useRef<View>(null);
 
   // Tier upgrade nudge — shown when user is eligible for next tier
   const [tierUpgradeNextTier, setTierUpgradeNextTier] = useState<AppAnalystTier | null>(null);
@@ -384,29 +393,48 @@ export default function FeedScreen() {
     [cardHeight]
   );
 
+  // Build tour steps lazily (refs may not be set during render)
+  const tourSteps = useMemo(
+    () => [
+      makeTourStep("feed-india-toggle", indiaToggleRef),
+      makeTourStep("feed-category-chips", categoryBarRef),
+      makeTourStep("feed-intro", feedListRef, {
+        scrollIntoView: () => listRef.current?.scrollToOffset({ offset: 0, animated: true }),
+      }),
+    ],
+    []
+  );
+
   return (
     <View style={styles.screen}>
       <GradientHeader
         title="Feed"
         right={
           <View style={styles.indiaToggleRow}>
-            <Text style={styles.indiaToggleLabel}>India</Text>
-            <Switch
-              value={indiaOnly}
-              onValueChange={handleIndiaToggle}
-              trackColor={{ false: "rgba(255,255,255,0.25)", true: "#2563EB" }}
-              thumbColor="#FFFFFF"
-              ios_backgroundColor="rgba(255,255,255,0.25)"
-              accessibilityLabel="India news filter"
-              accessibilityHint="When on, the feed shows only India-relevant news stories"
-            />
+            <View ref={indiaToggleRef} collapsable={false} style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <Text style={styles.indiaToggleLabel}>India</Text>
+              <Switch
+                value={indiaOnly}
+                onValueChange={handleIndiaToggle}
+                trackColor={{ false: "rgba(255,255,255,0.25)", true: "#2563EB" }}
+                thumbColor="#FFFFFF"
+                ios_backgroundColor="rgba(255,255,255,0.25)"
+                accessibilityLabel="India news filter"
+                accessibilityHint="When on, the feed shows only India-relevant news stories"
+              />
+            </View>
+            <TourButton onPress={() => setTourVisible(true)} variant="light" />
           </View>
         }
       />
 
       {/* Category filter bar — sticky above the feed cards.
           StreakBadge is appended at the trailing end of the same scroll row. */}
-      <View style={[styles.categoryBar, { height: CATEGORY_BAR_HEIGHT }]}>
+      <View
+        ref={categoryBarRef}
+        collapsable={false}
+        style={[styles.categoryBar, { height: CATEGORY_BAR_HEIGHT }]}
+      >
         <CategoryFilterBar
           selected={category}
           onSelect={handleCategoryChange}
@@ -420,6 +448,7 @@ export default function FeedScreen() {
         />
       </View>
 
+      <View ref={feedListRef} collapsable={false} style={{ flex: 1 }}>
       <FlatList
         ref={listRef}
         data={feedItems}
@@ -545,6 +574,8 @@ export default function FeedScreen() {
         }}
       />
 
+      </View>
+
       {/* Global swipe hint overlay for first card */}
       {showHint && feedItems.length > 0 && (
         <Animated.View
@@ -554,6 +585,12 @@ export default function FeedScreen() {
           <Text style={styles.swipeHintOverlayText}>↑  Swipe up for next story</Text>
         </Animated.View>
       )}
+
+      <SpotlightTour
+        visible={tourVisible}
+        steps={tourSteps}
+        onClose={() => setTourVisible(false)}
+      />
     </View>
   );
 }

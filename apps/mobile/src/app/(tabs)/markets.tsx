@@ -16,6 +16,8 @@ import {
 } from "react-native";
 
 import { GradientHeader } from "@/components/gradient-header";
+import { SpotlightTour, makeTourStep } from "@/components/spotlight-tour";
+import { TourButton } from "@/components/tour-button";
 
 import type { ApiDiscoverGroup, ApiGroupSummary, ApiMarketSummary, ApiMyPositionsResponse, ApiPollListItem, ApiPositionSummary } from "@predict-future/types";
 import { radius, spacing } from "@predict-future/ui-tokens";
@@ -95,6 +97,13 @@ export default function MarketsScreen() {
   // Read once on mount to pre-select the chip. We use a ref to ensure
   // we only apply it once and never fight with manual chip switching.
   const deepLinkParams = useLocalSearchParams<{ tab?: string }>();
+
+  // ── Tour ──────────────────────────────────────────────────────────
+  const [tourVisible, setTourVisible] = useState(false);
+  const modeToggleRef = useRef<View>(null);
+  const viewChipsRef = useRef<View>(null);
+  const categoryChipsRef = useRef<View>(null);
+  const discoverRef = useRef<View>(null);
 
   const [mode, setMode] = useState<MarketMode>("public");
   const [statusTab, setStatusTab] = useState<StatusTab>("all");
@@ -548,6 +557,16 @@ export default function MarketsScreen() {
     );
   }
 
+  const tourSteps = useMemo(
+    () => [
+      makeTourStep("markets-mode-toggle", modeToggleRef),
+      makeTourStep("markets-view-chips", viewChipsRef),
+      makeTourStep("markets-category-chips", categoryChipsRef),
+      makeTourStep("markets-discover-communities", modeToggleRef),
+    ],
+    []
+  );
+
   return (
     <View style={styles.screen}>
       <GradientHeader
@@ -569,12 +588,13 @@ export default function MarketsScreen() {
                 <Feather name="x" size={16} color="rgba(255,255,255,0.85)" />
               </Pressable>
             ) : null}
+            <TourButton onPress={() => setTourVisible(true)} variant="light" />
           </View>
         }
       />
 
       {/* ── Level 1: Public / Private / Polls toggle ── */}
-      <View style={styles.modeRow}>
+      <View ref={modeToggleRef} collapsable={false} style={styles.modeRow}>
         <Pressable
           style={[styles.modeBtn, mode === "public" && styles.modeBtnActive]}
           onPress={() => { setMode("public"); setStatusTab("live"); }}
@@ -604,6 +624,7 @@ export default function MarketsScreen() {
 
       {/* ── Merged view-selector chip row (public mode, hidden in search mode) ── */}
       {mode === "public" && !isSearchMode ? (
+        <View ref={viewChipsRef} collapsable={false}>
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -631,6 +652,7 @@ export default function MarketsScreen() {
             );
           })}
         </ScrollView>
+        </View>
       ) : null}
 
       {/* ── Group dropdown (private only) ── */}
@@ -702,11 +724,13 @@ export default function MarketsScreen() {
           Rendered non-elevated so it shares the screen background with the
           view-selector row above — the two pill rows read as one filter system. */}
       {mode === "public" && (statusTab === "all" || statusTab === "live") && !isSearchMode ? (
-        <CategoryFilterBar
-          selected={category}
-          onSelect={setCategory}
-          categories={FILTER_BAR_CATEGORIES}
-        />
+        <View ref={categoryChipsRef} collapsable={false}>
+          <CategoryFilterBar
+            selected={category}
+            onSelect={setCategory}
+            categories={FILTER_BAR_CATEGORIES}
+          />
+        </View>
       ) : null}
 
       {/* ── Market list ── */}
@@ -764,7 +788,7 @@ export default function MarketsScreen() {
                 section). Explore stays pure markets; communities still surface
                 contextually via the Hosted-by chip on every group-linked market card. */
             !isSearchMode && mode === "private" && discoverGroups.length > 0 ? (
-              <View style={styles.discoverSection}>
+              <View ref={discoverRef} collapsable={false} style={styles.discoverSection}>
                 <Text style={styles.discoverSectionHeader}>Discover communities</Text>
                 <CommunitiesList groups={discoverGroups} limit={5} />
               </View>
@@ -877,6 +901,12 @@ export default function MarketsScreen() {
           }
         />
       )}
+
+      <SpotlightTour
+        visible={tourVisible}
+        steps={tourSteps}
+        onClose={() => setTourVisible(false)}
+      />
     </View>
   );
 }
