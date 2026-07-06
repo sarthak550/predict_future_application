@@ -1704,38 +1704,47 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   // (category-filter-bar.tsx) so the two stacked filter rows read as one system.
   sortRow: {
     paddingHorizontal: spacing.lg,
-    paddingVertical: 9,
-    gap: 8,
+    paddingVertical: 10,
+    gap: 9,
     alignItems: "center",
   },
+  // Matches CategoryFilterBar's pills exactly so the two stacked filter rows
+  // read as one polished system: crisp floating white chip → solid accent active.
   sortChip: {
     flexShrink: 0,
-    height: 34,
-    paddingHorizontal: 14,
-    borderRadius: 17,
+    height: 36,
+    paddingHorizontal: 16,
+    borderRadius: 18,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: t.colors.surface,
     borderWidth: 1,
-    borderColor: t.colors.border,
+    borderColor: t.colors.borderMuted,
+    shadowColor: "#1E40AF",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 5,
+    elevation: 1,
   },
   sortChipActive: {
     backgroundColor: t.colors.accent,
     borderColor: t.colors.accent,
     shadowColor: t.colors.accent,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.32,
+    shadowRadius: 9,
+    elevation: 5,
   },
   sortChipText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: "600",
     color: t.colors.textMuted,
+    letterSpacing: 0.2,
   },
   sortChipTextActive: {
     color: "#FFFFFF",
     fontWeight: "700",
+    letterSpacing: 0.2,
   },
 
   // ── Community surfaces (S55-T7: live in My Groups sub-tab) ──────
