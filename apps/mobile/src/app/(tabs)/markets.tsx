@@ -534,6 +534,16 @@ export default function MarketsScreen() {
 
   // ── render ────────────────────────────────────────────────────────
 
+  const tourSteps = useMemo(
+    () => [
+      makeTourStep("markets-mode-toggle", modeToggleRef),
+      makeTourStep("markets-view-chips", viewChipsRef),
+      makeTourStep("markets-category-chips", categoryChipsRef),
+      makeTourStep("markets-discover-communities", modeToggleRef),
+    ],
+    []
+  );
+
   if (mode === "polls") {
     return (
       <PollsScreen
@@ -556,16 +566,6 @@ export default function MarketsScreen() {
       </View>
     );
   }
-
-  const tourSteps = useMemo(
-    () => [
-      makeTourStep("markets-mode-toggle", modeToggleRef),
-      makeTourStep("markets-view-chips", viewChipsRef),
-      makeTourStep("markets-category-chips", categoryChipsRef),
-      makeTourStep("markets-discover-communities", modeToggleRef),
-    ],
-    []
-  );
 
   return (
     <View style={styles.screen}>
