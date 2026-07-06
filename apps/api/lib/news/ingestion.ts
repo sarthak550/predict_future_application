@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "crypto";
 import { type MarketType, type Prisma, StoryStatus } from "@prisma/client";
 
 import { getPreferredSourceTrustTier } from "@/lib/news/config";
+import { isSummaryReady } from "@/lib/news/rss-ingestion-service";
 import { prisma } from "@/lib/prisma";
 import { slugify } from "@/lib/utils";
 import { type StoryInput } from "@/lib/validations/story";
@@ -83,12 +84,23 @@ async function upsertStoryWithMarket(tx: TxClient, input: StoryInput, actorId: s
     }
   });
 
+  // Determine whether the RSS/API-provided summary is already good enough to show
+  // immediately. Sources like BBC and TechCrunch include full descriptions; others
+  // (Seeking Alpha, Google News) send only the headline. Good summaries skip the
+  // AI summarizer queue; bad ones start hidden (summaryReady=false) until the
+  // background summarizer writes a proper AI summary and flips the flag.
+  const summaryReadyNow = isSummaryReady(input.summary, input.headline);
+
   const story = existingStory
     ? await tx.story.update({
         where: { id: existingStory.id },
         data: {
           headline: input.headline,
           summary: input.summary,
+          // Only flip summaryReady=true at update time if the new summary qualifies.
+          // Never flip back to false — if a prior update already set it true (e.g. AI
+          // wrote a great summary) we don't want to clobber it with a re-ingestion.
+          ...(summaryReadyNow ? { summaryReady: true } : {}),
           category: input.category,
           sourceId: source.id,
           sourceName: input.sourceName,
@@ -115,6 +127,7 @@ async function upsertStoryWithMarket(tx: TxClient, input: StoryInput, actorId: s
           slug: buildStorySlug(input.headline, input.publishedAt, input.externalId || input.sourceUrl),
           headline: input.headline,
           summary: input.summary,
+          summaryReady: summaryReadyNow,
           category: input.category,
           sourceId: source.id,
           sourceName: input.sourceName,

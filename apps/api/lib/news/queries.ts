@@ -368,6 +368,10 @@ export async function getPublishedNewsPage(input?: {
 
   const sharedWhere: Prisma.StoryWhereInput = {
     status: { in: visibleNewsStatuses },
+    // Hide stories that haven't received a proper AI summary yet. Stories with a
+    // good RSS description (isSummaryReady=true at ingest) or with an AI-written
+    // summary (set by the background summarizer) pass this filter immediately.
+    summaryReady: true,
     ...(input?.category ? categoryWhere(input.category) : {}),
     ...(input?.excludeCategory ? { category: { not: input.excludeCategory } } : {}),
     ...expertOpinionsFilter,
@@ -564,6 +568,7 @@ export async function getPersonalizedNewsPage(input: {
 
   const baseWhere: Prisma.StoryWhereInput = {
     status: { in: visibleNewsStatuses },
+    summaryReady: true,
     ...(input.category ? categoryWhere(input.category) : {}),
     ...(input.excludeCategory ? { category: { not: input.excludeCategory } } : {}),
     ...indiaOnlyWhere(input.indiaOnly),

@@ -337,19 +337,19 @@ async function generatePollsInBackground(items: NormalizedNewsItem[], actorId: s
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(`[news:ai-polls] failed for "${story.headline.slice(0, 50)}...":`, msg);
       if (msg.toLowerCase().includes("rate limit")) {
-        console.warn("[news:ai-polls] rate limited — stopping background poll generation");
+        console.warn("[news:ai-polls] rate limited -- stopping background poll generation");
         aiEnabled = false;
       }
     }
   }
 
-  console.info(`[news:ai-polls] done — ${generated}/${stories.length} polls created`);
+  console.info(`[news:ai-polls] done -- ${generated}/${stories.length} polls created`);
 }
 
 // Maximum stories to summarize in a single background pass.
-// Raised from 10 → 40 (S71-T2) so newly-ingested bursts get full summaries.
+// Raised from 10 -> 40 (S71-T2) so newly-ingested bursts get full summaries.
 // Note: GEMINI_API_KEY is not set in prod, so Gemini fallback is unavailable.
-// Going much above 40 risks Groq 429s — the 1500ms inter-batch pause below
+// Going much above 40 risks Groq 429s -- the 1500ms inter-batch pause below
 // provides additional spacing. Tune back down if rate-limit errors recur.
 const MAX_SUMMARIES_PER_BATCH = 40;
 
@@ -363,7 +363,7 @@ const SUMMARY_BATCH_PAUSE_MS = 1500;
  *
  * For each eligible story:
  * 1. Fetch the article body via fetchArticleBody (10s timeout, domain-throttled).
- * 2. Call summarizeNewsStory (Groq → Gemini fallback) for a 2-3 sentence summary.
+ * 2. Call summarizeNewsStory (Groq -> Gemini fallback) for a 2-3 sentence summary.
  * 3. Update story.summary in the DB. Skip silently on any failure.
  *
  * Concurrency is capped at SUMMARY_CONCURRENCY to avoid hammering external sites.
@@ -382,16 +382,106 @@ export function needsBetterSummary(summary: string | null | undefined, headline:
   if (!s) return true;
   if (s.toLowerCase() === headline.trim().toLowerCase()) return true;
   if (s.split(/\s+/).filter(Boolean).length < MIN_FEED_SUMMARY_WORDS) return true;
-  if (/(\.\.\.|…)\s*$/.test(s)) return true; // trailing ellipsis = truncated
-  if (!/[.!?]["'”’)\]]?\s*$/.test(s)) return true; // no terminal punctuation = cut mid-sentence
+  if (/(\.\.\.|[…])\s*$/.test(s)) return true; // trailing ellipsis = truncated
+  if (!/[.!?]["“”'‘’)\]]?\s*$/.test(s)) return true; // no terminal punctuation = cut mid-sentence
   return false;
+}
+
+/**
+ * Convenience inverse of needsBetterSummary. Use this to set summaryReady at
+ * ingestion time (good RSS descriptions skip the AI queue immediately).
+ */
+export function isSummaryReady(summary: string | null | undefined, headline: string): boolean {
+  return !needsBetterSummary(summary, headline);
+}
+
+type SummarizeOneStoryInput = {
+  id: string;
+  headline: string;
+  summary: string;
+  sourceUrl: string;
+};
+
+/**
+ * Shared inner logic for the summarizer: fetch body -> AI summarize -> DB update.
+ * Returns "summarized" | "body-failed" | "ai-failed" | "rate-limited".
+ * Never throws -- all errors are returned as discriminated string values so the
+ * outer concurrency loop can handle the rate-limit signal without catching.
+ */
+async function summarizeOneStory(
+  story: SummarizeOneStoryInput
+): Promise<"summarized" | "body-failed" | "ai-failed" | "rate-limited"> {
+  try {
+    const { text: bodyText, error: bodyError } = await fetchArticleBody(story.sourceUrl);
+    if (!bodyText) {
+      console.debug(
+        `[news:summarizer] body fetch failed for "${story.headline.slice(0, 60)}": ${bodyError ?? "unknown"}`
+      );
+      return "body-failed";
+    }
+
+    const summary = await summarizeNewsStory(story.headline, bodyText);
+    if (!summary) {
+      console.debug(`[news:summarizer] AI returned null for "${story.headline.slice(0, 60)}"`);
+      return "ai-failed";
+    }
+
+    await prisma.story.update({
+      where: { id: story.id },
+      data: { summary, summaryReady: true },
+    });
+    console.info(`[news:summarizer] updated summary for "${story.headline.slice(0, 60)}"`);
+    return "summarized";
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.toLowerCase().includes("rate limit") || msg.includes("429")) {
+      console.warn("[news:summarizer] 429 rate limit -- flagging for early exit");
+      return "rate-limited";
+    }
+    console.warn(`[news:summarizer] failed for "${story.headline.slice(0, 60)}": ${msg.slice(0, 200)}`);
+    return "ai-failed";
+  }
+}
+
+/**
+ * Runs the summarizer batch over a list of eligible stories.
+ * Shared by generateSummariesInBackground (new-batch pass) and
+ * resummarizeRecentStragglers (retry sweep).
+ */
+async function runSummarizerBatch(
+  eligible: SummarizeOneStoryInput[],
+  logTag: string
+): Promise<{ summarized: number }> {
+  const SUMMARY_CONCURRENCY = 3;
+  let summarized = 0;
+  let rateLimited = false;
+
+  for (let i = 0; i < eligible.length; i += SUMMARY_CONCURRENCY) {
+    if (rateLimited) {
+      console.warn(`${logTag} rate-limited -- stopping early to preserve quota`);
+      break;
+    }
+
+    if (i > 0) {
+      await new Promise<void>((r) => setTimeout(r, SUMMARY_BATCH_PAUSE_MS));
+    }
+
+    const batch = eligible.slice(i, i + SUMMARY_CONCURRENCY);
+    const outcomes = await Promise.all(batch.map(summarizeOneStory));
+    for (const outcome of outcomes) {
+      if (outcome === "summarized") summarized++;
+      if (outcome === "rate-limited") rateLimited = true;
+    }
+  }
+
+  return { summarized };
 }
 
 export async function generateSummariesInBackground(
   items: NormalizedNewsItem[]
 ): Promise<void> {
   if (!process.env.GROQ_API_KEY && !process.env.GEMINI_API_KEY) {
-    console.debug("[news:summarizer] No AI key configured — skipping background summarization");
+    console.debug("[news:summarizer] No AI key configured -- skipping background summarization");
     return;
   }
 
@@ -415,74 +505,50 @@ export async function generateSummariesInBackground(
     return;
   }
 
-  console.info(`[news:summarizer] summarizing ${eligible.length} stories`);
+  console.info(`[news:summarizer] summarizing ${eligible.length} new-batch stories`);
+  const { summarized } = await runSummarizerBatch(eligible, "[news:summarizer]");
+  console.info(`[news:summarizer] done -- ${summarized}/${eligible.length} summaries written`);
+}
 
-  const SUMMARY_CONCURRENCY = 3;
-  let summarized = 0;
-  let rateLimited = false;
-
-  for (let i = 0; i < eligible.length; i += SUMMARY_CONCURRENCY) {
-    // Early-exit: if any batch item hit a 429, stop issuing further calls —
-    // remaining calls would fail immediately and waste quota.
-    if (rateLimited) {
-      console.warn("[news:summarizer] rate-limited — stopping early to preserve quota");
-      break;
-    }
-
-    // Pause between batches (after the first) to avoid hitting Groq per-minute limits.
-    // With MAX_SUMMARIES_PER_BATCH=40 and SUMMARY_CONCURRENCY=3 this gives ~1.5s
-    // of breathing room between each burst of 3 concurrent requests.
-    if (i > 0) {
-      await new Promise<void>((r) => setTimeout(r, SUMMARY_BATCH_PAUSE_MS));
-    }
-
-    const batch = eligible.slice(i, i + SUMMARY_CONCURRENCY);
-    const results = await Promise.allSettled(
-      batch.map(async (story) => {
-        try {
-          const { text: bodyText, error: bodyError } = await fetchArticleBody(story.sourceUrl);
-          if (!bodyText) {
-            console.debug(
-              `[news:summarizer] body fetch failed for "${story.headline.slice(0, 60)}": ${bodyError ?? "unknown"}`
-            );
-            return;
-          }
-
-          const summary = await summarizeNewsStory(story.headline, bodyText);
-          if (!summary) {
-            console.debug(`[news:summarizer] AI returned null for "${story.headline.slice(0, 60)}"`);
-            return;
-          }
-
-          await prisma.story.update({
-            where: { id: story.id },
-            data: { summary },
-          });
-          summarized++;
-          console.info(`[news:summarizer] updated summary for "${story.headline.slice(0, 60)}"`);
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          // Detect rate-limit responses so we stop burning quota on doomed calls.
-          if (msg.toLowerCase().includes("rate limit") || msg.includes("429")) {
-            rateLimited = true;
-            console.warn("[news:summarizer] 429 rate limit — flagging for early exit");
-          } else {
-            console.warn(`[news:summarizer] failed for "${story.headline.slice(0, 60)}": ${msg.slice(0, 200)}`);
-          }
-        }
-      })
-    );
-    void results; // allSettled: failures already handled inside the map
+/**
+ * Retry sweep: re-attempt summarization for recent stories (last 3 days) that
+ * still have summaryReady=false. Stories that permanently fail body fetch
+ * (e.g. Seeking Alpha 403) stay summaryReady=false and remain hidden -- that
+ * is the desired outcome. Runs fire-and-forget from the ingestion job after
+ * the new-batch pass so the per-cron retry budget is consumed there.
+ */
+export async function resummarizeRecentStragglers(): Promise<void> {
+  if (!process.env.GROQ_API_KEY && !process.env.GEMINI_API_KEY) {
+    return;
   }
 
-  console.info(`[news:summarizer] done — ${summarized}/${eligible.length} summaries written`);
+  const since3Days = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+  const stragglers = await prisma.story.findMany({
+    where: {
+      summaryReady: false,
+      status: { in: ["PUBLISHED", "APPROVED"] },
+      publishedAt: { gte: since3Days },
+    },
+    select: { id: true, headline: true, summary: true, sourceUrl: true },
+    orderBy: { publishedAt: "desc" },
+    take: MAX_SUMMARIES_PER_BATCH,
+  });
+
+  if (stragglers.length === 0) {
+    console.info("[news:straggler] no recent stragglers to re-summarize");
+    return;
+  }
+
+  console.info(`[news:straggler] re-summarizing ${stragglers.length} recent stragglers`);
+  const { summarized } = await runSummarizerBatch(stragglers, "[news:straggler]");
+  console.info(`[news:straggler] done -- ${summarized}/${stragglers.length} stragglers resolved`);
 }
 
 const MAX_FINANCE_EXTRACTIONS_PER_BATCH = 5;
 
 /**
  * Phase 3: Extract expert opinions from newly-ingested FINANCE stories from approved sources.
- * Runs in the background after stories are saved — never blocks ingestion.
+ * Runs in the background after stories are saved -- never blocks ingestion.
  *
  * For each story:
  * 1. If bodyFetchFailed === true, skip (permanent failure already recorded).
@@ -494,9 +560,9 @@ const MAX_FINANCE_EXTRACTIONS_PER_BATCH = 5;
  */
 async function extractFinanceOpinionsInBackground(items: NormalizedNewsItem[]) {
   // Extraction prefers Groq (then falls back to Gemini), so EITHER key enables it.
-  // (Previously gated on GEMINI_API_KEY only — a Groq-only deploy silently never extracted.)
+  // (Previously gated on GEMINI_API_KEY only -- a Groq-only deploy silently never extracted.)
   if (!process.env.GROQ_API_KEY && !process.env.GEMINI_API_KEY) {
-    console.debug("[Finance AI] No AI key (GROQ_API_KEY/GEMINI_API_KEY) — skipping expert opinion extraction");
+    console.debug("[Finance AI] No AI key (GROQ_API_KEY/GEMINI_API_KEY) -- skipping expert opinion extraction");
     return;
   }
 
@@ -533,7 +599,7 @@ async function extractFinanceOpinionsInBackground(items: NormalizedNewsItem[]) {
   for (const story of financeStories) {
     // Cost guardrail: skip if source domain is not in the approved list
     if (!isApprovedFinanceSource(story.sourceUrl)) {
-      console.debug(`[Finance AI] Skipping extraction — source not in approved list: ${story.sourceUrl}`);
+      console.debug(`[Finance AI] Skipping extraction -- source not in approved list: ${story.sourceUrl}`);
       continue;
     }
 
@@ -542,11 +608,11 @@ async function extractFinanceOpinionsInBackground(items: NormalizedNewsItem[]) {
       let contentForExtraction: string;
 
       if (story.bodyFetchFailed) {
-        // Permanent failure — use summary fallback
-        console.debug(`[Finance AI] Body fetch previously failed for story ${story.id} — using summary`);
+        // Permanent failure -- use summary fallback
+        console.debug(`[Finance AI] Body fetch previously failed for story ${story.id} -- using summary`);
         contentForExtraction = `${story.headline}\n\n${story.summary}`;
       } else if (!story.bodyText) {
-        // Body not yet fetched — attempt fetch now
+        // Body not yet fetched -- attempt fetch now
         console.info(`[Finance AI] Fetching article body for story ${story.id}: ${story.sourceUrl}`);
         const bodyResult = await fetchArticleBody(story.sourceUrl);
 
@@ -562,7 +628,7 @@ async function extractFinanceOpinionsInBackground(items: NormalizedNewsItem[]) {
           contentForExtraction = bodyResult.text;
           console.info(`[Finance AI] Body fetched (${bodyResult.text.length} chars) for story ${story.id}`);
         } else {
-          // Fetch failed — mark and fall back to summary
+          // Fetch failed -- mark and fall back to summary
           await prisma.story.update({
             where: { id: story.id },
             data: {
@@ -577,7 +643,7 @@ async function extractFinanceOpinionsInBackground(items: NormalizedNewsItem[]) {
         // Body already present and sufficient
         contentForExtraction = story.bodyText;
       } else {
-        // Body present but too short (edge case) — use summary
+        // Body present but too short (edge case) -- use summary
         contentForExtraction = `${story.headline}\n\n${story.summary}`;
       }
 
@@ -595,13 +661,13 @@ async function extractFinanceOpinionsInBackground(items: NormalizedNewsItem[]) {
         extracted += opinions.length;
       }
     } catch (err) {
-      // Never block ingestion — log and continue
+      // Never block ingestion -- log and continue
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[Finance AI] Extraction loop failed for story ${story.id}: ${msg}`);
     }
   }
 
-  console.info(`[Finance AI] done — ${extracted} opinions extracted from ${financeStories.length} FINANCE stories`);
+  console.info(`[Finance AI] done -- ${extracted} opinions extracted from ${financeStories.length} FINANCE stories`);
 }
 
 export class RSSIngestionService {
@@ -737,7 +803,7 @@ export class RSSIngestionService {
     });
 
     await ingestStories(storiesToIngest, staffActorId);
-    console.info(`[news:ingestion] phase 1 done — ${storiesToIngest.length} stories inserted`);
+    console.info(`[news:ingestion] phase 1 done -- ${storiesToIngest.length} stories inserted`);
 
     // ---- Phase 2: Generate AI polls in background for stories without markets ----
     const aiEnabled = Boolean(process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY);
@@ -751,6 +817,11 @@ export class RSSIngestionService {
       // ---- Phase 2b: Summarize stories whose summary is just the headline ----
       void generateSummariesInBackground(newStories).catch((err) =>
         console.error("[news:summarizer] background summarization failed:", err)
+      );
+
+      // ---- Phase 2c: Retry recent stragglers that still lack a good summary ----
+      void resummarizeRecentStragglers().catch((err) =>
+        console.error("[news:straggler] straggler re-summarization failed:", err)
       );
     }
 
@@ -791,7 +862,7 @@ export class RSSIngestionService {
       skippedDuplicates: perFeedSkipped.get(feed.id) ?? 0
     }));
 
-    // Backfill OG images for older stories — run in background, don't block response
+    // Backfill OG images for older stories -- run in background, don't block response
     void backfillMissingImages().catch((err) =>
       console.warn("[news:ingestion] og-image backfill failed:", err)
     );

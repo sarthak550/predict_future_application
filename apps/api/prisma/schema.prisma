@@ -303,6 +303,11 @@ model Story {
   bodyFetchedAt     DateTime?
   /// True when all fetch attempts have failed (paywall, timeout, size, non-HTML, etc.).
   bodyFetchFailed   Boolean            @default(false)
+  /// True once the story has an AI-generated (or source-provided high-quality) summary.
+  /// Stories where summaryReady=false are hidden from the public feed until a summary
+  /// is written. Set to true at ingestion when needsBetterSummary returns false (good
+  /// RSS description), or set to true by the background summarizer on success.
+  summaryReady      Boolean            @default(false)
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
   latestResolvedAt  DateTime?
@@ -323,6 +328,7 @@ model Story {
   @@index([dedupeKey])
   @@index([ingestionFeedId, ingestedAt])
   @@index([latestResolvedAt(sort: Desc)])
+  @@index([status, summaryReady, publishedAt(sort: Desc)])
 }
 
 model CuratedFeed {

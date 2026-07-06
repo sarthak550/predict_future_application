@@ -59,8 +59,89 @@ export type ArticleBodyResult = {
 };
 
 /**
+ * Best-effort resolver for Google News redirect URLs (news.google.com/rss/articles/...).
+ *
+ * Google News RSS links are opaque redirect URLs. The redirect chain sometimes
+ * ends at the real publisher URL via HTTP 3xx, or Google returns an interstitial
+ * HTML page with the destination embedded in a `data-n-au` attribute or a
+ * canonical <link>. This function:
+ *   1. Follows redirects; if the final URL is not a google.com host → returns it.
+ *   2. Parses the response HTML for a `data-n-au` attribute or a canonical link.
+ *   3. Falls back to returning null so the caller can degrade gracefully.
+ *
+ * Shares the existing FETCH_TIMEOUT_MS and USER_AGENT. Does NOT apply domain
+ * throttling (called once per story, before the actual body fetch which throttles).
+ */
+async function resolveGoogleNewsUrl(googleUrl: string): Promise<string | null> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
+  let response: Response;
+  let finalUrl: string;
+  try {
+    response = await fetch(googleUrl, {
+      signal: controller.signal,
+      redirect: "follow",
+      headers: {
+        "User-Agent": USER_AGENT,
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+      },
+    });
+    finalUrl = response.url; // reflects the post-redirect URL
+  } catch {
+    clearTimeout(timeoutId);
+    return null;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  // If the redirect chain already landed on a non-Google host, we're done.
+  const finalHostname = getHostname(finalUrl);
+  if (finalHostname && !finalHostname.endsWith("google.com")) {
+    return finalUrl;
+  }
+
+  // Still on google.com — parse the interstitial page for the real destination.
+  if (!response.ok) return null;
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!contentType.includes("text/html")) return null;
+
+  let html: string;
+  try {
+    html = await response.text();
+  } catch {
+    return null;
+  }
+
+  // `data-n-au` attribute is the canonical destination in Google News interstitials.
+  const dataNAu = html.match(/data-n-au="([^"]+)"/)?.[1];
+  if (dataNAu) {
+    try { return new URL(dataNAu).href; } catch { /* fall through */ }
+  }
+
+  // Canonical <link rel="canonical"> as a secondary signal.
+  const canonical = html.match(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i)?.[1]
+    ?? html.match(/<link[^>]+href=["']([^"']+)["'][^>]+rel=["']canonical["']/i)?.[1];
+  if (canonical) {
+    try {
+      const u = new URL(canonical);
+      if (!u.hostname.endsWith("google.com")) return u.href;
+    } catch { /* fall through */ }
+  }
+
+  return null;
+}
+
+/**
  * Fetches the article at `sourceUrl`, extracts the main readable body text via
  * Mozilla Readability, and returns it. Never throws.
+ *
+ * For Google News redirect URLs (news.google.com/rss/articles/...) the URL is
+ * first resolved to the real publisher URL before fetching, since Readability
+ * returns no content on the Google interstitial page. Resolution is best-effort:
+ * if it fails the function falls back to the original URL (which will likely
+ * produce no content, leaving the story hidden until a manual retry).
  *
  * @param sourceUrl - The canonical URL of the article to scrape.
  * @returns `{ text, error }` — exactly one will be non-null.
@@ -68,9 +149,22 @@ export type ArticleBodyResult = {
 export async function fetchArticleBody(
   sourceUrl: string
 ): Promise<ArticleBodyResult> {
-  const hostname = getHostname(sourceUrl);
+  // Resolve Google News redirect URLs to the real publisher URL before fetching.
+  let resolvedUrl = sourceUrl;
+  const initialHostname = getHostname(sourceUrl);
+  if (initialHostname === "news.google.com") {
+    const real = await resolveGoogleNewsUrl(sourceUrl);
+    if (real) {
+      resolvedUrl = real;
+    } else {
+      // Resolution failed — body fetch will almost certainly return no content.
+      return { text: null, error: `Could not resolve Google News redirect URL: ${sourceUrl}` };
+    }
+  }
+
+  const hostname = getHostname(resolvedUrl);
   if (!hostname) {
-    return { text: null, error: `Invalid URL: ${sourceUrl}` };
+    return { text: null, error: `Invalid URL: ${resolvedUrl}` };
   }
 
   // Per-domain throttle — wait if needed before sending the request
@@ -81,7 +175,7 @@ export async function fetchArticleBody(
 
   let response: Response;
   try {
-    response = await fetch(sourceUrl, {
+    response = await fetch(resolvedUrl, {
       signal: controller.signal,
       redirect: "follow",
       headers: {
@@ -95,9 +189,9 @@ export async function fetchArticleBody(
     const msg = err instanceof Error ? err.message : String(err);
     // AbortController fires a DOMException with name 'AbortError'
     if (msg.toLowerCase().includes("abort") || msg.toLowerCase().includes("timeout")) {
-      return { text: null, error: `Fetch timed out after ${FETCH_TIMEOUT_MS}ms: ${sourceUrl}` };
+      return { text: null, error: `Fetch timed out after ${FETCH_TIMEOUT_MS}ms: ${resolvedUrl}` };
     }
-    return { text: null, error: `Network error fetching ${sourceUrl}: ${msg}` };
+    return { text: null, error: `Network error fetching ${resolvedUrl}: ${msg}` };
   } finally {
     clearTimeout(timeoutId);
   }
@@ -105,7 +199,7 @@ export async function fetchArticleBody(
   if (!response.ok) {
     return {
       text: null,
-      error: `HTTP ${response.status} ${response.statusText} for ${sourceUrl}`,
+      error: `HTTP ${response.status} ${response.statusText} for ${resolvedUrl}`,
     };
   }
 
@@ -114,7 +208,7 @@ export async function fetchArticleBody(
   if (!contentType.includes("text/html") && !contentType.includes("application/xhtml")) {
     return {
       text: null,
-      error: `Non-HTML content-type "${contentType}" for ${sourceUrl}`,
+      error: `Non-HTML content-type "${contentType}" for ${resolvedUrl}`,
     };
   }
 
@@ -123,7 +217,7 @@ export async function fetchArticleBody(
   if (contentLength && parseInt(contentLength, 10) > MAX_CONTENT_BYTES) {
     return {
       text: null,
-      error: `Content-Length ${contentLength} exceeds 5MB limit for ${sourceUrl}`,
+      error: `Content-Length ${contentLength} exceeds 5MB limit for ${resolvedUrl}`,
     };
   }
 
@@ -137,7 +231,7 @@ export async function fetchArticleBody(
       if (text.length > MAX_CONTENT_BYTES) {
         return {
           text: null,
-          error: `Response body exceeds 5MB limit for ${sourceUrl}`,
+          error: `Response body exceeds 5MB limit for ${resolvedUrl}`,
         };
       }
       html = text;
@@ -153,7 +247,7 @@ export async function fetchArticleBody(
             reader.cancel();
             return {
               text: null,
-              error: `Response body exceeds 5MB limit for ${sourceUrl}`,
+              error: `Response body exceeds 5MB limit for ${resolvedUrl}`,
             };
           }
           chunks.push(value);
@@ -169,30 +263,30 @@ export async function fetchArticleBody(
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    return { text: null, error: `Failed to read response body for ${sourceUrl}: ${msg}` };
+    return { text: null, error: `Failed to read response body for ${resolvedUrl}: ${msg}` };
   }
 
   // Parse HTML with jsdom and extract readable content via Readability
   let bodyText: string | null = null;
   try {
-    const dom = new JSDOM(html, { url: sourceUrl });
+    const dom = new JSDOM(html, { url: resolvedUrl });
     const reader = new Readability(dom.window.document);
     const article = reader.parse();
     bodyText = article?.textContent?.trim() ?? null;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    return { text: null, error: `Readability parse failed for ${sourceUrl}: ${msg}` };
+    return { text: null, error: `Readability parse failed for ${resolvedUrl}: ${msg}` };
   }
 
   if (!bodyText) {
-    return { text: null, error: `Readability returned no content for ${sourceUrl}` };
+    return { text: null, error: `Readability returned no content for ${resolvedUrl}` };
   }
 
   // Paywall stub heuristic: reject suspiciously short content
   if (bodyText.length < MIN_BODY_CHARS) {
     return {
       text: null,
-      error: `Extracted body too short (${bodyText.length} chars < ${MIN_BODY_CHARS}) — likely paywall stub for ${sourceUrl}`,
+      error: `Extracted body too short (${bodyText.length} chars < ${MIN_BODY_CHARS}) — likely paywall stub for ${resolvedUrl}`,
     };
   }
 
