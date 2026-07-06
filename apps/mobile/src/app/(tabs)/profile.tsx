@@ -45,6 +45,7 @@ import { useWatchlist, type WatchlistItem } from "@/providers/watchlist-provider
 import { makeTourStep } from "@/components/spotlight-tour";
 import { TourButton } from "@/components/tour-button";
 import { useTour } from "@/providers/tour-provider";
+import { BrandGradient } from "@/components/brand-gradient";
 
 // ── Status helpers ────────────────────────────────────────────────────────────
 
@@ -1565,8 +1566,11 @@ export default function ProfileScreen() {
 
   return (
     <View style={styles.screen}>
-      {/* ── Light header card (T1) — sticky above ScrollView ── */}
-      <View style={[styles.headerCard, { paddingTop: insets.top + spacing.lg }]}>
+      {/* ── Brand-gradient header hero — sticky above ScrollView ── */}
+      <BrandGradient
+        variant="brand"
+        style={[styles.headerCard, { paddingTop: insets.top + spacing.lg }]}
+      >
         {/* Icon bar: bell + gear */}
         <View style={styles.iconBar}>
           <View style={styles.iconBtnWrap}>
@@ -1578,7 +1582,7 @@ export default function ProfileScreen() {
               }}
               hitSlop={8}
             >
-              <Ionicons name="notifications-outline" size={22} color={colors.textMuted} />
+              <Ionicons name="notifications-outline" size={22} color="#FFFFFF" />
             </Pressable>
             {notifUnreadCount > 0 && (
               <View style={styles.notifBadge}>
@@ -1593,9 +1597,9 @@ export default function ProfileScreen() {
             onPress={() => router.push("/settings")}
             hitSlop={8}
           >
-            <Ionicons name="settings-outline" size={22} color={colors.textMuted} />
+            <Ionicons name="settings-outline" size={22} color="#FFFFFF" />
           </Pressable>
-          <TourButton onPress={() => startTour(profileTourSteps)} variant="default" />
+          <TourButton onPress={() => startTour(profileTourSteps)} variant="light" />
         </View>
 
         {/* Avatar + name block */}
@@ -1618,7 +1622,7 @@ export default function ProfileScreen() {
             )}
           </View>
         </View>
-      </View>
+      </BrandGradient>
 
       {/* ── Single scrollable body (T2: all sections unconditional) ── */}
       <ScrollView
@@ -1861,13 +1865,10 @@ const makeStyles = (t: ThemeContextValue) =>
     },
     retryLabel: { color: "#FFFFFF", fontWeight: "700", fontSize: 14 },
 
-    // ── Header (T1: light surface, no dark hero) ──
+    // ── Header (brand-gradient hero) ──
     headerCard: {
-      backgroundColor: t.colors.surface,
       paddingHorizontal: spacing.xl,
-      paddingVertical: spacing.lg,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: t.colors.border,
+      paddingBottom: spacing.lg,
     },
     iconBar: {
       flexDirection: "row",
@@ -1880,54 +1881,57 @@ const makeStyles = (t: ThemeContextValue) =>
     iconBtn: { padding: 4 },
     headerTop: { flexDirection: "row", alignItems: "center", gap: spacing.lg },
 
-    // Avatar: 60px, accentSoft bg, accent initials
+    // Avatar: 60px, frosted-white on gradient, white initials + hairline ring
     avatarCircle: {
       width: 60,
       height: 60,
       borderRadius: 30,
-      backgroundColor: t.colors.accentSoft,
+      backgroundColor: "rgba(255,255,255,0.20)",
+      borderWidth: 1.5,
+      borderColor: "rgba(255,255,255,0.55)",
       alignItems: "center",
       justifyContent: "center",
     },
-    avatarText: { fontSize: 20, fontWeight: "800", color: t.colors.accent },
+    avatarText: { fontSize: 20, fontWeight: "800", color: "#FFFFFF" },
 
     headerRight: { flex: 1 },
-    // Name (no @, LinkedIn-style)
-    displayName: { fontSize: 20, fontWeight: "700", color: t.colors.text },
-    handle: { fontSize: 13, color: t.colors.textMuted, marginTop: 1 },
-    // Analyst headline: accent, 13/600
+    // Name (white on gradient)
+    displayName: { fontSize: 20, fontWeight: "800", color: "#FFFFFF" },
+    handle: { fontSize: 13, color: "rgba(255,255,255,0.80)", marginTop: 1 },
+    // Analyst headline: white on gradient
     analystHeadline: {
       marginTop: 4,
       fontSize: 13,
-      fontWeight: "600",
-      color: t.colors.accent,
+      fontWeight: "700",
+      color: "#FFFFFF",
     },
     analystHeadlineCta: {
       marginTop: 4,
       fontSize: 13,
-      fontWeight: "600",
-      color: t.colors.accent,
+      fontWeight: "700",
+      color: "#FFFFFF",
+      textDecorationLine: "underline",
     },
     analystHeadlineMuted: {
       marginTop: 4,
       fontSize: 13,
       fontWeight: "500",
-      color: t.colors.textMuted,
+      color: "rgba(255,255,255,0.80)",
     },
 
-    // ── Balance pill (T1) ──
+    // ── Balance pill — frosted white on gradient ──
     balancePill: {
       alignSelf: "flex-start",
-      marginTop: 5,
-      backgroundColor: t.colors.accentSoft,
+      marginTop: 6,
+      backgroundColor: "rgba(255,255,255,0.22)",
       borderRadius: radius.pill,
-      paddingHorizontal: 9,
+      paddingHorizontal: 10,
       paddingVertical: 3,
     },
     balancePillText: {
       fontSize: 12,
-      fontWeight: "700",
-      color: t.colors.accent,
+      fontWeight: "800",
+      color: "#FFFFFF",
     },
 
     // ── Generic card ──
