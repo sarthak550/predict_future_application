@@ -16,8 +16,9 @@ import {
 } from "react-native";
 
 import { GradientHeader } from "@/components/gradient-header";
-import { SpotlightTour, makeTourStep } from "@/components/spotlight-tour";
+import { makeTourStep } from "@/components/spotlight-tour";
 import { TourButton } from "@/components/tour-button";
+import { useTour } from "@/providers/tour-provider";
 
 import type { ApiDiscoverGroup, ApiGroupSummary, ApiMarketSummary, ApiMyPositionsResponse, ApiPollListItem, ApiPositionSummary } from "@predict-future/types";
 import { radius, spacing } from "@predict-future/ui-tokens";
@@ -99,7 +100,7 @@ export default function MarketsScreen() {
   const deepLinkParams = useLocalSearchParams<{ tab?: string }>();
 
   // ── Tour ──────────────────────────────────────────────────────────
-  const [tourVisible, setTourVisible] = useState(false);
+  const { startTour } = useTour();
   const modeToggleRef = useRef<View>(null);
   const viewChipsRef = useRef<View>(null);
   const categoryChipsRef = useRef<View>(null);
@@ -588,7 +589,7 @@ export default function MarketsScreen() {
                 <Feather name="x" size={16} color="rgba(255,255,255,0.85)" />
               </Pressable>
             ) : null}
-            <TourButton onPress={() => setTourVisible(true)} variant="light" />
+            <TourButton onPress={() => startTour(tourSteps)} variant="light" />
           </View>
         }
       />
@@ -902,11 +903,6 @@ export default function MarketsScreen() {
         />
       )}
 
-      <SpotlightTour
-        visible={tourVisible}
-        steps={tourSteps}
-        onClose={() => setTourVisible(false)}
-      />
     </View>
   );
 }

@@ -12,6 +12,11 @@
  * card tokens (surface bg, accent dots, etc.). Theme-aware except the intentional
  * dark overlay and white highlight.
  *
+ * Rendered WITHOUT a Modal so it lives in the same native window as the
+ * measured elements. A zero-size origin marker is measured on mount so all
+ * ring/card coordinates are self-corrected relative to the overlay's top-left,
+ * cancelling any status-bar or inset offset exactly.
+ *
  * Usage:
  *   import { SpotlightTour, makeTourStep } from "@/components/spotlight-tour";
  *
@@ -29,7 +34,6 @@ import {
   Animated,
   Dimensions,
   Easing,
-  Modal,
   Pressable,
   StyleSheet,
   Text,
@@ -121,7 +125,9 @@ const makeStyles = (t: ThemeContextValue) =>
   StyleSheet.create({
     // Full-screen dark overlay — intentionally static (no theme)
     overlay: {
-      flex: 1,
+      ...StyleSheet.absoluteFillObject,
+      zIndex: 9999,
+      elevation: 9999,
       backgroundColor: "rgba(0,0,0,0.72)",
     },
     // Pulsing highlight ring around the target element
@@ -222,6 +228,21 @@ export function SpotlightTour({ visible, steps, onClose }: SpotlightTourProps) {
     };
   }, []);
 
+  // Self-correcting origin: the overlay's top-left in window coordinates.
+  // Because this component is no longer inside a Modal (a separate native window),
+  // origin will typically be {0, 0}. We still measure it so that any residual
+  // offset caused by an ancestor transform or inset is cancelled exactly.
+  const originRef = useRef<View>(null);
+  const [origin, setOrigin] = useState({ x: 0, y: 0 });
+
+  function measureOrigin() {
+    originRef.current?.measureInWindow((ox, oy) => {
+      if (mountedRef.current) {
+        setOrigin({ x: ox, y: oy });
+      }
+    });
+  }
+
   // Measured card height (updated via onLayout)
   const cardHeightRef = useRef(CARD_APPROX_HEIGHT);
 
@@ -231,6 +252,8 @@ export function SpotlightTour({ visible, steps, onClose }: SpotlightTourProps) {
     if (visible) {
       setStepIdx(0);
       setRect(null);
+      // Re-measure origin whenever the tour opens (layout may have shifted)
+      measureOrigin();
       Animated.timing(fadeAnim, {
         toValue: 1,
         duration: 220,
@@ -282,7 +305,7 @@ export function SpotlightTour({ visible, steps, onClose }: SpotlightTourProps) {
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(pulseAnim, {
-          toValue: 1.04,
+          toValue: 1.02,
           duration: 700,
           easing: Easing.inOut(Easing.ease),
           useNativeDriver: true,
@@ -329,16 +352,18 @@ export function SpotlightTour({ visible, steps, onClose }: SpotlightTourProps) {
   const body = content?.body ?? "";
   const isLast = stepIdx === steps.length - 1;
 
-  // ── Highlight ring geometry ───────────────────────────────────────────────────
+  // ── Highlight ring geometry (self-corrected against overlay origin) ───────────
 
+  // Subtract overlay's window origin so ring top-left is relative to the overlay,
+  // not the window. This cancels any residual offset (status bar, insets, etc.).
   let ringLeft = 0;
   let ringTop = 0;
   let ringWidth = SCREEN_WIDTH;
   let ringHeight = 80;
 
   if (rect) {
-    ringLeft = rect.x - RING_PADDING;
-    ringTop = rect.y - RING_PADDING;
+    ringLeft = rect.x - origin.x - RING_PADDING;
+    ringTop = rect.y - origin.y - RING_PADDING;
     ringWidth = rect.width + RING_PADDING * 2;
     ringHeight = rect.height + RING_PADDING * 2;
   }
@@ -349,7 +374,9 @@ export function SpotlightTour({ visible, steps, onClose }: SpotlightTourProps) {
 
   // If the element's centre is in the lower half of the screen → card above it.
   // Otherwise card below. Clamp within screen bounds.
-  const elementCentreY = rect ? rect.y + rect.height / 2 : SCREEN_HEIGHT / 2;
+  const elementCentreY = rect
+    ? rect.y - origin.y + rect.height / 2
+    : SCREEN_HEIGHT / 2;
   const cardInLowerHalf = elementCentreY > SCREEN_HEIGHT / 2;
 
   const CARD_MARGIN = 16;
@@ -373,63 +400,65 @@ export function SpotlightTour({ visible, steps, onClose }: SpotlightTourProps) {
   }
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="none"
-      statusBarTranslucent
-      onRequestClose={handleSkip}
+    <Animated.View
+      style={[s.overlay, { opacity: fadeAnim }]}
+      pointerEvents="auto"
+      onLayout={measureOrigin}
     >
-      <Animated.View style={[s.overlay, { opacity: fadeAnim }]}>
+      {/* Zero-size origin marker — measured to get the overlay's window offset */}
+      <View
+        ref={originRef}
+        pointerEvents="none"
+        style={{ position: "absolute", top: 0, left: 0, width: 0, height: 0 }}
+      />
 
-        {/* Highlight ring around target element */}
-        {rect ? (
-          <Animated.View
-            style={[
-              s.ring,
-              {
-                left: ringLeft,
-                top: ringTop,
-                width: ringWidth,
-                height: ringHeight,
-                borderRadius: ringBorderRadius,
-                transform: [{ scale: pulseAnim }],
-              },
-            ]}
-          />
-        ) : null}
+      {/* Highlight ring around target element */}
+      {rect ? (
+        <Animated.View
+          style={[
+            s.ring,
+            {
+              left: ringLeft,
+              top: ringTop,
+              width: ringWidth,
+              height: ringHeight,
+              borderRadius: ringBorderRadius,
+              transform: [{ scale: pulseAnim }],
+            },
+          ]}
+        />
+      ) : null}
 
-        {/* Caption card */}
-        <View
-          style={[s.card, { top: cardTop }]}
-          onLayout={(e) => {
-            cardHeightRef.current = e.nativeEvent.layout.height;
-          }}
-        >
-          {/* Step dots */}
-          <View style={s.stepRow}>
-            {steps.map((_, i) => (
-              <View
-                key={i}
-                style={[s.stepDot, i === stepIdx && s.stepDotActive]}
-              />
-            ))}
-          </View>
-
-          <Text style={s.cardTitle}>{title}</Text>
-          <Text style={s.cardBody}>{body}</Text>
-
-          <View style={s.actionRow}>
-            <Pressable onPress={handleSkip} style={s.skipBtn} hitSlop={8}>
-              <Text style={s.skipText}>Skip</Text>
-            </Pressable>
-            <Pressable onPress={handleNext} style={s.nextBtn} hitSlop={8}>
-              <Text style={s.nextText}>{isLast ? "Done" : "Next"}</Text>
-            </Pressable>
-          </View>
+      {/* Caption card */}
+      <View
+        style={[s.card, { top: cardTop }]}
+        onLayout={(e) => {
+          cardHeightRef.current = e.nativeEvent.layout.height;
+        }}
+      >
+        {/* Step dots */}
+        <View style={s.stepRow}>
+          {steps.map((_, i) => (
+            <View
+              key={i}
+              style={[s.stepDot, i === stepIdx && s.stepDotActive]}
+            />
+          ))}
         </View>
 
-      </Animated.View>
-    </Modal>
+        <Text style={s.cardTitle}>{title}</Text>
+        <Text style={s.cardBody}>{body}</Text>
+
+        <View style={s.actionRow}>
+          <Pressable onPress={handleSkip} style={s.skipBtn} hitSlop={8}>
+            <Text style={s.skipText}>Skip</Text>
+          </Pressable>
+          <Pressable onPress={handleNext} style={s.nextBtn} hitSlop={8}>
+            <Text style={s.nextText}>{isLast ? "Done" : "Next"}</Text>
+          </Pressable>
+        </View>
+      </View>
+
+    </Animated.View>
   );
 }

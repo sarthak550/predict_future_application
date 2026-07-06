@@ -23,8 +23,9 @@ import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/t
 import { F1DetailModal } from "@/components/f1-detail-modal";
 import { NewsFeedCard } from "@/components/news-feed-card";
 import { mobileApi } from "@/lib/api";
-import { SpotlightTour, makeTourStep } from "@/components/spotlight-tour";
+import { makeTourStep } from "@/components/spotlight-tour";
 import { TourButton } from "@/components/tour-button";
+import { useTour } from "@/providers/tour-provider";
 
 const LEAGUE_ICONS: Record<string, React.ComponentProps<typeof Feather>["name"]> = {
   IPL: "target",
@@ -80,7 +81,7 @@ export default function SportsScreen() {
   const mountedRef = useRef(true);
 
   // ── Tour ──────────────────────────────────────────────────────────
-  const [tourVisible, setTourVisible] = useState(false);
+  const { startTour } = useTour();
   const leagueChipsRef = useRef<View>(null);
   const scoresSectionRef = useRef<View>(null);
   const newsHeaderRef = useRef<View>(null);
@@ -320,7 +321,7 @@ export default function SportsScreen() {
             <Text style={styles.liveText}>{liveCount} LIVE</Text>
           </View>
         )}
-        <TourButton onPress={() => setTourVisible(true)} variant="default" />
+        <TourButton onPress={() => startTour(tourSteps)} variant="default" />
       </View>
 
       <FlatList
@@ -375,11 +376,6 @@ export default function SportsScreen() {
         onClose={() => setSelectedStory(null)}
       />
 
-      <SpotlightTour
-        visible={tourVisible}
-        steps={tourSteps}
-        onClose={() => setTourVisible(false)}
-      />
     </View>
   );
 }

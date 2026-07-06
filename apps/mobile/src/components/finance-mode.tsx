@@ -41,7 +41,8 @@ import { CombinedAnalystCard } from "@/components/combined-analyst-card";
 import { mobileApi } from "@/lib/api";
 import { withRetry } from "@/lib/retry";
 import { isNSEHoliday } from "@/constants/nse-holidays-2026";
-import { SpotlightTour, makeTourStep } from "@/components/spotlight-tour";
+import { makeTourStep } from "@/components/spotlight-tour";
+import { useTour } from "@/providers/tour-provider";
 
 const FOLLOWED_ANALYSTS_KEY = "finance:followedAnalysts";
 const FEED_DEFAULT_CACHE_KEY = "finance:feed:default";
@@ -2245,6 +2246,7 @@ export function FinanceMode({
   /** Called when the tour is dismissed */
   onTourClose?: () => void;
 }) {
+  const { startTour } = useTour();
   const financeStyles = useThemedStyles(makeFinanceStyles);
   const controlsStyles = useThemedStyles(makeControlsStyles);
   const { colors } = useTheme();
@@ -2403,6 +2405,31 @@ export function FinanceMode({
   const tourWeekCardRef = useRef<View>(null);
   const tourChipRowRef = useRef<View>(null);
   const tourExpertFeedRef = useRef<View>(null);
+
+  // When the parent signals tourVisible=true, delegate to the root TourProvider
+  // so the overlay renders in the same native window as the measured elements.
+  useEffect(() => {
+    if (!tourVisible) return;
+    startTour([
+      makeTourStep("finance-scope-tabs", tourScopeTabsRef, {
+        scrollIntoView: () =>
+          scrollViewRef.current?.scrollTo({ y: expertSectionY.current, animated: true }),
+      }),
+      makeTourStep("finance-your-week-card", tourWeekCardRef, {
+        scrollIntoView: () => scrollViewRef.current?.scrollTo({ y: 0, animated: true }),
+      }),
+      makeTourStep("finance-sort-filter-chips", tourChipRowRef, {
+        scrollIntoView: () =>
+          scrollViewRef.current?.scrollTo({ y: expertSectionY.current, animated: true }),
+      }),
+      makeTourStep("finance-expert-opinions-feed", tourExpertFeedRef, {
+        scrollIntoView: () =>
+          scrollViewRef.current?.scrollTo({ y: expertSectionY.current, animated: true }),
+      }),
+    ]);
+    onTourClose?.();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tourVisible]);
 
   // Cluster filter state: when set, only opinions with matching eventClusterId are shown (S18-T4)
   // Initial value can come from a deep-link param (e.g. tapping the cluster chip on opinion detail).
@@ -3935,29 +3962,6 @@ export function FinanceMode({
         </View>
       )}
     </PulseSheet>
-
-    {/* Spotlight tour — steps cover the 4 main Finance sections */}
-    <SpotlightTour
-      visible={tourVisible}
-      steps={[
-        makeTourStep("finance-scope-tabs", tourScopeTabsRef, {
-          scrollIntoView: () =>
-            scrollViewRef.current?.scrollTo({ y: expertSectionY.current, animated: true }),
-        }),
-        makeTourStep("finance-your-week-card", tourWeekCardRef, {
-          scrollIntoView: () => scrollViewRef.current?.scrollTo({ y: 0, animated: true }),
-        }),
-        makeTourStep("finance-sort-filter-chips", tourChipRowRef, {
-          scrollIntoView: () =>
-            scrollViewRef.current?.scrollTo({ y: expertSectionY.current, animated: true }),
-        }),
-        makeTourStep("finance-expert-opinions-feed", tourExpertFeedRef, {
-          scrollIntoView: () =>
-            scrollViewRef.current?.scrollTo({ y: expertSectionY.current, animated: true }),
-        }),
-      ]}
-      onClose={() => onTourClose?.()}
-    />
 
     </>
   );

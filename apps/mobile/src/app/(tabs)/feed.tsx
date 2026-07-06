@@ -11,8 +11,9 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
-import { SpotlightTour, makeTourStep } from "@/components/spotlight-tour";
+import { makeTourStep } from "@/components/spotlight-tour";
 import { TourButton } from "@/components/tour-button";
+import { useTour } from "@/providers/tour-provider";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -103,7 +104,7 @@ export default function FeedScreen() {
   const [streakCount, setStreakCount] = useState(0);
 
   // ── Tour ──────────────────────────────────────────────────────────────────────
-  const [tourVisible, setTourVisible] = useState(false);
+  const { startTour } = useTour();
   // Refs for the sections we want to spotlight
   const indiaToggleRef = useRef<View>(null);
   const categoryBarRef = useRef<View>(null);
@@ -423,7 +424,7 @@ export default function FeedScreen() {
                 accessibilityHint="When on, the feed shows only India-relevant news stories"
               />
             </View>
-            <TourButton onPress={() => setTourVisible(true)} variant="light" />
+            <TourButton onPress={() => startTour(tourSteps)} variant="light" />
           </View>
         }
       />
@@ -586,11 +587,6 @@ export default function FeedScreen() {
         </Animated.View>
       )}
 
-      <SpotlightTour
-        visible={tourVisible}
-        steps={tourSteps}
-        onClose={() => setTourVisible(false)}
-      />
     </View>
   );
 }

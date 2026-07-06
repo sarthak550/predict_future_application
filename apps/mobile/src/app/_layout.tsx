@@ -11,6 +11,7 @@ import { mobileApi } from "@/lib/api";
 import { AppProviders } from "@/providers";
 import { useSession } from "@/providers/session-provider";
 import { useTheme } from "@/providers/theme-provider";
+import { TourProvider } from "@/providers/tour-provider";
 import { LeagueBanner } from "@/components/league-banner";
 import { ThemedStackHeader } from "@/components/themed-stack-header";
 
@@ -114,16 +115,18 @@ function ThemedShell() {
           style={[styles.safeArea, { backgroundColor: themeColors.background }]}
           edges={["left", "right"]}
         >
-          <Stack
-            screenOptions={{
-              headerShown: false,
-              contentStyle: { backgroundColor: themeColors.background },
-              // Custom header that reliably clears the status bar (native-stack's
-              // own header doesn't under Expo 54 edge-to-edge). Only renders on
-              // screens that set headerShown: true.
-              header: (props) => <ThemedStackHeader {...props} />,
-            }}
-          />
+          <TourProvider>
+            <Stack
+              screenOptions={{
+                headerShown: false,
+                contentStyle: { backgroundColor: themeColors.background },
+                // Custom header that reliably clears the status bar (native-stack's
+                // own header doesn't under Expo 54 edge-to-edge). Only renders on
+                // screens that set headerShown: true.
+                header: (props) => <ThemedStackHeader {...props} />,
+              }}
+            />
+          </TourProvider>
         </SafeAreaView>
       </NavThemeProvider>
     </>

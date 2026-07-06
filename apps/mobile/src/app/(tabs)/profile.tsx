@@ -42,8 +42,9 @@ import { mobileApi } from "@/lib/api";
 import { SHOW_PHONE_VERIFY } from "@/lib/feature-flags";
 import { useSession } from "@/providers/session-provider";
 import { useWatchlist, type WatchlistItem } from "@/providers/watchlist-provider";
-import { SpotlightTour, makeTourStep } from "@/components/spotlight-tour";
+import { makeTourStep } from "@/components/spotlight-tour";
 import { TourButton } from "@/components/tour-button";
+import { useTour } from "@/providers/tour-provider";
 
 // ── Status helpers ────────────────────────────────────────────────────────────
 
@@ -1340,7 +1341,7 @@ export default function ProfileScreen() {
   const watchlist = useWatchlist();
 
   // ── Tour ──────────────────────────────────────────────────────────
-  const [tourVisible, setTourVisible] = useState(false);
+  const { startTour } = useTour();
   const profileScrollRef = useRef<ScrollView>(null);
   const trackRecordRef = useRef<View>(null);
   const achievementsRef = useRef<View>(null);
@@ -1480,6 +1481,30 @@ export default function ProfileScreen() {
     );
   }
 
+  // Build tour steps before the early return so they are always defined.
+  // All referenced values are refs — safe to capture before user is known.
+  const profileTourSteps = [
+    makeTourStep("profile-track-record", trackRecordRef, {
+      scrollIntoView: () => profileScrollRef.current?.scrollTo({ y: 0, animated: true }),
+    }),
+    makeTourStep("profile-achievements", achievementsRef, {
+      scrollIntoView: () =>
+        profileScrollRef.current?.scrollTo({ y: Math.max(0, achievementsLayoutY.current - 80), animated: true }),
+    }),
+    makeTourStep("profile-recent-activity", recentActivityRef, {
+      scrollIntoView: () =>
+        profileScrollRef.current?.scrollTo({ y: Math.max(0, recentActivityLayoutY.current - 80), animated: true }),
+    }),
+    makeTourStep("profile-markets-watchlist", marketsWatchlistRef, {
+      scrollIntoView: () =>
+        profileScrollRef.current?.scrollTo({ y: Math.max(0, marketsWatchlistLayoutY.current - 80), animated: true }),
+    }),
+    makeTourStep("profile-explore", exploreRef, {
+      scrollIntoView: () =>
+        profileScrollRef.current?.scrollTo({ y: Math.max(0, exploreLayoutY.current - 80), animated: true }),
+    }),
+  ];
+
   const user = data?.user;
   if (!user) return null;
 
@@ -1570,7 +1595,7 @@ export default function ProfileScreen() {
           >
             <Ionicons name="settings-outline" size={22} color={colors.textMuted} />
           </Pressable>
-          <TourButton onPress={() => setTourVisible(true)} variant="default" />
+          <TourButton onPress={() => startTour(profileTourSteps)} variant="default" />
         </View>
 
         {/* Avatar + name block */}
@@ -1814,31 +1839,6 @@ export default function ProfileScreen() {
         {referralData && <InviteFriendsCard referral={referralData} />}
       </ScrollView>
 
-      <SpotlightTour
-        visible={tourVisible}
-        steps={[
-          makeTourStep("profile-track-record", trackRecordRef, {
-            scrollIntoView: () => profileScrollRef.current?.scrollTo({ y: 0, animated: true }),
-          }),
-          makeTourStep("profile-achievements", achievementsRef, {
-            scrollIntoView: () =>
-              profileScrollRef.current?.scrollTo({ y: Math.max(0, achievementsLayoutY.current - 80), animated: true }),
-          }),
-          makeTourStep("profile-recent-activity", recentActivityRef, {
-            scrollIntoView: () =>
-              profileScrollRef.current?.scrollTo({ y: Math.max(0, recentActivityLayoutY.current - 80), animated: true }),
-          }),
-          makeTourStep("profile-markets-watchlist", marketsWatchlistRef, {
-            scrollIntoView: () =>
-              profileScrollRef.current?.scrollTo({ y: Math.max(0, marketsWatchlistLayoutY.current - 80), animated: true }),
-          }),
-          makeTourStep("profile-explore", exploreRef, {
-            scrollIntoView: () =>
-              profileScrollRef.current?.scrollTo({ y: Math.max(0, exploreLayoutY.current - 80), animated: true }),
-          }),
-        ]}
-        onClose={() => setTourVisible(false)}
-      />
     </View>
   );
 }
