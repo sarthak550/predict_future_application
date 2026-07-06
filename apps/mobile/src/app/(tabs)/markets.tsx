@@ -48,16 +48,16 @@ type ViewChip = {
 };
 
 const VIEW_CHIPS: ViewChip[] = [
-  { label: "All",          statusTab: "all",     sort: "new"      },
-  { label: "Trending",     statusTab: "live",    sort: "rank"     },
-  { label: "New",          statusTab: "live",    sort: "new"      },
-  { label: "Closing Soon", statusTab: "live",    sort: "close_at" },
-  { label: "Most Active",  statusTab: "live",    sort: "volume"   },
-  { label: "Settled",      statusTab: "settled", sort: "new"      },
-  { label: "Cancelled",    statusTab: "ended",   sort: "new"      },
-  { label: "Saved",        statusTab: "saved",   sort: "new"      },
-  { label: "My Bets",      statusTab: "mybets",  sort: "new"      },
-  { label: "My Markets",   statusTab: "mine",    sort: "new"      },
+  // "All" sorts open markets by soonest-closing (client-side); Trending = most
+  // popular/most participants (marketRankScore). "Most Active"/"Closing Soon"/
+  // "Cancelled" removed — Trending absorbs popularity, All surfaces closing-soon.
+  { label: "All",        statusTab: "all",     sort: "new"  },
+  { label: "Trending",   statusTab: "live",    sort: "rank" },
+  { label: "New",        statusTab: "live",    sort: "new"  },
+  { label: "Settled",    statusTab: "settled", sort: "new"  },
+  { label: "Saved",      statusTab: "saved",   sort: "new"  },
+  { label: "My Bets",    statusTab: "mybets",  sort: "new"  },
+  { label: "My Markets", statusTab: "mine",    sort: "new"  },
 ];
 
 // CATEGORIES is provided by the shared CategoryFilterBar via FILTER_BAR_CATEGORIES.
@@ -500,17 +500,28 @@ export default function MarketsScreen() {
       seen.add(m.id);
       return true;
     });
-    // "All" view: live/new markets at the top, resolved/settled at the bottom,
-    // ranked within each bucket by popularity + recency (marketRankScore).
+    // "All" view: open markets first (ordered by soonest-closing so markets about
+    // to close surface at the top), then pending, then resolved/settled — the
+    // latter buckets ranked by popularity (marketRankScore).
     if (statusTab === "all") {
       deduped.sort((a, b) => {
         const groupDelta = allViewStatusGroup(a.status) - allViewStatusGroup(b.status);
         if (groupDelta !== 0) return groupDelta;
+        if (allViewStatusGroup(a.status) === 0) {
+          // Live bucket: soonest to close first (tie-break by popularity).
+          const at = a.closeAt ? new Date(a.closeAt).getTime() : Infinity;
+          const bt = b.closeAt ? new Date(b.closeAt).getTime() : Infinity;
+          if (at !== bt) return at - bt;
+        }
         return (b.marketRankScore ?? 0) - (a.marketRankScore ?? 0);
       });
     }
+    // "Trending" (live + rank): most popular / most participants first.
+    if (statusTab === "live" && sort === "rank") {
+      deduped.sort((a, b) => (b.marketRankScore ?? 0) - (a.marketRankScore ?? 0));
+    }
     return deduped;
-  }, [allMarkets, savedMarkets, myCreatedMarkets, myBetsPositions, statusTab, category, mode]);
+  }, [allMarkets, savedMarkets, myCreatedMarkets, myBetsPositions, statusTab, sort, category, mode]);
 
   const handleRefresh = useCallback(() => {
     if (mode === "public") {
