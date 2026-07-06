@@ -1353,7 +1353,7 @@ function WeekToggleCard({
       </Text>
     ) : (
       <Text style={digestStyles.compactStripTextEmpty}>
-        {"Your week: track your accuracy here  ›"}
+        {"Your Week — track your accuracy"}
       </Text>
     );
 
@@ -1370,7 +1370,10 @@ function WeekToggleCard({
         }
       >
         {stripContent}
-        {hasCalls && <Text style={digestStyles.compactStripChevron}>›</Text>}
+        <View style={digestStyles.compactStripCue}>
+          <Text style={digestStyles.compactStripCueText}>Show</Text>
+          <Text style={digestStyles.compactStripChevron}>▼</Text>
+        </View>
       </Pressable>
     );
   }
@@ -1700,7 +1703,8 @@ const makeDigestStyles = (t: ThemeContextValue) => StyleSheet.create({
     color: t.colors.textSubtle,
     marginTop: 4,
   },
-  // S51-T3: compact strip layout — single-line summary, ~50px tall
+  // S51-T3: compact strip layout — single-line summary. Brand-tinted so it
+  // reads as an interactive, expandable banner rather than blending into the page.
   compactStrip: {
     flexDirection: "row",
     alignItems: "center",
@@ -1708,28 +1712,44 @@ const makeDigestStyles = (t: ThemeContextValue) => StyleSheet.create({
     marginHorizontal: spacing.lg,
     marginTop: spacing.xs,
     marginBottom: spacing.xs,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 12,
+    paddingLeft: spacing.md,
+    paddingRight: spacing.md,
+    paddingVertical: 14,
     borderRadius: radius.md,
-    backgroundColor: t.colors.surface,
+    backgroundColor: t.colors.accentSoft,
     borderWidth: 1,
-    borderColor: t.colors.border,
+    borderColor: t.colors.accent,
+    borderLeftWidth: 4,
   },
   compactStripText: {
-    fontSize: 13,
+    fontSize: 14,
+    fontWeight: "600",
     color: t.colors.text,
     flex: 1,
   },
-  compactStripChevron: {
-    fontSize: 18,
-    color: t.colors.textSubtle,
-    lineHeight: 20,
+  // Right-side "Show" affordance + chevron, both in accent so the strip clearly
+  // signals it can be expanded.
+  compactStripCue: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginLeft: spacing.sm,
   },
-  // S70-T2: italic muted text shown in compact strip when there's no call data yet
+  compactStripCueText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: t.colors.accent,
+  },
+  compactStripChevron: {
+    fontSize: 12,
+    color: t.colors.accent,
+    fontWeight: "700",
+  },
+  // Prompt text shown in compact strip when there's no call data yet — readable, not faint.
   compactStripTextEmpty: {
-    fontSize: 13,
-    color: t.colors.textMuted,
-    fontStyle: "italic",
+    fontSize: 14,
+    fontWeight: "600",
+    color: t.colors.text,
     flex: 1,
   },
   // S70-T2: empty calls body — accuracy explanation line (muted)
