@@ -1610,8 +1610,7 @@ export default function ProfileScreen() {
             </Text>
           </View>
           <View style={styles.headerRight}>
-            <Text style={styles.displayName}>{user.username}</Text>
-            <Text style={styles.handle}>{`@${user.username}`}</Text>
+            <Text style={styles.displayName}>{`@${user.username}`}</Text>
             {analystHeadline}
             {user.wallet?.balance != null && (
               <View style={styles.balancePill}>
