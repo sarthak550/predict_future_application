@@ -2934,6 +2934,10 @@ export function FinanceMode({
       ref={scrollViewRef}
       style={financeStyles.scroll}
       contentContainerStyle={financeStyles.scrollContent}
+      // Pin the scope-tab row (Expert Opinions / Market Analysis / Rates & Events)
+      // to the top while scrolling. Index accounts for the leading (currently
+      // disabled) analyst card; React.Children.toArray drops it when false.
+      stickyHeaderIndices={[SHOW_TOP_ANALYSTS ? 2 : 1]}
       onScroll={handleScroll}
       // 32ms = ~30fps onScroll fires — responsive enough that loadMore's
       // 200px-from-bottom trigger catches fast flicks. 200ms (the previous
@@ -2995,16 +2999,13 @@ export function FinanceMode({
           didn't have a clear meaning. Accuracy stats live on the user's profile
           and inside the Weekly Calls Digest card. */}
 
-      {/* Section 3: Expert Opinions + Market Analysis (NOW THE HERO FEED) */}
-      <View
-        ref={tourExpertFeedRef}
-        collapsable={false}
-        style={financeStyles.unclusteredSection}
-        onLayout={(e) => { expertSectionY.current = e.nativeEvent.layout.y; }}
-      >
-        {/* S38 v3: 3 tabs (content TYPE — exclusive). Verified + Resolved
-            moved to filter chips since they're qualifiers, not content types.
-            "Rates & Events" shows always-visible RBI Rates, Policy Calendar, and MPC polls. */}
+      {/* Sticky header: scope-tab row + filter chip strip pinned together.
+          Both are direct children of this single wrapper so RN treats them as
+          one sticky child (stickyHeaderIndices still points at index 1).
+          S38 v3: 3 content-TYPE tabs (exclusive); qualifiers live in the filter chips.
+          Filter chips are conditionally shown (hidden for Rates & Events tab which
+          has its own dedicated content). */}
+      <View collapsable={false} style={financeStyles.stickyTabsBar}>
         <View ref={tourScopeTabsRef} collapsable={false} style={controlsStyles.tabsRow}>
           {([
             { key: "expert-opinions" as const, label: "Expert Opinions" },
@@ -3026,6 +3027,134 @@ export function FinanceMode({
           })}
         </View>
 
+        {/* S38: Sort + active-filter chip strip — only shown when not on Rates & Events tab.
+            Moved here from Section 3 so it pins with the tabs in a single sticky header. */}
+        {showScope !== "rates-events" && (
+          <View ref={tourChipRowRef} collapsable={false} style={controlsStyles.chipRow}>
+            {/* Sort chip — leads the row so it's always visible */}
+            <Pressable
+              style={controlsStyles.sortChip}
+              onPress={() => setSortSheetOpen(true)}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Text style={controlsStyles.sortChipText}>
+                ⇅ {sortMode === "latest" ? "Latest" : "Top week"}
+              </Text>
+            </Pressable>
+
+            {/* Resolved-only filter chip */}
+            {resolvedOnly && (
+              <Pressable
+                style={controlsStyles.filterChip}
+                onPress={() => setResolvedOnly(false)}
+              >
+                <Text style={controlsStyles.filterChipText}>🎯 Resolved</Text>
+                <Text style={controlsStyles.filterChipX}>×</Text>
+              </Pressable>
+            )}
+
+            {/* Verified-only filter chip */}
+            {verifiedOnly && (
+              <Pressable
+                style={controlsStyles.filterChip}
+                onPress={() => setVerifiedOnly(false)}
+              >
+                <Text style={controlsStyles.filterChipText}>✓ Verified</Text>
+                <Text style={controlsStyles.filterChipX}>×</Text>
+              </Pressable>
+            )}
+
+            {selectedDirectionFilter !== null && selectedDirectionFilter !== "VERIFIED" && (
+              <Pressable
+                style={controlsStyles.filterChip}
+                onPress={() => setSelectedDirectionFilter(null)}
+              >
+                <Text style={controlsStyles.filterChipText}>
+                  {selectedDirectionFilter === "BULLISH" ? "↑ Bullish" :
+                   selectedDirectionFilter === "BEARISH" ? "↓ Bearish" : "→ Neutral"}
+                </Text>
+                <Text style={controlsStyles.filterChipX}>×</Text>
+              </Pressable>
+            )}
+            {activeInstrumentFilter !== null && (
+              <Pressable
+                style={controlsStyles.filterChip}
+                onPress={() => setActiveInstrumentFilter(null)}
+              >
+                <Text style={controlsStyles.filterChipText}>📊 {activeInstrumentFilter}</Text>
+                <Text style={controlsStyles.filterChipX}>×</Text>
+              </Pressable>
+            )}
+            {selectedAnalystFilter !== null && (
+              <Pressable
+                style={controlsStyles.filterChip}
+                onPress={() => setSelectedAnalystFilter(null)}
+              >
+                <Text style={controlsStyles.filterChipText}>
+                  👤 {expertNamesMap[selectedAnalystFilter]?.name ?? "Analyst"}
+                </Text>
+                <Text style={controlsStyles.filterChipX}>×</Text>
+              </Pressable>
+            )}
+            {selectedClusterFilter !== null && (() => {
+              const activeCluster = data?.eventClusters.find((c) => c.id === selectedClusterFilter);
+              return (
+                <Pressable
+                  style={controlsStyles.filterChip}
+                  onPress={() => setSelectedClusterFilter(null)}
+                >
+                  <Text style={controlsStyles.filterChipText}>
+                    📅 {activeCluster?.name ?? "Cluster"}
+                  </Text>
+                  <Text style={controlsStyles.filterChipX}>×</Text>
+                </Pressable>
+              );
+            })()}
+            <Pressable
+              style={controlsStyles.addFilterChip}
+              onPress={() => setFilterSheetOpen(true)}
+            >
+              <Text style={controlsStyles.addFilterText}>+ Filter</Text>
+            </Pressable>
+            {/* UX3: Clear-all affordance — only shows when ≥2 filters are active,
+                so it never clutters the single-chip case (which already has its own × on the chip). */}
+            {(() => {
+              const activeCount =
+                (resolvedOnly ? 1 : 0) +
+                (verifiedOnly ? 1 : 0) +
+                (selectedDirectionFilter !== null ? 1 : 0) +
+                (activeInstrumentFilter !== null ? 1 : 0) +
+                (selectedAnalystFilter !== null ? 1 : 0) +
+                (selectedClusterFilter !== null ? 1 : 0);
+              if (activeCount < 2) return null;
+              return (
+                <Pressable
+                  style={controlsStyles.clearAllChip}
+                  onPress={() => {
+                    setResolvedOnly(false);
+                    setVerifiedOnly(false);
+                    setSelectedDirectionFilter(null);
+                    setActiveInstrumentFilter(null);
+                    setSelectedAnalystFilter(null);
+                    setSelectedClusterFilter(null);
+                  }}
+                  hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                >
+                  <Text style={controlsStyles.clearAllText}>Clear all ({activeCount}) ×</Text>
+                </Pressable>
+              );
+            })()}
+          </View>
+        )}
+      </View>
+
+      {/* Section 3: Expert Opinions + Market Analysis (NOW THE HERO FEED) */}
+      <View
+        ref={tourExpertFeedRef}
+        collapsable={false}
+        style={financeStyles.unclusteredSection}
+        onLayout={(e) => { expertSectionY.current = e.nativeEvent.layout.y; }}
+      >
         {/* Rates & Events tab content — always-visible cards (no PulseRibbon, no collapse).
             S72 render order: IndiaMacroCard → PolicyCalendarCard → MpcPollPackCard.
             Rendered ONLY when showScope === "rates-events". */}
@@ -3054,129 +3183,10 @@ export function FinanceMode({
           </>
         )}
 
-        {/* Sort/filter chip strip + opinion/market feed.
-            Hidden when the Rates & Events tab is active — that tab has its
-            own dedicated content (RBI Rates + Policy Calendar + MpcPollPackCard) rendered above. */}
+        {/* Opinion/market feed — scrolls normally under the pinned sticky header.
+            Filter chips have moved to the sticky header above; this block renders
+            only the feed IIFE and its footers. Hidden when Rates & Events is active. */}
         {showScope !== "rates-events" && <>
-        {/* S38: Sort + active-filter chip strip — replaces the 3 separate rows
-            (MY ANALYSTS row + instrument banner + cluster banner) AND hosts the
-            Sort dropdown so it doesn't crowd the Show tabs row above. */}
-        <View ref={tourChipRowRef} collapsable={false} style={controlsStyles.chipRow}>
-          {/* Sort chip — leads the row so it's always visible */}
-          <Pressable
-            style={controlsStyles.sortChip}
-            onPress={() => setSortSheetOpen(true)}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <Text style={controlsStyles.sortChipText}>
-              ⇅ {sortMode === "latest" ? "Latest" : "Top week"}
-            </Text>
-          </Pressable>
-
-          {/* Resolved-only filter chip */}
-          {resolvedOnly && (
-            <Pressable
-              style={controlsStyles.filterChip}
-              onPress={() => setResolvedOnly(false)}
-            >
-              <Text style={controlsStyles.filterChipText}>🎯 Resolved</Text>
-              <Text style={controlsStyles.filterChipX}>×</Text>
-            </Pressable>
-          )}
-
-          {/* Verified-only filter chip */}
-          {verifiedOnly && (
-            <Pressable
-              style={controlsStyles.filterChip}
-              onPress={() => setVerifiedOnly(false)}
-            >
-              <Text style={controlsStyles.filterChipText}>✓ Verified</Text>
-              <Text style={controlsStyles.filterChipX}>×</Text>
-            </Pressable>
-          )}
-
-          {selectedDirectionFilter !== null && selectedDirectionFilter !== "VERIFIED" && (
-            <Pressable
-              style={controlsStyles.filterChip}
-              onPress={() => setSelectedDirectionFilter(null)}
-            >
-              <Text style={controlsStyles.filterChipText}>
-                {selectedDirectionFilter === "BULLISH" ? "↑ Bullish" :
-                 selectedDirectionFilter === "BEARISH" ? "↓ Bearish" : "→ Neutral"}
-              </Text>
-              <Text style={controlsStyles.filterChipX}>×</Text>
-            </Pressable>
-          )}
-          {activeInstrumentFilter !== null && (
-            <Pressable
-              style={controlsStyles.filterChip}
-              onPress={() => setActiveInstrumentFilter(null)}
-            >
-              <Text style={controlsStyles.filterChipText}>📊 {activeInstrumentFilter}</Text>
-              <Text style={controlsStyles.filterChipX}>×</Text>
-            </Pressable>
-          )}
-          {selectedAnalystFilter !== null && (
-            <Pressable
-              style={controlsStyles.filterChip}
-              onPress={() => setSelectedAnalystFilter(null)}
-            >
-              <Text style={controlsStyles.filterChipText}>
-                👤 {expertNamesMap[selectedAnalystFilter]?.name ?? "Analyst"}
-              </Text>
-              <Text style={controlsStyles.filterChipX}>×</Text>
-            </Pressable>
-          )}
-          {selectedClusterFilter !== null && (() => {
-            const activeCluster = data?.eventClusters.find((c) => c.id === selectedClusterFilter);
-            return (
-              <Pressable
-                style={controlsStyles.filterChip}
-                onPress={() => setSelectedClusterFilter(null)}
-              >
-                <Text style={controlsStyles.filterChipText}>
-                  📅 {activeCluster?.name ?? "Cluster"}
-                </Text>
-                <Text style={controlsStyles.filterChipX}>×</Text>
-              </Pressable>
-            );
-          })()}
-          <Pressable
-            style={controlsStyles.addFilterChip}
-            onPress={() => setFilterSheetOpen(true)}
-          >
-            <Text style={controlsStyles.addFilterText}>+ Filter</Text>
-          </Pressable>
-          {/* UX3: Clear-all affordance — only shows when ≥2 filters are active,
-              so it never clutters the single-chip case (which already has its own × on the chip). */}
-          {(() => {
-            const activeCount =
-              (resolvedOnly ? 1 : 0) +
-              (verifiedOnly ? 1 : 0) +
-              (selectedDirectionFilter !== null ? 1 : 0) +
-              (activeInstrumentFilter !== null ? 1 : 0) +
-              (selectedAnalystFilter !== null ? 1 : 0) +
-              (selectedClusterFilter !== null ? 1 : 0);
-            if (activeCount < 2) return null;
-            return (
-              <Pressable
-                style={controlsStyles.clearAllChip}
-                onPress={() => {
-                  setResolvedOnly(false);
-                  setVerifiedOnly(false);
-                  setSelectedDirectionFilter(null);
-                  setActiveInstrumentFilter(null);
-                  setSelectedAnalystFilter(null);
-                  setSelectedClusterFilter(null);
-                }}
-                hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-              >
-                <Text style={controlsStyles.clearAllText}>Clear all ({activeCount}) ×</Text>
-              </Pressable>
-            );
-          })()}
-        </View>
-
         {(() => {
           // Group opinions by (storyId, expertId) so same analyst's takes on one article share a card
           interface GroupedCard {
@@ -4257,6 +4267,18 @@ const makeFinanceStyles = (t: ThemeContextValue) => StyleSheet.create({
     fontWeight: "700",
   },
   unclusteredSection: { marginTop: spacing.sm },
+  // Sticky scope-tab bar: opaque page-colored background + hairline separator so
+  // feed content scrolling underneath the pinned tabs never shows through. Margins
+  // zeroed (sticky headers shouldn't carry vertical margins) — padding instead.
+  stickyTabsBar: {
+    marginTop: 0,
+    marginBottom: 0,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.sm,
+    backgroundColor: t.colors.background,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: t.colors.border,
+  },
   filterBanner: {
     flexDirection: "row",
     alignItems: "center",
