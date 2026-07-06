@@ -1312,20 +1312,9 @@ function WeekToggleCard({
   // analyst call in the feed to start.") is the first thing a new user sees.
   const [view, setViewState] = useState<"calls" | "sentiment">("calls");
 
-  // S51-T3: Expand/collapse state — defaults to compact strip (false).
-  // Persisted per-device (no userId in scope); renders collapsed before AsyncStorage
-  // hydrates so first render is already in compact mode, no flash.
-  const [expanded, setExpanded] = useState(false);
-
   useEffect(() => {
     void AsyncStorage.getItem("finance.weekCardView").then((v) => {
       if (v === "calls" || v === "sentiment") setViewState(v);
-    });
-  }, []);
-
-  useEffect(() => {
-    void AsyncStorage.getItem("finance_section_expanded_yourweek").then((v) => {
-      if (v === "true") setExpanded(true);
     });
   }, []);
 
@@ -1334,54 +1323,7 @@ function WeekToggleCard({
     void AsyncStorage.setItem("finance.weekCardView", next);
   }, []);
 
-  const toggleExpanded = useCallback(() => {
-    const next = !expanded;
-    setExpanded(next);
-    void AsyncStorage.setItem("finance_section_expanded_yourweek", String(next));
-  }, [expanded]);
-
-  // S70-T2: Compact strip — shows counts when data exists, italic prompt when empty.
-  if (!expanded) {
-    const stripContent = hasCalls ? (
-      <Text style={digestStyles.compactStripText}>
-        {"Your week: "}
-        <Text style={{ color: "#16a34a", fontWeight: "700" }}>{digest!.hits} right</Text>
-        {" · "}
-        <Text style={{ color: "#dc2626", fontWeight: "700" }}>{digest!.misses} wrong</Text>
-        {" · "}
-        <Text style={digestStyles.statNeutral}>{digest!.pending} pending</Text>
-      </Text>
-    ) : (
-      <Text style={digestStyles.compactStripTextEmpty}>
-        {"Your Week — track your accuracy"}
-      </Text>
-    );
-
-    return (
-      <Pressable
-        style={digestStyles.compactStrip}
-        onPress={toggleExpanded}
-        accessibilityRole="button"
-        accessibilityState={{ expanded: false }}
-        accessibilityLabel={
-          hasCalls
-            ? `Your week: ${digest!.hits} correct, ${digest!.misses} wrong, ${digest!.pending} pending. Tap to expand.`
-            : "Your week: tap to expand and start tracking your accuracy."
-        }
-      >
-        {stripContent}
-        <View style={digestStyles.compactStripCue}>
-          <Text style={digestStyles.compactStripCueText}>Show</Text>
-          <Text style={digestStyles.compactStripChevron}>▼</Text>
-        </View>
-      </Pressable>
-    );
-  }
-
-  // S51-T3/T5: Expanded full card — collapse via the explicit ▲ chevron in the
-  // toggle row. Active-pill-as-close removed: tapping an active pill now does
-  // nothing (expected no-op), and the chevron is the single, discoverable path
-  // back to compact strip.
+  // Your Week is always shown in full — collapse removed (enough vertical space).
   return (
     <View style={digestStyles.card}>
       {/* Toggle pills row + ▲ collapse chevron (S51-T5) */}
@@ -1413,17 +1355,6 @@ function WeekToggleCard({
           >
             Market Sentiment
           </Text>
-        </Pressable>
-
-        {/* Explicit collapse affordance — the only way to collapse from expanded */}
-        <Pressable
-          onPress={toggleExpanded}
-          style={digestStyles.collapseBtn}
-          accessibilityRole="button"
-          accessibilityLabel="Collapse Your Week to compact strip"
-          hitSlop={8}
-        >
-          <Text style={digestStyles.collapseBtnText}>▲</Text>
         </Pressable>
       </View>
 
