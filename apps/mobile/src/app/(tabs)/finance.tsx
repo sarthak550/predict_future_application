@@ -5,7 +5,6 @@ import { useThemedStyles, type ThemeContextValue } from "@/providers/theme-provi
 
 import { FinanceMode } from "@/components/finance-mode";
 import { GradientHeader } from "@/components/gradient-header";
-import { SectionHelp } from "@/components/section-help";
 
 export default function FinanceTabScreen() {
   const router = useRouter();
@@ -18,17 +17,14 @@ export default function FinanceTabScreen() {
       <GradientHeader
         title="Finance"
         right={
-          <View style={styles.headerRight}>
-            <SectionHelp helpKey="finance-intro" variant="light" />
-            <Pressable
-              onPress={() => router.push("/expert-search" as Parameters<typeof router.push>[0])}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              style={styles.searchBox}
-            >
-              <Text style={styles.searchIcon}>🔍</Text>
-              <Text style={styles.searchPlaceholder}>Search…</Text>
-            </Pressable>
-          </View>
+          <Pressable
+            onPress={() => router.push("/expert-search" as Parameters<typeof router.push>[0])}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            style={styles.searchBox}
+          >
+            <Text style={styles.searchIcon}>🔍</Text>
+            <Text style={styles.searchPlaceholder}>Search…</Text>
+          </Pressable>
         }
       />
       <FinanceMode
@@ -40,11 +36,6 @@ export default function FinanceTabScreen() {
 
 const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   screen: { flex: 1, backgroundColor: t.colors.background },
-  headerRight: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
   searchBox: {
     flexDirection: "row",
     alignItems: "center",

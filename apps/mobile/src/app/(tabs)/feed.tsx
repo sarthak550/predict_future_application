@@ -32,7 +32,6 @@ import { StreakBadge } from "@/components/streak-reminder";
 import { mobileApi } from "@/lib/api";
 import { useSession } from "@/providers/session-provider";
 import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
-import { SectionHelp } from "@/components/section-help";
 
 const PAGE_SIZE = 10;
 const TAB_BAR_HEIGHT = 72;
@@ -391,7 +390,6 @@ export default function FeedScreen() {
         title="Feed"
         right={
           <View style={styles.indiaToggleRow}>
-            <SectionHelp helpKey="feed-intro" variant="light" />
             <Text style={styles.indiaToggleLabel}>India</Text>
             <Switch
               value={indiaOnly}

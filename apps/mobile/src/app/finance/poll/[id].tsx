@@ -41,7 +41,6 @@ import { radius, spacing } from "@predict-future/ui-tokens";
 import { formatRelativeTime } from "@predict-future/utils";
 import type { ApiPollDetail } from "@predict-future/types";
 import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
-import { SectionHelp } from "@/components/section-help";
 
 type RelatedOpinion = {
   id: string;
@@ -656,10 +655,7 @@ function VoteConsensus({
 
     return (
       <View style={styles.card}>
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
-          <Text style={[styles.sectionLabel, { marginBottom: 0 }]}>{sectionTitle}</Text>
-          <SectionHelp helpKey={hasVoted ? "poll-you-vs-crowd" : "poll-live-consensus"} />
-        </View>
+        <Text style={styles.sectionLabel}>{sectionTitle}</Text>
         {isYouVsCrowd && (
           <Text style={styles.youVsCrowdNote}>
             You picked differently from the crowd — that&apos;s what makes it interesting.
@@ -718,10 +714,7 @@ function VoteConsensus({
   const yesPct = 0.5; // placeholder until API returns raw counts for binary markets
   return (
     <View style={styles.card}>
-      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
-        <Text style={[styles.sectionLabel, { marginBottom: 0 }]}>{hasVoted ? "You vs the crowd" : "Live consensus"}</Text>
-        <SectionHelp helpKey={hasVoted ? "poll-you-vs-crowd" : "poll-live-consensus"} />
-      </View>
+      <Text style={styles.sectionLabel}>{hasVoted ? "You vs the crowd" : "Live consensus"}</Text>
       {hasVoted && userSide && (
         <View style={[styles.sideTag, userSide === "YES" ? styles.sideTagYes : styles.sideTagNo]}>
           <Text style={styles.sideTagText}>You predicted: {userSide}</Text>
@@ -886,12 +879,9 @@ function PollVoteSheet({
         <View style={styles.sheetHandle} />
         <View style={styles.sheetHeader}>
           <Text style={styles.sheetTitle}>Your prediction</Text>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-            <SectionHelp helpKey="poll-vote-sheet" />
-            <Pressable onPress={onClose} hitSlop={12}>
-              <Text style={styles.sheetClose}>Cancel</Text>
-            </Pressable>
-          </View>
+          <Pressable onPress={onClose} hitSlop={12}>
+            <Text style={styles.sheetClose}>Cancel</Text>
+          </Pressable>
         </View>
         <Text style={styles.sheetSub} numberOfLines={3}>{market.title}</Text>
 

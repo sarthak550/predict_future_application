@@ -21,7 +21,6 @@ import type { ApiDiscoverGroup, ApiGroupSummary, AppMarketCategory } from "@pred
 import { mobileApi } from "@/lib/api";
 import { useSession } from "@/providers/session-provider";
 import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
-import { SectionHelp } from "@/components/section-help";
 
 // ── Category filter config ─────────────────────────────────────────────
 
@@ -126,12 +125,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     fontSize: 18,
     fontWeight: "700",
     color: t.colors.text,
-  },
-  sectionTitleRow: {
-    flexDirection: "row" as const,
-    alignItems: "center" as const,
-    justifyContent: "space-between" as const,
-    marginBottom: spacing.md,
+    marginBottom: spacing.md
   },
 
   // Category filter
@@ -681,10 +675,7 @@ export default function GroupsScreen() {
 
         {/* ── Browse Section ──────────────────────────────────────── */}
         <View style={styles.sectionBlock}>
-          <View style={styles.sectionTitleRow}>
-            <Text style={styles.sectionTitle}>Browse Groups</Text>
-            <SectionHelp helpKey="groups-browse" />
-          </View>
+          <Text style={styles.sectionTitle}>Browse Groups</Text>
 
           {/* Category filter chips */}
           <ScrollView
@@ -792,10 +783,7 @@ export default function GroupsScreen() {
         {/* ── My Groups Section ───────────────────────────────────── */}
         {session ? (
           <View style={styles.sectionBlock}>
-            <View style={styles.sectionTitleRow}>
-              <Text style={styles.sectionTitle}>My Groups</Text>
-              <SectionHelp helpKey="groups-my-groups" />
-            </View>
+            <Text style={styles.sectionTitle}>My Groups</Text>
 
             {/* S56: "My pending requests" entry — only visible when N > 0 */}
             {pendingRequestCount > 0 ? (

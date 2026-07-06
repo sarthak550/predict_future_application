@@ -12,7 +12,6 @@ import {
 import { useFocusEffect, useRouter } from "expo-router";
 
 import { GradientHeader } from "@/components/gradient-header";
-import { SectionHelp } from "@/components/section-help";
 
 import type {
   ApiLeaderboardEntry,
@@ -344,11 +343,7 @@ export default function LeaderboardScreen() {
   // S12-T3: fixed controls above FlatList (time-window pills + category chips + Your Rank card)
   const fixedControls = (
     <>
-      <GradientHeader
-        title="Leaderboard"
-        subtitle={subtitle}
-        right={<SectionHelp helpKey="leaderboard-intro" variant="light" />}
-      />
+      <GradientHeader title="Leaderboard" subtitle={subtitle} />
 
       <View style={styles.controlsPanel}>
         {/* Time-window selector */}

@@ -26,7 +26,6 @@ import { useApiQuery } from "@/hooks/useApiQuery";
 import { mobileApi } from "@/lib/api";
 import { useSession } from "@/providers/session-provider";
 import { LinkifiedText } from "@/components/linkified-text";
-import { SectionHelp } from "@/components/section-help";
 
 const DRAFT_KEY = "draft_market_form";
 
@@ -610,12 +609,9 @@ function CreateWizard({
             />
           ))}
         </View>
-        <View style={styles.stepLabelRow}>
-          <Text style={styles.stepLabel}>
-            Step {stepIdx + 1} of {totalSteps}
-          </Text>
-          <SectionHelp helpKey="create-intro" />
-        </View>
+        <Text style={styles.stepLabel}>
+          Step {stepIdx + 1} of {totalSteps}
+        </Text>
 
         {/* Draft banner — shown on step 1 only */}
         {currentStep === "audience" && draftBanner === "visible" && (
@@ -928,10 +924,7 @@ function StepAudience({
 
   return (
     <View>
-      <View style={styles.stepTitleRow}>
-        <Text style={styles.stepTitle}>Who can see this?</Text>
-        <SectionHelp helpKey="create-step-audience" />
-      </View>
+      <Text style={styles.stepTitle}>Who can see this?</Text>
       <Text style={styles.stepDesc}>Choose who can participate in your prediction.</Text>
 
       {eligible ? (
@@ -1289,10 +1282,7 @@ function StepType({
   const styles = useThemedStyles(makeStyles);
   return (
     <View>
-      <View style={styles.stepTitleRow}>
-        <Text style={styles.stepTitle}>What kind of question?</Text>
-        <SectionHelp helpKey="create-step-type" />
-      </View>
+      <Text style={styles.stepTitle}>What kind of question?</Text>
 
       <Pressable
         style={[styles.optionCard, marketType === "BINARY" && styles.optionCardActive]}
@@ -1393,10 +1383,7 @@ function StepQuestion({
   const styles = useThemedStyles(makeStyles);
   return (
     <View>
-      <View style={styles.stepTitleRow}>
-        <Text style={styles.stepTitle}>Write your question</Text>
-        <SectionHelp helpKey="create-step-question" />
-      </View>
+      <Text style={styles.stepTitle}>Write your question</Text>
 
       <Text style={styles.label}>Question</Text>
       <TextInput
@@ -1770,10 +1757,7 @@ function StepTiming({
 
   return (
     <View>
-      <View style={styles.stepTitleRow}>
-        <Text style={styles.stepTitle}>Timing</Text>
-        <SectionHelp helpKey="create-step-timing" />
-      </View>
+      <Text style={styles.stepTitle}>Timing</Text>
 
       {/* ---- Close time ---- */}
       <Text style={styles.label}>When does voting close?</Text>
@@ -2199,10 +2183,7 @@ function StepReview({
 
   return (
     <View>
-      <View style={styles.stepTitleRow}>
-        <Text style={styles.stepTitle}>Review your market</Text>
-        <SectionHelp helpKey="create-step-review" />
-      </View>
+      <Text style={styles.stepTitle}>Review your market</Text>
       <Text style={styles.stepDesc}>Make sure everything looks good before publishing.</Text>
 
       <View style={styles.reviewCard}>
@@ -2283,12 +2264,10 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   progressRow: { flexDirection: "row", gap: 6, marginBottom: spacing.xs },
   progressDot: { flex: 1, height: 4, borderRadius: 2, backgroundColor: t.colors.border },
   progressDotActive: { backgroundColor: t.colors.accent },
-  stepLabel: { fontSize: 12, color: t.colors.textMuted },
-  stepLabelRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.lg },
+  stepLabel: { fontSize: 12, color: t.colors.textMuted, marginBottom: spacing.lg },
 
   // Step content
-  stepTitle: { fontSize: 24, fontWeight: "700", color: t.colors.text, flex: 1 },
-  stepTitleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.xs },
+  stepTitle: { fontSize: 24, fontWeight: "700", color: t.colors.text, marginBottom: spacing.xs },
   stepDesc: { fontSize: 14, color: t.colors.textMuted, marginBottom: spacing.lg, lineHeight: 20 },
 
   // Option cards

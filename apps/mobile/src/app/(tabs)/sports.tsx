@@ -22,7 +22,6 @@ import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/t
 
 import { F1DetailModal } from "@/components/f1-detail-modal";
 import { NewsFeedCard } from "@/components/news-feed-card";
-import { SectionHelp } from "@/components/section-help";
 import { mobileApi } from "@/lib/api";
 
 const LEAGUE_ICONS: Record<string, React.ComponentProps<typeof Feather>["name"]> = {
@@ -234,7 +233,6 @@ export default function SportsScreen() {
               {l.hasLive && <View style={styles.chipLiveDot} />}
             </Pressable>
           ))}
-          <SectionHelp helpKey="sports-league-chips" />
       </ScrollView>
 
       {/* Scores section — hidden in News mode */}
@@ -280,7 +278,6 @@ export default function SportsScreen() {
         <View style={styles.header}>
           <Feather name="activity" size={22} color={colors.text} />
           <Text style={styles.headerTitle}>Sports</Text>
-          <SectionHelp helpKey="sports-intro" />
         </View>
         <View style={styles.errorBox}>
           <Feather name="wifi-off" size={32} color={colors.textMuted} />
@@ -307,7 +304,6 @@ export default function SportsScreen() {
             <Text style={styles.liveText}>{liveCount} LIVE</Text>
           </View>
         )}
-        <SectionHelp helpKey="sports-intro" />
       </View>
 
       <FlatList
