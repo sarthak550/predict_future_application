@@ -817,27 +817,7 @@ export default function MarketsScreen() {
               <View style={styles.footerSpinner}>
                 <ActivityIndicator size="small" color={colors.accent} />
               </View>
-            ) : (
-              // S55-T7: subtle bottom-of-feed CTA into community discovery
-              // (the My Groups sub-tab also surfaces spotlight + rail there).
-              !isSearchMode && mode === "public" && statusTab === "live" ? (
-                <Pressable
-                  style={({ pressed }) => [
-                    styles.discoverCommunitiesCta,
-                    pressed && { opacity: 0.7 },
-                  ]}
-                  onPress={() => { setMode("private"); setStatusTab("live"); }}
-                  accessibilityRole="button"
-                  accessibilityLabel="Browse communities to join"
-                >
-                  <Feather name="users" size={14} color={colors.accent} />
-                  <Text style={styles.discoverCommunitiesCtaText}>
-                    Find a community to join
-                  </Text>
-                  <Feather name="arrow-right" size={14} color={colors.accent} />
-                </Pressable>
-              ) : null
-            )
+            ) : null
           }
           renderItem={({ item }) => <MarketSummaryCard item={item} />}
           ListEmptyComponent={
