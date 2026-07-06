@@ -26,7 +26,7 @@ import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/t
 
 import {
   CategoryFilterBar,
-  FILTER_BAR_CATEGORIES,
+  CORE_CATEGORIES,
   type CategoryKey,
 } from "@/components/category-filter-bar";
 import { CommunitiesList } from "@/components/communities-list";
@@ -729,7 +729,7 @@ export default function MarketsScreen() {
           <CategoryFilterBar
             selected={category}
             onSelect={setCategory}
-            categories={FILTER_BAR_CATEGORIES}
+            categories={CORE_CATEGORIES}
           />
         </View>
       ) : null}
@@ -853,7 +853,7 @@ export default function MarketsScreen() {
               // Category-filtered empty state with Show All CTA
               <View style={[styles.emptyCard, { alignItems: "center" }]}>
                 <Text style={styles.emptyTitle}>
-                  {`No markets in ${FILTER_BAR_CATEGORIES.find((c) => c.key === category)?.label ?? category}`}
+                  {`No markets in ${CORE_CATEGORIES.find((c) => c.key === category)?.label ?? category}`}
                 </Text>
                 <Text style={styles.emptyText}>
                   No live markets in this category right now.
@@ -1705,46 +1705,31 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   sortRow: {
     paddingHorizontal: spacing.lg,
     paddingVertical: 10,
-    gap: 9,
+    gap: 8,
     alignItems: "center",
   },
-  // Matches CategoryFilterBar's pills exactly so the two stacked filter rows
-  // read as one polished system: crisp floating white chip → solid accent active.
+  // Market/view filters — deliberately a DIFFERENT type from the category
+  // underline tabs: solid soft-filled pills. Inactive = soft fill, active = accent.
   sortChip: {
     flexShrink: 0,
-    height: 36,
-    paddingHorizontal: 16,
-    borderRadius: 18,
+    height: 34,
+    paddingHorizontal: 15,
+    borderRadius: 17,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: t.colors.surface,
-    borderWidth: 1,
-    borderColor: t.colors.borderMuted,
-    shadowColor: "#1E40AF",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 5,
-    elevation: 1,
+    backgroundColor: t.colors.surfaceMuted,
   },
   sortChipActive: {
     backgroundColor: t.colors.accent,
-    borderColor: t.colors.accent,
-    shadowColor: t.colors.accent,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.32,
-    shadowRadius: 9,
-    elevation: 5,
   },
   sortChipText: {
     fontSize: 13,
     fontWeight: "600",
     color: t.colors.textMuted,
-    letterSpacing: 0.2,
   },
   sortChipTextActive: {
     color: "#FFFFFF",
     fontWeight: "700",
-    letterSpacing: 0.2,
   },
 
   // ── Community surfaces (S55-T7: live in My Groups sub-tab) ──────

@@ -60,6 +60,21 @@ export const FILTER_BAR_CATEGORIES: CategoryFilterBarCategory[] = [
   { key: "GENERAL",       label: "General" },
 ];
 
+/**
+ * CORE_CATEGORIES — the curated topic set shown to users (Feed + Markets).
+ * Finance/Company fold into Business and Product folds into Tech server-side;
+ * General has no chip (those items still appear under "All"). Single source of
+ * truth so Feed and Markets stay in sync.
+ */
+export const CORE_CATEGORIES: CategoryFilterBarCategory[] = [
+  { key: "ALL",           label: "All" },
+  { key: "SPORTS",        label: "Sports" },
+  { key: "BUSINESS",      label: "Business" },
+  { key: "TECH",          label: "Tech" },
+  { key: "ENTERTAINMENT", label: "Entertainment" },
+  { key: "WEATHER",       label: "Weather" },
+];
+
 type CategoryFilterBarProps = {
   selected: CategoryKey | string;
   onSelect: (category: CategoryKey) => void;
@@ -106,18 +121,20 @@ export function CategoryFilterBar({
           return (
             <Pressable
               key={cat.key}
-              style={[styles.pill, isActive && styles.pillActive]}
+              style={styles.tab}
               onPress={() => onSelect(cat.key)}
-              accessibilityRole="button"
+              accessibilityRole="tab"
               accessibilityLabel={cat.key === "ALL" ? "Show all categories" : `Filter by ${cat.label}`}
               accessibilityState={{ selected: isActive }}
+              hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
             >
               <Text
-                style={[styles.pillText, isActive && styles.pillTextActive]}
+                style={[styles.tabText, isActive && styles.tabTextActive]}
                 numberOfLines={1}
               >
                 {cat.label}
               </Text>
+              <View style={[styles.underline, isActive && styles.underlineActive]} />
             </Pressable>
           );
         })}
@@ -138,45 +155,36 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   },
   scrollContent: {
     paddingHorizontal: spacing.lg,
-    paddingVertical: 10,
-    gap: 9,
+    paddingTop: 6,
+    paddingBottom: 4,
+    gap: 22,
     alignItems: "center",
   },
-  // Inactive: a crisp white chip that floats off the page with a soft shadow —
-  // no mushy hairline outline. Active: solid accent with a lifted accent glow.
-  pill: {
-    height: 36,
-    paddingHorizontal: 16,
-    borderRadius: 18,
+  // Underline text tabs — no boxes. Inactive = muted text; active = bold accent
+  // text with a short accent underline bar sized to the label.
+  tab: {
     alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: t.colors.surface,
-    borderWidth: 1,
-    borderColor: t.colors.borderMuted,
-    shadowColor: "#1E40AF",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 5,
-    elevation: 1,
+    paddingHorizontal: 2,
+    paddingTop: 6,
   },
-  pillActive: {
-    backgroundColor: t.colors.accent,
-    borderColor: t.colors.accent,
-    shadowColor: t.colors.accent,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.32,
-    shadowRadius: 9,
-    elevation: 5,
-  },
-  pillText: {
-    fontSize: 13,
+  tabText: {
+    fontSize: 15,
     fontWeight: "600",
     color: t.colors.textMuted,
     letterSpacing: 0.2,
   },
-  pillTextActive: {
-    color: "#FFFFFF",
-    fontWeight: "700",
-    letterSpacing: 0.2,
+  tabTextActive: {
+    color: t.colors.accent,
+    fontWeight: "800",
+  },
+  underline: {
+    marginTop: 7,
+    height: 3,
+    borderRadius: 2,
+    alignSelf: "stretch",
+    backgroundColor: "transparent",
+  },
+  underlineActive: {
+    backgroundColor: t.colors.accent,
   },
 });
