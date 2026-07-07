@@ -7,6 +7,15 @@ import { approvedStoryStatuses } from "@/lib/validations/news";
 const visibleNewsStatuses: StoryStatus[] = [...new Set<StoryStatus>([...approvedStoryStatuses, "PUBLISHED"])];
 
 /**
+ * Feature flag: when true, the feed only returns stories with a proper summary
+ * (summaryReady=true). Kept OFF by default until AI-summary coverage across the
+ * ingested backlog is high enough that filtering doesn't gut the feed — flip
+ * FEED_FILTER_SUMMARY_READY=true (env) + restart to enable, no code change needed.
+ */
+const FILTER_SUMMARY_READY = process.env.FEED_FILTER_SUMMARY_READY === "true";
+const summaryReadyWhere: Prisma.StoryWhereInput = FILTER_SUMMARY_READY ? { summaryReady: true } : {};
+
+/**
  * Source names for RSS feeds that carry purely global content with no India
  * angle. When `indiaOnly=true` is passed, stories from these sources are
  * excluded from the feed. When `indiaOnly=false`, these form the "global pool"
@@ -368,10 +377,9 @@ export async function getPublishedNewsPage(input?: {
 
   const sharedWhere: Prisma.StoryWhereInput = {
     status: { in: visibleNewsStatuses },
-    // Hide stories that haven't received a proper AI summary yet. Stories with a
-    // good RSS description (isSummaryReady=true at ingest) or with an AI-written
-    // summary (set by the background summarizer) pass this filter immediately.
-    summaryReady: true,
+    // Hide stories without a proper summary — gated behind FEED_FILTER_SUMMARY_READY
+    // (off until coverage is high enough; see summaryReadyWhere).
+    ...summaryReadyWhere,
     ...(input?.category ? categoryWhere(input.category) : {}),
     ...(input?.excludeCategory ? { category: { not: input.excludeCategory } } : {}),
     ...expertOpinionsFilter,
@@ -568,7 +576,7 @@ export async function getPersonalizedNewsPage(input: {
 
   const baseWhere: Prisma.StoryWhereInput = {
     status: { in: visibleNewsStatuses },
-    summaryReady: true,
+    ...summaryReadyWhere,
     ...(input.category ? categoryWhere(input.category) : {}),
     ...(input.excludeCategory ? { category: { not: input.excludeCategory } } : {}),
     ...indiaOnlyWhere(input.indiaOnly),
