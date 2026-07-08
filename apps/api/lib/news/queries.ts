@@ -367,6 +367,11 @@ export async function getPublishedNewsPage(input?: {
   const limit = Math.max(1, Math.min(50, input?.limit ?? 10));
   const decodedCursor = decodeNewsCursor(input?.cursor);
   const expertOpinionsFilter = buildOpinionWhere(input ?? {});
+  // The finance / expert-opinions feed is opinion-driven — the analyst take is the
+  // value, not the article's AI summary. Don't hide opinion cards just because the
+  // underlying story lacks a summary; only apply the summary gate to pure news.
+  const isOpinionFeed = Object.keys(expertOpinionsFilter).length > 0;
+  const feedSummaryReadyWhere = isOpinionFeed ? {} : summaryReadyWhere;
 
   // When "Resolved only" is on, paginate by the most recent resolution time
   // instead of original publish date so a 60-day-old call that just resolved
@@ -377,9 +382,9 @@ export async function getPublishedNewsPage(input?: {
 
   const sharedWhere: Prisma.StoryWhereInput = {
     status: { in: visibleNewsStatuses },
-    // Hide stories without a proper summary — gated behind FEED_FILTER_SUMMARY_READY
-    // (off until coverage is high enough; see summaryReadyWhere).
-    ...summaryReadyWhere,
+    // Hide stories without a proper summary — gated behind FEED_FILTER_SUMMARY_READY,
+    // and skipped for the opinion feed (see feedSummaryReadyWhere / isOpinionFeed).
+    ...feedSummaryReadyWhere,
     ...(input?.category ? categoryWhere(input.category) : {}),
     ...(input?.excludeCategory ? { category: { not: input.excludeCategory } } : {}),
     ...expertOpinionsFilter,
@@ -567,6 +572,10 @@ export async function getPersonalizedNewsPage(input: {
   // 3. Fetch two batches in one query: boosted stories first, then the rest.
   // We over-fetch slightly (2× limit) then page correctly.
   const expertOpinionsFilter = buildOpinionWhere(input);
+  // Opinion feed exemption (see getPublishedNewsPage): don't summary-gate the
+  // analyst-opinion feed — the take is the value, not the article summary.
+  const isOpinionFeed = Object.keys(expertOpinionsFilter).length > 0;
+  const feedSummaryReadyWhere = isOpinionFeed ? {} : summaryReadyWhere;
 
   // Same sort-key switch as getPublishedNewsPage — when "Resolved only" is on,
   // paginate by latestResolvedAt so newly-resolved stories surface first.
@@ -576,7 +585,7 @@ export async function getPersonalizedNewsPage(input: {
 
   const baseWhere: Prisma.StoryWhereInput = {
     status: { in: visibleNewsStatuses },
-    ...summaryReadyWhere,
+    ...feedSummaryReadyWhere,
     ...(input.category ? categoryWhere(input.category) : {}),
     ...(input.excludeCategory ? { category: { not: input.excludeCategory } } : {}),
     ...indiaOnlyWhere(input.indiaOnly),
@@ -705,6 +714,7 @@ export async function getPublishedNewsItems(input?: {
   const items = await prisma.story.findMany({
     where: {
       status: { in: visibleNewsStatuses },
+      ...summaryReadyWhere,
       ...(input?.category ? { category: input.category } : {})
     },
     orderBy: [{ publishedAt: "desc" }, { ingestedAt: "desc" }],

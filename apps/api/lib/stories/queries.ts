@@ -6,6 +6,14 @@ import { approvedStoryStatuses } from "@/lib/validations/news";
 
 export type FeedView = "for-you" | "latest" | "trending" | "resolved";
 
+/**
+ * Same feature flag as lib/news/queries.ts: when FEED_FILTER_SUMMARY_READY=true,
+ * every story feed hides items without a proper summary (summaryReady=false) so
+ * headline-only articles never create noise on ANY feed (trending, legacy, etc.).
+ */
+const FILTER_SUMMARY_READY = process.env.FEED_FILTER_SUMMARY_READY === "true";
+const summaryReadyWhere: Prisma.StoryWhereInput = FILTER_SUMMARY_READY ? { summaryReady: true } : {};
+
 export const feedStoryInclude = (userId?: string | null) =>
   ({
     source: true,
@@ -91,6 +99,7 @@ export async function getFeedStories(input: {
       status: {
         in: approvedStoryStatuses
       },
+      ...summaryReadyWhere,
       ...(input.category ? { category: input.category } : {}),
       market: isResolvedView
         ? {
@@ -230,6 +239,7 @@ export async function getFeaturedMirrorStory(userId?: string | null) {
       status: {
         in: approvedStoryStatuses
       },
+      ...summaryReadyWhere,
       isFeatured: true,
       market: {
         is: {
