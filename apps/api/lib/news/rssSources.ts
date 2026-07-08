@@ -7,6 +7,8 @@ export type RssSource = {
   categoryHint: InternalNewsCategory;
   isActive?: boolean;
   fallbackCategory?: InternalNewsCategory;
+  /** Per-source item cap applied during fetch. Falls back to RSS_MAX_ITEMS_PER_SOURCE env var. */
+  maxItems?: number;
 };
 
 const defaultRssSources: RssSource[] = [
@@ -16,7 +18,8 @@ const defaultRssSources: RssSource[] = [
     url: "https://news.google.com/rss?hl=en-IN&gl=IN&ceid=IN:en",
     categoryHint: "GENERAL",
     fallbackCategory: "GENERAL",
-    isActive: true
+    isActive: true,
+    maxItems: 15,
   },
   {
     id: "bbc-world",
@@ -24,7 +27,8 @@ const defaultRssSources: RssSource[] = [
     url: "http://feeds.bbci.co.uk/news/rss.xml",
     categoryHint: "GENERAL",
     fallbackCategory: "GENERAL",
-    isActive: true
+    isActive: true,
+    maxItems: 10,
   },
   {
     id: "espn-news",
@@ -32,7 +36,8 @@ const defaultRssSources: RssSource[] = [
     url: "https://www.espn.com/espn/rss/news",
     categoryHint: "SPORTS",
     fallbackCategory: "SPORTS",
-    isActive: true
+    isActive: true,
+    maxItems: 10,
   },
   {
     id: "techcrunch",
@@ -40,7 +45,8 @@ const defaultRssSources: RssSource[] = [
     url: "https://techcrunch.com/feed/",
     categoryHint: "TECH",
     fallbackCategory: "TECH",
-    isActive: true
+    isActive: true,
+    maxItems: 10,
   },
   {
     id: "cnbc-top",
@@ -48,7 +54,8 @@ const defaultRssSources: RssSource[] = [
     url: "https://www.cnbc.com/id/100003114/device/rss/rss.html",
     categoryHint: "BUSINESS",
     fallbackCategory: "BUSINESS",
-    isActive: true
+    isActive: true,
+    maxItems: 10,
   },
   {
     id: "google-news-tech",
@@ -56,7 +63,8 @@ const defaultRssSources: RssSource[] = [
     url: "https://news.google.com/rss/search?q=technology&hl=en-IN&gl=IN&ceid=IN:en",
     categoryHint: "TECH",
     fallbackCategory: "TECH",
-    isActive: true
+    isActive: true,
+    maxItems: 15,
   },
   {
     // Reuters Agency RSS was retired (feed now 404s). Disabled until a working
@@ -75,7 +83,8 @@ const defaultRssSources: RssSource[] = [
     url: "https://www.theverge.com/rss/index.xml",
     categoryHint: "TECH",
     fallbackCategory: "TECH",
-    isActive: true
+    isActive: true,
+    maxItems: 10,
   },
   {
     id: "ars-technica",
@@ -83,7 +92,8 @@ const defaultRssSources: RssSource[] = [
     url: "https://feeds.arstechnica.com/arstechnica/index",
     categoryHint: "TECH",
     fallbackCategory: "TECH",
-    isActive: true
+    isActive: true,
+    maxItems: 10,
   },
 
   // ── India-focused general / sports / entertainment / tech feeds ──
@@ -97,7 +107,8 @@ const defaultRssSources: RssSource[] = [
     url: "https://feeds.feedburner.com/ndtvnews-top-stories",
     categoryHint: "GENERAL",
     fallbackCategory: "GENERAL",
-    isActive: true
+    isActive: true,
+    maxItems: 15,
   },
   {
     id: "espncricinfo",
@@ -105,7 +116,8 @@ const defaultRssSources: RssSource[] = [
     url: "https://www.espncricinfo.com/rss/content/story/feeds/0.xml",
     categoryHint: "SPORTS",
     fallbackCategory: "SPORTS",
-    isActive: true
+    isActive: true,
+    maxItems: 10,
   },
   {
     id: "gnews-in-sports",
@@ -113,7 +125,8 @@ const defaultRssSources: RssSource[] = [
     url: "https://news.google.com/rss/search?q=india%20sports%20cricket&hl=en-IN&gl=IN&ceid=IN:en",
     categoryHint: "SPORTS",
     fallbackCategory: "SPORTS",
-    isActive: true
+    isActive: true,
+    maxItems: 15,
   },
   {
     id: "gnews-in-entertainment",
@@ -121,7 +134,8 @@ const defaultRssSources: RssSource[] = [
     url: "https://news.google.com/rss/search?q=bollywood%20entertainment&hl=en-IN&gl=IN&ceid=IN:en",
     categoryHint: "ENTERTAINMENT",
     fallbackCategory: "ENTERTAINMENT",
-    isActive: true
+    isActive: true,
+    maxItems: 15,
   },
   {
     id: "gnews-in-business",
@@ -129,7 +143,8 @@ const defaultRssSources: RssSource[] = [
     url: "https://news.google.com/rss/search?q=india%20business%20markets&hl=en-IN&gl=IN&ceid=IN:en",
     categoryHint: "BUSINESS",
     fallbackCategory: "BUSINESS",
-    isActive: true
+    isActive: true,
+    maxItems: 15,
   },
 
   // ── Indian Finance Sources (Sprint 13) ──
@@ -142,7 +157,8 @@ const defaultRssSources: RssSource[] = [
     url: "https://www.moneycontrol.com/rss/marketreports.xml",
     categoryHint: "BUSINESS",
     fallbackCategory: "BUSINESS",
-    isActive: true
+    isActive: true,
+    maxItems: 20,
   },
   {
     id: "economic-times-markets",
@@ -150,7 +166,8 @@ const defaultRssSources: RssSource[] = [
     url: "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms",
     categoryHint: "BUSINESS",
     fallbackCategory: "BUSINESS",
-    isActive: true
+    isActive: true,
+    maxItems: 20,
   },
   {
     id: "mint-markets",
@@ -158,7 +175,8 @@ const defaultRssSources: RssSource[] = [
     url: "https://www.livemint.com/rss/markets",
     categoryHint: "BUSINESS",
     fallbackCategory: "BUSINESS",
-    isActive: true
+    isActive: true,
+    maxItems: 20,
   },
   {
     id: "cnbctv18-markets",
@@ -166,7 +184,8 @@ const defaultRssSources: RssSource[] = [
     url: "https://www.cnbctv18.com/commonfeeds/v1/cne/rss/market.xml",
     categoryHint: "BUSINESS",
     fallbackCategory: "BUSINESS",
-    isActive: true
+    isActive: true,
+    maxItems: 20,
   },
 
   // ── Curated Expert Opinion Feeds (highest extraction quality) ──
@@ -191,7 +210,8 @@ const defaultRssSources: RssSource[] = [
     url: "https://economictimes.indiatimes.com/markets/expert-view/rssfeeds/50649960.cms",
     categoryHint: "BUSINESS",
     fallbackCategory: "BUSINESS",
-    isActive: true
+    isActive: true,
+    maxItems: 25,
   },
   {
     id: "cnbctv18-views",
@@ -199,16 +219,20 @@ const defaultRssSources: RssSource[] = [
     url: "https://www.cnbctv18.com/commonfeeds/v1/cne/rss/views.xml",
     categoryHint: "BUSINESS",
     fallbackCategory: "BUSINESS",
-    isActive: true
+    isActive: true,
+    maxItems: 25,
   },
   // ── Seeking Alpha (global analyst opinions with India coverage) ──
+  // Deactivated S74-T1: paywalled US-stock analysis with ~100% body-fetch failure;
+  // every story stays summaryReady=false and is already hidden in the feed.
+  // Deactivating stops the wasted ingestion load. Keep entry for reference.
   {
     id: "seeking-alpha-india",
     name: "Seeking Alpha India",
     url: "https://seekingalpha.com/feed.xml?t=article&s=india",
     categoryHint: "BUSINESS",
     fallbackCategory: "BUSINESS",
-    isActive: true
+    isActive: false,
   },
   // ── Mint Columns (dedicated expert analysis and market views) ──
   {
@@ -217,7 +241,8 @@ const defaultRssSources: RssSource[] = [
     url: "https://www.livemint.com/rss/opinion",
     categoryHint: "BUSINESS",
     fallbackCategory: "BUSINESS",
-    isActive: true
+    isActive: true,
+    maxItems: 25,
   },
   // ── Global sources (Sprint 71) — included when indiaOnly=false ───────────────
   // All verified returning items 2026-07. These are listed in GLOBAL_ONLY_SOURCES
@@ -232,6 +257,7 @@ const defaultRssSources: RssSource[] = [
     categoryHint: "GENERAL",
     fallbackCategory: "GENERAL",
     isActive: true,
+    maxItems: 10,
   },
   {
     id: "guardian-world",
@@ -240,6 +266,7 @@ const defaultRssSources: RssSource[] = [
     categoryHint: "GENERAL",
     fallbackCategory: "GENERAL",
     isActive: true,
+    maxItems: 10,
   },
   {
     id: "france24",
@@ -248,6 +275,7 @@ const defaultRssSources: RssSource[] = [
     categoryHint: "GENERAL",
     fallbackCategory: "GENERAL",
     isActive: true,
+    maxItems: 10,
   },
   {
     id: "npr-news",
@@ -256,6 +284,7 @@ const defaultRssSources: RssSource[] = [
     categoryHint: "GENERAL",
     fallbackCategory: "GENERAL",
     isActive: true,
+    maxItems: 10,
   },
   {
     id: "sky-news-world",
@@ -264,6 +293,7 @@ const defaultRssSources: RssSource[] = [
     categoryHint: "GENERAL",
     fallbackCategory: "GENERAL",
     isActive: true,
+    maxItems: 10,
   },
   {
     id: "cnn-top",
@@ -272,6 +302,7 @@ const defaultRssSources: RssSource[] = [
     categoryHint: "GENERAL",
     fallbackCategory: "GENERAL",
     isActive: true,
+    maxItems: 10,
   },
   {
     id: "variety",
@@ -280,6 +311,7 @@ const defaultRssSources: RssSource[] = [
     categoryHint: "ENTERTAINMENT",
     fallbackCategory: "ENTERTAINMENT",
     isActive: true,
+    maxItems: 10,
   },
   {
     id: "espn-soccer",
@@ -288,6 +320,7 @@ const defaultRssSources: RssSource[] = [
     categoryHint: "SPORTS",
     fallbackCategory: "SPORTS",
     isActive: true,
+    maxItems: 10,
   },
 
   // Bloomberg's public sitemap is a news sitemap (XML), not a standard RSS feed.

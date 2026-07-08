@@ -122,7 +122,7 @@ export async function fetchRSSFeed(url: string): Promise<NormalizedNewsItem[]> {
   const feed = await parser.parseString(xml);
 
   const normalizedItems = (feed.items ?? [])
-    .slice(0, getMaxItemsPerSource())
+    .slice(0, source?.maxItems ?? getMaxItemsPerSource())
     .map<NormalizedNewsItem | null>((item) => {
       const rawTitle = item.title?.trim() ?? "";
       const sourceUrl = item.link?.trim() || item.guid?.trim() || "";

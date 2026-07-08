@@ -60,6 +60,9 @@ export const GLOBAL_ONLY_SOURCES = [
   "CNN",
   "Variety",
   "ESPN Soccer",
+  // S74-T1: ESPNcricinfo is a global cricket feed; exclude when India toggle is ON
+  // (sourceName derives from source.name = "ESPNcricinfo" — no channel.title variant needed)
+  "ESPNcricinfo",
 ] as const;
 
 /** Prisma where-fragment to exclude global-only sources when `indiaOnly` is true. */
