@@ -814,15 +814,15 @@ export class RSSIngestionService {
       // );
       void generatePollWithAI; // keep import live so noUnusedLocals doesn't break the build
 
-      // ---- Phase 2b: Summarize stories whose summary is just the headline ----
-      void generateSummariesInBackground(newStories).catch((err) =>
-        console.error("[news:summarizer] background summarization failed:", err)
-      );
-
-      // ---- Phase 2c: Retry recent stragglers that still lack a good summary ----
-      void resummarizeRecentStragglers().catch((err) =>
-        console.error("[news:straggler] straggler re-summarization failed:", err)
-      );
+      // ---- Phase 2b + 2c: summarize the new batch, THEN retry recent stragglers ----
+      // Chained (sequential), NOT concurrent: running both passes at once doubled the
+      // summarizer's DB write concurrency and spiked connections on Neon's direct
+      // (non-pooled) endpoint, briefly making the DB unreachable (P1001) for other
+      // requests incl. auth. Sequential keeps peak DB pressure at one pass.
+      void generateSummariesInBackground(newStories)
+        .catch((err) => console.error("[news:summarizer] background summarization failed:", err))
+        .then(() => resummarizeRecentStragglers())
+        .catch((err) => console.error("[news:straggler] straggler re-summarization failed:", err));
     }
 
     // ---- Phase 3: Extract expert opinions for FINANCE stories from approved sources ----
