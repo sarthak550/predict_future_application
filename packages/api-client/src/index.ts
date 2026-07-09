@@ -69,6 +69,9 @@ import type {
   AppPollStatus,
   // S72: India Macro panel
   ApiFinanceMacroResponse,
+  // Market Pulse (Phase 1)
+  ApiMarketMoveEventsResponse,
+  ApiMarketMoversResponse,
 } from "@predict-future/types";
 
 export type { ApiLeaderboardTimeWindow };
@@ -858,6 +861,20 @@ export function createApiClient(options: ApiClientOptions) {
      */
     getFinanceMacro() {
       return request<ApiFinanceMacroResponse>(`/api/finance/macro`);
+    },
+
+    // ─── Market Pulse: NSE/BSE announcements + movers (Phase 1) ───────────
+    /** Paginated, reverse-chronological corporate-announcements feed. No auth required. */
+    getMarketMoveEvents(params?: { cursor?: string; limit?: number; tickerSymbol?: string }) {
+      return request<ApiMarketMoveEventsResponse>(
+        "/api/finance/market-moves/events",
+        params
+      );
+    },
+
+    /** Today's top gainers/losers over the curated NIFTY 200 universe. No auth required. */
+    getMarketMovers() {
+      return request<ApiMarketMoversResponse>("/api/finance/market-moves/movers");
     },
 
     /** Fetch a single ExpertOpinion's full detail by id. */

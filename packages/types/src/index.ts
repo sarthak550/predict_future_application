@@ -1809,3 +1809,61 @@ export type ApiFinanceMacroResponse = {
   imf: ApiMacroImf;
   asOf: string | null;
 };
+
+// ─────────────────────────────────────────────────────────────────────────
+// Market Pulse (Phase 1) — NSE/BSE corporate announcements + gainer/loser
+// snapshots. See apps/api/prisma/schema.prisma MarketMoveEvent/
+// MarketMoverSnapshot for the source-of-truth field docs.
+// ─────────────────────────────────────────────────────────────────────────
+
+export type AppMarketMoveSource = "NSE" | "BSE";
+export type AppMarketMoveTickerType = "STOCK" | "INDEX";
+export type AppMarketMoveEventType =
+  | "MERGER_ACQUISITION"
+  | "RESULTS"
+  | "BOARD_MEETING"
+  | "RATING_CHANGE"
+  | "OTHER_MATERIAL";
+export type AppMarketMoveDirection = "GAINER" | "LOSER";
+
+/** One row from GET /api/finance/market-moves/events. */
+export type ApiMarketMoveEvent = {
+  id: string;
+  source: AppMarketMoveSource;
+  tickerSymbol: string;
+  tickerType: AppMarketMoveTickerType;
+  companyName: string;
+  eventType: AppMarketMoveEventType;
+  headline: string;
+  detailUrl: string | null;
+  rawText: string | null;
+  /** ISO timestamp — the exchange's own announcement time, not ingestion time. */
+  announcedAt: string;
+};
+
+/** Response shape for GET /api/finance/market-moves/events. */
+export type ApiMarketMoveEventsResponse = {
+  items: ApiMarketMoveEvent[];
+  nextCursor: string | null;
+  hasMore: boolean;
+};
+
+/** One row from GET /api/finance/market-moves/movers. */
+export type ApiMarketMover = {
+  tickerSymbol: string;
+  companyName: string;
+  changePercent: number;
+  changeAbs: number;
+  volume: number;
+  isUnusualVolume: boolean;
+  direction: AppMarketMoveDirection;
+  rank: number;
+};
+
+/** Response shape for GET /api/finance/market-moves/movers. */
+export type ApiMarketMoversResponse = {
+  gainers: ApiMarketMover[];
+  losers: ApiMarketMover[];
+  /** ISO timestamp of the most recent snapshot in this response, or null if empty. */
+  asOf: string | null;
+};

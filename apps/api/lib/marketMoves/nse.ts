@@ -1,0 +1,230 @@
+/**
+ * Market Pulse — NSE unofficial JSON endpoint fetchers.
+ *
+ * VERIFICATION STATUS (2026-07-10): VERIFIED WORKING from the production EC2 box.
+ * Key subtlety: NSE's Akamai serves an HTTP 403 challenge to the HTML homepage
+ * (`GET /`) even from EC2 — BUT it still sets the session cookie in that 403
+ * response, and the `/api/*` routes then return real 200 JSON when that cookie
+ * is replayed with a full browser header set. So we do NOT treat a non-200
+ * warm-up as failure — we capture the cookie regardless of status. Confirmed
+ * live from EC2: /api/corporate-announcements → 200 (726 rows) and
+ * /api/live-analysis-variations?index=gainers → 200 with real movers.
+ *
+ * Endpoints used (all under https://www.nseindia.com):
+ *   - GET  /                                          (cookie priming; 403 body, cookie still set)
+ *   - GET  /api/corporate-announcements?index=equities&from_date=DD-MM-YYYY&to_date=DD-MM-YYYY
+ *   - GET  /api/live-analysis-variations?index=gainers  (and ?index=losers)
+ *
+ * Cookie handshake: GET the homepage with browser-realistic headers, capture
+ * every `Set-Cookie` via `Headers.getSetCookie()` (Node 18.14+/undici — this
+ * repo runs Node 23) EVEN ON A 403, then replay the `name=value` pairs as a
+ * single `Cookie` header on the API GET, with `Referer` + `X-Requested-With` +
+ * `Sec-Fetch-*` (NSE's Akamai checks these, not just the cookie).
+ */
+
+import { classifyMarketMoveEventType, isIndexSymbol } from "./classify";
+import type { FetchedMarketMoveEvent, FetchedMarketMover } from "./types";
+
+const NSE_ORIGIN = "https://www.nseindia.com";
+
+const BROWSER_UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
+const HTML_HEADERS = {
+  "User-Agent": BROWSER_UA,
+  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "Accept-Language": "en-US,en;q=0.9",
+};
+
+const API_HEADERS_BASE = {
+  "User-Agent": BROWSER_UA,
+  Accept: "application/json, text/plain, */*",
+  "Accept-Language": "en-US,en;q=0.9",
+  "X-Requested-With": "XMLHttpRequest",
+  "Sec-Fetch-Dest": "empty",
+  "Sec-Fetch-Mode": "cors",
+  "Sec-Fetch-Site": "same-origin",
+};
+
+/** Extracts a `name=value; name2=value2` Cookie header from a Set-Cookie response. */
+function cookieHeaderFrom(res: Response): string {
+  // Node 18.14+/undici exposes getSetCookie(); fall back to the single-header
+  // getter (only captures one cookie) for older runtimes as defense-in-depth.
+  const headers = res.headers as Headers & { getSetCookie?: () => string[] };
+  const rawCookies = typeof headers.getSetCookie === "function"
+    ? headers.getSetCookie()
+    : (res.headers.get("set-cookie") ? [res.headers.get("set-cookie") as string] : []);
+
+  return rawCookies
+    .map((c) => c.split(";")[0]) // strip Path/Expires/HttpOnly/etc — keep name=value
+    .filter(Boolean)
+    .join("; ");
+}
+
+/**
+ * Primes an NSE session: GET the given warm-up path, return the Cookie header
+ * to replay on the follow-up API call. Never throws — returns null on any
+ * failure so callers can log-and-skip rather than crash the cron.
+ */
+async function primeNseSession(warmUpPath: string): Promise<string | null> {
+  try {
+    const res = await fetch(`${NSE_ORIGIN}${warmUpPath}`, { headers: HTML_HEADERS });
+    // Do NOT bail on a non-200 warm-up: NSE's Akamai serves a 403 challenge to
+    // the HTML page but STILL sets the session cookie the /api/* routes need.
+    // Capture the cookie regardless of status. (Verified from EC2 2026-07-10.)
+    const cookie = cookieHeaderFrom(res);
+    if (!cookie) {
+      console.warn(`[marketMoves/nse] warm-up ${warmUpPath} set no cookie (status ${res.status})`);
+      return null;
+    }
+    return cookie;
+  } catch (err) {
+    console.warn(`[marketMoves/nse] warm-up ${warmUpPath} network error: ${err instanceof Error ? err.message : err}`);
+    return null;
+  }
+}
+
+/** GETs an NSE API path with a primed cookie + matching referer. Never throws. */
+async function nseApiGet(apiPath: string, cookie: string, refererPath: string): Promise<unknown | null> {
+  try {
+    const res = await fetch(`${NSE_ORIGIN}${apiPath}`, {
+      headers: {
+        ...API_HEADERS_BASE,
+        Cookie: cookie,
+        Referer: `${NSE_ORIGIN}${refererPath}`,
+        Origin: NSE_ORIGIN,
+      },
+    });
+    if (!res.ok) {
+      console.warn(`[marketMoves/nse] API ${apiPath} returned ${res.status} (likely Akamai block)`);
+      return null;
+    }
+    return await res.json();
+  } catch (err) {
+    console.warn(`[marketMoves/nse] API ${apiPath} network/parse error: ${err instanceof Error ? err.message : err}`);
+    return null;
+  }
+}
+
+/** Raw shape of one row from GET /api/corporate-announcements?index=equities. */
+type NseAnnouncementRow = {
+  symbol?: string | null;
+  desc?: string | null;
+  sm_name?: string | null;
+  an_dt?: string | null;
+  sort_date?: string | null; // "YYYY-MM-DD HH:mm:ss", IST wall-clock, no offset
+  seq_id?: string | number | null;
+  attchmntFile?: string | null;
+  attchmntText?: string | null;
+};
+
+/** Parses NSE's `sort_date` ("YYYY-MM-DD HH:mm:ss", IST wall-clock) into a UTC Date. */
+function parseNseIstTimestamp(sortDate: string | null | undefined): Date | null {
+  if (!sortDate) return null;
+  const isoIst = `${sortDate.replace(" ", "T")}+05:30`;
+  const d = new Date(isoIst);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/**
+ * Fetches today's NSE corporate announcements (equities segment only).
+ * Drops any row missing a symbol/company — the "ticker-first" invariant is
+ * enforced here, before anything reaches the DB. Never throws.
+ */
+export async function fetchNseAnnouncements(): Promise<FetchedMarketMoveEvent[]> {
+  const cookie = await primeNseSession("/");
+  if (!cookie) return [];
+
+  const fmt = (d: Date) => {
+    const dd = String(d.getUTCDate()).padStart(2, "0");
+    const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const yyyy = d.getUTCFullYear();
+    return `${dd}-${mm}-${yyyy}`;
+  };
+  const today = new Date();
+  const dateParam = fmt(today);
+
+  const raw = await nseApiGet(
+    `/api/corporate-announcements?index=equities&from_date=${dateParam}&to_date=${dateParam}`,
+    cookie,
+    "/companies-listing/corporate-filings-announcements"
+  );
+  if (!raw || !Array.isArray(raw)) return [];
+
+  const out: FetchedMarketMoveEvent[] = [];
+  for (const row of raw as NseAnnouncementRow[]) {
+    const symbol = row.symbol?.trim();
+    const companyName = row.sm_name?.trim();
+    const seqId = row.seq_id != null ? String(row.seq_id) : null;
+    // Drop rule: no resolved ticker/company/id → not ingestable into Market Pulse.
+    if (!symbol || !companyName || !seqId) continue;
+
+    const announcedAt = parseNseIstTimestamp(row.sort_date) ?? new Date();
+    const headline = row.attchmntText?.trim() || row.desc?.trim() || symbol;
+
+    out.push({
+      source: "NSE",
+      sourceId: seqId,
+      tickerSymbol: symbol,
+      tickerType: isIndexSymbol(symbol) ? "INDEX" : "STOCK",
+      companyName,
+      eventType: classifyMarketMoveEventType(row.desc, row.attchmntText),
+      headline,
+      detailUrl: row.attchmntFile?.trim() || null,
+      rawText: row.attchmntText?.trim() || null,
+      announcedAt,
+    });
+  }
+  return out;
+}
+
+/** Raw row shape from GET /api/live-analysis-variations?index=gainers|losers. */
+type NseVariationRow = {
+  symbol?: string | null;
+  perChange?: number | null;   // percent change
+  net_price?: number | null;   // absolute change
+  trade_quantity?: number | null;
+};
+
+/** One variation group (NIFTY / NIFTYNEXT50 / allSec / ...) carries a `data` array. */
+type NseVariationGroup = { data?: NseVariationRow[] };
+
+/**
+ * Fetches today's top gainers + losers from NSE's own variations endpoint.
+ * The response groups movers by index (NIFTY, NIFTYNEXT50, allSec, ...); we use
+ * the large-cap NIFTY group (falling back to allSec) so the strip shows liquid,
+ * recognisable names. Never throws. `isUnusualVolume` is computed downstream in
+ * the cron (a same-day cross-sectional heuristic; see MarketMoverSnapshot doc).
+ */
+export async function fetchNseMovers(): Promise<FetchedMarketMover[]> {
+  const cookie = await primeNseSession("/");
+  if (!cookie) return [];
+
+  const pull = async (index: "gainers" | "losers"): Promise<FetchedMarketMover[]> => {
+    const raw = await nseApiGet(
+      `/api/live-analysis-variations?index=${index}`,
+      cookie,
+      "/market-data/top-gainers-losers"
+    );
+    if (!raw || typeof raw !== "object") return [];
+    const groups = raw as Record<string, NseVariationGroup | unknown>;
+    const rows =
+      (groups.NIFTY as NseVariationGroup | undefined)?.data ??
+      (groups.allSec as NseVariationGroup | undefined)?.data ??
+      [];
+    const direction = index === "gainers" ? "GAINER" : "LOSER";
+    return rows
+      .filter((r) => r.symbol && typeof r.perChange === "number" && r.perChange !== 0)
+      .map((r) => ({
+        tickerSymbol: (r.symbol as string).trim(),
+        companyName: (r.symbol as string).trim(), // this endpoint carries symbol only, no full name
+        changePercent: r.perChange as number,
+        changeAbs: r.net_price ?? 0,
+        volume: r.trade_quantity ?? 0,
+        direction: direction as "GAINER" | "LOSER",
+      }));
+  };
+
+  const [gainers, losers] = await Promise.all([pull("gainers"), pull("losers")]);
+  return [...gainers, ...losers];
+}

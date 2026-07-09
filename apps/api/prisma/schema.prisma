@@ -75,6 +75,8 @@ model User {
   reports                    MarketReport[]        @relation("ReportedByUser")
   reviewedReports            MarketReport[]        @relation("ReviewedReports")
   resolutions                MarketResolution[]    @relation("ResolvedByUser")
+  /// Market Pulse (Phase 1b, stub — not yet activated) push preference. See MarketMoveNotificationPreference.
+  marketMoveNotificationPreference MarketMoveNotificationPreference?
   monthlyLeagueEntries       MonthlyLeagueEntry[]
   multiChoicePositions       MultiChoicePosition[]
   notifications              Notification[]
@@ -1444,4 +1446,110 @@ model MacroSnapshot {
 
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Market Pulse (Phase 1) — NSE/BSE corporate announcements + gainer/loser
+// snapshots. Code prefix is deliberately `MarketMove*`, NOT `Pulse*` — the
+// `Pulse*` prefix is already taken by the Rates & Events tab's internals
+// (PulseKind, PulseRibbon, PulseSheet, makePulseStyles). User-facing tab
+// label is "Market Pulse"; ShowScope value is "market-moves".
+//
+// Data source: NSE/BSE's public (unofficial) JSON endpoints — the same ones
+// nseindia.com/bseindia.com's own frontend calls. Not an official developer
+// API; accepted as a Phase 1 pragmatic risk (see apps/api/lib/marketMoves/).
+// ─────────────────────────────────────────────────────────────────────────
+
+enum MarketMoveSource {
+  NSE
+  BSE
+}
+
+enum MarketMoveTickerType {
+  STOCK
+  INDEX
+}
+
+enum MarketMoveEventType {
+  MERGER_ACQUISITION
+  RESULTS
+  BOARD_MEETING
+  RATING_CHANGE
+  OTHER_MATERIAL
+}
+
+enum MarketMoveDirection {
+  GAINER
+  LOSER
+}
+
+/// Market Pulse — NSE/BSE corporate announcement (SEBI LODR Reg 30 material event)
+/// ingested from unofficial exchange JSON endpoints. Every row carries a resolved
+/// ticker — items with no company/index-specific ticker are dropped at ingestion
+/// (never stored here). See apps/api/lib/marketMoves/{nse,bse}.ts for the fetchers
+/// and apps/api/app/api/cron/market-moves-announcements/route.ts for the cron.
+model MarketMoveEvent {
+  id           String               @id @default(cuid())
+  source       MarketMoveSource
+  /// Exchange-native identifier for this announcement (NSE seq_id / BSE NEWSID).
+  sourceId     String
+  /// Idempotency key for upsert-on-poll: `${source}:${sourceId}`.
+  dedupeKey    String               @unique
+  tickerSymbol String
+  tickerType   MarketMoveTickerType @default(STOCK)
+  companyName  String
+  eventType    MarketMoveEventType  @default(OTHER_MATERIAL)
+  headline     String
+  /// Link to the exchange filing (PDF) or company detail page, when available.
+  detailUrl    String?
+  /// Fuller free-text body when the exchange feed provides one beyond the headline.
+  rawText      String?
+  /// Timestamp the exchange attached to this announcement (not our ingestion time).
+  announcedAt  DateTime
+  ingestedAt   DateTime             @default(now())
+
+  @@index([announcedAt(sort: Desc)])
+  @@index([tickerSymbol, announcedAt(sort: Desc)])
+  @@index([source, announcedAt(sort: Desc)])
+}
+
+/// Market Pulse — EOD/15-min-delayed gainer/loser snapshot over the curated NIFTY 200
+/// universe. One row per (sessionDate, tickerSymbol); re-polled and upserted through
+/// the trading session so `rank`/`changePercent` reflect the latest scan (keep-latest,
+/// same pattern as MacroSnapshot). `isUnusualVolume` is a same-day cross-sectional
+/// heuristic (today's volume vs. today's scanned universe), NOT a true rolling
+/// historical average — there is no historical volume store in Phase 1.
+model MarketMoverSnapshot {
+  id              String              @id @default(cuid())
+  /// Trading-session date (IST calendar day), stored at IST midnight converted to UTC.
+  sessionDate     DateTime
+  tickerSymbol    String
+  companyName     String
+  changePercent   Float
+  changeAbs       Float
+  volume          Float
+  /// Always null in Phase 1 — no historical volume store to compute a true rolling
+  /// average against. Reserved for a Phase 2 historical-average implementation.
+  avgVolume       Float?
+  isUnusualVolume Boolean             @default(false)
+  direction       MarketMoveDirection
+  rank            Int
+  snapshotAt      DateTime            @default(now())
+
+  @@unique([sessionDate, tickerSymbol])
+  @@index([sessionDate, direction, rank])
+}
+
+/// Market Pulse push preference stub (Phase 1b — NOT activated in Phase 1; no
+/// fan-out/sender code reads this model yet). Mirrors GroupNotificationPreference's
+/// per-user gating shape so activating push later only needs a sender, not a new
+/// preference model or migration.
+model MarketMoveNotificationPreference {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  enabled   Boolean  @default(false)
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
