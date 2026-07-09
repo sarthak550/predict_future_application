@@ -45,7 +45,7 @@ const makeLbStyles = (t: ThemeContextValue) => StyleSheet.create({
     color: t.colors.textMuted,
     textAlign: "center",
   },
-  rankTop: { color: "#d97706" },
+  rankTop: { color: t.colors.warning },
   avatar: { width: 40, height: 40, borderRadius: 20 },
   avatarFallback: {
     width: 40,

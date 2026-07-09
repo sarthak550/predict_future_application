@@ -117,7 +117,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     borderRadius: radius.pill,
     backgroundColor: t.colors.border,
   },
-  tagAccent: { backgroundColor: "#FFF7ED" },
+  tagAccent: { backgroundColor: t.colors.warningSoft },
   tagText: { fontSize: 11, fontWeight: "600", color: t.colors.textMuted },
 
   // Reputation bar
@@ -376,12 +376,12 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     paddingHorizontal: spacing.sm,
     paddingVertical: 2,
     borderRadius: radius.pill,
-    backgroundColor: "#EFF6FF",
+    backgroundColor: t.colors.accentSoft,
   },
   upvoteChipText: {
     fontSize: 11,
     fontWeight: "600",
-    color: "#1D4ED8",
+    color: t.colors.accentDeep,
   },
   recentCallReasoning: {
     fontSize: 13,
@@ -566,17 +566,25 @@ function CreatedMarketsSection({
 
 // ── Recent Calls (S30-T3) ─────────────────────────────────────────────────────
 
-const OUTCOME_META: Record<string, { label: string; color: string; bg: string }> = {
-  YES: { label: "YES", color: "#15803D", bg: "#DCFCE7" },
-  NO: { label: "NO", color: "#B91C1C", bg: "#FEE2E2" },
-  CANCELLED: { label: "Cancelled", color: "#6B7280", bg: "#F3F4F6" },
-};
+function getOutcomeMeta(
+  colors: ThemeContextValue["colors"],
+): Record<string, { label: string; color: string; bg: string }> {
+  return {
+    YES: { label: "YES", color: colors.success, bg: colors.successSoft },
+    NO: { label: "NO", color: colors.danger, bg: colors.dangerSoft },
+    CANCELLED: { label: "Cancelled", color: colors.textMuted, bg: colors.surfaceMuted },
+  };
+}
 
-const SIDE_META: Record<string, { label: string; color: string; bg: string }> = {
-  YES: { label: "YES", color: "#15803D", bg: "#DCFCE7" },
-  NO: { label: "NO", color: "#B91C1C", bg: "#FEE2E2" },
-  UNKNOWN: { label: "?", color: "#6B7280", bg: "#F3F4F6" },
-};
+function getSideMeta(
+  colors: ThemeContextValue["colors"],
+): Record<string, { label: string; color: string; bg: string }> {
+  return {
+    YES: { label: "YES", color: colors.success, bg: colors.successSoft },
+    NO: { label: "NO", color: colors.danger, bg: colors.dangerSoft },
+    UNKNOWN: { label: "?", color: colors.textMuted, bg: colors.surfaceMuted },
+  };
+}
 
 function RecentCallsSection({
   recentCalls,
@@ -585,6 +593,9 @@ function RecentCallsSection({
 }) {
   const router = useRouter();
   const styles = useThemedStyles(makeStyles);
+  const { colors } = useTheme();
+  const OUTCOME_META = getOutcomeMeta(colors);
+  const SIDE_META = getSideMeta(colors);
 
   return (
     <View style={styles.card}>

@@ -42,14 +42,15 @@ const IMPLICATION_OPTIONS: { key: ApiImplicationChoice; label: string; color: st
   { key: "DISAGREE", label: "Disagree", color: "#dc2626" },
 ];
 
-const DIRECTION_STYLE: Record<
-  ApiFinanceOpinionDetail["direction"],
-  { label: string; bg: string; fg: string }
-> = {
-  BULLISH: { label: "BULLISH", bg: "#dcfce7", fg: "#15803d" },
-  BEARISH: { label: "BEARISH", bg: "#fee2e2", fg: "#b91c1c" },
-  NEUTRAL: { label: "NEUTRAL", bg: "#f3f4f6", fg: "#374151" },
-};
+function directionStyle(
+  colors: ThemeContextValue["colors"],
+): Record<ApiFinanceOpinionDetail["direction"], { label: string; bg: string; fg: string }> {
+  return {
+    BULLISH: { label: "BULLISH", bg: colors.successSoft, fg: colors.success },
+    BEARISH: { label: "BEARISH", bg: colors.dangerSoft, fg: colors.danger },
+    NEUTRAL: { label: "NEUTRAL", bg: colors.surfaceMuted, fg: colors.textMuted },
+  };
+}
 
 function implCount(tallies: ApiExpertOpinionTallies, choice: ApiImplicationChoice): number {
   const impl = tallies.implication;
@@ -172,11 +173,11 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     marginHorizontal: spacing.lg,
     paddingHorizontal: spacing.md,
     paddingVertical: 6,
-    backgroundColor: "#eef2ff",
+    backgroundColor: t.colors.accentSoft,
     borderRadius: radius.pill,
     marginTop: spacing.sm,
   },
-  clusterChipText: { fontSize: 12, color: "#4338ca", fontWeight: "600" },
+  clusterChipText: { fontSize: 12, color: t.colors.accent, fontWeight: "600" },
 
   pollSection: {
     margin: spacing.lg,
@@ -249,10 +250,10 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     marginTop: spacing.md,
     paddingHorizontal: spacing.md,
     paddingVertical: 6,
-    backgroundColor: "#eef2ff",
+    backgroundColor: t.colors.accentSoft,
     borderRadius: radius.pill,
   },
-  lockedPillText: { color: "#4338ca", fontSize: 12, fontWeight: "700" },
+  lockedPillText: { color: t.colors.accent, fontSize: 12, fontWeight: "700" },
   lockHint: {
     fontSize: 11,
     color: t.colors.textMuted,
@@ -261,7 +262,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   },
 
   errorInline: {
-    color: "#b91c1c",
+    color: t.colors.danger,
     fontSize: 13,
     paddingHorizontal: spacing.lg,
     marginTop: spacing.sm,
@@ -362,7 +363,7 @@ export default function OpinionDetailScreen() {
   }
 
   const opinion = opinionQuery.data;
-  const dirStyle = DIRECTION_STYLE[opinion.direction];
+  const dirStyle = directionStyle(colors)[opinion.direction];
   const isResolved = opinion.resolutionStatus !== "PENDING";
   const initial = opinion.expertName?.[0]?.toUpperCase() ?? "?";
 
@@ -427,7 +428,7 @@ export default function OpinionDetailScreen() {
             styles.resolutionCard,
             {
               backgroundColor:
-                opinion.resolutionStatus === "RESOLVED_HIT" ? "#dcfce7" : "#fee2e2",
+                opinion.resolutionStatus === "RESOLVED_HIT" ? colors.successSoft : colors.dangerSoft,
             },
           ]}
         >
@@ -435,7 +436,7 @@ export default function OpinionDetailScreen() {
             style={[
               styles.resolutionLabel,
               {
-                color: opinion.resolutionStatus === "RESOLVED_HIT" ? "#15803d" : "#b91c1c",
+                color: opinion.resolutionStatus === "RESOLVED_HIT" ? colors.success : colors.danger,
               },
             ]}
           >
@@ -545,7 +546,7 @@ export default function OpinionDetailScreen() {
         {tallies?.implication.userChoice && opinion.resolutionStatus === "PENDING" && (
           tallies.implication.userLockedAt ? (
             <View style={styles.lockedPill}>
-              <Feather name="check-circle" size={12} color="#4338ca" />
+              <Feather name="check-circle" size={12} color={colors.accent} />
               <Text style={styles.lockedPillText}>
                 {(() => {
                   const userChoice = tallies.implication.userChoice;

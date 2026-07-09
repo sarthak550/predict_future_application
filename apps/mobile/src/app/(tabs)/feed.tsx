@@ -614,10 +614,10 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     marginTop: spacing.xs,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
-    backgroundColor: "#F5F3FF",
+    backgroundColor: t.colors.accentSoft,
     borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: "#DDD6FE",
+    borderColor: t.colors.border,
     gap: spacing.sm,
   },
   tierNudgeText: {

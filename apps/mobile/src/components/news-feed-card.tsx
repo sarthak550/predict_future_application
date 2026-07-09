@@ -327,7 +327,7 @@ const makePollStyles = (t: ThemeContextValue) => StyleSheet.create({
   youVotedChip: {
     marginTop: 4,
     fontSize: 10,
-    color: "#4338CA",
+    color: t.colors.accent,
     fontWeight: "700",
   },
   crowdSummary: {
@@ -339,7 +339,7 @@ const makePollStyles = (t: ThemeContextValue) => StyleSheet.create({
   errorText: {
     marginTop: 4,
     fontSize: 10,
-    color: "#dc2626",
+    color: t.colors.danger,
   },
   skeletonRow: {
     flexDirection: "row",
@@ -767,6 +767,7 @@ function PollA({
 
 /** Single expert opinion row — renders avatar, name, quote, direction badge, footer, and polls. */
 function ResolutionStrip({ opinion, articlePublishedAt }: { opinion: ApiExpertOpinionItem; articlePublishedAt?: string }) {
+  const { colors } = useTheme();
   const expertStyles = useThemedStyles(makeExpertStyles);
   const status = opinion?.resolutionStatus;
   if (status !== "RESOLVED_HIT" && status !== "RESOLVED_MISS") return null;
@@ -785,7 +786,7 @@ function ResolutionStrip({ opinion, articlePublishedAt }: { opinion: ApiExpertOp
     <View
       style={[
         expertStyles.resolutionStrip,
-        { backgroundColor: isHit ? "#f0fdf4" : "#fef2f2", borderColor: color + "40" },
+        { backgroundColor: isHit ? colors.successSoft : colors.dangerSoft, borderColor: color + "40" },
       ]}
     >
       <View style={[expertStyles.resolutionBadge, { backgroundColor: color }]}>
@@ -1044,6 +1045,7 @@ export function ExpertOpinionRow({
 
 /** Expert Take section — shows on FINANCE stories with expert opinions. */
 function ExpertTakeSection({ opinions }: { opinions: ApiExpertOpinionItem[] }) {
+  const { colors } = useTheme();
   const expertStyles = useThemedStyles(makeExpertStyles);
   const [expanded, setExpanded] = useState(false);
 
@@ -1055,7 +1057,7 @@ function ExpertTakeSection({ opinions }: { opinions: ApiExpertOpinionItem[] }) {
   return (
     <View style={expertStyles.container}>
       <View style={expertStyles.header}>
-        <Ionicons name="analytics-outline" size={14} color="#4338ca" />
+        <Ionicons name="analytics-outline" size={14} color={colors.accent} />
         <Text style={expertStyles.headerText}>Expert Take</Text>
       </View>
 
@@ -1405,7 +1407,7 @@ export function NewsFeedCard({ item, viewportHeight, showHint, onVoted }: Props)
                   <View style={styles.liveResults}>
                     {poll?.marketType === "NUMERIC" ? (
                       <View style={styles.numericResult}>
-                        <Ionicons name="checkmark-circle" size={16} color="#059669" />
+                        <Ionicons name="checkmark-circle" size={16} color={colors.success} />
                         <Text style={styles.numericResultText}>
                           Your guess: {voted}
                           {poll?.unit ? ` ${poll.unit}` : ""}
@@ -1445,7 +1447,7 @@ export function NewsFeedCard({ item, viewportHeight, showHint, onVoted }: Props)
                           <Ionicons
                             name="checkmark-circle"
                             size={14}
-                            color={voted === "YES" ? "#059669" : "#DC2626"}
+                            color={voted === "YES" ? colors.success : colors.danger}
                           />
                           <Text
                             style={[
@@ -1504,7 +1506,7 @@ export function NewsFeedCard({ item, viewportHeight, showHint, onVoted }: Props)
                         disabled={voting}
                       >
                         {voting ? (
-                          <ActivityIndicator size="small" color="#059669" />
+                          <ActivityIndicator size="small" color={colors.success} />
                         ) : (
                           <>
                             <Text style={styles.yesBtnLabel}>YES</Text>
@@ -1522,7 +1524,7 @@ export function NewsFeedCard({ item, viewportHeight, showHint, onVoted }: Props)
                         disabled={voting}
                       >
                         {voting ? (
-                          <ActivityIndicator size="small" color="#DC2626" />
+                          <ActivityIndicator size="small" color={colors.danger} />
                         ) : (
                           <>
                             <Text style={styles.noBtnLabel}>NO</Text>
@@ -1848,9 +1850,9 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     flex: 1,
     paddingVertical: 12,
     borderRadius: radius.md,
-    backgroundColor: "#ECFDF5",
+    backgroundColor: t.colors.successSoft,
     borderWidth: 1,
-    borderColor: "#A7F3D0",
+    borderColor: t.colors.success,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -1858,14 +1860,14 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     flex: 1,
     paddingVertical: 12,
     borderRadius: radius.md,
-    backgroundColor: "#FFF1F2",
+    backgroundColor: t.colors.dangerSoft,
     borderWidth: 1,
-    borderColor: "#FECDD3",
+    borderColor: t.colors.danger,
     alignItems: "center",
     justifyContent: "center",
   },
-  yesBtnLabel: { fontSize: 12, fontWeight: "800", letterSpacing: 0.5, color: "#059669" },
-  noBtnLabel: { fontSize: 12, fontWeight: "800", letterSpacing: 0.5, color: "#DC2626" },
+  yesBtnLabel: { fontSize: 12, fontWeight: "800", letterSpacing: 0.5, color: t.colors.success },
+  noBtnLabel: { fontSize: 12, fontWeight: "800", letterSpacing: 0.5, color: t.colors.danger },
   btnPct: { fontSize: 20, fontWeight: "700", color: t.colors.text, marginTop: 2 },
   btnDisabled: { opacity: 0.5 },
 
@@ -1906,21 +1908,21 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   liveBarTrack: {
     height: 10,
     borderRadius: radius.pill,
-    backgroundColor: "#FEE2E2",
+    backgroundColor: t.colors.dangerSoft,
     overflow: "hidden",
   },
   liveBarYes: {
     height: "100%",
     borderRadius: radius.pill,
-    backgroundColor: "#059669",
+    backgroundColor: t.colors.success,
   },
   liveLabelsRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
   },
-  liveLabelYes: { fontSize: 13, fontWeight: "700", color: "#059669" },
-  liveLabelNo: { fontSize: 13, fontWeight: "700", color: "#DC2626" },
+  liveLabelYes: { fontSize: 13, fontWeight: "700", color: t.colors.success },
+  liveLabelNo: { fontSize: 13, fontWeight: "700", color: t.colors.danger },
   liveTotalVotes: { fontSize: 12, color: t.colors.textMuted },
   yourVoteBadge: {
     flexDirection: "row",
@@ -1931,11 +1933,11 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     borderRadius: radius.md,
     alignSelf: "flex-start",
   },
-  yourVoteYes: { backgroundColor: "#ECFDF5", borderWidth: 1, borderColor: "#A7F3D0" },
-  yourVoteNo: { backgroundColor: "#FFF1F2", borderWidth: 1, borderColor: "#FECDD3" },
+  yourVoteYes: { backgroundColor: t.colors.successSoft, borderWidth: 1, borderColor: t.colors.success },
+  yourVoteNo: { backgroundColor: t.colors.dangerSoft, borderWidth: 1, borderColor: t.colors.danger },
   yourVoteText: { fontSize: 13, fontWeight: "700" },
-  yourVoteTextYes: { color: "#059669" },
-  yourVoteTextNo: { color: "#DC2626" },
+  yourVoteTextYes: { color: t.colors.success },
+  yourVoteTextNo: { color: t.colors.danger },
 
   // Numeric result
   numericResult: {
@@ -1945,12 +1947,12 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: spacing.md,
     borderRadius: radius.md,
-    backgroundColor: "#ECFDF5",
+    backgroundColor: t.colors.successSoft,
     borderWidth: 1,
-    borderColor: "#A7F3D0",
+    borderColor: t.colors.success,
     flexWrap: "wrap",
   },
-  numericResultText: { fontSize: 13, fontWeight: "700", color: "#059669" },
+  numericResultText: { fontSize: 13, fontWeight: "700", color: t.colors.success },
   crowdAvg: { fontSize: 12, color: t.colors.textMuted, marginLeft: "auto" },
 
   // Closed
@@ -1963,7 +1965,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   },
   closedText: { fontSize: 14, fontWeight: "700", color: t.colors.textMuted },
 
-  errorText: { marginTop: spacing.sm, fontSize: 12, color: "#DC2626" },
+  errorText: { marginTop: spacing.sm, fontSize: 12, color: t.colors.danger },
   link: { marginTop: spacing.md, fontSize: 14, fontWeight: "700", color: t.colors.accent },
 
   // Swipe hint
@@ -2007,7 +2009,7 @@ const makeExpertStyles = (t: ThemeContextValue) => StyleSheet.create({
     fontWeight: "800",
     letterSpacing: 0.8,
     textTransform: "uppercase",
-    color: "#4338CA",
+    color: t.colors.accent,
   },
   opinionRow: {
     flexDirection: "row",
@@ -2077,9 +2079,9 @@ const makeExpertStyles = (t: ThemeContextValue) => StyleSheet.create({
   },
   sourceAttributionBadge: {
     alignSelf: "flex-start",
-    backgroundColor: "#F0F9FF",
+    backgroundColor: t.colors.accentSoft,
     borderWidth: 1,
-    borderColor: "#BAE6FD",
+    borderColor: t.colors.accent,
     borderRadius: 4,
     paddingHorizontal: 6,
     paddingVertical: 2,
@@ -2088,7 +2090,7 @@ const makeExpertStyles = (t: ThemeContextValue) => StyleSheet.create({
   sourceAttributionLabel: {
     fontSize: 9,
     fontWeight: "700",
-    color: "#0369A1",
+    color: t.colors.accent,
     letterSpacing: 0.5,
   },
   expertNameRow: {
@@ -2197,6 +2199,6 @@ const makeExpertStyles = (t: ThemeContextValue) => StyleSheet.create({
   expandText: {
     fontSize: 12,
     fontWeight: "700",
-    color: "#4338CA",
+    color: t.colors.accent,
   },
 });

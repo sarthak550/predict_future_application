@@ -469,7 +469,7 @@ function RoleBadge({ role }: { role: string }) {
   const config =
     role === "OWNER"
       ? { bg: colors.accentSoft, text: colors.accent }
-      : { bg: "#FEF3C7", text: "#92400E" };
+      : { bg: colors.warningSoft, text: colors.warning };
   return (
     <View style={[styles.roleBadge, { backgroundColor: config.bg }]}>
       <Text style={[styles.roleBadgeText, { color: config.text }]}>
@@ -570,12 +570,12 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
-    backgroundColor: "#FEE2E2"
+    backgroundColor: t.colors.dangerSoft
   },
   bannedBadgeText: {
     fontSize: 10,
     fontWeight: "700",
-    color: "#DC2626",
+    color: t.colors.danger,
     textTransform: "uppercase",
     letterSpacing: 0.3
   },

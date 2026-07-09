@@ -92,9 +92,9 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     color: t.colors.textMuted,
     fontWeight: "500",
   },
-  // Error banner uses directional red — intentionally hardcoded
+  // Error banner uses theme-aware danger soft fill
   joinErrorBanner: {
-    backgroundColor: "#FFF1F2",
+    backgroundColor: t.colors.dangerSoft,
     borderRadius: radius.md,
     padding: spacing.md,
     marginBottom: spacing.md,
@@ -103,7 +103,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   },
   joinErrorText: {
     fontSize: 13,
-    color: "#DC2626",
+    color: t.colors.danger,
     textAlign: "center",
     lineHeight: 18,
   },

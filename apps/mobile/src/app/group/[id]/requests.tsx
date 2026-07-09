@@ -670,7 +670,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     color: "#fff"
   },
   rejectBtn: {
-    backgroundColor: "#FEE2E2"
+    backgroundColor: t.colors.dangerSoft
   },
   rejectBtnText: {
     fontSize: 13,
@@ -802,7 +802,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     color: "#fff",
   },
   bulkRejectBtn: {
-    backgroundColor: "#FEE2E2",
+    backgroundColor: t.colors.dangerSoft,
     borderWidth: 1,
     borderColor: t.colors.danger + "40",
   },

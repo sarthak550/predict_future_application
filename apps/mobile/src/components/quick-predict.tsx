@@ -269,8 +269,8 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   resultLabel: { fontSize: 13, fontWeight: "600", color: t.colors.textMuted },
 
   // Voted state
-  votedBox: { marginTop: spacing.md, flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: "#ecfdf5", paddingVertical: spacing.md, paddingHorizontal: spacing.lg, borderRadius: radius.md, borderWidth: 1, borderColor: "#a7f3d0" },
-  votedText: { fontSize: 14, fontWeight: "600", color: "#059669" },
+  votedBox: { marginTop: spacing.md, flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: t.colors.successSoft, paddingVertical: spacing.md, paddingHorizontal: spacing.lg, borderRadius: radius.md, borderWidth: 1, borderColor: t.colors.success },
+  votedText: { fontSize: 14, fontWeight: "600", color: t.colors.success },
   voteCount: { marginTop: spacing.sm, textAlign: "center", fontSize: 12, color: t.colors.textMuted },
 
   // Closed market

@@ -191,7 +191,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     backgroundColor: t.colors.surfaceMuted,
     borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: "#BFDBFE",
+    borderColor: t.colors.border,
     padding: spacing.md,
   },
   sisterCtaInner: {
@@ -202,7 +202,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   sisterCtaLabel: {
     fontSize: 10,
     fontWeight: "800",
-    color: "#1D4ED8",
+    color: t.colors.accentDeep,
     letterSpacing: 0.5,
     textTransform: "uppercase",
     marginBottom: 2,
@@ -210,17 +210,17 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   sisterCtaTitle: {
     fontSize: 15,
     fontWeight: "800",
-    color: "#1E3A8A",
+    color: t.colors.accentDeep,
   },
   sisterCtaSub: {
     fontSize: 12,
-    color: "#3B82F6",
+    color: t.colors.accent,
     marginTop: 2,
     lineHeight: 17,
   },
   sisterCtaArrow: {
     fontSize: 28,
-    color: "#3B82F6",
+    color: t.colors.accent,
     fontWeight: "600",
     lineHeight: 32,
   },
@@ -239,7 +239,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   // S61-T2: You vs the crowd note
   youVsCrowdNote: {
     fontSize: 12,
-    color: "#4338CA",
+    color: t.colors.accent,
     marginBottom: 10,
     fontStyle: "italic",
     lineHeight: 17,
@@ -253,9 +253,9 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   mcRow: { marginBottom: spacing.sm },
   mcRowHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 },
   mcLabel: { fontSize: 13, color: t.colors.text, flex: 1, marginRight: 4 },
-  mcLabelMine: { fontWeight: "700", color: "#92400e" },
+  mcLabelMine: { fontWeight: "700", color: t.colors.warning },
   mcPct: { fontSize: 13, fontWeight: "700", color: t.colors.text, minWidth: 36, textAlign: "right" },
-  mcPctMine: { color: "#92400e" },
+  mcPctMine: { color: t.colors.warning },
   mcBar: { height: 6, backgroundColor: t.colors.surfaceMuted, borderRadius: 3, overflow: "hidden" },
   mcBarFill: { height: "100%", backgroundColor: t.colors.accent, borderRadius: 3 },
   mcBarFillMine: { backgroundColor: "#f59e0b" },
@@ -263,7 +263,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
 
   // Your pick + crowd fave inline badges
   yourPickBadge: {
-    backgroundColor: "#FEF3C7",
+    backgroundColor: t.colors.warningSoft,
     borderRadius: 4,
     paddingHorizontal: 5,
     paddingVertical: 1,
@@ -271,11 +271,11 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   yourPickBadgeText: {
     fontSize: 9,
     fontWeight: "800",
-    color: "#92400e",
+    color: t.colors.warning,
     letterSpacing: 0.2,
   },
   crowdFaveBadge: {
-    backgroundColor: "#EEF2FF",
+    backgroundColor: t.colors.accentSoft,
     borderRadius: 4,
     paddingHorizontal: 5,
     paddingVertical: 1,
@@ -283,13 +283,13 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   crowdFaveBadgeText: {
     fontSize: 9,
     fontWeight: "800",
-    color: "#4338CA",
+    color: t.colors.accent,
     letterSpacing: 0.2,
   },
 
   sideTag: { alignSelf: "flex-start", paddingHorizontal: 14, paddingVertical: 6, borderRadius: 999 },
-  sideTagYes: { backgroundColor: "#dcfce7" },
-  sideTagNo: { backgroundColor: "#fee2e2" },
+  sideTagYes: { backgroundColor: t.colors.successSoft },
+  sideTagNo: { backgroundColor: t.colors.dangerSoft },
   sideTagText: { fontSize: 13, fontWeight: "800", letterSpacing: 0.5, color: t.colors.text },
 
   opinionRow: { paddingVertical: spacing.md, borderBottomWidth: 1, borderBottomColor: t.colors.border },
@@ -339,9 +339,9 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
 
   sideRow: { flexDirection: "row", gap: spacing.md, marginBottom: spacing.md },
   sideBtn: { flex: 1, paddingVertical: 18, borderRadius: radius.md, alignItems: "center", borderWidth: 1 },
-  sideYes: { backgroundColor: "#f0fdf4", borderColor: "#86efac" },
+  sideYes: { backgroundColor: t.colors.successSoft, borderColor: t.colors.success },
   sideYesActive: { backgroundColor: "#16a34a", borderColor: "#16a34a" },
-  sideNo: { backgroundColor: "#fef2f2", borderColor: "#fca5a5" },
+  sideNo: { backgroundColor: t.colors.dangerSoft, borderColor: t.colors.danger },
   sideNoActive: { backgroundColor: "#dc2626", borderColor: "#dc2626" },
   sideBtnText: { fontSize: 18, fontWeight: "800", color: t.colors.text },
   mcChoice: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 14, paddingHorizontal: 14, borderRadius: radius.md, marginBottom: 8, borderWidth: 1, borderColor: t.colors.border },
@@ -351,7 +351,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   submitBtn: { backgroundColor: t.colors.accent, paddingVertical: 14, borderRadius: radius.md, alignItems: "center", marginTop: 8 },
   submitBtnText: { color: "#fff", fontSize: 15, fontWeight: "800" },
   disclaimer: { fontSize: 11, color: t.colors.textMuted, textAlign: "center", marginTop: 8, lineHeight: 16 },
-  errorLine: { color: "#dc2626", fontSize: 12, marginBottom: 8 },
+  errorLine: { color: t.colors.danger, fontSize: 12, marginBottom: 8 },
 });
 
 // ─── Screen ───────────────────────────────────────────────────────────────────

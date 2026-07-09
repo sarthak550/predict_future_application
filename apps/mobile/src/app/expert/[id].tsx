@@ -49,7 +49,7 @@ const RESOLUTION_COLOR: Record<string, string> = {
 
 const makeExpertProfileStyles = (t: ThemeContextValue) => StyleSheet.create({
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  errorText: { color: "#dc2626", fontSize: 15, padding: spacing.lg, textAlign: "center" },
+  errorText: { color: t.colors.danger, fontSize: 15, padding: spacing.lg, textAlign: "center" },
   headerSection: { padding: spacing.lg },
   avatarRow: { flexDirection: "row", gap: spacing.md, marginBottom: spacing.lg, alignItems: "flex-start" },
   avatar: { width: 56, height: 56, borderRadius: 28 },

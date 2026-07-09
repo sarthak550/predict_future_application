@@ -2567,10 +2567,10 @@ function PhoneVerifyModal({
                     marginBottom: 10,
                   }}
                 >
-                  <Text style={{ fontSize: 12, color: "#92400e", fontWeight: "700" }}>
+                  <Text style={{ fontSize: 12, color: colors.warning, fontWeight: "700" }}>
                     DEV MODE — OTP: {devOtp}
                   </Text>
-                  <Text style={{ fontSize: 11, color: "#92400e", marginTop: 2 }}>
+                  <Text style={{ fontSize: 11, color: colors.warning, marginTop: 2 }}>
                     Tap to autofill. Real SMS will be sent once DLT is approved.
                   </Text>
                 </Pressable>
@@ -2664,7 +2664,7 @@ const makePvModalStyles = (t: ThemeContextValue) =>
       backgroundColor: t.colors.surface,
       marginBottom: spacing.md,
     },
-    error: { color: "#EF4444", fontSize: 13, marginBottom: spacing.sm },
+    error: { color: t.colors.danger, fontSize: 13, marginBottom: spacing.sm },
     primaryBtn: {
       backgroundColor: t.colors.accent,
       borderRadius: radius.md,

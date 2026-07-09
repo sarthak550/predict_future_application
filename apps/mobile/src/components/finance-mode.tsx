@@ -43,6 +43,7 @@ import { withRetry } from "@/lib/retry";
 import { isNSEHoliday } from "@/constants/nse-holidays-2026";
 import { makeTourStep } from "@/components/spotlight-tour";
 import { useTour } from "@/providers/tour-provider";
+import { MarketMovesTab } from "@/components/market-moves-tab";
 
 const FOLLOWED_ANALYSTS_KEY = "finance:followedAnalysts";
 const FEED_DEFAULT_CACHE_KEY = "finance:feed:default";
@@ -2020,15 +2021,15 @@ const makeMacroStyles = (t: ThemeContextValue) =>
       paddingVertical: 6,
       paddingHorizontal: 4,
       borderRadius: 8,
-      backgroundColor: "#EFF6FF",
+      backgroundColor: t.colors.accentSoft,
       borderWidth: 1,
-      borderColor: "#BFDBFE",
+      borderColor: t.colors.border,
       gap: 2,
     },
     tileLabel: {
       fontSize: 9,
       fontWeight: "700" as const,
-      color: "#1E40AF",
+      color: t.colors.accent,
       textTransform: "uppercase" as const,
       letterSpacing: 0.4,
     },
@@ -2248,7 +2249,7 @@ export function FinanceMode({
   //   "market-analysis" → brokerages / publications only (J.P. Morgan, ET Money, etc.)
   // Resolved + Verified live as filter chips (toggleable, compound on the tab).
   // Sort still uses max(resolvedAt, articlePublishedAt) so resolved calls bubble.
-  type ShowScope = "expert-opinions" | "market-analysis" | "rates-events";
+  type ShowScope = "expert-opinions" | "market-analysis" | "rates-events" | "market-moves";
   type SortMode = "latest" | "top-week";
 
   const defaultSortForWindow = (w: MarketWindow): SortMode => {
@@ -2264,7 +2265,7 @@ export function FinanceMode({
   useEffect(() => {
     // Hydrate persisted user overrides (one-time on mount).
     void AsyncStorage.getItem("finance.showScope").then((v) => {
-      if (v === "expert-opinions" || v === "market-analysis" || v === "rates-events") setShowScopeState(v);
+      if (v === "expert-opinions" || v === "market-analysis" || v === "rates-events" || v === "market-moves") setShowScopeState(v);
     });
     void AsyncStorage.getItem("finance.sortMode").then((v) => {
       if (v === "latest" || v === "top-week") setSortModeState(v);
@@ -3006,20 +3007,30 @@ export function FinanceMode({
           Filter chips are conditionally shown (hidden for Rates & Events tab which
           has its own dedicated content). */}
       <View collapsable={false} style={financeStyles.stickyTabsBar}>
-        <View ref={tourScopeTabsRef} collapsable={false} style={controlsStyles.tabsRow}>
+        {/* 4 tabs WRAP into a 2×2 grid (flexWrap) so all four are visible at once
+            without horizontal scrolling. Each tab flexBasis ~46% → two per row. */}
+        <View
+          ref={tourScopeTabsRef}
+          collapsable={false}
+          style={[controlsStyles.tabsRow, { flexWrap: "wrap" }]}
+        >
           {([
             { key: "expert-opinions" as const, label: "Expert Opinions" },
             { key: "market-analysis" as const, label: "Market Analysis" },
             { key: "rates-events" as const, label: "Rates & Events" },
+            { key: "market-moves" as const, label: "Market Pulse" },
           ]).map((opt) => {
             const active = showScope === opt.key;
             return (
               <Pressable
                 key={opt.key}
                 onPress={() => setShowScope(opt.key)}
-                style={[controlsStyles.tab, active && controlsStyles.tabActive]}
+                style={[controlsStyles.tab, { flexGrow: 1, flexBasis: "46%", minWidth: 0 }, active && controlsStyles.tabActive]}
               >
-                <Text style={[controlsStyles.tabText, active && controlsStyles.tabTextActive]}>
+                <Text
+                  style={[controlsStyles.tabText, active && controlsStyles.tabTextActive]}
+                  numberOfLines={1}
+                >
                   {opt.label}
                 </Text>
               </Pressable>
@@ -3027,9 +3038,10 @@ export function FinanceMode({
           })}
         </View>
 
-        {/* S38: Sort + active-filter chip strip — only shown when not on Rates & Events tab.
+        {/* S38: Sort + active-filter chip strip — only shown when not on Rates & Events or
+            Market Pulse tabs (both have their own dedicated content, no sort/filter concept).
             Moved here from Section 3 so it pins with the tabs in a single sticky header. */}
-        {showScope !== "rates-events" && (
+        {showScope !== "rates-events" && showScope !== "market-moves" && (
           <View ref={tourChipRowRef} collapsable={false} style={controlsStyles.chipRow}>
             {/* Sort chip — leads the row so it's always visible */}
             <Pressable
@@ -3183,10 +3195,16 @@ export function FinanceMode({
           </>
         )}
 
+        {/* Market Pulse (S74-ish) tab content — extracted component, own data
+            fetching (NSE/BSE announcements + NIFTY 200 movers), own pagination.
+            Rendered ONLY when showScope === "market-moves". */}
+        {showScope === "market-moves" && <MarketMovesTab />}
+
         {/* Opinion/market feed — scrolls normally under the pinned sticky header.
             Filter chips have moved to the sticky header above; this block renders
-            only the feed IIFE and its footers. Hidden when Rates & Events is active. */}
-        {showScope !== "rates-events" && <>
+            only the feed IIFE and its footers. Hidden when Rates & Events or
+            Market Pulse is active (both have their own dedicated content above). */}
+        {showScope !== "rates-events" && showScope !== "market-moves" && <>
         {(() => {
           // Group opinions by (storyId, expertId) so same analyst's takes on one article share a card
           interface GroupedCard {

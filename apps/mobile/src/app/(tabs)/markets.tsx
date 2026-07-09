@@ -1514,7 +1514,7 @@ const makePollStyles = (t: ThemeContextValue) => StyleSheet.create({
     justifyContent: "center",
   },
   submitGuessBtnText: { fontSize: 14, fontWeight: "700", color: "#fff" },
-  numericError: { fontSize: 12, color: "#DC2626", marginTop: 4 },
+  numericError: { fontSize: 12, color: t.colors.danger, marginTop: 4 },
 });
 
 // ── styles ──────────────────────────────────────────────────────────
@@ -1677,11 +1677,11 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     marginTop: spacing.md,
     padding: spacing.lg,
     borderRadius: radius.md,
-    backgroundColor: "#FEF9C3",
+    backgroundColor: t.colors.warningSoft,
   },
   noGroupsText: {
     fontSize: 14,
-    color: "#854D0E",
+    color: t.colors.warning,
     lineHeight: 20,
   },
 

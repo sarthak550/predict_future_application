@@ -151,13 +151,13 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     paddingVertical: 2,
     paddingHorizontal: 6,
     borderRadius: 999,
-    backgroundColor: "#FEF9C3",
+    backgroundColor: t.colors.warningSoft,
     flexShrink: 0,
   },
   featuredBadgeText: {
     fontSize: 10,
     fontWeight: "700" as const,
-    color: "#854D0E",
+    color: t.colors.warning,
   },
   meta: {
     fontSize: 11,

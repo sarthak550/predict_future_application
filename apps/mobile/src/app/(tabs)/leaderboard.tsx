@@ -173,7 +173,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     gap: spacing.md,
   },
   rowHighlight: {
-    backgroundColor: "#EEF2FF",
+    backgroundColor: t.colors.accentSoft,
     borderWidth: 1,
     borderColor: t.colors.accent,
   },
@@ -194,11 +194,11 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     paddingVertical: 2,
     borderRadius: radius.pill,
   },
-  deltaBadgeUp: { backgroundColor: "#D1FAE5" },
-  deltaBadgeDown: { backgroundColor: "#FEE2E2" },
+  deltaBadgeUp: { backgroundColor: t.colors.successSoft },
+  deltaBadgeDown: { backgroundColor: t.colors.dangerSoft },
   deltaBadgeText: { fontSize: 11, fontWeight: "700" },
-  deltaBadgeTextUp: { color: "#065F46" },
-  deltaBadgeTextDown: { color: "#991B1B" },
+  deltaBadgeTextUp: { color: t.colors.success },
+  deltaBadgeTextDown: { color: t.colors.danger },
 
   userInfo: { flex: 1 },
   usernameRow: { flexDirection: "row", alignItems: "center" },
@@ -227,7 +227,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
 
   // Your Rank sticky card (S12-T3)
   rankCard: {
-    backgroundColor: "#EEF2FF",
+    backgroundColor: t.colors.accentSoft,
     borderRadius: radius.md,
     borderWidth: 1,
     borderColor: t.colors.accent,

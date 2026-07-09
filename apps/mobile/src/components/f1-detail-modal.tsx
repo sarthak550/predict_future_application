@@ -368,9 +368,12 @@ function DriverRow({
   sessionType: string;
 }) {
   const dr = useThemedStyles(makeDriverStyles);
+  const { colors } = useTheme();
   const isRace = isRaceType(sessionType);
   const isQualifying = isQualifyingType(sessionType);
-  const badgeColour = POS_BADGE_COLOURS[driver.position] ?? "#e2e8f0";
+  // Non-podium fallback must adapt: a fixed light grey badge with theme-coloured
+  // (light) text turns invisible in dark mode.
+  const badgeColour = POS_BADGE_COLOURS[driver.position] ?? colors.surfaceMuted;
   const tire = driver.tireCompound ? TIRE_COLOURS[driver.tireCompound] : null;
 
   const showGap = isRace;

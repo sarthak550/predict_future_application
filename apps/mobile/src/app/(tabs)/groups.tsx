@@ -247,8 +247,8 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     borderColor: t.colors.accent
   },
   joinBtnJoined: {
-    borderColor: "#15803D",
-    backgroundColor: "#DCFCE7"
+    borderColor: t.colors.success,
+    backgroundColor: t.colors.successSoft
   },
   joinBtnText: {
     fontSize: 13,
@@ -258,7 +258,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   joinBtnJoinedText: {
     fontSize: 13,
     fontWeight: "700",
-    color: "#15803D"
+    color: t.colors.success
   },
   joinBtnDisabled: {
     opacity: 0.5
@@ -935,7 +935,7 @@ function DiscoverGroupCard({
       {/* Join button */}
       {isJoined ? (
         <View style={[styles.joinBtn, styles.joinBtnJoined]}>
-          <Ionicons name="checkmark" size={13} color="#15803D" />
+          <Ionicons name="checkmark" size={13} color={colors.success} />
           <Text style={styles.joinBtnJoinedText}>Joined</Text>
         </View>
       ) : group.visibility === "REQUEST_TO_JOIN" ? (

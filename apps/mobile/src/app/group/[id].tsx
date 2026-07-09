@@ -760,7 +760,7 @@ function GroupBody({
               </View>
             ) : memberStatus === "member" ? (
               <View style={[styles.pill, styles.pillMember]}>
-                <Ionicons name="checkmark" size={11} color="#15803D" />
+                <Ionicons name="checkmark" size={11} color={colors.success} />
                 <Text style={[styles.pillText, styles.pillTextMember]}>Member</Text>
               </View>
             ) : null}
@@ -944,18 +944,18 @@ function GroupBody({
 
 // ── Market Status Badge ───────────────────────────────────────────────
 
-const STATUS_BADGE: Record<string, { label: string; bg: string; text: string }> = {
-  OPEN: { label: "Live", bg: "#DCFCE7", text: "#15803D" },
-  RESOLVED: { label: "Resolved", bg: "#F3F4F6", text: "#6B7280" },
-  CLOSED: { label: "Closed", bg: "#FEF3C7", text: "#92400E" },
-  AWAITING_RESOLUTION: { label: "Awaiting", bg: "#DBEAFE", text: "#1D4ED8" },
-  CANCELLED: { label: "Cancelled", bg: "#F3F4F6", text: "#6B7280" },
-  DRAFT: { label: "Draft", bg: "#F3F4F6", text: "#9CA3AF" }
-};
-
 function MarketStatusBadge({ status }: { status: string }) {
   const styles = useThemedStyles(makeStyles);
-  const cfg = STATUS_BADGE[status] ?? { label: status, bg: "#F3F4F6", text: "#6B7280" };
+  const { colors } = useTheme();
+  const STATUS_BADGE: Record<string, { label: string; bg: string; text: string }> = {
+    OPEN: { label: "Live", bg: colors.successSoft, text: colors.success },
+    RESOLVED: { label: "Resolved", bg: colors.surfaceMuted, text: colors.textMuted },
+    CLOSED: { label: "Closed", bg: colors.warningSoft, text: colors.warning },
+    AWAITING_RESOLUTION: { label: "Awaiting", bg: colors.accentSoft, text: colors.accentDeep },
+    CANCELLED: { label: "Cancelled", bg: colors.surfaceMuted, text: colors.textMuted },
+    DRAFT: { label: "Draft", bg: colors.surfaceMuted, text: colors.textSubtle }
+  };
+  const cfg = STATUS_BADGE[status] ?? { label: status, bg: colors.surfaceMuted, text: colors.textMuted };
   return (
     <View style={[styles.statusBadge, { backgroundColor: cfg.bg }]}>
       <Text style={[styles.statusBadgeText, { color: cfg.text }]}>{cfg.label}</Text>
@@ -1066,18 +1066,18 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     fontWeight: "700",
     letterSpacing: 0.3
   },
-  pillOpen: { backgroundColor: "#DCFCE7" },
-  pillTextOpen: { color: "#15803D" },
-  pillRTJ: { backgroundColor: "#DBEAFE" },
-  pillTextRTJ: { color: "#1D4ED8" },
+  pillOpen: { backgroundColor: t.colors.successSoft },
+  pillTextOpen: { color: t.colors.success },
+  pillRTJ: { backgroundColor: t.colors.accentSoft },
+  pillTextRTJ: { color: t.colors.accentDeep },
   pillInviteOnly: { backgroundColor: t.colors.surfaceMuted },
   pillTextInviteOnly: { color: t.colors.textMuted },
   pillOwner: { backgroundColor: t.colors.accentSoft },
   pillTextOwner: { color: t.colors.accent },
-  pillAdmin: { backgroundColor: "#FEF3C7" },
-  pillTextAdmin: { color: "#92400E" },
-  pillMember: { backgroundColor: "#DCFCE7" },
-  pillTextMember: { color: "#15803D" },
+  pillAdmin: { backgroundColor: t.colors.warningSoft },
+  pillTextAdmin: { color: t.colors.warning },
+  pillMember: { backgroundColor: t.colors.successSoft },
+  pillTextMember: { color: t.colors.success },
 
   // Stats
   statsRow: {
@@ -1146,7 +1146,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     borderRadius: radius.md,
     backgroundColor: t.colors.accentSoft,
     borderWidth: 1,
-    borderColor: "#C7D2FE"
+    borderColor: t.colors.border
   },
   inviteCodeBox: { flex: 1 },
   inviteLabel: {

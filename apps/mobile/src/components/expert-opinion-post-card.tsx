@@ -619,10 +619,10 @@ export function ExpertOpinionPostCard({
         <View
           style={[
             styles.resolutionBanner,
-            { backgroundColor: isHit ? "#f0fdf4" : "#fef2f2", borderLeftColor: isHit ? "#16a34a" : "#dc2626" },
+            { backgroundColor: isHit ? colors.successSoft : colors.dangerSoft, borderLeftColor: isHit ? colors.success : colors.danger },
           ]}
         >
-          <Text style={[styles.resolutionBannerLabel, { color: isHit ? "#16a34a" : "#dc2626" }]}>
+          <Text style={[styles.resolutionBannerLabel, { color: isHit ? colors.success : colors.danger }]}>
             Why {isHit ? "HIT" : "MISS"}
           </Text>
           <Text style={styles.resolutionBannerText}>{opinion.resolutionNote}</Text>

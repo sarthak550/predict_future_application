@@ -3249,7 +3249,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   betError: {
     marginTop: spacing.sm,
     fontSize: 13,
-    color: "#DC2626",
+    color: t.colors.danger,
   },
   reasoningToggleRow: {
     flexDirection: "row",
@@ -3803,7 +3803,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   },
   stickyError: {
     fontSize: 12,
-    color: "#DC2626",
+    color: t.colors.danger,
     marginTop: 2,
   },
 
@@ -3963,7 +3963,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   payoffIconCircleLoss: {
     backgroundColor: t.colors.dangerSoft,
     borderWidth: 3,
-    borderColor: "#DC2626",
+    borderColor: t.colors.danger,
   },
   payoffIconText: {
     fontSize: 36,
@@ -3980,7 +3980,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   payoffHeadlineLoss: {
     fontSize: 22,
     fontWeight: "800",
-    color: "#DC2626",
+    color: t.colors.danger,
     textAlign: "center",
     marginBottom: spacing.sm,
   },

@@ -32,11 +32,12 @@ import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/t
 
 function StatusBadge({ status }: { status: "PENDING" | "APPROVED" | "REJECTED" }) {
   const styles = useThemedStyles(makeStyles);
-  // Status colours are intentional semantic colours, kept hardcoded
+  const { colors } = useTheme();
+  // Semantic status colours mapped to theme-aware soft/strong tokens
   const cfg = {
-    PENDING: { bg: "#DBEAFE", text: "#1D4ED8", label: "Pending" },
-    APPROVED: { bg: "#DCFCE7", text: "#15803D", label: "Approved" },
-    REJECTED: { bg: "#FEE2E2", text: "#DC2626", label: "Declined" }
+    PENDING: { bg: colors.accentSoft, text: colors.accentDeep, label: "Pending" },
+    APPROVED: { bg: colors.successSoft, text: colors.success, label: "Approved" },
+    REJECTED: { bg: colors.dangerSoft, text: colors.danger, label: "Declined" }
   }[status];
 
   return (

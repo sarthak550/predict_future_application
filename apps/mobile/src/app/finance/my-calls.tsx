@@ -175,12 +175,13 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
 
 function DirectionBadge({ direction }: { direction: string }) {
   const styles = useThemedStyles(makeStyles);
+  const { colors } = useTheme();
   const cfg =
     direction === "BULLISH"
-      ? { label: "BULLISH", color: "#16a34a", bg: "#dcfce7" }
+      ? { label: "BULLISH", color: colors.success, bg: colors.successSoft }
       : direction === "BEARISH"
-        ? { label: "BEARISH", color: "#dc2626", bg: "#fee2e2" }
-        : { label: "NEUTRAL", color: "#6b7280", bg: "#f3f4f6" };
+        ? { label: "BEARISH", color: colors.danger, bg: colors.dangerSoft }
+        : { label: "NEUTRAL", color: colors.textMuted, bg: colors.surfaceMuted };
 
   return (
     <View style={[styles.dirBadge, { backgroundColor: cfg.bg }]}>
@@ -197,17 +198,18 @@ function ResolutionBadge({
   status: "PENDING" | "RESOLVED_HIT" | "RESOLVED_MISS";
 }) {
   const styles = useThemedStyles(makeStyles);
+  const { colors } = useTheme();
   if (status === "PENDING") {
     return (
-      <View style={[styles.resBadge, { backgroundColor: "#f3f4f6" }]}>
-        <Text style={[styles.resBadgeText, { color: "#6b7280" }]}>PENDING</Text>
+      <View style={[styles.resBadge, { backgroundColor: colors.surfaceMuted }]}>
+        <Text style={[styles.resBadgeText, { color: colors.textMuted }]}>PENDING</Text>
       </View>
     );
   }
   const isHit = status === "RESOLVED_HIT";
   return (
-    <View style={[styles.resBadge, { backgroundColor: isHit ? "#dcfce7" : "#fee2e2" }]}>
-      <Text style={[styles.resBadgeText, { color: isHit ? "#16a34a" : "#dc2626" }]}>
+    <View style={[styles.resBadge, { backgroundColor: isHit ? colors.successSoft : colors.dangerSoft }]}>
+      <Text style={[styles.resBadgeText, { color: isHit ? colors.success : colors.danger }]}>
         {isHit ? "HIT" : "MISS"}
       </Text>
     </View>

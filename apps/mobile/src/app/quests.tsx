@@ -83,9 +83,9 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     color: t.colors.textMuted,
     marginTop: 2,
   },
-  // Intentional green earned badge — directional status color, keep static
+  // Green earned badge — theme-aware success soft fill
   earnedBadge: {
-    backgroundColor: "#ECFDF5",
+    backgroundColor: t.colors.successSoft,
     borderRadius: radius.md,
     paddingHorizontal: spacing.md,
     paddingVertical: 5,
@@ -93,14 +93,14 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   earnedBadgeText: {
     fontSize: 13,
     fontWeight: "700",
-    color: "#059669",
+    color: t.colors.success,
   },
-  // Intentional orange streak banner — status color, keep static
+  // Orange streak banner — theme-aware warning soft fill
   streakBanner: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    backgroundColor: "#FFF7ED",
+    backgroundColor: t.colors.warningSoft,
     borderRadius: radius.sm,
     paddingHorizontal: spacing.sm,
     paddingVertical: 5,
@@ -109,7 +109,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   streakBannerText: {
     fontSize: 13,
     fontWeight: "600",
-    color: "#EA580C",
+    color: t.colors.warning,
   },
 
   // Quest list
@@ -139,9 +139,9 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     color: t.colors.text,
     lineHeight: 20,
   },
-  // Intentional blue reward pill — brand hue, keep static
+  // Blue reward pill — theme-aware accent soft fill
   rewardPill: {
-    backgroundColor: "#EFF6FF",
+    backgroundColor: t.colors.accentSoft,
     borderRadius: radius.sm,
     paddingHorizontal: spacing.sm,
     paddingVertical: 3,
@@ -149,7 +149,7 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   rewardPillText: {
     fontSize: 12,
     fontWeight: "700",
-    color: "#1D4ED8",
+    color: t.colors.accentDeep,
   },
 
   // Progress bar
