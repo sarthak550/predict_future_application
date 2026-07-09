@@ -79,6 +79,9 @@ async function run(request: Request) {
   const knownCompanies = await prisma.marketMoveEvent.findMany({
     where: { tickerSymbol: { in: symbols }, source: "NSE" },
     select: { tickerSymbol: true, companyName: true },
+    // orderBy before distinct → Postgres DISTINCT ON (tickerSymbol) ORDER BY
+    // announcedAt DESC, so we get the MOST RECENT company name per symbol.
+    orderBy: { announcedAt: "desc" },
     distinct: ["tickerSymbol"],
   });
   const companyNameBySymbol = new Map(knownCompanies.map((c) => [c.tickerSymbol, c.companyName]));
