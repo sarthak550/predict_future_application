@@ -5,6 +5,7 @@ import { generatePollWithAI } from "@/lib/ai/gemini";
 import { summarizeNewsStory } from "@/lib/ai/summarizeNews";
 import {
   extractExpertOpinionsFromStory,
+  hasPlausibleAnalystSignal,
   isApprovedFinanceSource,
   persistExpertOpinions,
 } from "@/lib/ai/extractExpertOpinions";
@@ -544,7 +545,18 @@ export async function resummarizeRecentStragglers(): Promise<void> {
   console.info(`[news:straggler] done -- ${summarized}/${stragglers.length} stragglers resolved`);
 }
 
-const MAX_FINANCE_EXTRACTIONS_PER_BATCH = 5;
+// S74-T2 bumped 5 -> 20 to match the widened S74-T1 domain-only extraction gate
+// (~60-70 FINANCE stories/day candidate pool vs ~12/day before). Bumped again 20 -> 50
+// here to give a single ingestion pass enough headroom to clear a full 6h-cycle's share
+// of that daily pool (roughly 15-18 candidates/cycle at 4 cycles/day) plus burst
+// tolerance, instead of routinely spilling the overflow to the once-daily
+// finance-opinions-catchup backstop (apps/api/app/api/cron/finance-opinions-catchup/route.ts,
+// CATCHUP_BATCH_SIZE 120, 14-day lookback -- that route already IS the straggler-retry
+// sweep for zero-opinion FINANCE stories; it queries `expertOpinions: { none: {} }`
+// exactly like this batch does, just with a longer lookback and its own cron cadence).
+// Paired with the hasPlausibleAnalystSignal() pre-filter below so a higher cap isn't
+// spending AI calls on obviously-non-analyst general news.
+const MAX_FINANCE_EXTRACTIONS_PER_BATCH = 50;
 
 /**
  * Phase 3: Extract expert opinions from newly-ingested FINANCE stories from approved sources.
@@ -595,6 +607,8 @@ async function extractFinanceOpinionsInBackground(items: NormalizedNewsItem[]) {
   }
 
   let extracted = 0;
+  let preFilterSkipped = 0;
+  let extractionAttempts = 0;
 
   for (const story of financeStories) {
     // Cost guardrail: skip if source domain is not in the approved list
@@ -602,6 +616,17 @@ async function extractFinanceOpinionsInBackground(items: NormalizedNewsItem[]) {
       console.debug(`[Finance AI] Skipping extraction -- source not in approved list: ${story.sourceUrl}`);
       continue;
     }
+
+    // S74-T2 throughput guardrail: cheap headline+summary keyword pre-filter, checked
+    // BEFORE the expensive body-fetch + AI call. Biased toward recall -- see
+    // hasPlausibleAnalystSignal() doc comment for rationale.
+    if (!hasPlausibleAnalystSignal(story.headline, story.summary)) {
+      preFilterSkipped++;
+      console.debug(`[Finance AI] Pre-filter skip -- no analyst signal in headline/summary: ${story.sourceUrl}`);
+      continue;
+    }
+
+    extractionAttempts++;
 
     try {
       // Step 1: ensure body text is present (fetch if needed)
@@ -667,7 +692,9 @@ async function extractFinanceOpinionsInBackground(items: NormalizedNewsItem[]) {
     }
   }
 
-  console.info(`[Finance AI] done -- ${extracted} opinions extracted from ${financeStories.length} FINANCE stories`);
+  console.info(
+    `[Finance AI] done -- ${extracted} opinions extracted from ${extractionAttempts} attempted extraction(s); ${preFilterSkipped} skipped by pre-filter (of ${financeStories.length} FINANCE candidates)`
+  );
 }
 
 export class RSSIngestionService {

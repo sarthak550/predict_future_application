@@ -22,38 +22,36 @@ function computeQuoteHash(quote: string): string {
 }
 
 /**
- * Path-based allowlist for analyst opinion extraction.
- * Only articles whose URL matches a domain + path prefix pair will trigger AI extraction.
- * This is stricter than the broad FINANCE domain tagging used in financeTagging.ts
- * (which still tags the full publisher as FINANCE for category filtering in the news feed).
+ * Domain-only allowlist for analyst opinion extraction.
+ *
+ * S74-T1: previously gated on domain AND a narrow URL path-prefix allowlist (e.g. ET
+ * only /markets/expert-view, /opinion/columns/; CNBC TV18 only /views/,
+ * /market/expert-views/). That path gate meant general finance NEWS on the same
+ * approved domains — the bulk of ET/Mint/CNBC coverage, which regularly contains named
+ * analyst/brokerage calls in ordinary market-report stories — never reached the
+ * extractor. Root-caused in prod: 424 FINANCE stories/7d, only 81 had opinions (19% hit
+ * rate); CNBC TV18 alone was 111 stories/week with 0 opinions because nothing matched
+ * the narrow prefixes.
+ *
+ * The quality bar now lives entirely downstream in validateRawOpinions() and the
+ * EXTRACTION_SYSTEM_PROMPT (named-expert-or-institution requirement, numeric-anchor +
+ * unit-token check, 0.82 confidence floor, 80-char quote floor, one-direction-per-
+ * expert-instrument collapse) — that AI+validator combo is strict enough to hold the
+ * quality line on its own (89% hit rate on curated ET Expert View feeds proves it).
+ * Do NOT add path gating back here; if quality drifts on newly-opened general-news
+ * paths, tighten the validator's numeric-anchor or confidence floor instead.
+ *
+ * bqprime.com and ndtvprofit.com were removed here — both had zero matching RSS feed
+ * in rssSources.ts (dead allowlist entries that never fired). seekingalpha.com was
+ * removed — its RSS source is isActive:false (killed in the news-source overhaul), so
+ * global/non-Indian expansion is explicitly out of scope. See S74-T3 for the
+ * replacement domain (NDTV Profit, once verified live) plus new source additions.
  */
-type AllowedSourcePath = { domain: string; pathPrefixes: string[] };
-
-const ANALYST_OPINION_SOURCES: AllowedSourcePath[] = [
-  // Curated expert opinion feeds (highest quality)
-  {
-    domain: "economictimes.indiatimes.com",
-    // expert-view = dedicated analyst column; stocks/news often has named brokerage calls
-    pathPrefixes: ["/markets/expert-view", "/opinion/columns/", "/markets/stocks/news/"],
-  },
-  {
-    domain: "cnbctv18.com",
-    pathPrefixes: ["/views/", "/market/expert-views/"],
-  },
-  // Expert analyst feeds
-  {
-    domain: "livemint.com",
-    // stock-market-news regularly features named analysts with buy/sell calls
-    pathPrefixes: ["/opinion/online-views/", "/opinion/", "/market/mark-to-market", "/market/stock-market-news/"],
-  },
-  {
-    domain: "seekingalpha.com",
-    pathPrefixes: ["/article/", "/instablog/"],
-  },
-  // Regional analysts and brokerage research syndicated on news sites
-  { domain: "moneycontrol.com", pathPrefixes: ["/news/business/markets/expert-views/"] },
-  { domain: "bqprime.com", pathPrefixes: ["/markets/", "/opinion/"] },
-  { domain: "ndtvprofit.com", pathPrefixes: ["/markets/", "/opinion/"] },
+const ANALYST_OPINION_SOURCES: string[] = [
+  "economictimes.indiatimes.com",
+  "cnbctv18.com",
+  "livemint.com",
+  "moneycontrol.com",
 ];
 
 export type RawExpertOpinion = {
@@ -86,29 +84,129 @@ export type RawExpertOpinion = {
 };
 
 /**
- * Checks if a source URL matches the path-based analyst-opinion allowlist.
+ * Checks if a source URL's hostname matches the domain-only analyst-opinion allowlist.
  *
- * Both domain AND path prefix must match. The broad FINANCE category tagging in
- * financeTagging.ts is intentionally kept separate — this check gates AI extraction only.
+ * S74-T1: domain match only — no path check. The broad FINANCE category tagging in
+ * financeTagging.ts is intentionally kept separate; this check gates AI extraction only.
  */
 export function isApprovedFinanceSource(sourceUrl: string): boolean {
   try {
     const parsed = new URL(sourceUrl);
     const hostname = parsed.hostname.toLowerCase().replace(/^www\./, "");
-    const pathname = parsed.pathname;
 
-    for (const entry of ANALYST_OPINION_SOURCES) {
-      const domainMatches = hostname === entry.domain || hostname.endsWith(`.${entry.domain}`);
-      if (!domainMatches) continue;
-
-      const pathMatches = entry.pathPrefixes.some((prefix) => pathname.startsWith(prefix));
-      if (pathMatches) return true;
-    }
-
-    return false;
+    return ANALYST_OPINION_SOURCES.some(
+      (domain) => hostname === domain || hostname.endsWith(`.${domain}`)
+    );
   } catch {
     return false;
   }
+}
+
+/**
+ * S74-T2 throughput guardrail: cheap keyword pre-filter checked on headline+summary only
+ * (already in the DB — no body fetch, no AI call) BEFORE a story is queued for the
+ * expensive body-fetch + AI extraction path.
+ *
+ * Ships together with the S74-T1 domain-only gate widening, which turns the extraction
+ * candidate pool from ~19% of FINANCE stories into effectively all of them on approved
+ * domains (~60-70/day vs ~12/day before). Without this pre-filter every one of those
+ * candidates would cost an AI call, repeating the exact ingestion/summarizer coverage-
+ * collapse bug just fixed on the news feed (838/day ingestion vs 160/day capacity).
+ *
+ * Deliberately biased toward broad recall over precision: a false negative here silently
+ * and PERMANENTLY drops a real opinion (the story is never re-queued), whereas a false
+ * positive only costs one AI call that the downstream validator (numeric-anchor gate,
+ * 0.82 confidence floor, etc.) will reject anyway. When in doubt, this returns true.
+ */
+const ANALYST_SIGNAL_KEYWORDS: string[] = [
+  // Rating / call verbs
+  "target",
+  "overweight",
+  "underweight",
+  "buy",
+  "sell",
+  "accumulate",
+  "outperform",
+  "downgrade",
+  "upgrade",
+  "bullish",
+  "bearish",
+  "brokerage",
+  "recommends",
+  "price target",
+  // Known brokerage / research house names
+  "motilal oswal",
+  "nuvama",
+  "jm financial",
+  "kotak institutional",
+  "icici securities",
+  "hdfc securities",
+  "jefferies",
+  "clsa",
+  "nomura",
+  "morgan stanley",
+  "goldman sachs",
+  "ubs",
+  "citi",
+  "macquarie",
+  "elara",
+  "emkay",
+  "prabhudas lilladher",
+  "sharekhan",
+  "axis securities",
+  "anand rathi",
+  "iifl",
+  "geojit",
+  "centrum",
+  // Role words
+  "analyst",
+  "strategist",
+  "fund manager",
+];
+
+/**
+ * Word-boundary-aware regex per keyword, compiled once at module load.
+ *
+ * Plain substring matching (haystack.includes(kw)) previously produced false
+ * positives on ordinary English words that merely CONTAIN a keyword — e.g. the
+ * brokerage keyword "citi" matched "citing" (as in "...citing weak global
+ * cues", extremely common in Indian financial journalism) and "sell" matched
+ * "selling" ("Broad-based selling was seen across sectors"). Both caused plain
+ * descriptive market recaps and policy stories to wrongly pass the pre-filter,
+ * defeating its entire cost-saving purpose.
+ *
+ * A first fix anchored every keyword with strict \b<kw>\b, which correctly
+ * blocked those false positives but over-corrected: strict trailing \b also
+ * blocks the keyword's own ordinary plural / third-person-singular form (e.g.
+ * "analyst" no longer matched "analysts", "downgrade" no longer matched
+ * "downgrades", "target" no longer matched "targets") — extremely common
+ * headline phrasing in Indian financial journalism ("Brokerages raise targets
+ * on IT stocks", "XYZ downgrades stock to Sell"). Per this pre-filter's own
+ * design intent ("a false negative here silently and PERMANENTLY drops a real
+ * opinion... When in doubt, this returns true"), losing those plurals is worse
+ * than the original false-positive bug — that one only wasted an AI call the
+ * downstream validator would reject anyway; this one permanently drops real
+ * signal.
+ *
+ * Fix: single-word keywords get an OPTIONAL trailing "s" — \b<kw>s?\b — so the
+ * bare plural/verb-inflected form matches while a true word boundary is still
+ * required immediately after. This deliberately does NOT extend to -ing/-ed
+ * suffixes (e.g. "selling", "downgraded" via a bare stem match): "selling" is
+ * the literal gerund of "sell" and would resurrect the original false-positive
+ * bug if -ing were permitted. Multi-word phrases ("price target", "fund
+ * manager") keep the plain \b...\b form — a missed "price targets" plural is a
+ * low-value edge case not worth the extra branching. Escaping is defensive —
+ * no current keyword contains regex-special characters.
+ */
+const ANALYST_SIGNAL_KEYWORD_PATTERNS: RegExp[] = ANALYST_SIGNAL_KEYWORDS.map((kw) => {
+  const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const isSingleWord = !kw.includes(" ");
+  return new RegExp(`\\b${escaped}${isSingleWord ? "s?" : ""}\\b`, "i");
+});
+
+export function hasPlausibleAnalystSignal(headline: string, summary: string): boolean {
+  const haystack = `${headline ?? ""} ${summary ?? ""}`;
+  return ANALYST_SIGNAL_KEYWORD_PATTERNS.some((re) => re.test(haystack));
 }
 
 /**

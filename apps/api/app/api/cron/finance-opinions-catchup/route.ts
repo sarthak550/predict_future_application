@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import {
   extractExpertOpinionsFromStory,
+  hasPlausibleAnalystSignal,
   isApprovedFinanceSource,
   persistExpertOpinions,
 } from "@/lib/ai/extractExpertOpinions";
@@ -16,9 +17,10 @@ function hasCronAccess(request: Request) {
   return authHeader === `Bearer ${secret}` || cronHeader === secret;
 }
 
-// Drain backlog of FINANCE stories from approved analyst-opinion paths that
+// Drain backlog of FINANCE stories from approved analyst-opinion domains that
 // were never extracted (missed by the per-batch limit in the ingestion run).
-const CATCHUP_BATCH_SIZE = 50;
+// S74-T2: bumped 50 -> 120 to match the widened S74-T1 domain-only extraction gate.
+const CATCHUP_BATCH_SIZE = 120;
 const LOOKBACK_DAYS = 14;
 
 async function runCatchup() {
@@ -30,9 +32,11 @@ async function runCatchup() {
 
   const since = new Date(Date.now() - LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
 
-  // Pull a wider candidate set, then filter in-memory to approved analyst paths.
-  // Prisma can't easily express the (host, pathPrefix) tuples that
+  // Pull a wider candidate set, then filter in-memory to the approved analyst
+  // domain allowlist. Prisma can't easily express the domain-suffix matching that
   // isApprovedFinanceSource encodes, so we over-fetch and filter.
+  // S74-T2: over-fetch bumped 300 -> 600 to keep the larger CATCHUP_BATCH_SIZE full
+  // under the widened S74-T1 domain-only gate.
   const candidates = await prisma.story.findMany({
     where: {
       category: "FINANCE",
@@ -50,11 +54,17 @@ async function runCatchup() {
       bodyFetchFailed: true,
     },
     orderBy: { publishedAt: "desc" },
-    take: 300,
+    take: 600,
   });
 
   const approved = candidates.filter((s) => isApprovedFinanceSource(s.sourceUrl));
-  const batch = approved.slice(0, CATCHUP_BATCH_SIZE);
+
+  // S74-T2 throughput guardrail: same cheap headline+summary pre-filter as the inline
+  // ingestion path, applied here BEFORE slicing to CATCHUP_BATCH_SIZE so we don't burn
+  // AI calls (or backlog slots) on candidates with no plausible analyst signal.
+  const preFiltered = approved.filter((s) => hasPlausibleAnalystSignal(s.headline, s.summary));
+  const preFilterSkipped = approved.length - preFiltered.length;
+  const batch = preFiltered.slice(0, CATCHUP_BATCH_SIZE);
 
   let extracted = 0;
   let opinionsTotal = 0;
@@ -99,6 +109,10 @@ async function runCatchup() {
       errors.push(`${story.id}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
+
+  console.info(
+    `[finance-opinions-catchup] done -- ${extracted} stories yielded opinions from ${batch.length} attempted (${preFilterSkipped} skipped by pre-filter of ${approved.length} approved-domain candidates)`
+  );
 
   return {
     ok: true,
