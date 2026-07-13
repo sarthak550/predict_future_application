@@ -230,9 +230,9 @@ export function MarketMovesTab() {
       ) : (
         <View style={styles.card}>
           <Text style={styles.emptyIcon}>📈</Text>
-          <Text style={styles.emptyTitle}>Movers update during market hours</Text>
+          <Text style={styles.emptyTitle}>Top Movers loading</Text>
           <Text style={styles.emptyText}>
-            Top NIFTY 200 gainers and losers appear here 9:15–15:30 IST on trading days.
+            The latest session's top NIFTY 200 gainers and losers will appear here shortly.
           </Text>
         </View>
       )}

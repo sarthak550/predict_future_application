@@ -22,14 +22,24 @@
 import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/prisma";
-import { getIstSessionDate } from "@/lib/marketMoves/marketHours";
 
 export const dynamic = "force-dynamic";
 
 const STRIP_SIZE = 5;
 
 export async function GET() {
-  const sessionDate = getIstSessionDate();
+  // Always show the MOST RECENT available session — not strictly today's — so the
+  // Top Movers strip stays populated after market close, on weekends/holidays, and
+  // before the day's first cron run (the cron only refreshes during market hours,
+  // but the last close's gainers/losers should stay visible all the time).
+  const latest = await prisma.marketMoverSnapshot.findFirst({
+    orderBy: { sessionDate: "desc" },
+    select: { sessionDate: true },
+  });
+  if (!latest) {
+    return NextResponse.json({ gainers: [], losers: [], asOf: null });
+  }
+  const sessionDate = latest.sessionDate;
 
   const [gainers, losers] = await Promise.all([
     prisma.marketMoverSnapshot.findMany({
