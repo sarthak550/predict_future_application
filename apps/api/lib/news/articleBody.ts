@@ -59,15 +59,151 @@ export type ArticleBodyResult = {
 };
 
 /**
+ * Extracts the base64 article id from a Google News URL, e.g.
+ * `https://news.google.com/rss/articles/CBMi...?oc=5` → `CBMi...`.
+ * Accepts both the `/rss/articles/<id>` and `/articles/<id>` / `/read/<id>` forms.
+ */
+function extractGoogleNewsArticleId(googleUrl: string): string | null {
+  try {
+    const u = new URL(googleUrl);
+    if (!getHostname(googleUrl)?.endsWith("google.com")) return null;
+    const segments = u.pathname.split("/").filter(Boolean);
+    if (segments.length < 2) return null;
+    const marker = segments[segments.length - 2];
+    if (marker !== "articles" && marker !== "read") return null;
+    return segments[segments.length - 1];
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Parses the `data-n-a-sg` (signature) and `data-n-a-ts` (timestamp) attributes
+ * out of a Google News article interstitial page. These are required to make
+ * the `garturlreq` batchexecute call that resolves the real publisher URL.
+ */
+function extractSignatureAndTimestamp(
+  html: string
+): { signature: string; timestamp: string } | null {
+  try {
+    const dom = new JSDOM(html);
+    const el = dom.window.document.querySelector("[data-n-a-sg][data-n-a-ts]");
+    const signature = el?.getAttribute("data-n-a-sg");
+    const timestamp = el?.getAttribute("data-n-a-ts");
+    if (signature && timestamp) return { signature, timestamp };
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Calls Google's internal `garturlreq` batchexecute RPC to decode a Google News
+ * article id into the real publisher URL. This is the mechanism Google News'
+ * own frontend uses to resolve `news.google.com/rss/articles/CBMi...` links —
+ * the id alone is not enough; it must be paired with the signature/timestamp
+ * scraped from the article's interstitial page (see extractSignatureAndTimestamp).
+ */
+async function decodeViaBatchExecute(
+  articleId: string,
+  signature: string,
+  timestamp: string
+): Promise<string | null> {
+  const innerPayload = JSON.stringify([
+    "garturlreq",
+    [
+      ["X", "X", ["X", "X"], null, null, 1, 1, "US:en", null, 1, null, null, null, null, null, 0, 1],
+      "X",
+      "X",
+      1,
+      [1, 1, 1],
+      1,
+      1,
+      null,
+      0,
+      0,
+      null,
+      0,
+    ],
+    articleId,
+    timestamp,
+    signature,
+  ]);
+  const outerPayload = JSON.stringify([[["Fbv4je", innerPayload]]]);
+  const body = `f.req=${encodeURIComponent(outerPayload)}`;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch("https://news.google.com/_/DotsSplashUi/data/batchexecute", {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+        "User-Agent": USER_AGENT,
+      },
+      body,
+    });
+    if (!response.ok) return null;
+
+    const raw = await response.text();
+    // Response is prefixed with an XSSI guard (`)]}'`) followed by a blank line,
+    // then a JSON array of RPC result rows.
+    const parts = raw.split("\n\n");
+    if (parts.length < 2) return null;
+
+    const rows = JSON.parse(parts[1]);
+    if (!Array.isArray(rows) || rows.length === 0) return null;
+    const firstRow = rows[0];
+    if (!Array.isArray(firstRow) || typeof firstRow[2] !== "string") return null;
+
+    const inner = JSON.parse(firstRow[2]);
+    const decodedUrl = Array.isArray(inner) ? inner[1] : null;
+    if (typeof decodedUrl === "string" && /^https?:\/\//.test(decodedUrl)) {
+      return decodedUrl;
+    }
+    return null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
+ * Fallback decoder for older-style Google News article ids. Some legacy ids
+ * (commonly prefixed `AU_yqL...` rather than `CBMi...`) embed the destination
+ * URL directly in the base64-decoded protobuf bytes, so no batchexecute
+ * round-trip is required — the URL can be pulled out with a regex scan of the
+ * decoded byte string. This is best-effort and expected to miss on most
+ * current-format ids (which is why it runs only after decodeViaBatchExecute).
+ */
+function tryDecodeEmbeddedUrl(articleId: string): string | null {
+  try {
+    const normalized = articleId.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+    const decoded = Buffer.from(padded, "base64").toString("latin1");
+    const match = decoded.match(/https?:\/\/[^\s\x00-\x1f\x7f"'<>]+/);
+    return match ? match[0] : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Best-effort resolver for Google News redirect URLs (news.google.com/rss/articles/...).
  *
- * Google News RSS links are opaque redirect URLs. The redirect chain sometimes
- * ends at the real publisher URL via HTTP 3xx, or Google returns an interstitial
- * HTML page with the destination embedded in a `data-n-au` attribute or a
- * canonical <link>. This function:
- *   1. Follows redirects; if the final URL is not a google.com host → returns it.
- *   2. Parses the response HTML for a `data-n-au` attribute or a canonical link.
- *   3. Falls back to returning null so the caller can degrade gracefully.
+ * Google News RSS links are opaque, not simple HTTP redirects. Resolution is
+ * attempted in three stages, each falling through to the next on failure:
+ *   1. Follow redirects on the raw URL; if the final URL already landed off
+ *      google.com, or the interstitial HTML carries a `data-n-au` attribute /
+ *      canonical <link>, use that (covers legacy link formats).
+ *   2. Current format (`CBMi...` ids, ~2024+): scrape the `data-n-a-sg` /
+ *      `data-n-a-ts` attributes from the same interstitial page and call
+ *      Google's internal `garturlreq` batchexecute RPC to decode the real URL.
+ *   3. Fall back to decoding the id's base64 payload directly, for older ids
+ *      that embed the destination URL in-band.
+ * Returns null if all three fail, so the caller can degrade gracefully.
  *
  * Shares the existing FETCH_TIMEOUT_MS and USER_AGENT. Does NOT apply domain
  * throttling (called once per story, before the actual body fetch which throttles).
@@ -114,7 +250,7 @@ async function resolveGoogleNewsUrl(googleUrl: string): Promise<string | null> {
     return null;
   }
 
-  // `data-n-au` attribute is the canonical destination in Google News interstitials.
+  // Legacy interstitial: `data-n-au` attribute is the canonical destination.
   const dataNAu = html.match(/data-n-au="([^"]+)"/)?.[1];
   if (dataNAu) {
     try { return new URL(dataNAu).href; } catch { /* fall through */ }
@@ -128,6 +264,20 @@ async function resolveGoogleNewsUrl(googleUrl: string): Promise<string | null> {
       const u = new URL(canonical);
       if (!u.hostname.endsWith("google.com")) return u.href;
     } catch { /* fall through */ }
+  }
+
+  // Current format: decode via the garturlreq batchexecute RPC.
+  const articleId = extractGoogleNewsArticleId(googleUrl);
+  if (articleId) {
+    const sigTs = extractSignatureAndTimestamp(html);
+    if (sigTs) {
+      const decoded = await decodeViaBatchExecute(articleId, sigTs.signature, sigTs.timestamp);
+      if (decoded) return decoded;
+    }
+
+    // Last resort: some older ids embed the destination URL in-band.
+    const embedded = tryDecodeEmbeddedUrl(articleId);
+    if (embedded) return embedded;
   }
 
   return null;
