@@ -103,27 +103,90 @@ function normalizeForMatch(input: string): string {
     .trim();
 }
 
-/** First alphabetic token of the company name (>=3 chars), used as a loose relevance anchor. */
-function primaryNameToken(companyName: string): string | null {
-  const cleanName = stripCorporateSuffix(companyName);
-  const token = normalizeForMatch(cleanName).split(" ").find((word) => word.length >= 3);
-  return token ?? null;
+/**
+ * Generic business/civic words that are worthless as a relevance anchor on
+ * their own — a huge slice of PSU banks/insurers/finance companies are named
+ * almost entirely out of these ("State Bank Of India", "Bank Of Baroda",
+ * "Life Insurance Corp", "New India Assurance"). Picking the first token
+ * (the pre-fix behavior) meant "bank"/"state"/"life"/"new" — words that show
+ * up constantly in unrelated macro/politics headlines — passed as if they
+ * uniquely identified the company. See the Phase 1c QA fail: "RBI holds repo
+ * rate, bank stocks mixed" wrongly matched both Bank of Baroda and Bank of
+ * India via the word "bank".
+ */
+const GENERIC_COMPANY_STOPWORDS = new Set([
+  "bank", "state", "national", "general", "united", "central", "indian", "india",
+  "life", "new", "housing", "power", "union", "corporation", "corp", "limited",
+  "ltd", "company", "co", "industries", "finance", "financial", "insurance",
+  "assurance", "development", "services", "enterprises", "holdings", "group",
+  "motors", "private", "pvt", "public", "sector", "and", "the", "of",
+]);
+
+/** Escapes regex metacharacters so a raw string can be embedded in a `RegExp` literal. */
+function escapeRegExp(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /**
- * Relevance guard: the decoded headline must contain the ticker symbol OR a
- * normalized token of the company name — defends against Google loosely
- * matching a generic-word overlap unrelated to the actual stock.
+ * `&` is a connector in a lot of Indian company/ticker shorthand ("L&T",
+ * "M&M") — headlines write it with the ampersand, but the exchange ticker
+ * itself has it stripped ("LT", "MM"). Removing (not space-replacing) `&`
+ * from BOTH sides before the whole-word check lets "L&T shares surge" match
+ * ticker "LT" without reintroducing the substring-match bug: it only
+ * collapses a specific, known connector character, it doesn't relax boundary
+ * checking on the letters around it.
+ */
+function stripAmpersand(input: string): string {
+  return input.replace(/&/g, "");
+}
+
+/**
+ * True if `needle` appears in `haystack` as a whole word — i.e. bounded by
+ * non-word characters (or string edges) on both sides, not merely as a
+ * substring. This is the fix for the QA-reported bypass where ticker "LT"
+ * matched inside "resu-LT-s" ("results").
+ */
+function containsWholeWord(haystack: string, needle: string): boolean {
+  const trimmedNeedle = needle.trim();
+  if (!trimmedNeedle) return false;
+  const pattern = new RegExp(`\\b${escapeRegExp(stripAmpersand(trimmedNeedle))}\\b`, "i");
+  return pattern.test(stripAmpersand(haystack));
+}
+
+/**
+ * The single most distinctive token in a company name for relevance matching:
+ * the longest word that isn't a generic business/civic stopword and is at
+ * least 4 characters (short words are too collision-prone). Returns null
+ * when every token is generic (e.g. "Bank Of India") — callers must NOT fall
+ * back to a generic token in that case; the ticker whole-word match is the
+ * only valid anchor left.
+ */
+function mostDistinctiveNameToken(companyName: string): string | null {
+  const cleanName = stripCorporateSuffix(companyName);
+  const candidates = normalizeForMatch(cleanName)
+    .split(" ")
+    .filter((word) => word.length >= 4 && !GENERIC_COMPANY_STOPWORDS.has(word));
+
+  if (candidates.length === 0) return null;
+
+  return candidates.reduce((longest, word) => (word.length > longest.length ? word : longest));
+}
+
+/**
+ * Relevance guard: the decoded headline must contain the ticker symbol OR the
+ * company name's most distinctive token, both matched as WHOLE WORDS (not
+ * substrings) — defends against both (a) a short ticker matching inside an
+ * unrelated word, and (b) a generic company-name word (bank/state/life/new)
+ * matching an unrelated macro headline. See GENERIC_COMPANY_STOPWORDS /
+ * containsWholeWord doc comments for the specific bugs this closes.
  */
 function isRelevantHeadline(cleanTitle: string, tickerSymbol: string, companyName: string): boolean {
-  const normalizedTitle = normalizeForMatch(cleanTitle);
-  const normalizedTicker = normalizeForMatch(tickerSymbol);
-  if (normalizedTicker && normalizedTitle.includes(normalizedTicker)) {
+  if (tickerSymbol && containsWholeWord(cleanTitle, tickerSymbol)) {
     return true;
   }
 
-  const nameToken = primaryNameToken(companyName);
-  if (nameToken && normalizedTitle.includes(nameToken)) {
+  const distinctiveToken = mostDistinctiveNameToken(companyName);
+  if (distinctiveToken && containsWholeWord(cleanTitle, distinctiveToken)) {
     return true;
   }
 

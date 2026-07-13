@@ -87,12 +87,18 @@ export function MarketMovesTab() {
   const [selectedEvent, setSelectedEvent] = useState<ApiMarketMoveEvent | null>(null);
 
   // Regulatory Filings disclosure — collapsed by default, persisted per-device.
+  // `filingsRestored` gates rendering of the toggle/content until the
+  // AsyncStorage read resolves, so a previously-expanded user never sees a
+  // collapsed frame flash-then-jump-open on cold launch — the section simply
+  // appears already in its correct state a beat after mount instead.
   const [filingsCollapsed, setFilingsCollapsed] = useState(true);
+  const [filingsRestored, setFilingsRestored] = useState(false);
   useEffect(() => {
     void AsyncStorage.getItem(FILINGS_COLLAPSED_KEY).then((v) => {
       // null = first launch → stay collapsed (default true)
       // "true" → collapsed, "false" → expanded
       if (v === "false") setFilingsCollapsed(false);
+      setFilingsRestored(true);
     });
   }, []);
   const toggleFilingsCollapsed = useCallback(() => {
@@ -276,64 +282,70 @@ export function MarketMovesTab() {
 
       {/* Zone 3 (demoted, Phase 1c): the pre-existing NSE/BSE announcement
           feed, collapsed by default — same components (AnnouncementCard,
-          EventDetailModal), just no longer the first thing the user sees. */}
-      <Pressable
-        onPress={toggleFilingsCollapsed}
-        style={styles.filingsHeaderRow}
-        accessibilityRole="button"
-        accessibilityState={{ expanded: !filingsCollapsed }}
-        accessibilityLabel="Regulatory Filings"
-      >
-        <Text style={styles.filingsHeaderText}>Regulatory Filings</Text>
-        <Text style={styles.filingsChevron}>{filingsCollapsed ? "▼" : "▲"}</Text>
-      </Pressable>
+          EventDetailModal), just no longer the first thing the user sees.
+          Gated on filingsRestored so a previously-expanded user never sees a
+          collapsed-then-jump-open flash on cold launch (see state doc comment). */}
+      {filingsRestored && (
+        <>
+          <Pressable
+            onPress={toggleFilingsCollapsed}
+            style={styles.filingsHeaderRow}
+            accessibilityRole="button"
+            accessibilityState={{ expanded: !filingsCollapsed }}
+            accessibilityLabel="Regulatory Filings"
+          >
+            <Text style={styles.filingsHeaderText}>Regulatory Filings</Text>
+            <Text style={styles.filingsChevron}>{filingsCollapsed ? "▼" : "▲"}</Text>
+          </Pressable>
 
-      {!filingsCollapsed && (
-        eventsLoading ? (
-          <View style={{ paddingVertical: 32, alignItems: "center" }}>
-            <ActivityIndicator size="small" color={colors.accent} />
-          </View>
-        ) : loadError ? (
-          <View style={styles.card}>
-            <Text style={styles.emptyIcon}>⚠️</Text>
-            <Text style={styles.emptyTitle}>Couldn't load announcements</Text>
-            <Pressable onPress={loadInitial} style={styles.retryButton}>
-              <Text style={styles.retryButtonText}>Try again</Text>
-            </Pressable>
-          </View>
-        ) : events.length === 0 ? (
-          <View style={styles.card}>
-            <Text style={styles.emptyIcon}>📰</Text>
-            <Text style={styles.emptyTitle}>No announcements yet</Text>
-            <Text style={styles.emptyText}>
-              NSE and BSE corporate announcements will appear here as companies file them.
-            </Text>
-          </View>
-        ) : (
-          <>
-            {events.map((event) => (
-              <AnnouncementCard
-                key={event.id}
-                event={event}
-                onPress={() => setSelectedEvent(event)}
-                onCreateBet={authStatus === "authenticated" ? () => openCreateBet(event) : undefined}
-              />
-            ))}
-            {hasMore && (
-              <Pressable
-                onPress={loadMore}
-                disabled={loadingMore}
-                style={styles.loadMoreFooter}
-              >
-                {loadingMore ? (
-                  <ActivityIndicator size="small" color={colors.accent} />
-                ) : (
-                  <Text style={styles.loadMoreText}>Load more</Text>
+          {!filingsCollapsed && (
+            eventsLoading ? (
+              <View style={{ paddingVertical: 32, alignItems: "center" }}>
+                <ActivityIndicator size="small" color={colors.accent} />
+              </View>
+            ) : loadError ? (
+              <View style={styles.card}>
+                <Text style={styles.emptyIcon}>⚠️</Text>
+                <Text style={styles.emptyTitle}>Couldn't load announcements</Text>
+                <Pressable onPress={loadInitial} style={styles.retryButton}>
+                  <Text style={styles.retryButtonText}>Try again</Text>
+                </Pressable>
+              </View>
+            ) : events.length === 0 ? (
+              <View style={styles.card}>
+                <Text style={styles.emptyIcon}>📰</Text>
+                <Text style={styles.emptyTitle}>No announcements yet</Text>
+                <Text style={styles.emptyText}>
+                  NSE and BSE corporate announcements will appear here as companies file them.
+                </Text>
+              </View>
+            ) : (
+              <>
+                {events.map((event) => (
+                  <AnnouncementCard
+                    key={event.id}
+                    event={event}
+                    onPress={() => setSelectedEvent(event)}
+                    onCreateBet={authStatus === "authenticated" ? () => openCreateBet(event) : undefined}
+                  />
+                ))}
+                {hasMore && (
+                  <Pressable
+                    onPress={loadMore}
+                    disabled={loadingMore}
+                    style={styles.loadMoreFooter}
+                  >
+                    {loadingMore ? (
+                      <ActivityIndicator size="small" color={colors.accent} />
+                    ) : (
+                      <Text style={styles.loadMoreText}>Load more</Text>
+                    )}
+                  </Pressable>
                 )}
-              </Pressable>
-            )}
-          </>
-        )
+              </>
+            )
+          )}
+        </>
       )}
 
       <EventDetailModal
