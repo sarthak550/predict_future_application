@@ -72,6 +72,8 @@ import type {
   // Market Pulse (Phase 1)
   ApiMarketMoveEventsResponse,
   ApiMarketMoversResponse,
+  // Market Pulse (Phase 1c) — Google News per-ticker headlines
+  ApiMarketMoveNewsResponse,
 } from "@predict-future/types";
 
 export type { ApiLeaderboardTimeWindow };
@@ -875,6 +877,15 @@ export function createApiClient(options: ApiClientOptions) {
     /** Today's top gainers/losers over the curated NIFTY 200 universe. No auth required. */
     getMarketMovers() {
       return request<ApiMarketMoversResponse>("/api/finance/market-moves/movers");
+    },
+
+    // ─── Market Pulse: Google News per-ticker headlines (Phase 1c) ────────
+    /** Paginated, reverse-chronological readable news feed. No auth required. */
+    getMarketMoveNews(params?: { cursor?: string; limit?: number; tickerSymbol?: string }) {
+      return request<ApiMarketMoveNewsResponse>(
+        "/api/finance/market-moves/news",
+        params
+      );
     },
 
     /** Fetch a single ExpertOpinion's full detail by id. */

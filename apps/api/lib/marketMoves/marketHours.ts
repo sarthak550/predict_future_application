@@ -29,6 +29,8 @@ function getIstMinutesSinceMidnight(now: Date): number {
 
 const NSE_OPEN_MINUTES = 9 * 60 + 15; // 09:15 IST
 const NSE_CLOSE_MINUTES = 15 * 60 + 30; // 15:30 IST
+const NEWS_WINDOW_OPEN_MINUTES = 8 * 60; // 08:00 IST
+const NEWS_WINDOW_CLOSE_MINUTES = 21 * 60; // 21:00 IST
 
 /**
  * True on a weekday (Mon–Fri IST) between 09:15 and 15:30 IST. Used to gate
@@ -41,6 +43,20 @@ export function isNseWeekdayMarketHours(now: Date = new Date()): boolean {
 
   const minutes = getIstMinutesSinceMidnight(now);
   return minutes >= NSE_OPEN_MINUTES && minutes <= NSE_CLOSE_MINUTES;
+}
+
+/**
+ * True on a weekday (Mon–Fri IST) between 08:00 and 21:00 IST — deliberately
+ * wider than trading hours (Phase 1c Decision 4): results/news commonly land
+ * after the 15:30 close, so the news cron's window is not tied to
+ * isNseWeekdayMarketHours. Sat/Sun explicitly out of scope for Phase 1c.
+ */
+export function isNewsRefreshWindow(now: Date = new Date()): boolean {
+  const dayOfWeek = getIstDayOfWeek(now);
+  if (dayOfWeek === 0 || dayOfWeek === 6) return false; // Sun / Sat
+
+  const minutes = getIstMinutesSinceMidnight(now);
+  return minutes >= NEWS_WINDOW_OPEN_MINUTES && minutes <= NEWS_WINDOW_CLOSE_MINUTES;
 }
 
 /** Returns the current IST calendar day at IST midnight, expressed as a UTC Date instant. */

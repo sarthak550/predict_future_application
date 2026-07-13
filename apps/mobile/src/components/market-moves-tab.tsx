@@ -11,9 +11,11 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import type {
   ApiMarketMoveEvent,
+  ApiMarketMoveNews,
   ApiMarketMover,
   AppMarketMoveEventType,
   AppMarketMoveSource,
@@ -33,8 +35,14 @@ import { TickerChip } from "@/components/ticker-chip";
  * 4,481 lines) doesn't grow further. Code prefix is `MarketMoves`, not
  * `Pulse*` — that prefix is taken by the Rates & Events tab's internals.
  *
- * Layout: pinned Top Movers strip (5 gainers + 5 losers, horizontally
- * scrollable) followed by a reverse-chronological NSE/BSE announcement feed.
+ * Layout (Phase 1c): pinned Top Movers strip, then a reverse-chronological
+ * feed of readable Google News stock headlines (MarketMoveNews — Zone 2,
+ * primary), then the pre-existing NSE/BSE announcement feed relocated into a
+ * collapsed-by-default "Regulatory Filings" disclosure (Zone 3, demoted —
+ * legitimate signal, just no longer competing with the headline for
+ * attention). See the Market Pulse Phase 1c CTO brief for the "better
+ * source, not a better summarizer" reasoning behind this split.
+ *
  * Rendered as plain Views (not its own ScrollView/FlatList) because the
  * parent (finance-mode.tsx) already wraps tab content in one big ScrollView —
  * pagination here is a tap-triggered "Load more" footer rather than
@@ -49,6 +57,10 @@ const EVENT_TYPE_META: Record<AppMarketMoveEventType, { label: string; color: (c
   OTHER_MATERIAL: { label: "Material Update", color: (c) => c.textMuted },
 };
 
+/** AsyncStorage key for the "Regulatory Filings" disclosure's collapsed state,
+ *  same persistence pattern precedent as PulseRibbon's "finance_section_collapsed_pulse". */
+const FILINGS_COLLAPSED_KEY = "market_moves_filings_collapsed";
+
 export function MarketMovesTab() {
   const { colors } = useTheme();
   const styles = useThemedStyles(makeMarketMovesStyles);
@@ -57,6 +69,13 @@ export function MarketMovesTab() {
 
   const [movers, setMovers] = useState<{ gainers: ApiMarketMover[]; losers: ApiMarketMover[]; asOf: string | null } | null>(null);
   const [moversLoading, setMoversLoading] = useState(true);
+
+  const [news, setNews] = useState<ApiMarketMoveNews[]>([]);
+  const [newsCursor, setNewsCursor] = useState<string | null>(null);
+  const [newsHasMore, setNewsHasMore] = useState(false);
+  const [newsLoading, setNewsLoading] = useState(true);
+  const [newsLoadingMore, setNewsLoadingMore] = useState(false);
+  const [newsLoadError, setNewsLoadError] = useState(false);
 
   const [events, setEvents] = useState<ApiMarketMoveEvent[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -67,10 +86,29 @@ export function MarketMovesTab() {
 
   const [selectedEvent, setSelectedEvent] = useState<ApiMarketMoveEvent | null>(null);
 
+  // Regulatory Filings disclosure — collapsed by default, persisted per-device.
+  const [filingsCollapsed, setFilingsCollapsed] = useState(true);
+  useEffect(() => {
+    void AsyncStorage.getItem(FILINGS_COLLAPSED_KEY).then((v) => {
+      // null = first launch → stay collapsed (default true)
+      // "true" → collapsed, "false" → expanded
+      if (v === "false") setFilingsCollapsed(false);
+    });
+  }, []);
+  const toggleFilingsCollapsed = useCallback(() => {
+    setFilingsCollapsed((prev) => {
+      const next = !prev;
+      void AsyncStorage.setItem(FILINGS_COLLAPSED_KEY, String(next));
+      return next;
+    });
+  }, []);
+
   const loadInitial = useCallback(() => {
     setMoversLoading(true);
+    setNewsLoading(true);
     setEventsLoading(true);
     setLoadError(false);
+    setNewsLoadError(false);
 
     mobileApi
       .getMarketMovers()
@@ -80,6 +118,19 @@ export function MarketMovesTab() {
         setMovers(null);
       })
       .finally(() => setMoversLoading(false));
+
+    mobileApi
+      .getMarketMoveNews({ limit: 20 })
+      .then((page) => {
+        setNews(page.items);
+        setNewsCursor(page.nextCursor);
+        setNewsHasMore(page.hasMore);
+      })
+      .catch((err: unknown) => {
+        console.warn("[market-moves-tab] news fetch failed:", err);
+        setNewsLoadError(true);
+      })
+      .finally(() => setNewsLoading(false));
 
     mobileApi
       .getMarketMoveEvents({ limit: 20 })
@@ -98,6 +149,22 @@ export function MarketMovesTab() {
   useEffect(() => {
     loadInitial();
   }, [loadInitial]);
+
+  const loadMoreNews = useCallback(() => {
+    if (!newsCursor || newsLoadingMore) return;
+    setNewsLoadingMore(true);
+    mobileApi
+      .getMarketMoveNews({ cursor: newsCursor, limit: 20 })
+      .then((page) => {
+        setNews((prev) => [...prev, ...page.items]);
+        setNewsCursor(page.nextCursor);
+        setNewsHasMore(page.hasMore);
+      })
+      .catch((err: unknown) => {
+        console.warn("[market-moves-tab] news load-more failed:", err);
+      })
+      .finally(() => setNewsLoadingMore(false));
+  }, [newsCursor, newsLoadingMore]);
 
   const loadMore = useCallback(() => {
     if (!nextCursor || loadingMore) return;
@@ -164,44 +231,40 @@ export function MarketMovesTab() {
         </View>
       )}
 
-      {/* Announcement feed */}
-      {eventsLoading ? (
+      {/* Zone 2 (primary, Phase 1c): reverse-chronological readable Google
+          News headlines — directly answers the "raw filing text" complaint. */}
+      {newsLoading ? (
         <View style={{ paddingVertical: 32, alignItems: "center" }}>
           <ActivityIndicator size="small" color={colors.accent} />
         </View>
-      ) : loadError ? (
+      ) : newsLoadError ? (
         <View style={styles.card}>
           <Text style={styles.emptyIcon}>⚠️</Text>
-          <Text style={styles.emptyTitle}>Couldn't load announcements</Text>
+          <Text style={styles.emptyTitle}>Couldn't load news</Text>
           <Pressable onPress={loadInitial} style={styles.retryButton}>
             <Text style={styles.retryButtonText}>Try again</Text>
           </Pressable>
         </View>
-      ) : events.length === 0 ? (
+      ) : news.length === 0 ? (
         <View style={styles.card}>
           <Text style={styles.emptyIcon}>📰</Text>
-          <Text style={styles.emptyTitle}>No announcements yet</Text>
+          <Text style={styles.emptyTitle}>No fresh headlines yet</Text>
           <Text style={styles.emptyText}>
-            NSE and BSE corporate announcements will appear here as companies file them.
+            Readable news for today's movers and filings will appear here as stories are published.
           </Text>
         </View>
       ) : (
         <>
-          {events.map((event) => (
-            <AnnouncementCard
-              key={event.id}
-              event={event}
-              onPress={() => setSelectedEvent(event)}
-              onCreateBet={authStatus === "authenticated" ? () => openCreateBet(event) : undefined}
-            />
+          {news.map((item) => (
+            <NewsCard key={item.id} item={item} />
           ))}
-          {hasMore && (
+          {newsHasMore && (
             <Pressable
-              onPress={loadMore}
-              disabled={loadingMore}
+              onPress={loadMoreNews}
+              disabled={newsLoadingMore}
               style={styles.loadMoreFooter}
             >
-              {loadingMore ? (
+              {newsLoadingMore ? (
                 <ActivityIndicator size="small" color={colors.accent} />
               ) : (
                 <Text style={styles.loadMoreText}>Load more</Text>
@@ -209,6 +272,68 @@ export function MarketMovesTab() {
             </Pressable>
           )}
         </>
+      )}
+
+      {/* Zone 3 (demoted, Phase 1c): the pre-existing NSE/BSE announcement
+          feed, collapsed by default — same components (AnnouncementCard,
+          EventDetailModal), just no longer the first thing the user sees. */}
+      <Pressable
+        onPress={toggleFilingsCollapsed}
+        style={styles.filingsHeaderRow}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: !filingsCollapsed }}
+        accessibilityLabel="Regulatory Filings"
+      >
+        <Text style={styles.filingsHeaderText}>Regulatory Filings</Text>
+        <Text style={styles.filingsChevron}>{filingsCollapsed ? "▼" : "▲"}</Text>
+      </Pressable>
+
+      {!filingsCollapsed && (
+        eventsLoading ? (
+          <View style={{ paddingVertical: 32, alignItems: "center" }}>
+            <ActivityIndicator size="small" color={colors.accent} />
+          </View>
+        ) : loadError ? (
+          <View style={styles.card}>
+            <Text style={styles.emptyIcon}>⚠️</Text>
+            <Text style={styles.emptyTitle}>Couldn't load announcements</Text>
+            <Pressable onPress={loadInitial} style={styles.retryButton}>
+              <Text style={styles.retryButtonText}>Try again</Text>
+            </Pressable>
+          </View>
+        ) : events.length === 0 ? (
+          <View style={styles.card}>
+            <Text style={styles.emptyIcon}>📰</Text>
+            <Text style={styles.emptyTitle}>No announcements yet</Text>
+            <Text style={styles.emptyText}>
+              NSE and BSE corporate announcements will appear here as companies file them.
+            </Text>
+          </View>
+        ) : (
+          <>
+            {events.map((event) => (
+              <AnnouncementCard
+                key={event.id}
+                event={event}
+                onPress={() => setSelectedEvent(event)}
+                onCreateBet={authStatus === "authenticated" ? () => openCreateBet(event) : undefined}
+              />
+            ))}
+            {hasMore && (
+              <Pressable
+                onPress={loadMore}
+                disabled={loadingMore}
+                style={styles.loadMoreFooter}
+              >
+                {loadingMore ? (
+                  <ActivityIndicator size="small" color={colors.accent} />
+                ) : (
+                  <Text style={styles.loadMoreText}>Load more</Text>
+                )}
+              </Pressable>
+            )}
+          </>
+        )
       )}
 
       <EventDetailModal
@@ -272,6 +397,21 @@ function MoverCard({ mover }: { mover: ApiMarketMover }) {
         </View>
       )}
     </View>
+  );
+}
+
+function NewsCard({ item }: { item: ApiMarketMoveNews }) {
+  const styles = useThemedStyles(makeMarketMovesStyles);
+
+  return (
+    <Pressable style={styles.newsCard} onPress={() => void Linking.openURL(item.sourceUrl)}>
+      <View style={styles.newsTopRow}>
+        <TickerChip symbol={item.tickerSymbol} tickerType="STOCK" size="sm" />
+        <Text style={styles.newsPublisher} numberOfLines={1}>{item.publisher}</Text>
+      </View>
+      <Text style={styles.newsHeadline} numberOfLines={4}>{item.headline}</Text>
+      <Text style={styles.footerMeta}>{formatRelativeTime(item.publishedAt)}</Text>
+    </Pressable>
   );
 }
 
@@ -508,6 +648,57 @@ const makeMarketMovesStyles = (t: ThemeContextValue) =>
       fontSize: 12,
       fontWeight: "600" as const,
       color: t.colors.accent,
+    },
+    newsCard: {
+      marginHorizontal: spacing.lg,
+      marginTop: spacing.xs,
+      marginBottom: spacing.xs,
+      backgroundColor: t.colors.surface,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      padding: spacing.md,
+      gap: 6,
+    },
+    newsTopRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: spacing.sm,
+    },
+    newsPublisher: {
+      flex: 1,
+      fontSize: 11,
+      fontWeight: "600" as const,
+      color: t.colors.textMuted,
+      textAlign: "right",
+    },
+    newsHeadline: {
+      fontSize: 15,
+      fontWeight: "700" as const,
+      color: t.colors.text,
+      lineHeight: 21,
+    },
+    filingsHeaderRow: {
+      marginHorizontal: spacing.lg,
+      marginTop: spacing.md,
+      marginBottom: spacing.xs,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      paddingVertical: spacing.sm,
+      paddingHorizontal: spacing.md,
+      borderRadius: radius.sm,
+      backgroundColor: t.colors.surfaceMuted,
+    },
+    filingsHeaderText: {
+      fontSize: 13,
+      fontWeight: "600" as const,
+      color: t.colors.text,
+    },
+    filingsChevron: {
+      fontSize: 12,
+      color: t.colors.textMuted,
     },
     announcementCard: {
       marginHorizontal: spacing.lg,

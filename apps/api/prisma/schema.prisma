@@ -1553,3 +1553,27 @@ model MarketMoveNotificationPreference {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
+
+/// Market Pulse (Phase 1c) — readable, real-time stock news pulled from Google
+/// News RSS per ticker, replacing raw filing text as the primary read surface.
+/// Deliberately NOT 1:1 with MarketMoveEvent (a news story rarely maps to one
+/// specific filing) — see apps/api/lib/marketMoves/googleNews.ts for the fetch
+/// + relevance/recency/dedupe rules and market-moves-news cron for ingestion.
+model MarketMoveNews {
+  id           String   @id @default(cuid())
+  tickerSymbol String
+  companyName  String
+  /// Decoded Google News RSS title with the trailing " - <Publisher>" suffix removed.
+  headline     String
+  /// Decoded publisher name split out of the raw RSS title.
+  publisher    String
+  /// Google News RSS redirect link, opened directly client-side — no server-side resolution.
+  sourceUrl    String
+  /// Idempotency key for upsert-on-poll: sha1(tickerSymbol + ":" + normalize(headline)).
+  dedupeKey    String   @unique
+  publishedAt  DateTime
+  ingestedAt   DateTime @default(now())
+
+  @@index([tickerSymbol, publishedAt(sort: Desc)])
+  @@index([publishedAt(sort: Desc)])
+}

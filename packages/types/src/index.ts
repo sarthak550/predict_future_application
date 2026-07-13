@@ -1867,3 +1867,26 @@ export type ApiMarketMoversResponse = {
   /** ISO timestamp of the most recent snapshot in this response, or null if empty. */
   asOf: string | null;
 };
+
+/**
+ * One row from GET /api/finance/market-moves/news (Phase 1c) — a readable
+ * Google News stock headline, the primary Market Pulse read surface (raw
+ * MarketMoveEvent filings are demoted to a collapsed secondary section).
+ */
+export type ApiMarketMoveNews = {
+  id: string;
+  tickerSymbol: string;
+  companyName: string;
+  headline: string;
+  publisher: string;
+  sourceUrl: string;
+  /** ISO timestamp — the story's own publish time, not ingestion time. */
+  publishedAt: string;
+};
+
+/** Response shape for GET /api/finance/market-moves/news. */
+export type ApiMarketMoveNewsResponse = {
+  items: ApiMarketMoveNews[];
+  nextCursor: string | null;
+  hasMore: boolean;
+};
