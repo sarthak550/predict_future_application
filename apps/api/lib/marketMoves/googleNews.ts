@@ -214,7 +214,7 @@ const ROUNDUP_PATTERNS: RegExp[] = [
 ];
 
 /** True if the headline matches a known list/roundup shape — see ROUNDUP_PATTERNS doc comment. */
-function isRoundupHeadline(cleanTitle: string): boolean {
+export function isRoundupHeadline(cleanTitle: string): boolean {
   return ROUNDUP_PATTERNS.some((pattern) => pattern.test(cleanTitle));
 }
 
@@ -297,7 +297,7 @@ const NON_MATERIAL_PATTERNS: RegExp[] = [
  *      outcome since the default is already drop, but keeps the
  *      non-material categories explicit and auditable).
  */
-function isMaterialHeadline(cleanTitle: string): boolean {
+export function isMaterialHeadline(cleanTitle: string): boolean {
   if (MATERIAL_SIGNAL_PATTERNS.some((pattern) => pattern.test(cleanTitle))) return true;
 
   // Step 2 and step 3 both resolve to "drop" — the deny-list match is kept as

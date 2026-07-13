@@ -18,6 +18,8 @@ import { NextResponse } from "next/server";
 
 import {
   EARNINGS_RESULTS_PATTERN,
+  isMaterialHeadline,
+  isRoundupHeadline,
   mostDistinctiveNameToken,
 } from "@/lib/marketMoves/googleNews";
 import { prisma } from "@/lib/prisma";
@@ -289,11 +291,18 @@ export async function GET(request: Request) {
   // Over-fetch multiplier bumped 4 -> 6: two extra dedup/cap passes below
   // (near-duplicate collapse + per-ticker cap) remove more rows than the
   // single exact-match pass the original *4 was sized for.
-  const rows = await prisma.marketMoveNews.findMany({
+  const fetchedRows = await prisma.marketMoveNews.findMany({
     where,
     orderBy: [{ publishedAt: "desc" }, { id: "asc" }],
     take: (limit + 1) * 6,
   });
+
+  // Read-side material + roundup filter (belt-and-suspenders): the cron-side T1/T4
+  // filters only affect NEW fetches, so rows stored before they shipped — and any
+  // that slip through — are dropped here at display time so the feed is material-only.
+  const rows = fetchedRows.filter(
+    (r) => isMaterialHeadline(r.headline) && !isRoundupHeadline(r.headline)
+  );
 
   const normHeadline = (h: string) => h.toLowerCase().replace(/[^a-z0-9]/g, "");
   const dedup = new Map<string, (typeof rows)[number]>();
