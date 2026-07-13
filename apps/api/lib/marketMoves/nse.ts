@@ -201,18 +201,17 @@ export async function fetchNseMovers(): Promise<FetchedMarketMover[]> {
   if (!cookie) return [];
 
   const pull = async (index: "gainers" | "losers"): Promise<FetchedMarketMover[]> => {
+    // NSE's API spells losers "loosers" (double-o); "losers" returns
+    // {data:"Missing index or key"}. Both return the same grouped shape (NIFTY.data).
+    const nseIndexParam = index === "gainers" ? "gainers" : "loosers";
     const raw = await nseApiGet(
-      `/api/live-analysis-variations?index=${index}`,
+      `/api/live-analysis-variations?index=${nseIndexParam}`,
       cookie,
       "/market-data/top-gainers-losers"
     );
     if (!raw || typeof raw !== "object") return [];
     const groups = raw as Record<string, NseVariationGroup | unknown>;
-    // Shape differs by index: `gainers` groups rows by index (NIFTY/allSec each with
-    // .data); `losers` returns a FLAT { data: [...] }. Handle both, flat first.
-    const flat = (raw as { data?: NseVariationRow[] }).data;
     const rows =
-      (Array.isArray(flat) ? flat : undefined) ??
       (groups.NIFTY as NseVariationGroup | undefined)?.data ??
       (groups.allSec as NseVariationGroup | undefined)?.data ??
       [];
