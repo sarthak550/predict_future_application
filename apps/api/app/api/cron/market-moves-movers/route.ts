@@ -57,7 +57,11 @@ async function run(request: Request) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
 
-  if (!isNseWeekdayMarketHours()) {
+  // `?force=1` bypasses the market-hours gate for a manual backfill — NSE's
+  // endpoint still returns the last session's closing movers after close, so a
+  // forced run outside hours populates today's gainers AND losers on demand.
+  const force = new URL(request.url).searchParams.get("force") === "1";
+  if (!force && !isNseWeekdayMarketHours()) {
     return NextResponse.json({ ok: true, skipped: "outside_market_hours" });
   }
 
