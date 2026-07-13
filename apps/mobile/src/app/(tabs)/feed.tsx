@@ -115,6 +115,12 @@ export default function FeedScreen() {
   const [tierNudgeDismissed, setTierNudgeDismissed] = useState(true); // default hidden until loaded
 
   const [items, setItems] = useState<ApiNewsFeedItem[]>([]);
+  // Mirrors `items` so async flows (e.g. pull-to-refresh diffing) can read the
+  // latest list without a stale-closure snapshot from when the callback was created.
+  const itemsRef = useRef<ApiNewsFeedItem[]>([]);
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -233,9 +239,11 @@ export default function FeedScreen() {
     return () => { mountedRef.current = false; };
   }, []);
 
-  const loadPage = useCallback(async (mode: "append" | "replace") => {
-    if (inFlightRef.current) return;
-    if (mode === "append" && !hasMoreRef.current) return;
+  // Returns the raw page of items fetched (undefined if the call was skipped
+  // or failed) so callers like onRefresh can diff against a pre-fetch snapshot.
+  const loadPage = useCallback(async (mode: "append" | "replace"): Promise<ApiNewsFeedItem[] | undefined> => {
+    if (inFlightRef.current) return undefined;
+    if (mode === "append" && !hasMoreRef.current) return undefined;
 
     inFlightRef.current = true;
     if (mode === "replace") {
@@ -257,7 +265,7 @@ export default function FeedScreen() {
       // ALL: no category filter — sports news appears alongside everything else.
 
       const response = await mobileApi.getNews(query);
-      if (!mountedRef.current) return;
+      if (!mountedRef.current) return undefined;
 
       const pageItems = response.items;
       setItems((current) =>
@@ -270,9 +278,11 @@ export default function FeedScreen() {
       // Mark that we have successfully loaded at least once so the skeleton
       // never reappears after the first data arrives (pull-to-refresh, etc.)
       hasEverLoadedRef.current = true;
+      return pageItems;
     } catch (nextError) {
-      if (!mountedRef.current) return;
+      if (!mountedRef.current) return undefined;
       setError(nextError instanceof Error ? nextError.message : "Unable to fetch the feed.");
+      return undefined;
     } finally {
       if (mountedRef.current) {
         setLoading(false);
@@ -304,22 +314,90 @@ export default function FeedScreen() {
     void loadPage("replace");
   }, [category, loadPage]);
 
+  // Post-refresh feedback — "N new stories" pill or "you're all caught up" banner.
+  // Only ever set from the pull-to-refresh path (onRefresh below); category/India
+  // toggle switches and the silent background poll call loadPage() directly and
+  // never touch this state, so they never trigger the feedback.
+  const [refreshFeedback, setRefreshFeedback] = useState<
+    { type: "new"; count: number } | { type: "caught-up" } | null
+  >(null);
+  const refreshFeedbackOpacity = useRef(new Animated.Value(0)).current;
+  const refreshFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const dismissRefreshFeedback = useCallback(() => {
+    if (refreshFeedbackTimerRef.current) {
+      clearTimeout(refreshFeedbackTimerRef.current);
+      refreshFeedbackTimerRef.current = null;
+    }
+    Animated.timing(refreshFeedbackOpacity, {
+      toValue: 0,
+      duration: 220,
+      useNativeDriver: true,
+    }).start(() => setRefreshFeedback(null));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const showRefreshFeedback = useCallback(
+    (feedback: { type: "new"; count: number } | { type: "caught-up" }) => {
+      if (refreshFeedbackTimerRef.current) {
+        clearTimeout(refreshFeedbackTimerRef.current);
+        refreshFeedbackTimerRef.current = null;
+      }
+      setRefreshFeedback(feedback);
+      refreshFeedbackOpacity.setValue(0);
+      Animated.timing(refreshFeedbackOpacity, {
+        toValue: 1,
+        duration: 220,
+        useNativeDriver: true,
+      }).start();
+
+      const autoDismissMs = feedback.type === "new" ? 5000 : 2000;
+      refreshFeedbackTimerRef.current = setTimeout(() => {
+        dismissRefreshFeedback();
+      }, autoDismissMs);
+    },
+    [dismissRefreshFeedback]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  );
+
+  // Clear any pending auto-dismiss timer on unmount.
+  useEffect(() => {
+    return () => {
+      if (refreshFeedbackTimerRef.current) {
+        clearTimeout(refreshFeedbackTimerRef.current);
+      }
+    };
+  }, []);
+
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
+    // Snapshot the pre-refresh item ids so we can tell how many of the
+    // freshly-fetched top-of-feed items are genuinely new.
+    const previousIds = new Set(itemsRef.current.map((item) => item.id));
     cursorRef.current = null;
     hasMoreRef.current = true;
     await mobileApi.refreshNewsFeed().catch(() => {});
-    void loadPage("replace");
-  }, [loadPage]);
+    const freshItems = await loadPage("replace");
+    if (freshItems) {
+      const newCount = freshItems.filter((item) => !previousIds.has(item.id)).length;
+      if (newCount > 0) {
+        showRefreshFeedback({ type: "new", count: newCount });
+      } else {
+        showRefreshFeedback({ type: "caught-up" });
+      }
+    }
+  }, [loadPage, showRefreshFeedback]);
 
-  // Scroll to top + refresh when tab tapped while active
+  // Tapping the Feed tab while already on it scrolls to top only — it must NOT
+  // refetch. Pulling the list down (RefreshControl → onRefresh) is the only
+  // refresh trigger; a tab tap doubling as a silent refetch was what made "no new
+  // stories" pulls read as broken (spinner spins, nothing visibly changes).
   useEffect(() => {
     const unsubscribe = navigation.addListener("tabPress" as never, () => {
       listRef.current?.scrollToOffset({ offset: 0, animated: true });
-      onRefresh();
     });
     return unsubscribe;
-  }, [navigation, onRefresh]);
+  }, [navigation]);
 
   // Silently reload feed every 3 minutes while tab is focused — picks up AI-generated polls.
   // Also re-applies the category URL param on focus so navigation from the Finance tab
@@ -575,6 +653,36 @@ export default function FeedScreen() {
         }}
       />
 
+      {/* Pull-to-refresh completion feedback — "N new stories" pill (tap to jump
+          to top) or a transient "you're all caught up" banner. Floats over the
+          list, never blocks scrolling/taps beneath it except on the pill itself. */}
+      {refreshFeedback && (
+        <Animated.View
+          style={[styles.refreshFeedbackContainer, { opacity: refreshFeedbackOpacity }]}
+          pointerEvents="box-none"
+        >
+          {refreshFeedback.type === "new" ? (
+            <Pressable
+              onPress={() => {
+                listRef.current?.scrollToOffset({ offset: 0, animated: true });
+                dismissRefreshFeedback();
+              }}
+              style={styles.refreshPill}
+              accessibilityRole="button"
+              accessibilityLabel={`${refreshFeedback.count} new ${refreshFeedback.count === 1 ? "story" : "stories"} available. Tap to scroll to top.`}
+            >
+              <Text style={styles.refreshPillText}>
+                {`↑ ${refreshFeedback.count} new ${refreshFeedback.count === 1 ? "story" : "stories"}`}
+              </Text>
+            </Pressable>
+          ) : (
+            <View style={styles.caughtUpBanner} pointerEvents="none">
+              <Text style={styles.caughtUpBannerText}>{"✓ You're all caught up"}</Text>
+            </View>
+          )}
+        </Animated.View>
+      )}
+
       </View>
 
       {/* Global swipe hint overlay for first card */}
@@ -693,5 +801,50 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
     overflow: "hidden",
     borderWidth: 1,
     borderColor: t.colors.border,
+  },
+
+  // Pull-to-refresh completion feedback — floats near the top of the list,
+  // horizontally centered, below the category bar (which lives outside this container).
+  refreshFeedbackContainer: {
+    position: "absolute",
+    top: spacing.md,
+    left: 0,
+    right: 0,
+    alignItems: "center",
+    zIndex: 10,
+  },
+  refreshPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: t.colors.accentSoft,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.pill,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  refreshPillText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: t.colors.accent,
+  },
+  caughtUpBanner: {
+    backgroundColor: t.colors.successSoft,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.pill,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  caughtUpBannerText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: t.colors.success,
   },
 });
