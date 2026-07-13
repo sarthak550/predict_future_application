@@ -208,7 +208,11 @@ export async function fetchNseMovers(): Promise<FetchedMarketMover[]> {
     );
     if (!raw || typeof raw !== "object") return [];
     const groups = raw as Record<string, NseVariationGroup | unknown>;
+    // Shape differs by index: `gainers` groups rows by index (NIFTY/allSec each with
+    // .data); `losers` returns a FLAT { data: [...] }. Handle both, flat first.
+    const flat = (raw as { data?: NseVariationRow[] }).data;
     const rows =
+      (Array.isArray(flat) ? flat : undefined) ??
       (groups.NIFTY as NseVariationGroup | undefined)?.data ??
       (groups.allSec as NseVariationGroup | undefined)?.data ??
       [];

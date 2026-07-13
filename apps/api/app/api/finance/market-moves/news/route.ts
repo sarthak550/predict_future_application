@@ -58,14 +58,30 @@ export async function GET(request: Request) {
       : {}),
   };
 
+  // Over-fetch so we can collapse the same story stored under BOTH an NSE symbol
+  // and its BSE scrip code (identical headline, two ticker keys). Dedup by
+  // normalized headline, preferring the NSE-symbol row over the "BSE:<code>" one.
   const rows = await prisma.marketMoveNews.findMany({
     where,
     orderBy: [{ publishedAt: "desc" }, { id: "asc" }],
-    take: limit + 1,
+    take: (limit + 1) * 4,
   });
 
-  const hasMore = rows.length > limit;
-  const page = hasMore ? rows.slice(0, limit) : rows;
+  const normHeadline = (h: string) => h.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const dedup = new Map<string, (typeof rows)[number]>();
+  for (const r of rows) {
+    const key = normHeadline(r.headline);
+    const existing = dedup.get(key);
+    if (!existing) {
+      dedup.set(key, r);
+    } else if (existing.tickerSymbol.startsWith("BSE:") && !r.tickerSymbol.startsWith("BSE:")) {
+      dedup.set(key, r); // upgrade to the NSE-symbol version (Map keeps position)
+    }
+  }
+  const deduped = [...dedup.values()];
+
+  const hasMore = deduped.length > limit;
+  const page = hasMore ? deduped.slice(0, limit) : deduped;
 
   let nextCursor: string | null = null;
   if (hasMore && page.length > 0) {
