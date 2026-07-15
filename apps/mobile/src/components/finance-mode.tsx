@@ -3,9 +3,11 @@ import { useRouter } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
   Modal,
   NativeScrollEvent,
   NativeSyntheticEvent,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -1104,19 +1106,33 @@ function PulseSheet({
   const pulseStyles = useThemedStyles(makePulseStyles);
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={pulseStyles.sheetBackdrop} onPress={onClose} />
-      <View style={pulseStyles.sheetContainer}>
-        <View style={pulseStyles.sheetHandle} />
-        <View style={pulseStyles.sheetHeader}>
-          <Text style={pulseStyles.sheetTitle}>{title}</Text>
-          <Pressable onPress={onClose} hitSlop={12}>
-            <Text style={pulseStyles.sheetClose}>Done</Text>
-          </Pressable>
+      {/* Lift the sheet above the on-screen keyboard. Without this, a sheet that
+          holds a TextInput (the instrument search) shrinks as results narrow and
+          its bottom-anchored body slides behind the keyboard — the input appears
+          to "vanish" after a couple of keystrokes. flex-end anchors the sheet to
+          the bottom of the space *above* the keyboard instead of the raw screen. */}
+      <KeyboardAvoidingView
+        style={pulseStyles.sheetRoot}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+      >
+        <Pressable style={pulseStyles.sheetBackdrop} onPress={onClose} />
+        <View style={pulseStyles.sheetContainer}>
+          <View style={pulseStyles.sheetHandle} />
+          <View style={pulseStyles.sheetHeader}>
+            <Text style={pulseStyles.sheetTitle}>{title}</Text>
+            <Pressable onPress={onClose} hitSlop={12}>
+              <Text style={pulseStyles.sheetClose}>Done</Text>
+            </Pressable>
+          </View>
+          <ScrollView
+            style={{ maxHeight: "90%" }}
+            contentContainerStyle={{ paddingBottom: 40 }}
+            keyboardShouldPersistTaps="handled"
+          >
+            {children}
+          </ScrollView>
         </View>
-        <ScrollView style={{ maxHeight: "90%" }} contentContainerStyle={{ paddingBottom: 40 }}>
-          {children}
-        </ScrollView>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -1271,9 +1287,11 @@ const makePulseStyles = (t: ThemeContextValue) => StyleSheet.create({
   },
 
   // Bottom sheet (events / sentiment / calendar)
-  sheetBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)" },
+  // Fills the Modal; anchors the sheet to the bottom of the keyboard-avoided area.
+  sheetRoot: { flex: 1, justifyContent: "flex-end" },
+  // Absolute-fill so the dim backdrop sits behind the (now flex-child) sheet.
+  sheetBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.4)" },
   sheetContainer: {
-    position: "absolute", left: 0, right: 0, bottom: 0,
     backgroundColor: t.colors.surface,
     borderTopLeftRadius: 24, borderTopRightRadius: 24,
     paddingHorizontal: spacing.md, paddingTop: spacing.md, paddingBottom: spacing.lg,
