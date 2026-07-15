@@ -2337,6 +2337,20 @@ export function FinanceMode({
   const [instrumentCatalogLoading, setInstrumentCatalogLoading] = useState(true);
   const [instrumentSearch, setInstrumentSearch] = useState("");
 
+  // Refetch the catalog whenever the picker opens so instruments from opinions
+  // generated since mount show up without an app restart — the list grows as the
+  // extraction pipeline runs. Silent on failure: we keep the catalog we have.
+  useEffect(() => {
+    if (!instrumentPickerOpen) return;
+    let cancelled = false;
+    mobileApi.getFinanceInstruments()
+      .then(({ items }) => {
+        if (!cancelled && items.length > 0) setInstrumentCatalog(items);
+      })
+      .catch(() => { /* keep existing catalog */ });
+    return () => { cancelled = true; };
+  }, [instrumentPickerOpen]);
+
   // Expert leaderboard count for conditional "Top Experts" link
   const [leaderboardCount, setLeaderboardCount] = useState(0);
 
@@ -3719,7 +3733,11 @@ export function FinanceMode({
           <TextInput
             value={instrumentSearch}
             onChangeText={setInstrumentSearch}
-            placeholder="Search instruments..."
+            placeholder={
+              instrumentCatalog.length > 0
+                ? `Search ${instrumentCatalog.length} instruments…`
+                : "Search instruments…"
+            }
             placeholderTextColor={colors.textSubtle}
             autoCapitalize="none"
             autoCorrect={false}
@@ -3736,11 +3754,20 @@ export function FinanceMode({
           />
           {/* Instrument list */}
           {(() => {
-            const query = instrumentSearch.trim().toLowerCase();
+            // Normalize so search ignores case, spaces and punctuation, and match
+            // on BOTH the display label and the ticker — so "hdfcbank", "HDFC Bank"
+            // and "HDFCBANK.NS" all find the same instrument, and a bare ticker
+            // like "SBIN" or "RELIANCE" matches even when the label reads "SBI" /
+            // "Reliance Industries". (Was label-only + space-sensitive, which made
+            // most ticker / no-space searches silently return nothing.)
+            const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+            const query = norm(instrumentSearch);
             const displayItems = query.length === 0
               ? instrumentCatalog.filter((item) => item.isPopular)
-              : instrumentCatalog.filter((item) =>
-                  item.label.toLowerCase().includes(query)
+              : instrumentCatalog.filter(
+                  (item) =>
+                    norm(item.label).includes(query) ||
+                    norm(item.ticker).includes(query)
                 );
 
             if (displayItems.length === 0) {
