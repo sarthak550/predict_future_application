@@ -1,7 +1,7 @@
 /**
  * POST /api/cron/market-moves-movers
  *
- * Market Pulse (Phase 1) — polls NSE's NIFTY 200 index-constituent endpoint
+ * Market Pulse (Phase 1) — polls NSE's NIFTY 100 (NIFTY 50 + Next 50) movers endpoint
  * (see apps/api/lib/marketMoves/nse.ts — the same Akamai-blocking caveat
  * documented there applies here) and upserts today's top gainers/losers into
  * `MarketMoverSnapshot`, one row per (sessionDate, tickerSymbol).

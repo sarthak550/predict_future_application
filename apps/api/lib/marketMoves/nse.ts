@@ -191,10 +191,12 @@ type NseVariationGroup = { data?: NseVariationRow[] };
 
 /**
  * Fetches today's top gainers + losers from NSE's own variations endpoint.
- * The response groups movers by index (NIFTY, NIFTYNEXT50, allSec, ...); we use
- * the large-cap NIFTY group (falling back to allSec) so the strip shows liquid,
- * recognisable names. Never throws. `isUnusualVolume` is computed downstream in
- * the cron (a same-day cross-sectional heuristic; see MarketMoverSnapshot doc).
+ * The response groups movers by index (NIFTY, NIFTYNEXT50, allSec, ...); we rank
+ * across the NIFTY 100 (NIFTY 50 + NIFTY Next 50) so the strip matches the
+ * large-cap universe mainstream apps (Groww, etc.) show by default, without the
+ * illiquid microcap noise in allSec/SecGtr20. Never throws. `isUnusualVolume` is
+ * computed downstream in the cron (a same-day cross-sectional heuristic; see
+ * MarketMoverSnapshot doc).
  */
 export async function fetchNseMovers(): Promise<FetchedMarketMover[]> {
   const cookie = await primeNseSession("/");
@@ -211,10 +213,23 @@ export async function fetchNseMovers(): Promise<FetchedMarketMover[]> {
     );
     if (!raw || typeof raw !== "object") return [];
     const groups = raw as Record<string, NseVariationGroup | unknown>;
+    // Rank across the NIFTY 100 (NIFTY 50 + NIFTY Next 50) — the large-cap
+    // universe mainstream apps (Groww, etc.) use for their DEFAULT Top Gainers/
+    // Losers. Using only the NIFTY 50 group hid every Next-50 mover: e.g. ABB
+    // (Next 50, +4.9%) was the session's real top gainer but never surfaced
+    // because ULTRACEMCO (+2.9%) topped the NIFTY-50-only list — which is exactly
+    // the "we show UltraTech, Groww shows ABB" mismatch. We deliberately do NOT
+    // use allSec/SecGtr20 as the primary source: their tops are illiquid,
+    // circuit-locked microcaps (e.g. HIRECT +19.99%) that no retail app shows as
+    // a "top mover". NIFTY 50 and Next 50 are disjoint, so no dedup is needed
+    // (and the movers cron upserts by (sessionDate, tickerSymbol) anyway).
+    const nifty50 = (groups.NIFTY as NseVariationGroup | undefined)?.data ?? [];
+    const niftyNext50 = (groups.NIFTYNEXT50 as NseVariationGroup | undefined)?.data ?? [];
+    const merged = [...nifty50, ...niftyNext50];
     const rows =
-      (groups.NIFTY as NseVariationGroup | undefined)?.data ??
-      (groups.allSec as NseVariationGroup | undefined)?.data ??
-      [];
+      merged.length > 0
+        ? merged
+        : (groups.allSec as NseVariationGroup | undefined)?.data ?? [];
     const direction = index === "gainers" ? "GAINER" : "LOSER";
     return rows
       .filter((r) => r.symbol && typeof r.perChange === "number" && r.perChange !== 0)
