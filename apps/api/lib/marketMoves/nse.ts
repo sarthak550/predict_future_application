@@ -190,6 +190,65 @@ type NseVariationRow = {
 type NseVariationGroup = { data?: NseVariationRow[] };
 
 /**
+ * NSE's variations rows carry only the ticker `symbol`, never the full company
+ * name. To label movers ("ABB India Limited" not "ABB") we join against NSE's
+ * complete published equity master (EQUITY_L.csv) — every ~2,400 NSE-listed
+ * company, keyless, no session cookie (served from the archives host), refreshed
+ * by NSE on every new listing/rename. This is a full market map, not a fixed
+ * index list, so it labels any symbol we could ever show — including anything
+ * beyond the NIFTY 100 if the movers universe is ever broadened. Cached in-module
+ * for 12h since the master changes only on listing/corporate-name events.
+ */
+const NSE_EQUITY_MASTER_URL =
+  "https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv";
+const EQUITY_NAME_TTL_MS = 12 * 60 * 60 * 1000;
+let equityNameCache: { at: number; map: Map<string, string> } | null = null;
+
+/** Parses EQUITY_L.csv ("SYMBOL,NAME OF COMPANY,SERIES,...") → symbol→name. */
+function parseEquityMasterCsv(csv: string): Map<string, string> {
+  const map = new Map<string, string>();
+  const lines = csv.split(/\r?\n/);
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    // NSE's master has no quoted fields and no commas inside any field, so a
+    // plain split is safe: column 0 = SYMBOL, column 1 = NAME OF COMPANY.
+    const parts = line.split(",");
+    if (parts.length < 2) continue;
+    const symbol = parts[0].trim();
+    const name = parts[1].trim();
+    if (symbol && name) map.set(symbol, name);
+  }
+  return map;
+}
+
+/**
+ * Returns a symbol→company-name map for all NSE-listed equities. Cached 12h. On
+ * any fetch/parse failure returns the last good cache (or an empty map) so a name
+ * lookup never blocks or breaks the movers pipeline — callers fall back to the
+ * ticker symbol when a name is missing.
+ */
+async function fetchEquityNames(): Promise<Map<string, string>> {
+  const now = Date.now();
+  if (equityNameCache && now - equityNameCache.at < EQUITY_NAME_TTL_MS) {
+    return equityNameCache.map;
+  }
+  try {
+    const res = await fetch(NSE_EQUITY_MASTER_URL, { headers: HTML_HEADERS });
+    if (!res.ok) {
+      console.warn(`[marketMoves/nse] equity master CSV returned ${res.status}`);
+      return equityNameCache?.map ?? new Map();
+    }
+    const map = parseEquityMasterCsv(await res.text());
+    if (map.size > 0) equityNameCache = { at: now, map };
+    return equityNameCache?.map ?? map;
+  } catch (err) {
+    console.warn(`[marketMoves/nse] equity master CSV fetch error: ${err instanceof Error ? err.message : err}`);
+    return equityNameCache?.map ?? new Map();
+  }
+}
+
+/**
  * Fetches today's top gainers + losers from NSE's own variations endpoint.
  * The response groups movers by index (NIFTY, NIFTYNEXT50, allSec, ...); we rank
  * across the NIFTY 100 (NIFTY 50 + NIFTY Next 50) so the strip matches the
@@ -201,6 +260,12 @@ type NseVariationGroup = { data?: NseVariationRow[] };
 export async function fetchNseMovers(): Promise<FetchedMarketMover[]> {
   const cookie = await primeNseSession("/");
   if (!cookie) return [];
+
+  // Full company names for every NSE-listed equity (cached). The variations feed
+  // has none, so this is the authoritative label source — the movers cron only
+  // falls back to announcement-derived names / the raw ticker when a symbol
+  // somehow misses here (e.g. master fetch failed and no cache yet).
+  const nameBySymbol = await fetchEquityNames();
 
   const pull = async (index: "gainers" | "losers"): Promise<FetchedMarketMover[]> => {
     // NSE's API spells losers "loosers" (double-o); "losers" returns
@@ -233,14 +298,17 @@ export async function fetchNseMovers(): Promise<FetchedMarketMover[]> {
     const direction = index === "gainers" ? "GAINER" : "LOSER";
     return rows
       .filter((r) => r.symbol && typeof r.perChange === "number" && r.perChange !== 0)
-      .map((r) => ({
-        tickerSymbol: (r.symbol as string).trim(),
-        companyName: (r.symbol as string).trim(), // this endpoint carries symbol only, no full name
+      .map((r) => {
+        const sym = (r.symbol as string).trim();
+        return {
+        tickerSymbol: sym,
+        companyName: nameBySymbol.get(sym) ?? sym, // full NIFTY 100 name; ticker only if unmapped
         changePercent: r.perChange as number,
         changeAbs: r.net_price ?? 0,
         volume: r.trade_quantity ?? 0,
         direction: direction as "GAINER" | "LOSER",
-      }));
+        };
+      });
   };
 
   const [gainers, losers] = await Promise.all([pull("gainers"), pull("losers")]);

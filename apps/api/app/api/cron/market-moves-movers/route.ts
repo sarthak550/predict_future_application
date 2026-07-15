@@ -111,11 +111,16 @@ async function run(request: Request) {
       const m = group[i];
       const rank = i + 1;
       const isUnusualVolume = medianVolume > 0 && m.volume >= medianVolume * UNUSUAL_VOLUME_MULTIPLE;
+      // Name priority: the NSE equity-master name (already on m.companyName when
+      // mapped) wins; only when the symbol was unmapped there (m.companyName ===
+      // ticker) do we fall back to an announcement-derived name, then the ticker.
+      const csvName = m.companyName !== m.tickerSymbol ? m.companyName : null;
+      const companyName = csvName ?? companyNameBySymbol.get(m.tickerSymbol) ?? m.companyName;
       try {
         await prisma.marketMoverSnapshot.upsert({
           where: { sessionDate_tickerSymbol: { sessionDate, tickerSymbol: m.tickerSymbol } },
           update: {
-            companyName: companyNameBySymbol.get(m.tickerSymbol) ?? m.companyName,
+            companyName,
             changePercent: m.changePercent,
             changeAbs: m.changeAbs,
             volume: m.volume,
@@ -127,7 +132,7 @@ async function run(request: Request) {
           create: {
             sessionDate,
             tickerSymbol: m.tickerSymbol,
-            companyName: companyNameBySymbol.get(m.tickerSymbol) ?? m.companyName,
+            companyName,
             changePercent: m.changePercent,
             changeAbs: m.changeAbs,
             volume: m.volume,
