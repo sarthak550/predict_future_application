@@ -54,7 +54,7 @@ export function MarketSummaryCard({ item, onSaveToggled, compact = false }: Prop
     const parts: string[] = [];
     if ((item.totalVolume ?? 0) > 0) parts.push(formatPoints(item.totalVolume ?? 0));
     if ((item.totalParticipants ?? 0) > 0) parts.push(`${item.totalParticipants} players`);
-    if (item.closeAt) parts.push(`closes ${formatRelativeTime(item.closeAt)}`);
+    if (item.closeAt) parts.push(`${new Date(item.closeAt).getTime() < Date.now() ? "closed" : "closes"} ${formatRelativeTime(item.closeAt)}`);
     return parts.join(" · ");
   })();
 
@@ -68,7 +68,7 @@ export function MarketSummaryCard({ item, onSaveToggled, compact = false }: Prop
         (item.totalParticipants ?? 0) > 0
           ? `${item.totalParticipants} ${item.totalParticipants === 1 ? "guess" : "guesses"}`
           : null;
-      const numericMeta = [guessCount, item.closeAt ? `closes ${formatRelativeTime(item.closeAt)}` : null]
+      const numericMeta = [guessCount, item.closeAt ? `${new Date(item.closeAt).getTime() < Date.now() ? "closed" : "closes"} ${formatRelativeTime(item.closeAt)}` : null]
         .filter(Boolean)
         .join(" · ");
       return (
