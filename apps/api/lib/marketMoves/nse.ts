@@ -250,10 +250,9 @@ async function fetchEquityNames(): Promise<Map<string, string>> {
 
 /**
  * Fetches today's top gainers + losers from NSE's own variations endpoint.
- * The response groups movers by index (NIFTY, NIFTYNEXT50, allSec, ...); we rank
- * across the NIFTY 100 (NIFTY 50 + NIFTY Next 50) so the strip matches the
- * large-cap universe mainstream apps (Groww, etc.) show by default, without the
- * illiquid microcap noise in allSec/SecGtr20. Never throws. `isUnusualVolume` is
+ * The response groups movers by index (NIFTY, NIFTYNEXT50, allSec, ...); we use
+ * the `allSec` group — the ALL-MARKET top movers across every listed security,
+ * with no market-cap cap — per product choice. Never throws. `isUnusualVolume` is
  * computed downstream in the cron (a same-day cross-sectional heuristic; see
  * MarketMoverSnapshot doc).
  */
@@ -278,23 +277,20 @@ export async function fetchNseMovers(): Promise<FetchedMarketMover[]> {
     );
     if (!raw || typeof raw !== "object") return [];
     const groups = raw as Record<string, NseVariationGroup | unknown>;
-    // Rank across the NIFTY 100 (NIFTY 50 + NIFTY Next 50) — the large-cap
-    // universe mainstream apps (Groww, etc.) use for their DEFAULT Top Gainers/
-    // Losers. Using only the NIFTY 50 group hid every Next-50 mover: e.g. ABB
-    // (Next 50, +4.9%) was the session's real top gainer but never surfaced
-    // because ULTRACEMCO (+2.9%) topped the NIFTY-50-only list — which is exactly
-    // the "we show UltraTech, Groww shows ABB" mismatch. We deliberately do NOT
-    // use allSec/SecGtr20 as the primary source: their tops are illiquid,
-    // circuit-locked microcaps (e.g. HIRECT +19.99%) that no retail app shows as
-    // a "top mover". NIFTY 50 and Next 50 are disjoint, so no dedup is needed
-    // (and the movers cron upserts by (sessionDate, tickerSymbol) anyway).
-    const nifty50 = (groups.NIFTY as NseVariationGroup | undefined)?.data ?? [];
-    const niftyNext50 = (groups.NIFTYNEXT50 as NseVariationGroup | undefined)?.data ?? [];
-    const merged = [...nifty50, ...niftyNext50];
+    // ALL-MARKET universe: use NSE's `allSec` group — top movers across every
+    // listed security, with NO market-cap restriction (not Nifty 50/100/200/500).
+    // This is by explicit product choice: the strip shows the true market-wide
+    // top gainers/losers, which will often be small/mid-caps hitting circuit
+    // limits rather than large-cap index names. Fall back to the NIFTY 100 merge
+    // only if `allSec` is somehow absent, so the strip never goes empty.
+    const allSec = (groups.allSec as NseVariationGroup | undefined)?.data ?? [];
     const rows =
-      merged.length > 0
-        ? merged
-        : (groups.allSec as NseVariationGroup | undefined)?.data ?? [];
+      allSec.length > 0
+        ? allSec
+        : [
+            ...((groups.NIFTY as NseVariationGroup | undefined)?.data ?? []),
+            ...((groups.NIFTYNEXT50 as NseVariationGroup | undefined)?.data ?? []),
+          ];
     const direction = index === "gainers" ? "GAINER" : "LOSER";
     return rows
       .filter((r) => r.symbol && typeof r.perChange === "number" && r.perChange !== 0)
@@ -302,7 +298,7 @@ export async function fetchNseMovers(): Promise<FetchedMarketMover[]> {
         const sym = (r.symbol as string).trim();
         return {
         tickerSymbol: sym,
-        companyName: nameBySymbol.get(sym) ?? sym, // full NIFTY 100 name; ticker only if unmapped
+        companyName: nameBySymbol.get(sym) ?? sym, // full company name; ticker only if unmapped
         changePercent: r.perChange as number,
         changeAbs: r.net_price ?? 0,
         volume: r.trade_quantity ?? 0,
