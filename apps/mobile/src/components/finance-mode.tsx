@@ -1398,8 +1398,15 @@ function WeekToggleCard({
             onDirectionPress={onSentimentDirectionPress}
           />
         ) : (
+          // S72: split the zero-state copy by scope. Driven off the response's
+          // scopedInstrument (not the activeInstrumentFilter prop closure) so
+          // the copy always matches the data that was actually fetched — e.g.
+          // a fast filter switch mid-flight can't show "market-wide" copy for
+          // a response that was actually scoped, or vice versa.
           <Text style={digestStyles.emptyText}>
-            No analyst calls logged this week yet.
+            {sentiment?.scopedInstrument
+              ? `No analyst opinions on ${sentiment.scopedInstrument} this week.`
+              : "No analyst calls logged this week yet."}
           </Text>
         )
       )}
@@ -1552,7 +1559,9 @@ function SentimentBody({
         <View style={[digestStyles.barFill, { flex: bearPct || 0.01, backgroundColor: "#dc2626" }]} />
       </View>
       <Text style={digestStyles.tapHint}>
-        Across {sentiment.totalCount} analyst {sentiment.totalCount === 1 ? "call" : "calls"} this week — tap a direction to filter
+        {sentiment.scopedInstrument
+          ? `Across ${sentiment.totalCount} analyst ${sentiment.totalCount === 1 ? "call" : "calls"} on ${sentiment.scopedInstrument} this week — tap a direction to filter`
+          : `Across ${sentiment.totalCount} analyst ${sentiment.totalCount === 1 ? "call" : "calls"} this week — tap a direction to filter`}
       </Text>
     </>
   );
@@ -2562,7 +2571,7 @@ export function FinanceMode({
       const [marketsResult, newsResult, sentimentResult, verifiedResult, flagshipResult, digestResult, bigCallResult] = await Promise.all([
         withRetry(() => mobileApi.getFinanceMarkets()),
         withRetry(() => mobileApi.getNews(buildNewsFilterPayload())),
-        withRetry(() => mobileApi.getFinanceExpertSentiment()).catch(logSideFetch("expert-sentiment")),
+        withRetry(() => mobileApi.getFinanceExpertSentiment(activeInstrumentFilter ?? undefined)).catch(logSideFetch("expert-sentiment")),
         withRetry(() => mobileApi.getVerifiedCalls()).catch((err) => {
           console.error("[finance-mode] verified-calls fetch failed (showing empty):", err);
           return [];
@@ -2792,10 +2801,29 @@ export function FinanceMode({
         console.error("[finance-mode] filter-change refetch failed:", err);
       }
     })();
+    // S72: Re-scope the Market Sentiment gauge to the active instrument filter
+    // on every filter change too — folded into this SAME epoch-guarded effect
+    // (rather than a separate effect) so a rapid instrument switch can't land
+    // the sentiment result out of order relative to the feed result.
+    (async () => {
+      try {
+        const sentimentResult = await mobileApi.getFinanceExpertSentiment(activeInstrumentFilter ?? undefined);
+        if (cancelled || filterEpochRef.current !== epoch) return;
+        setAnalystSentiment(sentimentResult);
+      } catch (err) {
+        if (cancelled) return;
+        console.error("[finance-mode] filter-change sentiment refetch failed:", err);
+      }
+    })();
     return () => {
       cancelled = true;
     };
-  }, [buildNewsFilterPayload]);
+  }, [
+    // activeInstrumentFilter is already a dependency of buildNewsFilterPayload
+    // (see its useCallback deps above), so its identity changes whenever the
+    // instrument filter changes — no separate dependency needed here.
+    buildNewsFilterPayload,
+  ]);
 
   // S50-T3: Fetch top weekly experts independently — isolated from the main Promise.all
   // so a failed or slow top-weekly call never affects market/news rendering.

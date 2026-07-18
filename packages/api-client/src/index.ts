@@ -778,8 +778,10 @@ export function createApiClient(options: ApiClientOptions) {
     },
 
     // ─── Finance: Expert Sentiment Aggregate ──────────────────────────────
-    getFinanceExpertSentiment() {
-      return request<ApiFinanceExpertSentiment>("/api/finance/expert-sentiment");
+    /** Pass a canonical instrument label to scope the gauge; omit for market-wide. */
+    getFinanceExpertSentiment(instrument?: string) {
+      const query = instrument ? `?instrument=${encodeURIComponent(instrument)}` : "";
+      return request<ApiFinanceExpertSentiment>(`/api/finance/expert-sentiment${query}`);
     },
 
     // ─── Finance: Instrument Catalog (S44-T1) ─────────────────────────────

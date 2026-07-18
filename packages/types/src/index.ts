@@ -1137,6 +1137,8 @@ export interface ApiFinanceExpertSentiment {
   neutralPercent: number;
   dominantLean: "BULLISH" | "BEARISH" | "NEUTRAL" | "MIXED";
   samplePeriod: "7d";
+  /** Canonical instrument label the aggregate was scoped to, or null when market-wide. */
+  scopedInstrument: string | null;
 }
 
 // ─── Finance: Markets Feed ─────────────────────────────────────────────────────

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/prisma";
+import { getInstrumentVariants } from "@/lib/news/queries";
 
 export const dynamic = "force-dynamic";
 
@@ -11,10 +12,17 @@ export const dynamic = "force-dynamic";
  * in the last 7 days. Includes PENDING and RESOLVED — a call made this week
  * is a this-week data point regardless of whether it later resolved.
  *
+ * Optional `?instrument=<canonical label>` scopes the aggregate to that
+ * instrument (and all its known variants — see getInstrumentVariants) via
+ * a case-insensitive match against instrument/instrumentTicker. This reuses
+ * the same matching logic as the news feed's instrument filter so the gauge
+ * and the feed always agree on which opinions belong to an instrument.
+ *
  * No auth required — this is a public aggregate.
  */
-export async function GET() {
+export async function GET(request: Request) {
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const instrument = new URL(request.url).searchParams.get("instrument")?.trim() || undefined;
 
   // Single groupBy replaces 3 separate count() round-trips.
   // No resolutionStatus filter — resolved calls still count as "this week's sentiment".
@@ -23,6 +31,18 @@ export async function GET() {
     where: {
       suppressedAt: null,
       publishedAt: { gte: sevenDaysAgo },
+      // Reuses the news feed's instrument-matching semantics (buildOpinionWhere
+      // in lib/news/queries.ts): match ANY known variant on EITHER field, so
+      // this must be an OR array, not AND — AND would require every variant to
+      // match both fields simultaneously and return ~zero results.
+      ...(instrument
+        ? {
+            OR: getInstrumentVariants(instrument).flatMap((v) => [
+              { instrument: { contains: v, mode: "insensitive" as const } },
+              { instrumentTicker: { contains: v, mode: "insensitive" as const } },
+            ]),
+          }
+        : {}),
     },
     _count: { _all: true },
   });
@@ -62,6 +82,7 @@ export async function GET() {
     neutralPercent,
     dominantLean,
     samplePeriod: "7d" as const,
+    scopedInstrument: instrument ?? null,
   });
   response.headers.set("Cache-Control", "public, max-age=120, s-maxage=120");
   return response;
