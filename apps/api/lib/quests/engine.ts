@@ -23,7 +23,7 @@ export type TxClient = Omit<
   "$connect" | "$disconnect" | "$on" | "$transaction" | "$use" | "$extends"
 >;
 
-export type QuestAction = "PREDICTION" | "POLL_VOTE" | "MARKET_CREATE";
+export type QuestAction = "PREDICTION" | "POLL_VOTE" | "MARKET_CREATE" | "APP_OPEN";
 
 /** A completed quest reward returned to callers for optional UI feedback. */
 export type CompletedQuestReward = {
@@ -96,6 +96,9 @@ export async function getOrCreateTodayQuests(
  * For MARKET_CREATE:
  *   - Completes CREATE_MARKET if not yet done today
  *
+ * For APP_OPEN:
+ *   - Completes DAILY_LOGIN if not yet done today (daily login bonus)
+ *
  * Returns an array of completed quest rewards so callers can surface them in
  * API responses for UI feedback (e.g. "Quest complete! +50 pts").
  */
@@ -162,6 +165,8 @@ export async function checkAndCompleteQuests(
     } else if (action === "POLL_VOTE" && quest.questType === "VOTE_ON_POLL") {
       shouldComplete = true;
     } else if (action === "MARKET_CREATE" && quest.questType === "CREATE_MARKET") {
+      shouldComplete = true;
+    } else if (action === "APP_OPEN" && quest.questType === "DAILY_LOGIN") {
       shouldComplete = true;
     }
 
@@ -321,6 +326,8 @@ function getRelevantQuestTypes(action: QuestAction): QuestType[] {
       return ["VOTE_ON_POLL"];
     case "MARKET_CREATE":
       return ["CREATE_MARKET"];
+    case "APP_OPEN":
+      return ["DAILY_LOGIN"];
   }
 }
 

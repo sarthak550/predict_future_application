@@ -7,7 +7,7 @@
  * issued to new users; existing completed rows remain for history.
  */
 
-export type QuestType = "PREDICT_3" | "PREDICT_5" | "VOTE_ON_POLL" | "CREATE_MARKET";
+export type QuestType = "PREDICT_3" | "PREDICT_5" | "VOTE_ON_POLL" | "CREATE_MARKET" | "DAILY_LOGIN";
 
 export type QuestDefinition = {
   questType: QuestType;
@@ -42,6 +42,12 @@ export const QUEST_DEFINITIONS: QuestDefinition[] = [
     description: "Create a market today",
     goal: 1,
     rewardAmount: 75,
+  },
+  {
+    questType: "DAILY_LOGIN",
+    description: "Open the app today",
+    goal: 1,
+    rewardAmount: 100,
   },
 ];
 

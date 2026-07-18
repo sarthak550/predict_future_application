@@ -69,16 +69,19 @@ export async function GET(request: Request) {
       }),
     ]);
 
-    // Build progress map per quest type
+    // Build quest map by questType for lookup
+    const questRowMap = new Map(questRows.map((r) => [r.questType, r]));
+
+    // Build progress map per quest type. DAILY_LOGIN has no dedicated action
+    // table to count (app opens aren't logged) so progress is derived from
+    // the quest row's own completed flag — goal is always 1.
     const progressMap: Record<QuestType, number> = {
       PREDICT_3: predictionCount,
       PREDICT_5: predictionCount,
       VOTE_ON_POLL: pollVoteCount,
       CREATE_MARKET: marketCount,
+      DAILY_LOGIN: questRowMap.get("DAILY_LOGIN")?.completed ? 1 : 0,
     };
-
-    // Build quest map by questType for lookup
-    const questRowMap = new Map(questRows.map((r) => [r.questType, r]));
 
     const quests = QUEST_DEFINITIONS.map((def) => {
       const row = questRowMap.get(def.questType);

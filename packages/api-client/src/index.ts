@@ -3,6 +3,7 @@ import type {
   ApiBigCallResponse,
   ApiCategoryTopResponse,
   ApiCricketMatchDetail,
+  ApiDailyBonusResponse,
   ApiDailyQuests,
   ApiExpertLeaderboardEntry,
   ApiExpertOpinionTallies,
@@ -972,6 +973,21 @@ export function createApiClient(options: ApiClientOptions) {
      */
     getQuestsToday() {
       return request<ApiDailyQuests>("/api/quests/today", undefined, { auth: true });
+    },
+
+    /**
+     * Claims the daily login bonus (+100 pts, once per IST day) via the
+     * DAILY_LOGIN quest. Idempotent — safe to call on every app open; the
+     * server credits at most once per IST calendar day. Intended to be
+     * called fire-and-forget on cold launch and after sign-in.
+     * Auth: required.
+     */
+    claimDailyBonus() {
+      return request<ApiDailyBonusResponse>(
+        "/api/users/me/daily-bonus",
+        undefined,
+        { method: "POST", auth: true }
+      );
     },
 
     // ─── Referral rewards (S24-T6) ────────────────────────────────────────────

@@ -26,6 +26,7 @@ const QUEST_LABELS: Record<string, string> = {
   PREDICT_5: "Make 5 Predictions",
   VOTE_ON_POLL: "Vote on a Poll",
   CREATE_MARKET: "Create a Market",
+  DAILY_LOGIN: "Open the App",
 };
 
 function getQuestLabel(questType: string): string {

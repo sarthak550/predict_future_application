@@ -1240,7 +1240,7 @@ export type ApiFollowerEntry = {
 // ─── Daily quests (S24-T4) ────────────────────────────────────────────────────
 
 /** Valid daily quest type identifiers. */
-export type AppQuestType = "PREDICT_3" | "PREDICT_5" | "VOTE_ON_POLL" | "CREATE_MARKET";
+export type AppQuestType = "PREDICT_3" | "PREDICT_5" | "VOTE_ON_POLL" | "CREATE_MARKET" | "DAILY_LOGIN";
 
 /**
  * A single daily quest entry as returned by GET /api/quests/today.
@@ -1273,6 +1273,18 @@ export type ApiDailyQuests = {
 export type ApiQuestReward = {
   questType: string;
   reward: number;
+};
+
+/**
+ * Response shape of POST /api/users/me/daily-bonus — the daily login bonus
+ * (DAILY_LOGIN quest, +100 pts once per IST day). Fired fire-and-forget by
+ * the mobile client on cold launch / sign-in; idempotent server-side.
+ */
+export type ApiDailyBonusResponse = {
+  credited: boolean;
+  amount: number;
+  newBalance: number;
+  alreadyClaimedToday: boolean;
 };
 
 // ─── Finance: My Calls Digest (S33-T2 / S33-T3) ───────────────────────────────

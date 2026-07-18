@@ -2,7 +2,7 @@ import { router } from "expo-router";
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import * as SecureStore from "expo-secure-store";
 
-import { setApiAuthFailureHandler, setApiTokenCache } from "@/lib/api";
+import { mobileApi, setApiAuthFailureHandler, setApiTokenCache } from "@/lib/api";
 
 const SESSION_TOKEN_KEY = "session_token";
 const SESSION_USER_ID_KEY = "session_user_id";
@@ -41,6 +41,19 @@ async function resolveInitialSession(): Promise<Session | null> {
   return null;
 }
 
+/**
+ * Fire-and-forget daily login bonus claim (+100 pts once per IST day, via
+ * the DAILY_LOGIN quest). Non-blocking and idempotent server-side — never
+ * gates navigation and swallows errors so a flaky network never surfaces
+ * to the user. Called on cold launch (stored token) and after signIn()
+ * (fresh login/signup).
+ */
+function claimDailyBonusSilently(): void {
+  mobileApi.claimDailyBonus().catch((err) => {
+    console.warn("[SessionProvider] claimDailyBonus failed (non-fatal):", err);
+  });
+}
+
 export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [status, setStatus] = useState<SessionState["status"]>("loading");
@@ -59,6 +72,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       sessionRef.current = next;
       setSession(next);
       setStatus(next ? "authenticated" : "unauthenticated");
+      if (next) claimDailyBonusSilently();
     });
     return () => {
       cancelled = true;
@@ -76,6 +90,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       sessionRef.current = next;
       setSession(next);
       setStatus("authenticated");
+      claimDailyBonusSilently();
 
       const newFlag = args.isNew ?? false;
       isNewUserRef.current = newFlag;
