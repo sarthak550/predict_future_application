@@ -1,3 +1,4 @@
+export * from "./experts/scorecard";
 export * from "./hosts/trust";
 export * from "./markets/access";
 export * from "./markets/numeric";

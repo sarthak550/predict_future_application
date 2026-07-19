@@ -846,6 +846,11 @@ model Expert {
   avatarUrl    String?
   tipranksUrl  String?
   linkedinUrl  String?
+  /// Public profile URL slug, e.g. "rupak-de-lkp-securities" (apps/web/app/analysts/[slug]).
+  /// Nullable so the column can be added to prod without a backfill in the same deploy —
+  /// see apps/api/scripts/backfill-expert-slugs.ts. New experts get one at creation time via
+  /// apps/api/lib/finance/expertSlug.ts (called from lib/ai/extractExpertOpinions.ts).
+  slug         String?         @unique
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt
   followers    ExpertFollow[]

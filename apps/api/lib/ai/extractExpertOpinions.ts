@@ -11,6 +11,7 @@ import { OpinionDirection, type PrismaClient } from "@prisma/client";
 
 import { checkTickerMap, extractInstrumentFromQuote, normalizeYahooTicker } from "@/lib/ai/extractInstrument";
 import { callGeminiAI } from "@/lib/ai/gemini";
+import { generateUniqueExpertSlug } from "@/lib/finance/expertSlug";
 import { notifyExpertFollowersOnNewOpinion } from "@/lib/notifyExpertFollowersOnNewOpinion";
 
 /**
@@ -904,6 +905,10 @@ export async function persistExpertOpinions(
         ? `${opinion.expertOrganization} Analysis`
         : opinion.expertName;
 
+      // Pre-compute a collision-checked slug for a *new* expert. Wasted if this turns out
+      // to be an upsert-update (expert already exists), but cheap — one indexed lookup.
+      const candidateSlug = await generateUniqueExpertSlug(prisma, displayName, opinion.expertOrganization);
+
       // Upsert expert: if (name, organization) pair doesn't exist, create with appropriate verified flag
       const expert = await prisma.expert.upsert({
         where: {
@@ -912,12 +917,13 @@ export async function persistExpertOpinions(
             organization: opinion.expertOrganization,
           },
         },
-        update: {}, // Don't overwrite verified=true experts
+        update: {}, // Don't overwrite verified=true experts (or their existing slug)
         create: {
           name: displayName,
           organization: opinion.expertOrganization,
           // Source attributions are pre-verified (trusted publications), named analysts are not
           verified: opinion.isSourceAttribution,
+          slug: candidateSlug,
         },
       });
 
