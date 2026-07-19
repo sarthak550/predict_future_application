@@ -9,7 +9,6 @@ import {
   fetchLatestFilings,
   fetchLatestNews,
   fetchTopMovers,
-  type MoverRow,
 } from "@/lib/finance/marketPulse";
 import { formatRelativeTime } from "@/lib/utils";
 
