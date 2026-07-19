@@ -1,33 +1,66 @@
 /**
  * POST /api/cron/market-moves-movers
  *
- * Market Pulse (Phase 1) — polls NSE's NIFTY 100 (NIFTY 50 + Next 50) movers endpoint
- * (see apps/api/lib/marketMoves/nse.ts — the same Akamai-blocking caveat
- * documented there applies here) and upserts today's top gainers/losers into
- * `MarketMoverSnapshot`, one row per (sessionDate, tickerSymbol).
+ * Market Pulse — two enrichment sources feed `MarketMoverSnapshot`, one row
+ * per (sessionDate, tickerSymbol):
  *
- * Weekday + market-hours gated (09:15-15:30 IST, Mon-Fri) — silently no-ops
- * outside that window rather than upserting stale/closed-market snapshots.
- * No holiday-calendar awareness in Phase 1 (see marketHours.ts doc comment).
+ *  1. LIVE (intraday): polls NSE's `allSec` live-variations endpoint (see
+ *     apps/api/lib/marketMoves/nse.ts — the same Akamai-blocking caveat
+ *     documented there applies here). Hard-capped by NSE itself at the
+ *     top ~20 gainers/losers; we store the top 25 of whatever it returns.
+ *     Weekday + market-hours gated (09:15-15:30 IST, Mon-Fri) — silently
+ *     no-ops outside that window rather than upserting stale/closed-market
+ *     snapshots from the live endpoint. No holiday-calendar awareness in
+ *     Phase 1 (see marketHours.ts doc comment).
+ *
+ *  2. EOD (full-market): fetches NSE's keyless end-of-day bhavcopy CSV (see
+ *     apps/api/lib/marketMoves/bhavcopy.ts) covering EVERY listed EQ-series
+ *     security (~2,380 names, ~1,993 after a liquidity filter) — not capped
+ *     at 20/direction like the live endpoint. Stores the top 100
+ *     gainers/losers by % change. This pass runs when either:
+ *       (a) the request is `?source=eod` explicitly, or
+ *       (b) the request lands outside market hours (i.e. the case where the
+ *           live-pass gate above would otherwise just skip) AND that day's
+ *           bhavcopy file has already been published by NSE (it typically
+ *           appears some time after the 15:30 IST close; requesting it
+ *           earlier — or on a weekend/holiday with no session — 404s, in
+ *           which case this run falls back to the original "skipped"
+ *           no-op response).
+ *     Re-running the EOD pass simply re-upserts the same ~200 rows
+ *     (idempotent) with fresh ranks — safe to hit repeatedly through the
+ *     evening until the file appears.
  *
  * Protected by CRON_SECRET (Bearer or x-cron-secret header). Intended
- * cadence: every 15 min via EC2 crontab during market hours:
- *   15,30,45,0 9-15 * * 1-5 curl -s -X POST https://<host>/api/cron/market-moves-movers \
- *       -H "Authorization: Bearer $CRON_SECRET"
- * (the crontab's own schedule is a coarse filter; this route's own gate is
- * the source of truth and safely no-ops if the crontab fires early/late/on
- * a holiday).
+ * cadence — mirrors the existing EC2 crontab pattern (see run-cron.sh):
+ *   LIVE, every 15 min during market hours:
+ *     15,30,45,0 9-15 * * 1-5 curl -s -X POST https://<host>/api/cron/market-moves-movers \
+ *         -H "Authorization: Bearer $CRON_SECRET"
+ *   EOD, once after close (19:15 IST = 13:45 UTC), explicit ?source=eod so
+ *   it doesn't depend on the outside-market-hours auto-fallback timing:
+ *     45 13 * * 1-5 curl -s -X POST "https://<host>/api/cron/market-moves-movers?source=eod" \
+ *         -H "Authorization: Bearer $CRON_SECRET"
+ *   (run-cron.sh on the box currently takes just a route name and has no
+ *   query-string passthrough — recommend either extending it to accept an
+ *   optional second arg appended as `?source=eod`, or adding this as a
+ *   standalone crontab line with the raw curl command above. Not applied to
+ *   the crontab as part of this change — see CTO report.)
+ *   (the crontab's own schedule is a coarse filter; this route's own gates
+ *   are the source of truth and safely no-op if the crontab fires
+ *   early/late/on a holiday).
  *
  * isUnusualVolume is a same-day cross-sectional heuristic (today's volume vs.
  * the median of today's scanned universe) — see schema doc comment on
  * MarketMoverSnapshot for why this isn't a true historical rolling average.
+ * Computed identically (median of the batch being upserted) for both the
+ * LIVE and EOD passes.
  *
  * Prod note: run `prisma db push` to land the MarketMoverSnapshot model
- * before activating this cron.
+ * before activating this cron (already applied — see Phase 1 notes).
  */
 
 import { NextResponse } from "next/server";
 
+import { fetchBhavcopyMovers } from "@/lib/marketMoves/bhavcopy";
 import { fetchNseMovers } from "@/lib/marketMoves/nse";
 import type { FetchedMarketMover } from "@/lib/marketMoves/types";
 import { isNseWeekdayMarketHours, getIstSessionDate } from "@/lib/marketMoves/marketHours";
@@ -50,35 +83,24 @@ function median(values: number[]): number {
 }
 
 const UNUSUAL_VOLUME_MULTIPLE = 3;
-const TOP_N_PER_DIRECTION = 25; // headroom above the 5+5 the mobile strip shows, for future ranking tweaks
+const TOP_N_PER_DIRECTION_LIVE = 25; // headroom above the 5+5 the mobile strip shows, for future ranking tweaks
+const TOP_N_PER_DIRECTION_EOD = 100; // full-market pass: NSE's bhavcopy has no 20/direction cap, so we can store far deeper
 
-async function run(request: Request) {
-  if (!hasCronAccess(request)) {
-    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
-  }
-
-  // `?force=1` bypasses the market-hours gate for a manual backfill — NSE's
-  // endpoint still returns the last session's closing movers after close, so a
-  // forced run outside hours populates today's gainers AND losers on demand.
-  const force = new URL(request.url).searchParams.get("force") === "1";
-  if (!force && !isNseWeekdayMarketHours()) {
-    return NextResponse.json({ ok: true, skipped: "outside_market_hours" });
-  }
-
-  const movers = await fetchNseMovers().catch((err: unknown) => {
-    console.error("[cron/market-moves-movers] NSE fetch threw unexpectedly:", err);
-    return [] as FetchedMarketMover[];
-  });
-
-  if (movers.length === 0) {
-    return NextResponse.json({ ok: true, fetched: 0, upserted: 0, reason: "no_data" });
-  }
-
-  // Enrichment: NSE's index-constituent endpoint doesn't carry a full company
-  // name, only the symbol. Backfill from the most recently seen announcement
-  // for that symbol (already flowing in via the announcements cron), when
-  // one exists — a free, incremental improvement over showing the raw ticker
-  // twice. Falls back to the ticker symbol itself when no match exists yet.
+/**
+ * Shared upsert path for both the LIVE and EOD passes: enriches company
+ * names, computes the cross-sectional unusual-volume heuristic and rank,
+ * and upserts into MarketMoverSnapshot keyed on (sessionDate, tickerSymbol).
+ * Re-running with the same sessionDate is idempotent — later ranks simply
+ * overwrite earlier ones for that day.
+ */
+async function upsertMovers(
+  movers: FetchedMarketMover[],
+  sessionDate: Date,
+  topNPerDirection: number
+): Promise<{ gainers: number; losers: number; upserted: number; failed: number }> {
+  // Enrichment: fall back to the most recently seen announcement company name
+  // for any symbol whose mover row didn't resolve one (e.g. missing from the
+  // equity master) before falling back to the raw ticker.
   const symbols = movers.map((m) => m.tickerSymbol);
   const knownCompanies = await prisma.marketMoveEvent.findMany({
     where: { tickerSymbol: { in: symbols }, source: "NSE" },
@@ -90,18 +112,17 @@ async function run(request: Request) {
   });
   const companyNameBySymbol = new Map(knownCompanies.map((c) => [c.tickerSymbol, c.companyName]));
 
-  const sessionDate = getIstSessionDate();
   const volumes = movers.map((m) => m.volume).filter((v) => v > 0);
   const medianVolume = median(volumes);
 
   const gainers = movers
     .filter((m) => m.direction === "GAINER")
     .sort((a, b) => b.changePercent - a.changePercent)
-    .slice(0, TOP_N_PER_DIRECTION);
+    .slice(0, topNPerDirection);
   const losers = movers
     .filter((m) => m.direction === "LOSER")
     .sort((a, b) => a.changePercent - b.changePercent)
-    .slice(0, TOP_N_PER_DIRECTION);
+    .slice(0, topNPerDirection);
 
   let upserted = 0;
   let failed = 0;
@@ -111,11 +132,12 @@ async function run(request: Request) {
       const m = group[i];
       const rank = i + 1;
       const isUnusualVolume = medianVolume > 0 && m.volume >= medianVolume * UNUSUAL_VOLUME_MULTIPLE;
-      // Name priority: the NSE equity-master name (already on m.companyName when
-      // mapped) wins; only when the symbol was unmapped there (m.companyName ===
-      // ticker) do we fall back to an announcement-derived name, then the ticker.
-      const csvName = m.companyName !== m.tickerSymbol ? m.companyName : null;
-      const companyName = csvName ?? companyNameBySymbol.get(m.tickerSymbol) ?? m.companyName;
+      // Name priority: a resolved name on the mover row itself (equity-master
+      // match, in either fetcher) wins; only when the symbol was unmapped
+      // there (companyName === ticker) do we fall back to an
+      // announcement-derived name, then the ticker.
+      const resolvedName = m.companyName !== m.tickerSymbol ? m.companyName : null;
+      const companyName = resolvedName ?? companyNameBySymbol.get(m.tickerSymbol) ?? m.companyName;
       try {
         await prisma.marketMoverSnapshot.upsert({
           where: { sessionDate_tickerSymbol: { sessionDate, tickerSymbol: m.tickerSymbol } },
@@ -150,14 +172,75 @@ async function run(request: Request) {
     }
   }
 
-  return NextResponse.json({
-    ok: true,
-    fetched: movers.length,
-    gainers: gainers.length,
-    losers: losers.length,
-    upserted,
-    failed,
+  return { gainers: gainers.length, losers: losers.length, upserted, failed };
+}
+
+/** Runs the intraday LIVE pass (NSE's capped ~top-20/direction variations endpoint). */
+async function runLivePass(sessionDate: Date) {
+  const movers = await fetchNseMovers().catch((err: unknown) => {
+    console.error("[cron/market-moves-movers] NSE live fetch threw unexpectedly:", err);
+    return [] as FetchedMarketMover[];
   });
+
+  if (movers.length === 0) {
+    return NextResponse.json({ ok: true, source: "live", fetched: 0, upserted: 0, reason: "no_data" });
+  }
+
+  const result = await upsertMovers(movers, sessionDate, TOP_N_PER_DIRECTION_LIVE);
+  return NextResponse.json({ ok: true, source: "live", fetched: movers.length, ...result });
+}
+
+/** Runs the EOD full-market pass (NSE's uncapped bhavcopy). Returns null if the file isn't published yet. */
+async function runEodPass(sessionDate: Date): Promise<ReturnType<typeof NextResponse.json> | null> {
+  const movers = await fetchBhavcopyMovers(sessionDate).catch((err: unknown) => {
+    console.error("[cron/market-moves-movers] EOD bhavcopy fetch threw unexpectedly:", err);
+    return null;
+  });
+
+  if (!movers) return null; // not published yet / no session that day — let the caller decide the response
+  if (movers.length === 0) {
+    return NextResponse.json({ ok: true, source: "eod", fetched: 0, upserted: 0, reason: "no_data" });
+  }
+
+  const result = await upsertMovers(movers, sessionDate, TOP_N_PER_DIRECTION_EOD);
+  return NextResponse.json({ ok: true, source: "eod", fetched: movers.length, ...result });
+}
+
+async function run(request: Request) {
+  if (!hasCronAccess(request)) {
+    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  }
+
+  const url = new URL(request.url);
+  const sourceParam = url.searchParams.get("source");
+  const sessionDate = getIstSessionDate();
+
+  // Explicit EOD trigger: always attempts the bhavcopy pass regardless of
+  // market hours (this is precisely how the file is meant to be pulled — the
+  // evening after close). Reports the "not published yet" case explicitly
+  // rather than falling through to the live pass, since the caller asked for
+  // EOD specifically.
+  if (sourceParam === "eod") {
+    const eodResult = await runEodPass(sessionDate);
+    return eodResult ?? NextResponse.json({ ok: true, source: "eod", skipped: "not_yet_published" });
+  }
+
+  // `?force=1` bypasses the market-hours gate for a manual LIVE backfill —
+  // NSE's live endpoint still returns the last session's closing movers after
+  // close, so a forced run outside hours populates today's gainers AND losers
+  // on demand.
+  const force = url.searchParams.get("force") === "1";
+  if (!force && !isNseWeekdayMarketHours()) {
+    // Outside market hours and not forced — this is where the LIVE pass would
+    // previously just no-op. Before giving up, opportunistically try the EOD
+    // bhavcopy: if NSE has already published today's file by the time this
+    // cron tick lands, we get a full-market enrichment instead of nothing.
+    const eodResult = await runEodPass(sessionDate);
+    if (eodResult) return eodResult;
+    return NextResponse.json({ ok: true, skipped: "outside_market_hours" });
+  }
+
+  return runLivePass(sessionDate);
 }
 
 export const GET = run;

@@ -227,8 +227,11 @@ function parseEquityMasterCsv(csv: string): Map<string, string> {
  * any fetch/parse failure returns the last good cache (or an empty map) so a name
  * lookup never blocks or breaks the movers pipeline — callers fall back to the
  * ticker symbol when a name is missing.
+ *
+ * Exported so the EOD bhavcopy fetcher (bhavcopy.ts) can reuse the same cache
+ * to label full-market movers, rather than duplicating the fetch+parse+cache.
  */
-async function fetchEquityNames(): Promise<Map<string, string>> {
+export async function fetchEquityNames(): Promise<Map<string, string>> {
   const now = Date.now();
   if (equityNameCache && now - equityNameCache.at < EQUITY_NAME_TTL_MS) {
     return equityNameCache.map;
