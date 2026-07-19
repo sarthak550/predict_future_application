@@ -155,7 +155,7 @@ export default async function ModerationPage() {
                             resolutionSourceType: story.market.resolutionSourceType,
                             resolutionSourceName: story.market.resolutionSourceName,
                             resolutionSourceUrl: story.market.resolutionSourceUrl,
-                            resolutionRuleText: story.market.resolutionRuleText,
+                            resolutionRuleText: story.market.resolutionRuleText ?? "",
                             fallbackRuleText: story.market.fallbackRuleText
                           }
                         : null
