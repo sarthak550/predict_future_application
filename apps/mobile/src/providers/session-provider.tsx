@@ -1,6 +1,7 @@
 import { router } from "expo-router";
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import * as SecureStore from "expo-secure-store";
+import { AppState } from "react-native";
 
 import { mobileApi, setApiAuthFailureHandler, setApiTokenCache } from "@/lib/api";
 
@@ -78,6 +79,42 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       cancelled = true;
     };
   }, []);
+
+  // Keep the daily login bonus flowing while the app stays open — the cold-launch
+  // and signIn claims only cover app *starts*. Two extra triggers, only while
+  // authenticated (the server credits at most once per IST day, so every extra
+  // fire is a harmless no-op):
+  //   1. On foreground return (AppState → "active") — covers a user who
+  //      backgrounds the app and taps back in after midnight.
+  //   2. At the next IST-midnight boundary while the app is continuously open —
+  //      covers a user scrolling straight across midnight without ever
+  //      backgrounding; the timer re-arms for each following day.
+  useEffect(() => {
+    if (status !== "authenticated") return;
+
+    const sub = AppState.addEventListener("change", (nextState) => {
+      if (nextState === "active") claimDailyBonusSilently();
+    });
+
+    let midnightTimer: ReturnType<typeof setTimeout> | undefined;
+    const armMidnightTimer = () => {
+      const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000; // IST = UTC+5:30
+      const DAY_MS = 24 * 60 * 60 * 1000;
+      const istNow = Date.now() + IST_OFFSET_MS;
+      const msIntoIstDay = ((istNow % DAY_MS) + DAY_MS) % DAY_MS;
+      const msUntilIstMidnight = DAY_MS - msIntoIstDay + 2000; // +2s past the boundary
+      midnightTimer = setTimeout(() => {
+        claimDailyBonusSilently();
+        armMidnightTimer(); // re-arm for the following IST midnight
+      }, msUntilIstMidnight);
+    };
+    armMidnightTimer();
+
+    return () => {
+      sub.remove();
+      if (midnightTimer) clearTimeout(midnightTimer);
+    };
+  }, [status]);
 
   const signIn = useCallback(
     (args: { userId: string; username: string; token: string; isNew?: boolean }) => {
