@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
-import { ArrowUpRight, ChevronDown, TrendingDown, TrendingUp } from "lucide-react";
+import { ArrowUpRight, ChevronDown } from "lucide-react";
 
 import { AnalystDisclaimerFooter } from "@/components/finance/disclaimer-footer";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { MoverList } from "@/components/finance/mover-list";
 import {
   fetchLatestFilings,
   fetchLatestNews,
@@ -85,47 +86,6 @@ function TopMoversSection({ movers }: { movers: Awaited<ReturnType<typeof fetchT
         </div>
       )}
     </section>
-  );
-}
-
-function MoverList({ title, rows, tone }: { title: string; rows: MoverRow[]; tone: "up" | "down" }) {
-  const Icon = tone === "up" ? TrendingUp : TrendingDown;
-  const toneClass = tone === "up" ? "text-emerald-600" : "text-rose-600";
-
-  return (
-    <Card>
-      <CardContent className="p-5">
-        <p className={`mb-3 flex items-center gap-1.5 text-sm font-semibold ${toneClass}`}>
-          <Icon className="h-4 w-4" />
-          {title}
-        </p>
-        {rows.length === 0 ? (
-          <p className="text-sm text-ink-400">No {title.toLowerCase()} captured this session.</p>
-        ) : (
-          <ul className="divide-y divide-ink-100">
-            {rows.map((row) => (
-              <li key={row.tickerSymbol} className="flex items-center justify-between gap-3 py-2.5">
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium text-ink-900">{row.companyName}</p>
-                  <p className="text-xs text-ink-400">{row.tickerSymbol}</p>
-                </div>
-                <div className="text-right">
-                  <p className={`text-sm font-semibold ${toneClass}`}>
-                    {row.changePercent > 0 ? "+" : ""}
-                    {row.changePercent.toFixed(2)}%
-                  </p>
-                  {row.isUnusualVolume && (
-                    <p className="text-[10px] font-medium uppercase tracking-wide text-signal-amber">
-                      Unusual volume
-                    </p>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </CardContent>
-    </Card>
   );
 }
 

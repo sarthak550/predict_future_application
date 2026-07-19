@@ -1,6 +1,5 @@
 import { prisma } from "@/lib/prisma";
 
-const MOVERS_STRIP_SIZE = 5;
 const NEWS_LIMIT = 20;
 const FILINGS_LIMIT = 10;
 
@@ -42,12 +41,10 @@ export async function fetchTopMovers(): Promise<TopMovers> {
     prisma.marketMoverSnapshot.findMany({
       where: { sessionDate: latest.sessionDate, direction: "GAINER" },
       orderBy: { rank: "asc" },
-      take: MOVERS_STRIP_SIZE,
     }),
     prisma.marketMoverSnapshot.findMany({
       where: { sessionDate: latest.sessionDate, direction: "LOSER" },
       orderBy: { rank: "asc" },
-      take: MOVERS_STRIP_SIZE,
     }),
   ]);
 
