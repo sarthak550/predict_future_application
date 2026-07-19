@@ -5,6 +5,7 @@ export * from "./markets/numeric";
 export * from "./markets/policies";
 export * from "./markets/probability";
 export * from "./markets/ranking";
+export * from "./marketPulse/newsQuality";
 export * from "./news/category-map";
 export * from "./news/types";
 export * from "./stories/ranking";

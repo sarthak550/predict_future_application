@@ -1,3 +1,5 @@
+import { refineStockNews } from "@predict-future/business-rules";
+
 import { prisma } from "@/lib/prisma";
 
 const NEWS_LIMIT = 20;
@@ -74,19 +76,19 @@ export interface NewsRow {
 }
 
 /**
- * Latest MarketMoveNews rows, newest first. Simplified relative to
- * apps/api/app/api/finance/market-moves/news/route.ts — that route runs a
- * multi-pass near-duplicate collapse (rewritten-headline clustering, per-
- * ticker cap) tied to apps/api-only helpers (lib/marketMoves/googleNews.ts)
- * that apps/web cannot import. This applies only an exact-headline dedup
- * (case-insensitive), which is the majority of the benefit for a public
- * SEO page at a fraction of the complexity. Revisit if visibly duplicated
- * headlines become a real quality complaint on this page specifically.
+ * Latest MarketMoveNews rows, newest first, run through the same read-side
+ * quality pipeline as apps/api/app/api/finance/market-moves/news/route.ts
+ * (near-duplicate collapse across NSE/BSE twin rows and reworded headlines,
+ * publisher-credibility blocklist, trusted-publisher tie-break, per-ticker
+ * cap) — see packages/business-rules/src/marketPulse/newsQuality.ts. Both
+ * apps share one implementation so this public SEO page no longer shows the
+ * full unfiltered mess that only an exact-headline dedup used to leave
+ * behind.
  */
 export async function fetchLatestNews(limit = NEWS_LIMIT): Promise<NewsRow[]> {
   const rows = await prisma.marketMoveNews.findMany({
     orderBy: [{ publishedAt: "desc" }, { id: "asc" }],
-    take: limit * 2,
+    take: limit * 6,
     select: {
       id: true,
       tickerSymbol: true,
@@ -98,17 +100,7 @@ export async function fetchLatestNews(limit = NEWS_LIMIT): Promise<NewsRow[]> {
     },
   });
 
-  const seen = new Set<string>();
-  const deduped: NewsRow[] = [];
-  for (const row of rows) {
-    const key = row.headline.toLowerCase().replace(/[^a-z0-9]/g, "");
-    if (seen.has(key)) continue;
-    seen.add(key);
-    deduped.push(row);
-    if (deduped.length >= limit) break;
-  }
-
-  return deduped;
+  return refineStockNews(rows, { limit });
 }
 
 export interface FilingRow {
