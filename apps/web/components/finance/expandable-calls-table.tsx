@@ -89,9 +89,12 @@ export function ExpandableCallsTable({ calls }: { calls: ExpandableCall[] }) {
                       <ChevronDown
                         className={`mt-0.5 h-3.5 w-3.5 shrink-0 text-ink-400 transition-transform ${isOpen ? "rotate-180" : ""}`}
                       />
+                      {/* Always show the short preview — the expanded panel below
+                          owns the full quote, so un-truncating here would render
+                          the same text twice. */}
                       <span>
                         &ldquo;
-                        {needsTruncation && !isOpen
+                        {needsTruncation
                           ? `${call.quote.slice(0, QUOTE_PREVIEW_LENGTH)}…`
                           : call.quote}
                         &rdquo;
