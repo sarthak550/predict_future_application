@@ -16,13 +16,18 @@
  */
 
 import { prisma } from "../lib/prisma";
-import { parseOpinionTimeframe } from "../lib/ai/evaluateOpinionResolution";
+import { parseOpinionTimeframe, wasLastCallRateLimited } from "../lib/ai/evaluateOpinionResolution";
 
 // ─── Configuration ─────────────────────────────────────────────────────────────
 
 const LIMIT = parseInt(process.env.LIMIT ?? "200", 10);
 const DELAY_MS = parseInt(process.env.DELAY_MS ?? "400", 10);
 const DRY_RUN = process.env.DRY_RUN === "true";
+
+/** Max AI attempts before an opinion is permanently marked NOT_GRADED. Must match the
+ *  PREPROCESS_MAX_ATTEMPTS constant in app/api/cron/auto-resolve-opinions/route.ts so manual
+ *  runs of this script and the nightly cron agree on when to stop retrying a row. */
+const PREPROCESS_MAX_ATTEMPTS = 5;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -59,14 +64,19 @@ async function main() {
   console.log("=".repeat(60));
   console.log();
 
-  // Fetch PENDING opinions that have no resolutionWindowDays yet
+  // Fetch PENDING opinions that have no resolutionWindowDays yet.
+  // Oldest first (FIFO) — matches the cron route's ordering. Ordering by publishedAt DESC
+  // was the root cause of the backlog this script drains: it let freshly ingested opinions
+  // permanently queue-jump ahead of older ones, so old rows never got attempted.
   const opinions = await prisma.expertOpinion.findMany({
     where: {
       resolutionStatus: "PENDING",
       resolutionWindowDays: null,
       suppressedAt: null,
+      // Exclude opinions that have already hit the attempt cap (mirrors the cron route).
+      preprocessAttempts: { lt: PREPROCESS_MAX_ATTEMPTS },
     },
-    orderBy: { publishedAt: "desc" },
+    orderBy: { publishedAt: "asc" },
     take: LIMIT,
     include: {
       story: { select: { headline: true } },
@@ -102,19 +112,51 @@ async function main() {
       quote: opinion.quote,
       direction: opinion.direction,
       publishedAt: opinion.publishedAt,
+      analystCallAt: opinion.analystCallAt,
       headline,
     });
 
     if (result === null) {
+      // Don't burn an attempt on a transient AI rate-limit (429) — mirrors the cron route.
+      if (wasLastCallRateLimited()) {
+        console.log(`  Rate-limited — skipping this run, attempt counter unchanged\n`);
+        failed++;
+        await sleep(DELAY_MS);
+        continue;
+      }
+
       console.log(`  Failed (AI error) — skipping\n`);
       failed++;
+
+      if (!DRY_RUN) {
+        const attemptNumber = opinion.preprocessAttempts + 1;
+        await prisma.expertOpinion.update({
+          where: { id: opinion.id },
+          data: { preprocessAttempts: { increment: 1 }, lastPreprocessAttemptAt: new Date() },
+        });
+        if (attemptNumber >= PREPROCESS_MAX_ATTEMPTS) {
+          await prisma.expertOpinion.update({
+            where: { id: opinion.id },
+            data: {
+              resolutionStatus: "NOT_GRADED",
+              resolutionNote: "AI failed to parse timeframe after 5 attempts",
+              resolvedAt: new Date(),
+            },
+          });
+          console.log(`  Capped after ${attemptNumber} failed attempts — marked NOT_GRADED\n`);
+        }
+      }
+
       await sleep(DELAY_MS);
       continue;
     }
 
     const windowDays = result.impliedWindowDays;
-    // Compute eligible date: publishedAt + windowDays
-    const eligibleAt = new Date(opinion.publishedAt.getTime() + windowDays * 24 * 60 * 60 * 1000);
+    // Compute eligible date from the analyst's actual call date when known, falling back to
+    // publishedAt — matches the cron route (previously this script always used publishedAt,
+    // which could disagree with the cron's computed resolutionEligibleAt for the same row).
+    const callDate = opinion.analystCallAt ?? opinion.publishedAt;
+    const eligibleAt = new Date(callDate.getTime() + windowDays * 24 * 60 * 60 * 1000);
 
     const label = bucketLabel(windowDays);
     distribution.set(label, (distribution.get(label) ?? 0) + 1);

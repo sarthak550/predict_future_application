@@ -21,13 +21,17 @@
  */
 
 import { prisma } from "../lib/prisma";
-import { evaluateOpinionResolution } from "../lib/ai/evaluateOpinionResolution";
+import { evaluateOpinionResolution, wasLastCallRateLimited } from "../lib/ai/evaluateOpinionResolution";
 
 // ─── Configuration ─────────────────────────────────────────────────────────────
 
 const DRY_RUN = process.env.DRY_RUN === "true";
 const LIMIT = parseInt(process.env.LIMIT ?? "200", 10);
 const DELAY_MS = parseInt(process.env.DELAY_MS ?? "600", 10);
+
+/** Max AI attempts before an opinion is permanently marked NOT_GRADED. Must match
+ *  RESOLVE_MAX_ATTEMPTS in app/api/cron/auto-resolve-opinions/route.ts. */
+const RESOLVE_MAX_ATTEMPTS = 5;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -38,6 +42,7 @@ const summary = {
   miss: 0,
   notGraded: 0,
   skipped: 0,
+  capped: 0,
   noWindow: 0,
   total: 0,
 };
@@ -64,6 +69,8 @@ async function main() {
       resolutionEligibleAt: { lte: now },
       resolutionWindowDays: { not: null },
       suppressedAt: null,
+      // Exclude opinions that have already hit the attempt cap (mirrors the cron route).
+      resolutionAttempts: { lt: RESOLVE_MAX_ATTEMPTS },
     },
     orderBy: { resolutionEligibleAt: "asc" },
     take: LIMIT,
@@ -108,20 +115,59 @@ async function main() {
     }
 
     // Delegate all resolution logic to the AI evaluator.
-    // Pass resolutionWindowDays from DB so evaluateOpinionResolution uses the stored window.
+    // Pass resolutionWindowDays and analystCallAt from DB so evaluateOpinionResolution uses
+    // the stored window and the analyst's actual call date (not just publishedAt).
+    const hasFullParseCache =
+      opinion.resolutionWindowDays !== null &&
+      opinion.instrument !== null &&
+      opinion.instrumentTicker !== null;
+
     const result = await evaluateOpinionResolution({
       id: opinion.id,
       quote: opinion.quote,
       direction: opinion.direction,
       publishedAt: opinion.publishedAt,
+      analystCallAt: opinion.analystCallAt,
       headline,
       resolutionWindowDays: opinion.resolutionWindowDays,
+      instrument: hasFullParseCache ? opinion.instrument : undefined,
+      instrumentTicker: hasFullParseCache ? opinion.instrumentTicker : undefined,
     });
 
-    // null means an unrecoverable AI error — skip this opinion to avoid corrupting the DB
+    // null means an unrecoverable AI error — track the attempt (unless it was a transient
+    // rate-limit) and skip this opinion to avoid corrupting the DB. Mirrors the cron route's
+    // attempt-cap logic so a chronically-failing opinion eventually stops being retried.
     if (result === null) {
+      if (wasLastCallRateLimited()) {
+        console.log(`  Rate-limited — skipping this run, attempt counter unchanged\n`);
+        summary.skipped++;
+        await sleep(DELAY_MS);
+        continue;
+      }
+
       console.log(`  Skipped (AI error)\n`);
       summary.skipped++;
+
+      if (!DRY_RUN) {
+        const attemptNumber = opinion.resolutionAttempts + 1;
+        await prisma.expertOpinion.update({
+          where: { id: opinion.id },
+          data: { resolutionAttempts: { increment: 1 }, lastResolutionAttemptAt: new Date() },
+        });
+        if (attemptNumber >= RESOLVE_MAX_ATTEMPTS) {
+          await prisma.expertOpinion.update({
+            where: { id: opinion.id },
+            data: {
+              resolutionStatus: "NOT_GRADED",
+              resolutionNote: "AI resolution failed after 5 attempts",
+              resolvedAt: new Date(),
+            },
+          });
+          summary.capped++;
+          console.log(`  Capped after ${attemptNumber} failed attempts — marked NOT_GRADED\n`);
+        }
+      }
+
       await sleep(DELAY_MS);
       continue;
     }
@@ -166,6 +212,7 @@ async function main() {
   console.log(`RESOLVED_MISS:     ${summary.miss}`);
   console.log(`NOT_GRADED:        ${summary.notGraded}`);
   console.log(`Skipped (error):   ${summary.skipped}`);
+  console.log(`Capped (5 fails):  ${summary.capped}`);
   if (summary.noWindow > 0) {
     console.log(`Skipped (no win):  ${summary.noWindow}`);
   }

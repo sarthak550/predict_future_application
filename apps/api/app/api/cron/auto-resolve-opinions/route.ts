@@ -11,14 +11,28 @@
  * Phase 2 — Resolve:    Resolve any PENDING opinions whose resolutionEligibleAt <= now.
  *
  * Env vars:
- *   CRON_PREPROCESS_LIMIT   — max opinions to preprocess per run (default: 30)
- *   CRON_RESOLVE_LIMIT      — max opinions to resolve per run (default: 25)
+ *   CRON_PREPROCESS_LIMIT   — max opinions to preprocess per run (default: 250)
+ *   CRON_RESOLVE_LIMIT      — max opinions to resolve per run (default: 120)
  *   PREPROCESS_DELAY_MS     — ms between preprocess AI calls (default: 400)
  *   RESOLVE_DELAY_MS        — ms between resolve AI calls (default: 600)
  *
- * Budget: 30 × 400ms + 25 × 600ms = 27s — well under Vercel Hobby 60s limit.
+ * Runtime budget: this app runs self-hosted on an EC2 Docker container with an EC2 crontab
+ * mirroring `apps/api/vercel.json` (see README) — it is not invoked as a real Vercel
+ * serverless function, so the 60s Hobby ceiling does not actually apply here. At the
+ * defaults above, worst case is roughly 250×(400ms + AI latency) + 120×(600ms + 2×AI
+ * latency), i.e. on the order of 10-15 minutes for a full backlog-draining run.
+ * `maxDuration` below is left in place only in case this route is ever invoked under
+ * real Vercel.
  *
- * Schedule recommendation: daily at 03:00 UTC via Vercel Cron or external scheduler.
+ * IMPORTANT (Analyst Scorecard Phase 0): this cron has historically fired at the same
+ * crontab minute as three other opinion-pipeline crons (finance-opinions-catchup,
+ * retry-stuck-opinions, sync-manifold-resolutions) — see project_ec2_prod_ops memory.
+ * Now that a full run can take 10+ minutes instead of ~30s, that concurrency window is
+ * much larger and increases the risk of the Neon P1001 connection errors seen previously
+ * from concurrent sweeps. The coordinator should stagger these crontab entries (see the
+ * runbook delivered alongside this change) rather than firing them simultaneously.
+ *
+ * Schedule recommendation: daily, staggered from the other opinion-pipeline crons.
  */
 
 import { NextResponse } from "next/server";
@@ -26,12 +40,17 @@ import { prisma } from "@/lib/prisma";
 import { parseOpinionTimeframe, evaluateOpinionResolution, wasLastCallRateLimited } from "@/lib/ai/evaluateOpinionResolution";
 import { notifyOpinionResolution } from "@/lib/notifyOpinionResolution";
 
-// Vercel function timeout hint (Next.js convention)
+// Vercel function timeout hint (Next.js convention) — inert on the actual EC2/Docker deployment.
 export const maxDuration = 60;
 
-// Lowered defaults so 30×400ms + 25×600ms = 27s — fits comfortably in 60s Vercel budget.
-const PREPROCESS_LIMIT = parseInt(process.env.CRON_PREPROCESS_LIMIT ?? "30", 10);
-const RESOLVE_LIMIT = parseInt(process.env.CRON_RESOLVE_LIMIT ?? "25", 10);
+// Bumped from 30/25 (Analyst Scorecard Phase 0, 2026-07). The old defaults could never
+// drain the resolution backlog even in principle: Phase 1 ordered by publishedAt DESC, so
+// newly-created PENDING opinions permanently out-competed older backlog rows for the fixed
+// daily slots (see the orderBy fix in runPreprocess below). Raising the ceiling alone would
+// not have fixed that starvation, but the fix now needs enough daily headroom to actually
+// clear the backlog within a few days.
+const PREPROCESS_LIMIT = parseInt(process.env.CRON_PREPROCESS_LIMIT ?? "250", 10);
+const RESOLVE_LIMIT = parseInt(process.env.CRON_RESOLVE_LIMIT ?? "120", 10);
 const PREPROCESS_DELAY_MS = parseInt(process.env.PREPROCESS_DELAY_MS ?? "400", 10);
 const RESOLVE_DELAY_MS = parseInt(process.env.RESOLVE_DELAY_MS ?? "600", 10);
 
@@ -104,7 +123,13 @@ async function runPreprocess(): Promise<{ preprocessed: number; failed: number; 
       // Exclude opinions that have already hit the attempt cap.
       preprocessAttempts: { lt: PREPROCESS_MAX_ATTEMPTS },
     },
-    orderBy: { publishedAt: "desc" },
+    // FIFO (oldest first) — NOT "desc". This was the root cause of the 813-opinion backlog
+    // in bucket (a) of the Phase 0 diagnosis: ordering by publishedAt DESC means freshly
+    // ingested opinions permanently queue-jump ahead of older ones whenever daily inflow
+    // meets or exceeds PREPROCESS_LIMIT, so old rows never reach the front of the queue and
+    // sit at preprocessAttempts=0 forever. Oldest-first guarantees every opinion eventually
+    // gets attempted, and drains the existing backlog fastest.
+    orderBy: { publishedAt: "asc" },
     take: PREPROCESS_LIMIT,
     include: {
       story: { select: { headline: true } },

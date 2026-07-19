@@ -53,6 +53,9 @@ type ParseResult = {
 
 type VerdictResult = {
   status: "HIT" | "MISS" | "NOT_GRADED";
+  /** Self-reported model confidence. A "low" HIT/MISS is downgraded to NOT_GRADED by the caller —
+   *  see the quality gate in evaluateOpinionResolution below. */
+  confidence: "high" | "medium" | "low";
   reasoning: string;
 };
 
@@ -150,6 +153,7 @@ Given the original quote, direction tag, specific claim, and real price data, re
 Return JSON only:
 {
   "status": "HIT" or "MISS" or "NOT_GRADED",
+  "confidence": "high" or "medium" or "low",
   "reasoning": "one clear sentence starting with the instrument name and price movement"
 }
 
@@ -164,7 +168,12 @@ Rules:
   - The claim is qualitative (valuation re-rating, sector positioning) with no clear price target to verify.
   - The instrument price data period is too short relative to the stated horizon.
 - For explicit price-target calls (e.g. "target ₹360"): HIT if price reached within 5% of target during the window, MISS if price moved meaningfully in the opposite direction.
-- Keep reasoning to exactly one sentence. Start with the instrument name and its price change. Cite the actual numbers from the Price data line — do not invent percentages.`;
+- Keep reasoning to exactly one sentence. Start with the instrument name and its price change. Cite the actual numbers from the Price data line — do not invent percentages.
+
+Confidence — this result may be published on a public analyst track record, so be honest about certainty:
+- "high": the price move is large and unambiguous and the claim maps cleanly onto the price data — you are confident a reasonable analyst would agree with this verdict.
+- "medium": directionally clear but there is some ambiguity in how the claim maps to the price move (e.g. partial conditions, borderline timing).
+- "low": the price move is close to the 1.5% no-signal threshold, the claim required significant interpretation, or you are not genuinely certain. A HIT or MISS with "low" confidence will be downgraded to NOT_GRADED by the caller — so only report HIT/MISS with "high" or "medium" confidence when you actually believe it.`;
 
 // ─── Rate-limit sentinel ─────────────────────────────────────────────────────
 //
@@ -374,7 +383,17 @@ function validateVerdictResult(raw: unknown): VerdictResult | null {
   const reasoning = typeof obj.reasoning === "string" ? obj.reasoning.trim() : "";
   if (!reasoning) return null;
 
-  return { status: statusRaw as VerdictResult["status"], reasoning };
+  // Strict enum match — no fuzzy/substring inference. A missing or malformed confidence
+  // field fails safe to "low" so an unreadable signal downgrades toward NOT_GRADED instead
+  // of silently being trusted as a confident HIT/MISS.
+  const confidenceRaw = typeof obj.confidence === "string" ? obj.confidence.toLowerCase() : "";
+  const confidence: VerdictResult["confidence"] = (["high", "medium", "low"] as const).includes(
+    confidenceRaw as VerdictResult["confidence"]
+  )
+    ? (confidenceRaw as VerdictResult["confidence"])
+    : "low";
+
+  return { status: statusRaw as VerdictResult["status"], confidence, reasoning };
 }
 
 // ─── Long-term threshold ──────────────────────────────────────────────────────
@@ -657,7 +676,23 @@ Render your HIT/MISS/NOT_GRADED verdict.`;
   };
 
   const dbStatus = statusMap[verdict.status];
-  console.log(`${logPrefix} Verdict: ${dbStatus} — ${verdict.reasoning}`);
+
+  // ── Quality gate: never publish a low-confidence verdict ─────────────────────
+  // A wrong HIT/MISS on a public analyst track-record page is worse than a slow
+  // PENDING/NOT_GRADED. Downgrade rather than guess.
+  if ((dbStatus === "RESOLVED_HIT" || dbStatus === "RESOLVED_MISS") && verdict.confidence === "low") {
+    const note = `Low-confidence ${verdict.status} downgraded to NOT_GRADED: ${verdict.reasoning}`;
+    console.log(`${logPrefix} ${note}`);
+    return {
+      status: "NOT_GRADED",
+      instrument: effectiveInstrument,
+      ticker: effectiveTicker,
+      resolutionNote: note,
+      resolutionWindowDays: effectiveWindowDays,
+    };
+  }
+
+  console.log(`${logPrefix} Verdict: ${dbStatus} (confidence: ${verdict.confidence}) — ${verdict.reasoning}`);
 
   return {
     status: dbStatus,
