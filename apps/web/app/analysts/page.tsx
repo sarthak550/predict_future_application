@@ -5,13 +5,12 @@ import { AnalystDisclaimerFooter } from "@/components/finance/disclaimer-footer"
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { getPublicProfileStats } from "@/lib/finance/publicProfile";
-import { prisma } from "@/lib/prisma";
+import { fetchIndexableAnalysts, sortAnalysts, type AnalystSortMode } from "@/lib/finance/analysts";
 import { formatPercent } from "@/lib/utils";
 
 export const revalidate = 3600;
 
-type SortMode = "accuracy" | "volume";
+type SortMode = AnalystSortMode;
 
 export const metadata: Metadata = {
   title: "Analyst Scorecard — Track Records of Indian Market Analysts | Predict Future",
@@ -26,36 +25,6 @@ export const metadata: Metadata = {
   },
 };
 
-async function fetchIndexableAnalysts() {
-  const experts = await prisma.expert.findMany({
-    where: { slug: { not: null } },
-    select: {
-      id: true,
-      slug: true,
-      name: true,
-      organization: true,
-      verified: true,
-      avatarUrl: true,
-      opinions: {
-        where: { suppressedAt: null },
-        select: { resolutionStatus: true, instrument: true, instrumentTicker: true },
-      },
-    },
-  });
-
-  return experts
-    .map((expert) => ({
-      id: expert.id,
-      slug: expert.slug as string,
-      name: expert.name,
-      organization: expert.organization,
-      verified: expert.verified,
-      avatarUrl: expert.avatarUrl,
-      stats: getPublicProfileStats(expert.opinions),
-    }))
-    .filter((expert) => expert.stats.indexable);
-}
-
 export default async function AnalystsDirectoryPage({
   searchParams,
 }: {
@@ -66,15 +35,7 @@ export default async function AnalystsDirectoryPage({
   const sort: SortMode = searchParams?.sort === "volume" ? "volume" : "accuracy";
 
   const analysts = await fetchIndexableAnalysts();
-
-  const sorted = [...analysts].sort((a, b) => {
-    if (sort === "volume") {
-      return b.stats.resolvedCount - a.stats.resolvedCount;
-    }
-    // accuracy: hitRate is guaranteed non-null here since indexable implies resolvedCount >= 5
-    return (b.stats.hitRate ?? 0) - (a.stats.hitRate ?? 0);
-  });
-
+  const sorted = sortAnalysts(analysts, sort);
   const visible = sorted.slice(0, 100);
 
   return (

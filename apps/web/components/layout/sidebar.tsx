@@ -4,7 +4,7 @@ import Link from "next/link";
 import type { Session } from "next-auth";
 import { usePathname } from "next/navigation";
 import type { LucideIcon } from "lucide-react";
-import { Bell, Flag, Newspaper, PlusCircle, ShieldCheck, Trophy, User, Users } from "lucide-react";
+import { LineChart, Newspaper, Radio, ShieldCheck } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -16,18 +16,18 @@ type NavItem = {
 };
 
 /**
- * Primary nav. Keep this list short — every item here competes for a new
- * user's attention on first login. Trending lives inside the feed view tabs,
- * so it does not need a top-level slot.
+ * Primary nav. This shell (AppShell/Sidebar/TopNav) now only renders for the
+ * (admin) route group — every (app) group page (feed/markets/groups/etc.) was
+ * parked out of routing when the site pivoted to the Analyst Scorecard
+ * (app/(app)/_parked/**). Links here point at the surviving public Finance
+ * site rather than the old product's now-unrouted pages.
  */
 const primaryLinks: NavItem[] = [
-  { href: "/feed", label: "Feed", icon: Newspaper },
-  { href: "/markets", label: "Markets", icon: Flag },
-  { href: "/markets/create", label: "Create", icon: PlusCircle },
-  { href: "/leaderboard", label: "Leaderboard", icon: Trophy }
+  { href: "/", label: "Scorecard home", icon: LineChart },
+  { href: "/analysts", label: "Analysts", icon: Newspaper },
+  { href: "/opinions", label: "Opinions", icon: Newspaper },
+  { href: "/pulse", label: "Market Pulse", icon: Radio }
 ];
-
-const discoverLinks: NavItem[] = [{ href: "/groups", label: "Groups", icon: Users }];
 
 export function Sidebar({ session }: { session: Session | null }) {
   const pathname = usePathname();
@@ -45,7 +45,7 @@ export function Sidebar({ session }: { session: Session | null }) {
         </div>
         <div>
           <p className="text-sm font-semibold leading-tight text-ink-900">Predict Future</p>
-          <p className="text-xs text-ink-500">News · predictions · rank</p>
+          <p className="text-xs text-ink-500">Analyst Scorecard</p>
         </div>
       </Link>
 
@@ -55,33 +55,17 @@ export function Sidebar({ session }: { session: Session | null }) {
         ))}
       </NavSection>
 
-      <NavSection label="Discover">
-        {discoverLinks.map((link) => (
-          <NavLink key={link.href} item={link} active={isActive(link.href)} />
-        ))}
-      </NavSection>
-
-      {session?.user && (
-        <NavSection label="You" className="mt-auto">
+      {isStaff && (
+        <NavSection label="Staff" className="mt-auto">
           <NavLink
-            item={{ href: `/profile/${session.user.username}`, label: "Profile", icon: User }}
-            active={isActive("/profile")}
+            item={{ href: "/admin", label: "Admin", icon: ShieldCheck }}
+            active={isActive("/admin")}
+            trailing={
+              <Badge variant="accent" className="ml-auto">
+                Staff
+              </Badge>
+            }
           />
-          <NavLink
-            item={{ href: "/notifications", label: "Notifications", icon: Bell }}
-            active={isActive("/notifications")}
-          />
-          {isStaff && (
-            <NavLink
-              item={{ href: "/admin", label: "Admin", icon: ShieldCheck }}
-              active={isActive("/admin")}
-              trailing={
-                <Badge variant="accent" className="ml-auto">
-                  Staff
-                </Badge>
-              }
-            />
-          )}
         </NavSection>
       )}
     </aside>

@@ -1,15 +1,23 @@
 import Link from "next/link";
 
 /**
- * Minimal chrome for public, unauthenticated, indexable pages (app/analysts/**,
- * app/calls/**). These pages render outside the (app) route group / AppShell —
- * they need to work for a signed-out visitor arriving from Google or a shared
- * WhatsApp link, so we keep the header to a brand mark + a link back into the app.
+ * Site-wide chrome for every public, unauthenticated, indexable Finance page
+ * (app/page.tsx, app/analysts/**, app/opinions/**, app/pulse/**, app/calls/**).
+ * These pages render outside the (app) route group / AppShell — that shell
+ * now only backs the (admin) console (see components/layout/app-shell.tsx) —
+ * so this header needs to work standalone for a signed-out visitor arriving
+ * from Google or a shared WhatsApp link.
  */
+const NAV_LINKS = [
+  { href: "/analysts", label: "Analysts" },
+  { href: "/opinions", label: "Opinions" },
+  { href: "/pulse", label: "Market Pulse" },
+];
+
 export function PublicHeader() {
   return (
     <header className="border-b border-ink-100 bg-white/70 backdrop-blur">
-      <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-4 sm:px-6">
+      <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-4 px-4 py-4 sm:px-6">
         <Link href="/" className="flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-ink-900 text-sm font-semibold text-white">
             PF
@@ -19,12 +27,24 @@ export function PublicHeader() {
             <p className="text-xs text-ink-400">Analyst Scorecard</p>
           </div>
         </Link>
-        <Link
-          href="/analysts"
-          className="text-sm font-medium text-ink-500 transition hover:text-ink-900"
-        >
-          All analysts
-        </Link>
+
+        <nav className="flex flex-wrap items-center gap-x-5 gap-y-2">
+          {NAV_LINKS.map((link) => (
+            <Link
+              key={link.href}
+              href={link.href}
+              className="text-sm font-medium text-ink-500 transition hover:text-ink-900"
+            >
+              {link.label}
+            </Link>
+          ))}
+          <Link
+            href="/sign-in"
+            className="text-sm font-medium text-ink-500 transition hover:text-ink-900"
+          >
+            Sign in
+          </Link>
+        </nav>
       </div>
     </header>
   );

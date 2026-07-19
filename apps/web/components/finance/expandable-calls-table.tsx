@@ -12,6 +12,11 @@
  *
  * Dates arrive preformatted as strings — the server component owns formatting
  * so this stays a purely presentational client component.
+ *
+ * The `analyst` field is optional: the analyst-profile page (where every row
+ * already belongs to the one profile being viewed) omits it, while /opinions
+ * (a cross-analyst feed) supplies it to render an extra column linking to
+ * /analysts/[slug].
  */
 
 import { Fragment, useState } from "react";
@@ -40,12 +45,16 @@ export type ExpandableCall = {
   resolutionStatus: OpinionResolutionStatus;
   resolutionNote: string | null;
   resolvedAtLabel: string | null;
+  /** Present only when the table is rendering calls from more than one analyst. */
+  analyst?: { name: string; slug: string | null };
 };
 
 const QUOTE_PREVIEW_LENGTH = 120;
 
 export function ExpandableCallsTable({ calls }: { calls: ExpandableCall[] }) {
   const [openId, setOpenId] = useState<string | null>(null);
+  const showAnalystColumn = calls.some((call) => call.analyst);
+  const columnCount = showAnalystColumn ? 7 : 6;
 
   return (
     <div className="overflow-x-auto">
@@ -53,6 +62,7 @@ export function ExpandableCallsTable({ calls }: { calls: ExpandableCall[] }) {
         <TableHead>
           <TableRow>
             <TableHeaderCell>Call</TableHeaderCell>
+            {showAnalystColumn && <TableHeaderCell>Analyst</TableHeaderCell>}
             <TableHeaderCell>Instrument</TableHeaderCell>
             <TableHeaderCell>Direction</TableHeaderCell>
             <TableHeaderCell>Date</TableHeaderCell>
@@ -88,6 +98,21 @@ export function ExpandableCallsTable({ calls }: { calls: ExpandableCall[] }) {
                       </span>
                     </span>
                   </TableCell>
+                  {showAnalystColumn && (
+                    <TableCell className="whitespace-nowrap">
+                      {call.analyst?.slug ? (
+                        <Link
+                          href={`/analysts/${call.analyst.slug}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="font-medium text-ink-700 hover:text-signal-sky hover:underline"
+                        >
+                          {call.analyst.name}
+                        </Link>
+                      ) : (
+                        <span className="text-ink-600">{call.analyst?.name ?? "—"}</span>
+                      )}
+                    </TableCell>
+                  )}
                   <TableCell className="whitespace-nowrap text-ink-600">
                     {call.instrument ?? "—"}
                   </TableCell>
@@ -116,7 +141,7 @@ export function ExpandableCallsTable({ calls }: { calls: ExpandableCall[] }) {
 
                 {isOpen ? (
                   <TableRow className="bg-ink-50/50">
-                    <TableCell colSpan={6} className="px-6 py-4">
+                    <TableCell colSpan={columnCount} className="px-6 py-4">
                       <div className="space-y-3 text-sm">
                         {call.headline ? (
                           <p className="font-medium text-ink-900">{call.headline}</p>
