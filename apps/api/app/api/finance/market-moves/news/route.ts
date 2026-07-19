@@ -7,7 +7,9 @@
  *
  * Query params:
  *   cursor?: opaque pagination cursor (base64url JSON: { publishedAt, id })
- *   limit?: number (default 20, max 50)
+ *   limit?: number (default 20, max 100 — raised from 50 so the mobile Market
+ *     Pulse tab's "Stock News" peer-tab can fetch a longer list, ~60, in one
+ *     shot and reveal it incrementally client-side)
  *   tickerSymbol?: filter to a single ticker
  *
  * Public endpoint — no auth required.
@@ -27,7 +29,7 @@ import { prisma } from "@/lib/prisma";
 export const dynamic = "force-dynamic";
 
 const PAGE_SIZE_DEFAULT = 20;
-const PAGE_SIZE_MAX = 50;
+const PAGE_SIZE_MAX = 100;
 
 /** Near-duplicate collapse window (Decision 2): reworded stories about the same event. */
 const NEAR_DUPLICATE_WINDOW_MS = 24 * 60 * 60 * 1000;

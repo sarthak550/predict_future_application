@@ -7,7 +7,9 @@
  *
  * Query params:
  *   cursor?: opaque pagination cursor (base64url JSON: { announcedAt, id })
- *   limit?: number (default 20, max 50)
+ *   limit?: number (default 20, max 60 — raised from 50 so the mobile Market
+ *     Pulse tab's "Filings & announcements" peer-tab can fetch a longer list,
+ *     ~40, in one shot and reveal it incrementally client-side)
  *   tickerSymbol?: filter to a single ticker (e.g. "RELIANCE" or "BSE:500325")
  *
  * Public endpoint — no auth required.
@@ -21,7 +23,7 @@ import { prisma } from "@/lib/prisma";
 export const dynamic = "force-dynamic";
 
 const PAGE_SIZE_DEFAULT = 20;
-const PAGE_SIZE_MAX = 50;
+const PAGE_SIZE_MAX = 60;
 
 type Cursor = { announcedAt: string; id: string };
 

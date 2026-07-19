@@ -15,9 +15,11 @@
  *
  * Public endpoint — no auth required.
  * Response: `{ gainers: [...], losers: [...], asOf: string | null }`
- * `gainers`/`losers` are each capped at 5 (the pinned Top Movers strip shows
- * 5+5), in rank order. Empty arrays (not 404) when the cron hasn't run yet — the
- * mobile card renders its own empty state.
+ * `gainers`/`losers` each return the FULL latest session (the DB holds ~20 per
+ * direction — a tiny payload), in rank order. Clients render their own
+ * collapsed "top 5 + show all" UI on top of this (web: MoverList, mobile:
+ * MoverRow) rather than the server truncating. Empty arrays (not 404) when
+ * the cron hasn't run yet — callers render their own empty state.
  */
 
 import { NextResponse } from "next/server";
@@ -25,8 +27,6 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
-
-const STRIP_SIZE = 5;
 
 export async function GET() {
   // Most recent captured session — not strictly today's — so the strip stays
@@ -44,12 +44,10 @@ export async function GET() {
     prisma.marketMoverSnapshot.findMany({
       where: { sessionDate, direction: "GAINER" },
       orderBy: { rank: "asc" },
-      take: STRIP_SIZE,
     }),
     prisma.marketMoverSnapshot.findMany({
       where: { sessionDate, direction: "LOSER" },
       orderBy: { rank: "asc" },
-      take: STRIP_SIZE,
     }),
   ]);
 

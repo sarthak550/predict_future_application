@@ -869,7 +869,12 @@ export function createApiClient(options: ApiClientOptions) {
     },
 
     // ─── Market Pulse: NSE/BSE announcements + movers (Phase 1) ───────────
-    /** Paginated, reverse-chronological corporate-announcements feed. No auth required. */
+    /**
+     * Paginated, reverse-chronological corporate-announcements ("filings")
+     * feed. No auth required. `limit` defaults to 20, capped server-side at
+     * 60 — pass a higher value (e.g. 40) to fetch enough for a peer-tab view
+     * with client-side incremental reveal instead of network-paginating.
+     */
     getMarketMoveEvents(params?: { cursor?: string; limit?: number; tickerSymbol?: string }) {
       return request<ApiMarketMoveEventsResponse>(
         "/api/finance/market-moves/events",
@@ -877,13 +882,23 @@ export function createApiClient(options: ApiClientOptions) {
       );
     },
 
-    /** Today's top gainers/losers over the curated NIFTY 200 universe. No auth required. */
+    /**
+     * Today's top gainers/losers over the curated NIFTY 200 universe. No auth
+     * required. Returns the FULL latest-session list per direction (~20
+     * each, not capped to a top-5 strip) — callers slice client-side for a
+     * collapsed "top 5 + show all" UI.
+     */
     getMarketMovers() {
       return request<ApiMarketMoversResponse>("/api/finance/market-moves/movers");
     },
 
     // ─── Market Pulse: Google News per-ticker headlines (Phase 1c) ────────
-    /** Paginated, reverse-chronological readable news feed. No auth required. */
+    /**
+     * Paginated, reverse-chronological readable news feed. No auth required.
+     * `limit` defaults to 20, capped server-side at 100 — pass a higher value
+     * (e.g. 60) to fetch enough for a peer-tab view with client-side
+     * incremental reveal instead of network-paginating.
+     */
     getMarketMoveNews(params?: { cursor?: string; limit?: number; tickerSymbol?: string }) {
       return request<ApiMarketMoveNewsResponse>(
         "/api/finance/market-moves/news",
