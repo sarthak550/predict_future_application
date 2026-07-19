@@ -1,14 +1,11 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowUpRight } from "lucide-react";
 
 import { AnalystDisclaimerFooter } from "@/components/finance/disclaimer-footer";
-import { DirectionChip, VerdictBadge } from "@/components/finance/analyst-badges";
+import { ExpandableCallsTable } from "@/components/finance/expandable-calls-table";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@/components/ui/table";
 import { getPublicProfileStats } from "@/lib/finance/publicProfile";
 import { prisma } from "@/lib/prisma";
 import { formatDateOnly, formatPercent } from "@/lib/utils";
@@ -35,12 +32,15 @@ async function fetchExpertBySlug(slug: string) {
         select: {
           id: true,
           quote: true,
+          headline: true,
           instrument: true,
           instrumentTicker: true,
           direction: true,
           sourceUrl: true,
           publishedAt: true,
           resolutionStatus: true,
+          resolutionNote: true,
+          resolvedAt: true,
         },
       },
     },
@@ -203,54 +203,20 @@ export default async function AnalystProfilePage({
           {recentCalls.length === 0 ? (
             <p className="py-6 text-center text-sm text-ink-500">No public calls recorded yet.</p>
           ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHead>
-                  <TableRow>
-                    <TableHeaderCell>Call</TableHeaderCell>
-                    <TableHeaderCell>Instrument</TableHeaderCell>
-                    <TableHeaderCell>Direction</TableHeaderCell>
-                    <TableHeaderCell>Date</TableHeaderCell>
-                    <TableHeaderCell>Verdict</TableHeaderCell>
-                    <TableHeaderCell>Source</TableHeaderCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {recentCalls.map((call) => (
-                    <TableRow key={call.id}>
-                      <TableCell className="max-w-xs">
-                        <Link href={`/calls/${call.id}`} className="text-ink-700 hover:text-ink-900">
-                          &ldquo;{call.quote.length > 120 ? `${call.quote.slice(0, 120)}…` : call.quote}&rdquo;
-                        </Link>
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap text-ink-600">
-                        {call.instrument ?? "—"}
-                      </TableCell>
-                      <TableCell>
-                        <DirectionChip direction={call.direction} />
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap text-ink-500">
-                        {formatDateOnly(call.publishedAt)}
-                      </TableCell>
-                      <TableCell>
-                        <VerdictBadge status={call.resolutionStatus} />
-                      </TableCell>
-                      <TableCell>
-                        <a
-                          href={call.sourceUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1 text-signal-sky hover:underline"
-                        >
-                          Source
-                          <ArrowUpRight className="h-3.5 w-3.5" />
-                        </a>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+            <ExpandableCallsTable
+              calls={recentCalls.map((call) => ({
+                id: call.id,
+                quote: call.quote,
+                headline: call.headline,
+                instrument: call.instrument,
+                direction: call.direction,
+                sourceUrl: call.sourceUrl,
+                publishedAtLabel: formatDateOnly(call.publishedAt),
+                resolutionStatus: call.resolutionStatus,
+                resolutionNote: call.resolutionNote,
+                resolvedAtLabel: call.resolvedAt ? formatDateOnly(call.resolvedAt) : null,
+              }))}
+            />
           )}
         </CardContent>
       </Card>
