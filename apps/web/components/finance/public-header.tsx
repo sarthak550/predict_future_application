@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import { SessionChip } from "@/components/finance/session-chip";
+
 /**
  * Site-wide chrome for every public, unauthenticated, indexable Finance page
  * (app/page.tsx, app/analysts/**, app/opinions/**, app/pulse/**, app/calls/**).
@@ -38,12 +40,7 @@ export function PublicHeader() {
               {link.label}
             </Link>
           ))}
-          <Link
-            href="/sign-in"
-            className="text-sm font-medium text-ink-500 transition hover:text-ink-900"
-          >
-            Sign in
-          </Link>
+          <SessionChip />
         </nav>
       </div>
     </header>
