@@ -5,6 +5,7 @@ import { ArrowUpRight } from "lucide-react";
 
 import { AnalystDisclaimerFooter } from "@/components/finance/disclaimer-footer";
 import { DirectionChip, VerdictBadge } from "@/components/finance/analyst-badges";
+import { TakeASide } from "@/components/finance/take-a-side";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -145,6 +146,7 @@ export default async function CallSharePage({ params }: { params: { id: string }
           {opinion.resolutionNote && (
             <p className="text-sm leading-6 text-ink-600">{opinion.resolutionNote}</p>
           )}
+          <TakeASide opinionId={opinion.id} resolutionStatus={opinion.resolutionStatus} />
           <a
             href={opinion.sourceUrl}
             target="_blank"

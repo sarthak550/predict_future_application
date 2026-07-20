@@ -17,10 +17,17 @@
  * already belongs to the one profile being viewed) omits it, while /opinions
  * (a cross-analyst feed) supplies it to render an extra column linking to
  * /analysts/[slug].
+ *
+ * Return-to-call (Phase C.1): TakeASide's signed-out CTA links to
+ * /sign-in?callbackUrl=<this page>&call=<id>. On landing back here, this
+ * component reads ?call= from the URL, auto-expands that row, and scrolls it
+ * into view — so a user who signed in specifically to vote on one call isn't
+ * dropped back at the top of a long table.
  */
 
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { ArrowUpRight, ChevronDown } from "lucide-react";
 import type { OpinionDirection, OpinionResolutionStatus } from "@prisma/client";
 
@@ -33,6 +40,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { DirectionChip, VerdictBadge } from "@/components/finance/analyst-badges";
+import { TakeASide } from "@/components/finance/take-a-side";
 
 export type ExpandableCall = {
   id: string;
@@ -55,6 +63,22 @@ export function ExpandableCallsTable({ calls }: { calls: ExpandableCall[] }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const showAnalystColumn = calls.some((call) => call.analyst);
   const columnCount = showAnalystColumn ? 7 : 6;
+  const searchParams = useSearchParams();
+  const rowRefs = useRef(new Map<string, HTMLTableRowElement>());
+
+  useEffect(() => {
+    const targetId = searchParams.get("call");
+    if (!targetId || !calls.some((call) => call.id === targetId)) return;
+
+    setOpenId(targetId);
+    // Wait a tick for the expanded panel row to mount before scrolling to it.
+    const raf = requestAnimationFrame(() => {
+      rowRefs.current.get(targetId)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+    return () => cancelAnimationFrame(raf);
+    // Only ever react to the initial ?call= on load, not every searchParams change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="overflow-x-auto">
@@ -148,7 +172,13 @@ export function ExpandableCallsTable({ calls }: { calls: ExpandableCall[] }) {
                 </TableRow>
 
                 {isOpen ? (
-                  <TableRow className="bg-ink-50/50">
+                  <TableRow
+                    className="bg-ink-50/50"
+                    ref={(el) => {
+                      if (el) rowRefs.current.set(call.id, el);
+                      else rowRefs.current.delete(call.id);
+                    }}
+                  >
                     <TableCell colSpan={columnCount} className="px-6 py-4">
                       <div className="space-y-3 text-sm">
                         {call.headline ? (
@@ -193,6 +223,7 @@ export function ExpandableCallsTable({ calls }: { calls: ExpandableCall[] }) {
                             </Link>
                           ) : null}
                         </div>
+                        <TakeASide opinionId={call.id} resolutionStatus={call.resolutionStatus} />
                       </div>
                     </TableCell>
                   </TableRow>

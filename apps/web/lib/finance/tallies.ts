@@ -1,21 +1,17 @@
 import { prisma } from "@/lib/prisma";
 import {
-  choiceToBucketIndex,
   computeVoteTallies,
-  IMPLICATION_BUCKETS,
-  normaliseImplicationChoice,
-  type ImplicationBucket,
   type TalliesResponse,
 } from "@predict-future/business-rules/finance/voteTallies";
 
 /**
- * Re-exported for callers (vote/route.ts, lock-vote/route.ts) that reference these
- * directly. The pure aggregation math itself now lives in
- * @predict-future/business-rules/finance/voteTallies so apps/web's tallies route can
- * share the exact same implementation. See that module for the full doc comments.
+ * Web-side wrapper around the shared pure aggregation math in
+ * @predict-future/business-rules/finance/voteTallies. Reads the same
+ * ExpertOpinionVote rows apps/api's tallies route reads — web's vote route
+ * (lib/finance/votes.ts) writes into the exact same table/pollType, so a call's
+ * tallies are always the cross-platform sum of mobile + web votes.
  */
-export { IMPLICATION_BUCKETS, choiceToBucketIndex, normaliseImplicationChoice };
-export type { ImplicationBucket, TalliesResponse };
+export type { TalliesResponse };
 
 export async function buildTalliesResponse(
   opinionId: string,

@@ -15,6 +15,7 @@
     "./marketPulse/topHeadline": "./src/marketPulse/topHeadline.ts",
     "./marketPulse/instrumentMatch": "./src/marketPulse/instrumentMatch.ts",
     "./hosts/trust": "./src/hosts/trust.ts",
+    "./finance/voteTallies": "./src/finance/voteTallies.ts",
     "./news/category-map": "./src/news/category-map.ts",
     "./news/types": "./src/news/types.ts",
     "./stories/ranking": "./src/stories/ranking.ts"

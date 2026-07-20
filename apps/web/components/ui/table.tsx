@@ -1,4 +1,4 @@
-import type { HTMLAttributes, TableHTMLAttributes, TdHTMLAttributes, ThHTMLAttributes } from "react";
+import { forwardRef, type HTMLAttributes, type TableHTMLAttributes, type TdHTMLAttributes, type ThHTMLAttributes } from "react";
 
 import { cn } from "@/lib/utils";
 
@@ -14,9 +14,12 @@ export function TableBody({ className, ...props }: HTMLAttributes<HTMLTableSecti
   return <tbody className={cn("divide-y divide-ink-100", className)} {...props} />;
 }
 
-export function TableRow({ className, ...props }: HTMLAttributes<HTMLTableRowElement>) {
-  return <tr className={cn("align-top", className)} {...props} />;
-}
+export const TableRow = forwardRef<HTMLTableRowElement, HTMLAttributes<HTMLTableRowElement>>(
+  ({ className, ...props }, ref) => (
+    <tr ref={ref} className={cn("align-top", className)} {...props} />
+  )
+);
+TableRow.displayName = "TableRow";
 
 export function TableHeaderCell({ className, ...props }: ThHTMLAttributes<HTMLTableCellElement>) {
   return <th className={cn("px-4 py-3 font-medium", className)} {...props} />;
