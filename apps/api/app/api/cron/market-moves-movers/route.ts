@@ -147,6 +147,7 @@ async function upsertMovers(
       changePercent: m.changePercent,
       changeAbs: m.changeAbs,
       volume: m.volume,
+      lastPrice: m.lastPrice,
       avgVolume: null,
       isUnusualVolume,
       direction: m.direction,

@@ -21,5 +21,7 @@ export type FetchedMarketMover = {
   changePercent: number;
   changeAbs: number;
   volume: number;
+  /** Last traded / close price (₹). Live pass maps NSE's `ltp`, EOD pass maps CLOSE_PRICE. */
+  lastPrice: number | null;
   direction: "GAINER" | "LOSER";
 };

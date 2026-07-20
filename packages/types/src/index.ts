@@ -1862,6 +1862,23 @@ export type ApiMarketMoveEventsResponse = {
   hasMore: boolean;
 };
 
+/** "Why is it moving" headline attached to a Top Movers row, or null when none survived the quality filter. */
+export type ApiMarketMoverHeadline = {
+  headline: string;
+  sourceUrl: string;
+  publisher: string;
+};
+
+/** "Analyst said" badge attached to a Top Movers row, or null when no recent call matches. */
+export type ApiMarketMoverAnalystCall = {
+  analystName: string;
+  analystSlug: string | null;
+  direction: "BULLISH" | "BEARISH" | "NEUTRAL";
+  resolutionStatus: "PENDING" | "RESOLVED_HIT" | "RESOLVED_MISS" | "NOT_GRADED";
+  /** ISO timestamp the underlying ExpertOpinion was published. */
+  publishedAt: string;
+};
+
 /** One row from GET /api/finance/market-moves/movers. */
 export type ApiMarketMover = {
   tickerSymbol: string;
@@ -1869,9 +1886,15 @@ export type ApiMarketMover = {
   changePercent: number;
   changeAbs: number;
   volume: number;
+  /** Last traded / close price (₹), or null for legacy rows captured before this field existed. */
+  lastPrice: number | null;
   isUnusualVolume: boolean;
   direction: AppMarketMoveDirection;
   rank: number;
+  /** Latest non-blocklisted-publisher headline for this ticker in the last 3 days, or null. */
+  topHeadline?: ApiMarketMoverHeadline | null;
+  /** Latest non-suppressed analyst call on this ticker in the last 14 days, or null. */
+  analystCall?: ApiMarketMoverAnalystCall | null;
 };
 
 /** Response shape for GET /api/finance/market-moves/movers. */

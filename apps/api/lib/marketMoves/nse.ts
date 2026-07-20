@@ -189,6 +189,7 @@ type NseVariationRow = {
   perChange?: number | null;   // percent change
   net_price?: number | null;   // absolute change
   trade_quantity?: number | null;
+  ltp?: number | null;         // last traded price
 };
 
 /** One variation group (NIFTY / NIFTYNEXT50 / allSec / ...) carries a `data` array. */
@@ -317,6 +318,7 @@ export async function fetchNseMovers(): Promise<FetchedMarketMover[]> {
         changePercent: r.perChange as number,
         changeAbs: r.net_price ?? 0,
         volume: r.trade_quantity ?? 0,
+        lastPrice: typeof r.ltp === "number" ? r.ltp : null,
         direction: direction as "GAINER" | "LOSER",
         };
       });

@@ -1,17 +1,39 @@
-import { refineStockNews } from "@predict-future/business-rules";
+import {
+  pickLatestAnalystCallPerTicker,
+  pickLatestHeadlinePerTicker,
+  refineStockNews,
+  type TopHeadline,
+} from "@predict-future/business-rules";
+import type { OpinionDirection, OpinionResolutionStatus } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 
 const NEWS_LIMIT = 20;
 const FILINGS_LIMIT = 10;
 
+/** "Why is it moving" headlines: only consider news from the last 3 days. */
+const HEADLINE_LOOKBACK_DAYS = 3;
+/** "Analyst said" badge: only consider opinions from the last 14 days. */
+const ANALYST_CALL_LOOKBACK_DAYS = 14;
+
+export interface MoverAnalystCall {
+  analystName: string;
+  analystSlug: string | null;
+  direction: OpinionDirection;
+  resolutionStatus: OpinionResolutionStatus;
+  publishedAt: Date;
+}
+
 export interface MoverRow {
   tickerSymbol: string;
   companyName: string;
   changePercent: number;
   changeAbs: number;
+  lastPrice: number | null;
   isUnusualVolume: boolean;
   rank: number;
+  topHeadline: TopHeadline | null;
+  analystCall: MoverAnalystCall | null;
 }
 
 export interface TopMovers {
@@ -55,14 +77,66 @@ export async function fetchTopMovers(): Promise<TopMovers> {
   const all = [...gainers, ...losers];
   const asOf = all.length > 0 ? new Date(Math.max(...all.map((m) => m.snapshotAt.getTime()))) : null;
 
-  const shape = (m: (typeof gainers)[number]): MoverRow => ({
-    tickerSymbol: m.tickerSymbol,
-    companyName: m.companyName,
-    changePercent: m.changePercent,
-    changeAbs: m.changeAbs,
-    isUnusualVolume: m.isUnusualVolume,
-    rank: m.rank, // overwritten below with the sorted position
-  });
+  // "Why is it moving" headline + "analyst said" badge — a single grouped/IN
+  // query per source (not N+1), joined in memory. See
+  // packages/business-rules/src/marketPulse/{topHeadline,instrumentMatch}.ts.
+  const symbols = [...new Set(all.map((m) => m.tickerSymbol))];
+  const headlineSince = new Date(Date.now() - HEADLINE_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
+  const analystCallSince = new Date(Date.now() - ANALYST_CALL_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
+
+  const [newsRows, opinionRows] = symbols.length === 0
+    ? [[], []]
+    : await Promise.all([
+        prisma.marketMoveNews.findMany({
+          where: { tickerSymbol: { in: symbols }, publishedAt: { gte: headlineSince } },
+          select: {
+            id: true,
+            tickerSymbol: true,
+            companyName: true,
+            headline: true,
+            publisher: true,
+            sourceUrl: true,
+            publishedAt: true,
+          },
+        }),
+        prisma.expertOpinion.findMany({
+          where: { instrumentTicker: { not: null }, suppressedAt: null, publishedAt: { gte: analystCallSince } },
+          select: {
+            instrumentTicker: true,
+            direction: true,
+            resolutionStatus: true,
+            publishedAt: true,
+            expert: { select: { name: true, slug: true } },
+          },
+        }),
+      ]);
+
+  // pickLatestHeadlinePerTicker drops blocklisted-publisher rows internally.
+  const headlineByTicker = pickLatestHeadlinePerTicker(newsRows);
+  const analystCallBySymbol = pickLatestAnalystCallPerTicker(opinionRows);
+
+  const shape = (m: (typeof gainers)[number]): MoverRow => {
+    const analystCallRow = analystCallBySymbol.get(m.tickerSymbol.toUpperCase());
+    return {
+      tickerSymbol: m.tickerSymbol,
+      companyName: m.companyName,
+      changePercent: m.changePercent,
+      changeAbs: m.changeAbs,
+      lastPrice: m.lastPrice,
+      isUnusualVolume: m.isUnusualVolume,
+      rank: m.rank, // overwritten below with the sorted position
+      topHeadline: headlineByTicker.get(m.tickerSymbol) ?? null,
+      analystCall: analystCallRow
+        ? {
+            analystName: analystCallRow.expert.name,
+            analystSlug: analystCallRow.expert.slug,
+            direction: analystCallRow.direction,
+            resolutionStatus: analystCallRow.resolutionStatus,
+            publishedAt: analystCallRow.publishedAt,
+          }
+        : null,
+    };
+  };
 
   // Renumber ranks to the sorted position so the displayed number always
   // matches the order (stored ranks can collide across write generations).

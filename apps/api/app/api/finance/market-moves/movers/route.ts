@@ -24,9 +24,16 @@
 
 import { NextResponse } from "next/server";
 
+import { pickLatestAnalystCallPerTicker, pickLatestHeadlinePerTicker } from "@predict-future/business-rules";
+
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
+
+/** "Why is it moving" headlines: only consider news from the last 3 days. */
+const HEADLINE_LOOKBACK_DAYS = 3;
+/** "Analyst said" badge: only consider opinions from the last 14 days. */
+const ANALYST_CALL_LOOKBACK_DAYS = 14;
 
 export async function GET() {
   // Most recent captured session — not strictly today's — so the strip stays
@@ -59,16 +66,68 @@ export async function GET() {
       ? new Date(Math.max(...all.map((m) => m.snapshotAt.getTime()))).toISOString()
       : null;
 
-  const shape = (m: (typeof gainers)[number]) => ({
-    tickerSymbol: m.tickerSymbol,
-    companyName: m.companyName,
-    changePercent: m.changePercent,
-    changeAbs: m.changeAbs,
-    volume: m.volume,
-    isUnusualVolume: m.isUnusualVolume,
-    direction: m.direction,
-    rank: m.rank,
-  });
+  // "Why is it moving" headline + "analyst said" badge — a single grouped/IN
+  // query per source (not N+1), joined in memory. See
+  // packages/business-rules/src/marketPulse/{topHeadline,instrumentMatch}.ts.
+  const symbols = [...new Set(all.map((m) => m.tickerSymbol))];
+  const headlineSince = new Date(Date.now() - HEADLINE_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
+  const analystCallSince = new Date(Date.now() - ANALYST_CALL_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
+
+  const [newsRows, opinionRows] = symbols.length === 0
+    ? [[], []]
+    : await Promise.all([
+        prisma.marketMoveNews.findMany({
+          where: { tickerSymbol: { in: symbols }, publishedAt: { gte: headlineSince } },
+          select: {
+            id: true,
+            tickerSymbol: true,
+            companyName: true,
+            headline: true,
+            publisher: true,
+            sourceUrl: true,
+            publishedAt: true,
+          },
+        }),
+        prisma.expertOpinion.findMany({
+          where: { instrumentTicker: { not: null }, suppressedAt: null, publishedAt: { gte: analystCallSince } },
+          select: {
+            instrumentTicker: true,
+            direction: true,
+            resolutionStatus: true,
+            publishedAt: true,
+            expert: { select: { name: true, slug: true } },
+          },
+        }),
+      ]);
+
+  // pickLatestHeadlinePerTicker drops blocklisted-publisher rows internally.
+  const headlineByTicker = pickLatestHeadlinePerTicker(newsRows);
+  const analystCallBySymbol = pickLatestAnalystCallPerTicker(opinionRows);
+
+  const shape = (m: (typeof gainers)[number]) => {
+    const analystCallRow = analystCallBySymbol.get(m.tickerSymbol.toUpperCase());
+    return {
+      tickerSymbol: m.tickerSymbol,
+      companyName: m.companyName,
+      changePercent: m.changePercent,
+      changeAbs: m.changeAbs,
+      volume: m.volume,
+      lastPrice: m.lastPrice,
+      isUnusualVolume: m.isUnusualVolume,
+      direction: m.direction,
+      rank: m.rank,
+      topHeadline: headlineByTicker.get(m.tickerSymbol) ?? null,
+      analystCall: analystCallRow
+        ? {
+            analystName: analystCallRow.expert.name,
+            analystSlug: analystCallRow.expert.slug,
+            direction: analystCallRow.direction,
+            resolutionStatus: analystCallRow.resolutionStatus,
+            publishedAt: analystCallRow.publishedAt.toISOString(),
+          }
+        : null,
+    };
+  };
 
   return NextResponse.json({
     // Renumber to the sorted position — stored ranks can collide across passes.

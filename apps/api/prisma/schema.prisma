@@ -1533,6 +1533,10 @@ model MarketMoverSnapshot {
   changePercent   Float
   changeAbs       Float
   volume          Float
+  /// Last traded / close price at snapshot time (₹). Nullable/additive — rows written
+  /// before this column existed have no price; the live pass maps NSE's `ltp`, the EOD
+  /// pass maps the bhavcopy CLOSE_PRICE. Added in the Market Pulse interactivity sprint.
+  lastPrice       Float?
   /// Always null in Phase 1 — no historical volume store to compute a true rolling
   /// average against. Reserved for a Phase 2 historical-average implementation.
   avgVolume       Float?

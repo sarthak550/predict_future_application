@@ -67,6 +67,29 @@ const EVENT_TYPE_META: Record<AppMarketMoveEventType, { label: string; color: (c
 /** Top Movers strip: collapsed row size, matching web's MoverList COLLAPSED_COUNT. */
 const MOVERS_COLLAPSED_COUNT = 5;
 
+/** "₹1,830.50" — Indian digit grouping, at most 2 decimal places. Matches web's formatRupees. */
+function formatRupees(value: number): string {
+  return `₹${value.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+}
+
+/** "+₹52.00" / "-₹12.30" — signed rupee change, shown under the % figure. */
+function formatSignedRupees(value: number): string {
+  const sign = value > 0 ? "+" : value < 0 ? "-" : "";
+  return `${sign}₹${Math.abs(value).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+}
+
+const ANALYST_DIRECTION_LABEL: Record<"BULLISH" | "BEARISH" | "NEUTRAL", string> = {
+  BULLISH: "Bullish",
+  BEARISH: "Bearish",
+  NEUTRAL: "Neutral",
+};
+
+const ANALYST_RESOLUTION_LABEL: Partial<Record<"PENDING" | "RESOLVED_HIT" | "RESOLVED_MISS" | "NOT_GRADED", string>> = {
+  PENDING: "pending",
+  RESOLVED_HIT: "hit",
+  RESOLVED_MISS: "miss",
+};
+
 /** Peer-tab feeds: fetched once at this size (server caps: news 100, filings 60),
  *  then revealed incrementally client-side — see file-header doc comment. */
 const NEWS_FETCH_LIMIT = 60;
@@ -387,12 +410,24 @@ function MoverRow({
 
 function MoverCard({ mover }: { mover: ApiMarketMover }) {
   const styles = useThemedStyles(makeMarketMovesStyles);
+  const { colors } = useTheme();
   const isGainer = mover.direction === "GAINER";
+  const analystCall = mover.analystCall ?? null;
+  const analystDirectionColor =
+    analystCall?.direction === "BULLISH"
+      ? colors.success
+      : analystCall?.direction === "BEARISH"
+        ? colors.danger
+        : colors.textMuted;
+
   return (
     <View style={styles.moverCard}>
       <TickerChip symbol={mover.tickerSymbol} tickerType="STOCK" size="sm" />
       {mover.companyName !== mover.tickerSymbol && (
         <Text style={styles.moverCompanyName} numberOfLines={1}>{mover.companyName}</Text>
+      )}
+      {mover.lastPrice != null && (
+        <Text style={styles.moverPrice} numberOfLines={1}>{formatRupees(mover.lastPrice)}</Text>
       )}
       <View style={styles.moverChangeRow}>
         <Text style={[styles.moverChangeArrow, { color: isGainer ? styles.gainerColor.color : styles.loserColor.color }]}>
@@ -402,10 +437,28 @@ function MoverCard({ mover }: { mover: ApiMarketMover }) {
           {Math.abs(mover.changePercent).toFixed(2)}%
         </Text>
       </View>
+      <Text style={styles.moverChangeAbs} numberOfLines={1}>{formatSignedRupees(mover.changeAbs)}</Text>
       {mover.isUnusualVolume && (
         <View style={styles.unusualVolumeBadge}>
           <Text style={styles.unusualVolumeText}>Unusual volume</Text>
         </View>
+      )}
+      {mover.topHeadline && (
+        <Pressable onPress={() => void Linking.openURL(mover.topHeadline!.sourceUrl)} hitSlop={4}>
+          <Text style={styles.moverHeadline} numberOfLines={1}>{mover.topHeadline.headline}</Text>
+        </Pressable>
+      )}
+      {analystCall && (
+        <Text style={styles.moverAnalystCall} numberOfLines={1}>
+          <Text style={{ color: colors.text, fontWeight: "600" }}>{analystCall.analystName}</Text>
+          <Text>: </Text>
+          <Text style={{ color: analystDirectionColor, fontWeight: "700" }}>
+            {ANALYST_DIRECTION_LABEL[analystCall.direction]}
+          </Text>
+          {ANALYST_RESOLUTION_LABEL[analystCall.resolutionStatus] ? (
+            <Text> · {ANALYST_RESOLUTION_LABEL[analystCall.resolutionStatus]}</Text>
+          ) : null}
+        </Text>
       )}
     </View>
   );
@@ -602,7 +655,7 @@ const makeMarketMovesStyles = (t: ThemeContextValue) =>
       color: t.colors.accent,
     },
     moverCard: {
-      width: 128,
+      width: 168,
       padding: spacing.sm,
       borderRadius: radius.sm,
       backgroundColor: t.colors.surfaceMuted,
@@ -614,6 +667,12 @@ const makeMarketMovesStyles = (t: ThemeContextValue) =>
       fontSize: 10,
       color: t.colors.textMuted,
       marginTop: 2,
+    },
+    moverPrice: {
+      fontSize: 13,
+      fontWeight: "700" as const,
+      color: t.colors.text,
+      marginTop: 1,
     },
     moverChangeRow: {
       flexDirection: "row",
@@ -627,6 +686,21 @@ const makeMarketMovesStyles = (t: ThemeContextValue) =>
     moverChangePercent: {
       fontSize: 13,
       fontWeight: "800" as const,
+    },
+    moverChangeAbs: {
+      fontSize: 10,
+      color: t.colors.textMuted,
+    },
+    moverHeadline: {
+      fontSize: 10,
+      color: t.colors.textMuted,
+      marginTop: 2,
+      textDecorationLine: "underline" as const,
+    },
+    moverAnalystCall: {
+      fontSize: 10,
+      color: t.colors.textMuted,
+      marginTop: 2,
     },
     gainerColor: { color: t.colors.success },
     loserColor: { color: t.colors.danger },

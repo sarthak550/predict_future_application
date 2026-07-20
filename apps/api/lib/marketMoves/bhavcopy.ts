@@ -208,6 +208,7 @@ export async function fetchBhavcopyMovers(sessionDate: Date): Promise<FetchedMar
       changePercent,
       changeAbs,
       volume: row.ttlTrdQnty,
+      lastPrice: row.closePrice,
       direction: changePercent > 0 ? "GAINER" : "LOSER",
     });
   }
