@@ -41,13 +41,13 @@ export async function fetchTopMovers(): Promise<TopMovers> {
 
   const [gainers, losers] = await Promise.all([
     prisma.marketMoverSnapshot.findMany({
-      where: { sessionDate: latest.sessionDate, direction: "GAINER" },
+      where: { sessionDate: latest.sessionDate, direction: "GAINER", changePercent: { gt: 0 } },
       // Sort by the actual move, not stored rank (see the API movers route —
       // guards against mixed-generation rank collisions).
       orderBy: { changePercent: "desc" },
     }),
     prisma.marketMoverSnapshot.findMany({
-      where: { sessionDate: latest.sessionDate, direction: "LOSER" },
+      where: { sessionDate: latest.sessionDate, direction: "LOSER", changePercent: { lt: 0 } },
       orderBy: { changePercent: "asc" },
     }),
   ]);

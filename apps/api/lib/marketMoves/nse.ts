@@ -296,7 +296,14 @@ export async function fetchNseMovers(): Promise<FetchedMarketMover[]> {
           ];
     const direction = index === "gainers" ? "GAINER" : "LOSER";
     return rows
-      .filter((r) => r.symbol && typeof r.perChange === "number" && r.perChange !== 0)
+      // Sign must MATCH the direction: on a deeply red (or green) day NSE pads
+      // its own top-gainers (top-losers) table with the least-bad movers of the
+      // opposite sign — a negative "gainer" is never something we should show.
+      .filter((r) =>
+        r.symbol &&
+        typeof r.perChange === "number" &&
+        (direction === "GAINER" ? r.perChange > 0 : r.perChange < 0)
+      )
       .map((r) => {
         const sym = (r.symbol as string).trim();
         return {

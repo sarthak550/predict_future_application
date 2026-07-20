@@ -42,13 +42,13 @@ export async function GET() {
 
   const [gainers, losers] = await Promise.all([
     prisma.marketMoverSnapshot.findMany({
-      where: { sessionDate, direction: "GAINER" },
+      where: { sessionDate, direction: "GAINER", changePercent: { gt: 0 } },
       // Sort by the actual move, not the stored rank — defense against any
       // mixed-generation rows where ranks from different passes collide.
       orderBy: { changePercent: "desc" },
     }),
     prisma.marketMoverSnapshot.findMany({
-      where: { sessionDate, direction: "LOSER" },
+      where: { sessionDate, direction: "LOSER", changePercent: { lt: 0 } },
       orderBy: { changePercent: "asc" },
     }),
   ]);
