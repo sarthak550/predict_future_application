@@ -110,20 +110,19 @@ export function ExpandableCallsTable({ calls }: { calls: ExpandableCall[] }) {
                         <Link
                           href={`/analysts/${call.analyst.slug}`}
                           onClick={(e) => e.stopPropagation()}
-                          title={call.analyst.name}
-                          className="block truncate font-medium text-ink-700 hover:text-signal-sky hover:underline"
+                          className="block break-words font-medium text-ink-700 hover:text-signal-sky hover:underline"
                         >
                           {call.analyst.name}
                         </Link>
                       ) : (
-                        <span className="block truncate text-ink-600" title={call.analyst?.name}>
+                        <span className="block break-words text-ink-600">
                           {call.analyst?.name ?? "—"}
                         </span>
                       )}
                     </TableCell>
                   )}
                   <TableCell className="pr-3 text-ink-600">
-                    <span className="block truncate" title={call.instrument ?? undefined}>{call.instrument ?? "—"}</span>
+                    <span className="block break-words">{call.instrument ?? "—"}</span>
                   </TableCell>
                   <TableCell>
                     <DirectionChip direction={call.direction} />
