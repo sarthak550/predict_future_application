@@ -60,13 +60,25 @@ const MIN_LIQUIDITY_QTY = 10_000;
 const TOP_N_PER_DIRECTION = 100;
 
 /** Builds the DDMMYYYY-suffixed bhavcopy URL for a given IST session date. */
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+
+/** The IST calendar date {dd,mm,yyyy} of an IST-midnight-as-UTC session instant. */
+function istDateParts(sessionDate: Date): { dd: string; mm: string; yyyy: number } {
+  // sessionDate is an IST-midnight instant expressed in UTC (e.g. the Monday
+  // 20 Jul IST session is stored as 2026-07-19T18:30Z) — so its raw UTC date
+  // components are the PREVIOUS day. Shift by the IST offset first. (Getting
+  // this wrong once fetched Sunday's URL, which NSE happily serves with
+  // FRIDAY's data inside — see the DATE1 validation below.)
+  const ist = new Date(sessionDate.getTime() + IST_OFFSET_MS);
+  return {
+    dd: String(ist.getUTCDate()).padStart(2, "0"),
+    mm: String(ist.getUTCMonth() + 1).padStart(2, "0"),
+    yyyy: ist.getUTCFullYear(),
+  };
+}
+
 function bhavcopyUrl(sessionDate: Date): string {
-  // sessionDate is an IST-midnight instant expressed in UTC (see
-  // getIstSessionDate in marketHours.ts) — its UTC Y/M/D components ARE the
-  // IST calendar date, so no further offset math is needed here.
-  const dd = String(sessionDate.getUTCDate()).padStart(2, "0");
-  const mm = String(sessionDate.getUTCMonth() + 1).padStart(2, "0");
-  const yyyy = sessionDate.getUTCFullYear();
+  const { dd, mm, yyyy } = istDateParts(sessionDate);
   return `${NSE_ARCHIVES_ORIGIN}/products/content/sec_bhavdata_full_${dd}${mm}${yyyy}.csv`;
 }
 
@@ -156,6 +168,25 @@ export async function fetchBhavcopyMovers(sessionDate: Date): Promise<FetchedMar
   }
 
   const csv = await res.text();
+
+  // VALIDATE the file's own trading date before trusting it. NSE's archives
+  // host serves URLs for NON-trading dates (weekends/holidays) with HTTP 200
+  // but the PREVIOUS session's file inside — fetching "Sunday" returns
+  // Friday's data. Requiring the in-file DATE1 to match the requested IST
+  // session date makes stale data impossible regardless of URL math or NSE
+  // quirks: a mismatched file is treated exactly like "not published yet".
+  const { dd, mm, yyyy } = istDateParts(sessionDate);
+  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const expectedDate1 = `${dd}-${MONTHS[Number(mm) - 1]}-${yyyy}`;
+  const firstDataLine = csv.split(/\r?\n/).find((l, i) => i > 0 && l.trim().length > 0);
+  const fileDate1 = firstDataLine?.split(",")[2]?.trim() ?? "";
+  if (fileDate1.toLowerCase() !== expectedDate1.toLowerCase()) {
+    console.log(
+      `[marketMoves/bhavcopy] ${url} contains DATE1=${fileDate1}, expected ${expectedDate1} — treating as not published`
+    );
+    return null;
+  }
+
   const rows = parseBhavcopyCsv(csv);
   if (rows.length === 0) return null;
 
