@@ -147,7 +147,7 @@ export async function fetchBhavcopyMovers(sessionDate: Date): Promise<FetchedMar
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     try {
-      res = await fetch(url, { headers: ARCHIVE_HEADERS, signal: controller.signal });
+      res = await fetch(url, { cache: "no-store", headers: ARCHIVE_HEADERS, signal: controller.signal });
     } finally {
       clearTimeout(timeout);
     }

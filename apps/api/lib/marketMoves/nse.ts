@@ -87,7 +87,12 @@ async function primeNseSession(warmUpPath: string): Promise<string | null> {
 /** GETs an NSE API path with a primed cookie + matching referer. Never throws. */
 async function nseApiGet(apiPath: string, cookie: string, refererPath: string): Promise<unknown | null> {
   try {
-    const res = await fetch(`${NSE_ORIGIN}${apiPath}`, {
+    // cache: "no-store" + a cache-busting param: a long-lived server process
+    // once served stale NSE responses over a persistent connection (the strip
+    // froze a full session behind). Freshness must be guaranteed per-fetch.
+    const bust = `${apiPath.includes("?") ? "&" : "?"}_=${Date.now()}`;
+    const res = await fetch(`${NSE_ORIGIN}${apiPath}${bust}`, {
+      cache: "no-store",
       headers: {
         ...API_HEADERS_BASE,
         Cookie: cookie,
