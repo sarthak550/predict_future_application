@@ -66,7 +66,7 @@ export function SignUpForm() {
                 password,
                 redirect: false
               });
-              router.push("/feed");
+              router.push("/");
               router.refresh();
             })
           }

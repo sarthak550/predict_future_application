@@ -56,7 +56,7 @@ export function SignInForm({ initialErrorMessage = "" }: { initialErrorMessage?:
                 setError("Email or password is incorrect.");
                 return;
               }
-              router.push("/feed");
+              router.push("/");
               router.refresh();
             })
           }

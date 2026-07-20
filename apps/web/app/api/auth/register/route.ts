@@ -46,7 +46,7 @@ export async function POST(request: Request) {
             type: "SYSTEM",
             title: "Welcome to the news feed",
             body: `Your account is ready and ${STARTING_BALANCE.toLocaleString("en-IN")} virtual points have been added for your first predictions.`,
-            href: "/feed"
+            href: "/"
           }
         }
       }
