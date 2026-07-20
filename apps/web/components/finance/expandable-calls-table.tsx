@@ -58,18 +58,19 @@ export function ExpandableCallsTable({ calls }: { calls: ExpandableCall[] }) {
 
   return (
     <div className="overflow-x-auto">
-      <Table>
+      {/* table-fixed: every column gets an explicit width so no cell's content
+          (e.g. a long analyst name) can stretch its column and squeeze the
+          Call quote — long values truncate with an ellipsis instead. */}
+      <Table className="table-fixed">
         <TableHead>
           <TableRow>
-            {/* Call is the flexible column — every other column shrinks to its
-                content (w-px + nowrap) so the quote gets all remaining width. */}
-            <TableHeaderCell className="w-full">Call</TableHeaderCell>
-            {showAnalystColumn && <TableHeaderCell className="w-px whitespace-nowrap">Analyst</TableHeaderCell>}
-            <TableHeaderCell className="w-px whitespace-nowrap">Instrument</TableHeaderCell>
-            <TableHeaderCell className="w-px whitespace-nowrap">Direction</TableHeaderCell>
-            <TableHeaderCell className="w-px whitespace-nowrap">Date</TableHeaderCell>
-            <TableHeaderCell className="w-px whitespace-nowrap">Verdict</TableHeaderCell>
-            <TableHeaderCell className="w-px whitespace-nowrap">Source</TableHeaderCell>
+            <TableHeaderCell className={showAnalystColumn ? "w-[38%]" : "w-[46%]"}>Call</TableHeaderCell>
+            {showAnalystColumn && <TableHeaderCell className="w-[13%]">Analyst</TableHeaderCell>}
+            <TableHeaderCell className="w-[12%]">Instrument</TableHeaderCell>
+            <TableHeaderCell className="w-[10%]">Direction</TableHeaderCell>
+            <TableHeaderCell className="w-[10%]">Date</TableHeaderCell>
+            <TableHeaderCell className="w-[10%]">Verdict</TableHeaderCell>
+            <TableHeaderCell className="w-[7%]">Source</TableHeaderCell>
           </TableRow>
         </TableHead>
         <TableBody>
@@ -104,27 +105,30 @@ export function ExpandableCallsTable({ calls }: { calls: ExpandableCall[] }) {
                     </span>
                   </TableCell>
                   {showAnalystColumn && (
-                    <TableCell className="whitespace-nowrap">
+                    <TableCell className="pr-3">
                       {call.analyst?.slug ? (
                         <Link
                           href={`/analysts/${call.analyst.slug}`}
                           onClick={(e) => e.stopPropagation()}
-                          className="font-medium text-ink-700 hover:text-signal-sky hover:underline"
+                          title={call.analyst.name}
+                          className="block truncate font-medium text-ink-700 hover:text-signal-sky hover:underline"
                         >
                           {call.analyst.name}
                         </Link>
                       ) : (
-                        <span className="text-ink-600">{call.analyst?.name ?? "—"}</span>
+                        <span className="block truncate text-ink-600" title={call.analyst?.name}>
+                          {call.analyst?.name ?? "—"}
+                        </span>
                       )}
                     </TableCell>
                   )}
-                  <TableCell className="whitespace-nowrap text-ink-600">
-                    {call.instrument ?? "—"}
+                  <TableCell className="pr-3 text-ink-600">
+                    <span className="block truncate" title={call.instrument ?? undefined}>{call.instrument ?? "—"}</span>
                   </TableCell>
                   <TableCell>
                     <DirectionChip direction={call.direction} />
                   </TableCell>
-                  <TableCell className="whitespace-nowrap text-ink-500">
+                  <TableCell className="text-ink-500">
                     {call.publishedAtLabel}
                   </TableCell>
                   <TableCell>
