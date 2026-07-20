@@ -61,13 +61,15 @@ export function ExpandableCallsTable({ calls }: { calls: ExpandableCall[] }) {
       <Table>
         <TableHead>
           <TableRow>
-            <TableHeaderCell>Call</TableHeaderCell>
-            {showAnalystColumn && <TableHeaderCell>Analyst</TableHeaderCell>}
-            <TableHeaderCell>Instrument</TableHeaderCell>
-            <TableHeaderCell>Direction</TableHeaderCell>
-            <TableHeaderCell>Date</TableHeaderCell>
-            <TableHeaderCell>Verdict</TableHeaderCell>
-            <TableHeaderCell>Source</TableHeaderCell>
+            {/* Call is the flexible column — every other column shrinks to its
+                content (w-px + nowrap) so the quote gets all remaining width. */}
+            <TableHeaderCell className="w-full">Call</TableHeaderCell>
+            {showAnalystColumn && <TableHeaderCell className="w-px whitespace-nowrap">Analyst</TableHeaderCell>}
+            <TableHeaderCell className="w-px whitespace-nowrap">Instrument</TableHeaderCell>
+            <TableHeaderCell className="w-px whitespace-nowrap">Direction</TableHeaderCell>
+            <TableHeaderCell className="w-px whitespace-nowrap">Date</TableHeaderCell>
+            <TableHeaderCell className="w-px whitespace-nowrap">Verdict</TableHeaderCell>
+            <TableHeaderCell className="w-px whitespace-nowrap">Source</TableHeaderCell>
           </TableRow>
         </TableHead>
         <TableBody>
@@ -84,7 +86,7 @@ export function ExpandableCallsTable({ calls }: { calls: ExpandableCall[] }) {
                   onClick={() => setOpenId(isOpen ? null : call.id)}
                   aria-expanded={isOpen}
                 >
-                  <TableCell className="max-w-xs">
+                  <TableCell className="pr-4">
                     <span className="inline-flex items-start gap-1.5 text-ink-700">
                       <ChevronDown
                         className={`mt-0.5 h-3.5 w-3.5 shrink-0 text-ink-400 transition-transform ${isOpen ? "rotate-180" : ""}`}
