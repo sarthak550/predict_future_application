@@ -84,8 +84,9 @@ export function MarketMovesTab() {
 
   const [movers, setMovers] = useState<{ gainers: ApiMarketMover[]; losers: ApiMarketMover[]; asOf: string | null } | null>(null);
   const [moversLoading, setMoversLoading] = useState(true);
-  const [showAllGainers, setShowAllGainers] = useState(false);
-  const [showAllLosers, setShowAllLosers] = useState(false);
+  // One shared toggle for both directions — independent expansion left the
+  // columns lopsided and doubled the taps for what reads as one action.
+  const [showAllMovers, setShowAllMovers] = useState(false);
 
   const [news, setNews] = useState<ApiMarketMoveNews[]>([]);
   const [newsShown, setNewsShown] = useState(SHOWN_INITIAL);
@@ -190,21 +191,24 @@ export function MarketMovesTab() {
             )}
           </View>
           {movers && movers.gainers.length > 0 && (
-            <MoverRow
-              label="Gainers"
-              items={movers.gainers}
-              showAll={showAllGainers}
-              onToggleShowAll={() => setShowAllGainers((v) => !v)}
-            />
+            <MoverRow label="Gainers" items={movers.gainers} showAll={showAllMovers} />
           )}
           {movers && movers.losers.length > 0 && (
-            <MoverRow
-              label="Losers"
-              items={movers.losers}
-              showAll={showAllLosers}
-              onToggleShowAll={() => setShowAllLosers((v) => !v)}
-            />
+            <MoverRow label="Losers" items={movers.losers} showAll={showAllMovers} />
           )}
+          {movers &&
+            Math.max(movers.gainers.length, movers.losers.length) > MOVERS_COLLAPSED_COUNT && (
+              <Pressable
+                onPress={() => setShowAllMovers((v) => !v)}
+                style={styles.moverShowToggle}
+              >
+                <Text style={styles.moverShowToggleText}>
+                  {showAllMovers
+                    ? "Show less"
+                    : `Show all ${Math.max(movers.gainers.length, movers.losers.length)}`}
+                </Text>
+              </Pressable>
+            )}
         </View>
       ) : (
         <View style={styles.card}>
@@ -362,16 +366,13 @@ function MoverRow({
   label,
   items,
   showAll,
-  onToggleShowAll,
 }: {
   label: string;
   items: ApiMarketMover[];
   showAll: boolean;
-  onToggleShowAll: () => void;
 }) {
   const styles = useThemedStyles(makeMarketMovesStyles);
   const visible = showAll ? items : items.slice(0, MOVERS_COLLAPSED_COUNT);
-  const hiddenCount = items.length - MOVERS_COLLAPSED_COUNT;
   return (
     <View style={styles.moverRowSection}>
       <Text style={styles.moverRowLabel}>{label}</Text>
@@ -380,13 +381,6 @@ function MoverRow({
           <MoverCard key={m.tickerSymbol} mover={m} />
         ))}
       </ScrollView>
-      {hiddenCount > 0 && (
-        <Pressable onPress={onToggleShowAll} style={styles.moverShowToggle}>
-          <Text style={styles.moverShowToggleText}>
-            {showAll ? "Show less" : `Show all ${items.length}`}
-          </Text>
-        </Pressable>
-      )}
     </View>
   );
 }

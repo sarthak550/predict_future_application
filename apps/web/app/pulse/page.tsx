@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 
 import { AnalystDisclaimerFooter } from "@/components/finance/disclaimer-footer";
 import { Card, CardContent } from "@/components/ui/card";
-import { MoverList } from "@/components/finance/mover-list";
+import { TopMoversCard } from "@/components/finance/top-movers-card";
 import { PulseTabs } from "@/components/finance/pulse-tabs";
 import {
   fetchLatestFilings,
@@ -94,10 +94,7 @@ function TopMoversSection({ movers }: { movers: Awaited<ReturnType<typeof fetchT
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2">
-          <MoverList title="Gainers" rows={movers.gainers} tone="up" />
-          <MoverList title="Losers" rows={movers.losers} tone="down" />
-        </div>
+        <TopMoversCard gainers={movers.gainers} losers={movers.losers} />
       )}
     </section>
   );
