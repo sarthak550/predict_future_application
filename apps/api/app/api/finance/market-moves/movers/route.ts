@@ -43,11 +43,13 @@ export async function GET() {
   const [gainers, losers] = await Promise.all([
     prisma.marketMoverSnapshot.findMany({
       where: { sessionDate, direction: "GAINER" },
-      orderBy: { rank: "asc" },
+      // Sort by the actual move, not the stored rank — defense against any
+      // mixed-generation rows where ranks from different passes collide.
+      orderBy: { changePercent: "desc" },
     }),
     prisma.marketMoverSnapshot.findMany({
       where: { sessionDate, direction: "LOSER" },
-      orderBy: { rank: "asc" },
+      orderBy: { changePercent: "asc" },
     }),
   ]);
 
@@ -69,8 +71,9 @@ export async function GET() {
   });
 
   return NextResponse.json({
-    gainers: gainers.map(shape),
-    losers: losers.map(shape),
+    // Renumber to the sorted position — stored ranks can collide across passes.
+    gainers: gainers.map(shape).map((m, i) => ({ ...m, rank: i + 1 })),
+    losers: losers.map(shape).map((m, i) => ({ ...m, rank: i + 1 })),
     asOf,
   });
 }

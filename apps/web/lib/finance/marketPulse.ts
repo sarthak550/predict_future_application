@@ -42,11 +42,13 @@ export async function fetchTopMovers(): Promise<TopMovers> {
   const [gainers, losers] = await Promise.all([
     prisma.marketMoverSnapshot.findMany({
       where: { sessionDate: latest.sessionDate, direction: "GAINER" },
-      orderBy: { rank: "asc" },
+      // Sort by the actual move, not stored rank (see the API movers route —
+      // guards against mixed-generation rank collisions).
+      orderBy: { changePercent: "desc" },
     }),
     prisma.marketMoverSnapshot.findMany({
       where: { sessionDate: latest.sessionDate, direction: "LOSER" },
-      orderBy: { rank: "asc" },
+      orderBy: { changePercent: "asc" },
     }),
   ]);
 
@@ -59,10 +61,16 @@ export async function fetchTopMovers(): Promise<TopMovers> {
     changePercent: m.changePercent,
     changeAbs: m.changeAbs,
     isUnusualVolume: m.isUnusualVolume,
-    rank: m.rank,
+    rank: m.rank, // overwritten below with the sorted position
   });
 
-  return { gainers: gainers.map(shape), losers: losers.map(shape), asOf };
+  // Renumber ranks to the sorted position so the displayed number always
+  // matches the order (stored ranks can collide across write generations).
+  return {
+    gainers: gainers.map(shape).map((m, i) => ({ ...m, rank: i + 1 })),
+    losers: losers.map(shape).map((m, i) => ({ ...m, rank: i + 1 })),
+    asOf,
+  };
 }
 
 export interface NewsRow {

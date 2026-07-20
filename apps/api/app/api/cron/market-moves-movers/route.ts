@@ -124,52 +124,48 @@ async function upsertMovers(
     .sort((a, b) => a.changePercent - b.changePercent)
     .slice(0, topNPerDirection);
 
+  // REPLACE the session's rows atomically instead of upserting by ticker.
+  // Upserting left orphans behind: a symbol written by an earlier pass (e.g.
+  // the intraday top-20) that doesn't appear in a later pass (the EOD top-100)
+  // kept its old rank/percent — so generations of writes interleaved and the
+  // "sorted" list came out shuffled with duplicate ranks. Delete-then-create
+  // in one transaction guarantees each pass owns the whole session snapshot.
+  const now = new Date();
+  const rows = [...gainers, ...losers].flatMap((m, idx) => {
+    const rank = (idx < gainers.length ? idx : idx - gainers.length) + 1;
+    const isUnusualVolume = medianVolume > 0 && m.volume >= medianVolume * UNUSUAL_VOLUME_MULTIPLE;
+    // Name priority: a resolved name on the mover row itself (equity-master
+    // match, in either fetcher) wins; only when the symbol was unmapped there
+    // (companyName === ticker) do we fall back to an announcement-derived
+    // name, then the ticker.
+    const resolvedName = m.companyName !== m.tickerSymbol ? m.companyName : null;
+    const companyName = resolvedName ?? companyNameBySymbol.get(m.tickerSymbol) ?? m.companyName;
+    return [{
+      sessionDate,
+      tickerSymbol: m.tickerSymbol,
+      companyName,
+      changePercent: m.changePercent,
+      changeAbs: m.changeAbs,
+      volume: m.volume,
+      avgVolume: null,
+      isUnusualVolume,
+      direction: m.direction,
+      rank,
+      snapshotAt: now,
+    }];
+  });
+
   let upserted = 0;
   let failed = 0;
-
-  for (const group of [gainers, losers]) {
-    for (let i = 0; i < group.length; i++) {
-      const m = group[i];
-      const rank = i + 1;
-      const isUnusualVolume = medianVolume > 0 && m.volume >= medianVolume * UNUSUAL_VOLUME_MULTIPLE;
-      // Name priority: a resolved name on the mover row itself (equity-master
-      // match, in either fetcher) wins; only when the symbol was unmapped
-      // there (companyName === ticker) do we fall back to an
-      // announcement-derived name, then the ticker.
-      const resolvedName = m.companyName !== m.tickerSymbol ? m.companyName : null;
-      const companyName = resolvedName ?? companyNameBySymbol.get(m.tickerSymbol) ?? m.companyName;
-      try {
-        await prisma.marketMoverSnapshot.upsert({
-          where: { sessionDate_tickerSymbol: { sessionDate, tickerSymbol: m.tickerSymbol } },
-          update: {
-            companyName,
-            changePercent: m.changePercent,
-            changeAbs: m.changeAbs,
-            volume: m.volume,
-            isUnusualVolume,
-            direction: m.direction,
-            rank,
-            snapshotAt: new Date(),
-          },
-          create: {
-            sessionDate,
-            tickerSymbol: m.tickerSymbol,
-            companyName,
-            changePercent: m.changePercent,
-            changeAbs: m.changeAbs,
-            volume: m.volume,
-            avgVolume: null,
-            isUnusualVolume,
-            direction: m.direction,
-            rank,
-          },
-        });
-        upserted++;
-      } catch (err) {
-        failed++;
-        console.error(`[cron/market-moves-movers] upsert failed for ${m.tickerSymbol}:`, err);
-      }
-    }
+  try {
+    await prisma.$transaction([
+      prisma.marketMoverSnapshot.deleteMany({ where: { sessionDate } }),
+      prisma.marketMoverSnapshot.createMany({ data: rows, skipDuplicates: true }),
+    ]);
+    upserted = rows.length;
+  } catch (err) {
+    failed = rows.length;
+    console.error(`[cron/market-moves-movers] session replace failed:`, err);
   }
 
   return { gainers: gainers.length, losers: losers.length, upserted, failed };
