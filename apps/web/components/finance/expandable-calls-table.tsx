@@ -60,7 +60,7 @@ export function ExpandableCallsTable({ calls }: { calls: ExpandableCall[] }) {
     <div className="overflow-x-auto">
       {/* table-fixed: every column gets an explicit width so no cell's content
           (e.g. a long analyst name) can stretch its column and squeeze the
-          Call quote — long values truncate with an ellipsis instead. */}
+          Call quote — long values wrap onto multiple lines within their column. */}
       <Table className="table-fixed">
         <TableHead>
           <TableRow>
