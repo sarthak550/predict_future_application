@@ -1,5 +1,5 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
   // "native" = your Mac for local dev; "debian-openssl-3.0.x" = the Linux container
   // (node:20-bookworm-slim / Debian 12 / OpenSSL 3) used in the AWS App Runner image.
   // Without the Debian target the query engine .so is missing in the container and
@@ -13,88 +13,90 @@ datasource db {
 }
 
 model User {
-  id                         String                @id @default(cuid())
-  username                   String                @unique
-  email                      String                @unique
-  emailVerified              DateTime?
-  passwordHash               String?
-  image                      String?
-  avatarUrl                  String?
-  role                       Role                  @default(USER)
-  isSuspended                Boolean               @default(false)
-  suspendedReason            String?
-  reputationScore            Int                   @default(50)
-  expoPushToken              String?
-  accuracyScore              Float                 @default(0)
-  level                      Int                   @default(1)
-  streak                     Int                   @default(0)
-  createdAt                  DateTime              @default(now())
-  updatedAt                  DateTime              @updatedAt
-  referralCode               String?               @unique
-  referredById               String?
-  currentLeagueTier          LeagueTier?
-  isVerifiedAnalyst          Boolean               @default(false)
-  phone                      String?               @unique
-  phoneVerified              Boolean               @default(false)
+  id                               String                            @id @default(cuid())
+  username                         String                            @unique
+  email                            String                            @unique
+  emailVerified                    DateTime?
+  passwordHash                     String?
+  image                            String?
+  avatarUrl                        String?
+  role                             Role                              @default(USER)
+  isSuspended                      Boolean                           @default(false)
+  suspendedReason                  String?
+  reputationScore                  Int                               @default(50)
+  expoPushToken                    String?
+  accuracyScore                    Float                             @default(0)
+  level                            Int                               @default(1)
+  streak                           Int                               @default(0)
+  createdAt                        DateTime                          @default(now())
+  updatedAt                        DateTime                          @updatedAt
+  referralCode                     String?                           @unique
+  referredById                     String?
+  currentLeagueTier                LeagueTier?
+  isVerifiedAnalyst                Boolean                           @default(false)
+  phone                            String?                           @unique
+  phoneVerified                    Boolean                           @default(false)
   /// Lifetime tip points received across all comments. Incremented atomically on each tip transaction.
-  tipsReceivedTotal          Int                   @default(0)
+  tipsReceivedTotal                Int                               @default(0)
   /// Controls whether the user appears under their real username or an anonymised pseudonym on public surfaces.
-  displayMode                UserDisplayMode       @default(USERNAME)
+  displayMode                      UserDisplayMode                   @default(USERNAME)
   /// Analyst tier earned through prediction accuracy and volume. Recomputed on market resolution and nightly cron.
-  analystTier                AnalystTier           @default(ROOKIE)
-  referralBonusCreditedAt    DateTime?
-  accounts                   Account[]
-  adminActions               AdminAction[]         @relation("AdminActor")
-  targetAdminActions         AdminAction[]         @relation("AdminTargetUser")
-  BigCallTap                 BigCallTap[]
-  challenges                 Challenge[]           @relation("UserChallenges")
-  reviewedChallenges         Challenge[]           @relation("UserReviewedChallenges")
-  dailyQuests                DailyQuest[]
-  expertFollows              ExpertFollow[]
-  expertOpinionVotes         ExpertOpinionVote[]
-  followers                  Follow[]              @relation("Followee")
-  following                  Follow[]              @relation("Follower")
-  ownedGroups                Group[]               @relation("OwnedGroups")
-  groupMemberships           GroupMembership[]
-  groupJoinRequests          GroupJoinRequest[]    @relation("JoinRequests")
-  decidedJoinRequests        GroupJoinRequest[]    @relation("JoinRequestDecider")
+  analystTier                      AnalystTier                       @default(ROOKIE)
+  referralBonusCreditedAt          DateTime?
+  accounts                         Account[]
+  adminActions                     AdminAction[]                     @relation("AdminActor")
+  targetAdminActions               AdminAction[]                     @relation("AdminTargetUser")
+  BigCallTap                       BigCallTap[]
+  challenges                       Challenge[]                       @relation("UserChallenges")
+  reviewedChallenges               Challenge[]                       @relation("UserReviewedChallenges")
+  dailyQuests                      DailyQuest[]
+  expertFollows                    ExpertFollow[]
+  expertOpinionVotes               ExpertOpinionVote[]
+  followers                        Follow[]                          @relation("Followee")
+  following                        Follow[]                          @relation("Follower")
+  ownedGroups                      Group[]                           @relation("OwnedGroups")
+  groupMemberships                 GroupMembership[]
+  groupJoinRequests                GroupJoinRequest[]                @relation("JoinRequests")
+  decidedJoinRequests              GroupJoinRequest[]                @relation("JoinRequestDecider")
   /// S59: User-level default notification level for all group memberships. Migrated from AsyncStorage in T2.
-  defaultGroupNotificationLevel GroupNotifLevel @default(ALL)
+  defaultGroupNotificationLevel    GroupNotifLevel                   @default(ALL)
   /// S58: per-group notification preferences set by this user.
-  groupNotificationPreferences GroupNotificationPreference[]
+  groupNotificationPreferences     GroupNotificationPreference[]
   /// S59: moderation actions taken by this user.
-  moderationActionsAsActor   GroupModerationAction[] @relation("ModerationActor")
+  moderationActionsAsActor         GroupModerationAction[]           @relation("ModerationActor")
   /// S59: moderation actions targeting this user.
-  moderationActionsAsTarget  GroupModerationAction[] @relation("ModerationTarget")
-  leaderboardSnapshots       LeaderboardSnapshot[]
-  approvedMarkets            Market[]              @relation("ApprovedMarkets")
-  createdMarkets             Market[]              @relation("CreatedMarkets")
-  finalizedMarketResolutions Market[]              @relation("FinalizedMarketResolutions")
-  comments                   MarketComment[]
-  positions                  MarketPosition[]
-  reports                    MarketReport[]        @relation("ReportedByUser")
-  reviewedReports            MarketReport[]        @relation("ReviewedReports")
-  resolutions                MarketResolution[]    @relation("ResolvedByUser")
+  moderationActionsAsTarget        GroupModerationAction[]           @relation("ModerationTarget")
+  leaderboardSnapshots             LeaderboardSnapshot[]
+  approvedMarkets                  Market[]                          @relation("ApprovedMarkets")
+  createdMarkets                   Market[]                          @relation("CreatedMarkets")
+  finalizedMarketResolutions       Market[]                          @relation("FinalizedMarketResolutions")
+  comments                         MarketComment[]
+  positions                        MarketPosition[]
+  reports                          MarketReport[]                    @relation("ReportedByUser")
+  reviewedReports                  MarketReport[]                    @relation("ReviewedReports")
+  resolutions                      MarketResolution[]                @relation("ResolvedByUser")
   /// Market Pulse (Phase 1b, stub — not yet activated) push preference. See MarketMoveNotificationPreference.
   marketMoveNotificationPreference MarketMoveNotificationPreference?
-  monthlyLeagueEntries       MonthlyLeagueEntry[]
-  multiChoicePositions       MultiChoicePosition[]
-  notifications              Notification[]
-  phoneVerificationOtp       PhoneVerificationOtp?
-  reasoningUpvotes           ReasoningUpvote[]
-  savedMarkets               SavedMarket[]
-  sessions                   Session[]
-  reviewedStories            Story[]               @relation("ReviewedStories")
-  createdStories             Story[]               @relation("CreatedStories")
-  referredBy                 User?                 @relation("Referrer", fields: [referredById], references: [id])
-  referrals                  User[]                @relation("Referrer")
-  badges                     UserBadge[]
-  categoryStats              UserCategoryStat[]
-  stats                      UserStat?
-  votes                      Vote[]
-  wallet                     Wallet?
-  createdPolls               Poll[]                @relation("CreatedPolls")
-  pollVotes                  PollVote[]            @relation("PollVotes")
+  monthlyLeagueEntries             MonthlyLeagueEntry[]
+  multiChoicePositions             MultiChoicePosition[]
+  notifications                    Notification[]
+  phoneVerificationOtp             PhoneVerificationOtp?
+  reasoningUpvotes                 ReasoningUpvote[]
+  savedMarkets                     SavedMarket[]
+  sessions                         Session[]
+  reviewedStories                  Story[]                           @relation("ReviewedStories")
+  createdStories                   Story[]                           @relation("CreatedStories")
+  referredBy                       User?                             @relation("Referrer", fields: [referredById], references: [id])
+  referrals                        User[]                            @relation("Referrer")
+  badges                           UserBadge[]
+  categoryStats                    UserCategoryStat[]
+  stats                            UserStat?
+  votes                            Vote[]
+  wallet                           Wallet?
+  createdPolls                     Poll[]                            @relation("CreatedPolls")
+  pollVotes                        PollVote[]                        @relation("PollVotes")
+  /// Portfolios (P3.1) owned by this user. See model Portfolio.
+  portfolios                       Portfolio[]                       @relation("PortfolioOwnerUser")
 }
 
 model LeaderboardSnapshot {
@@ -360,34 +362,34 @@ model CuratedFeedItem {
 }
 
 model Group {
-  id            String               @id @default(cuid())
-  slug          String               @unique
-  name          String
-  description   String?
-  ownerId       String
-  inviteCode    String               @unique
-  isArchived    Boolean              @default(false)
+  id                      String                        @id @default(cuid())
+  slug                    String                        @unique
+  name                    String
+  description             String?
+  ownerId                 String
+  inviteCode              String                        @unique
+  isArchived              Boolean                       @default(false)
   /// S54: open discovery visibility model. Existing groups default to INVITE_ONLY.
-  visibility    GroupVisibility      @default(INVITE_ONLY)
+  visibility              GroupVisibility               @default(INVITE_ONLY)
   /// Optional category tag for filtering in the discover feed.
-  category      MarketCategory?
+  category                MarketCategory?
   /// Maximum members allowed. Default 10,000. Enforced on OPEN join path.
-  memberCap     Int                  @default(10000)
+  memberCap               Int                           @default(10000)
   /// Cover image URL. Set by admin/seed in S54; upload UI is S58.
-  coverImageUrl String?
+  coverImageUrl           String?
   /// S59: Editorial curation flag. Featured groups appear first in the discover rail.
-  isFeatured    Boolean              @default(false)
-  createdAt     DateTime             @default(now())
-  updatedAt     DateTime             @updatedAt
-  owner         User                 @relation("OwnedGroups", fields: [ownerId], references: [id], onDelete: Cascade)
-  memberships   GroupMembership[]
-  markets       Market[]
+  isFeatured              Boolean                       @default(false)
+  createdAt               DateTime                      @default(now())
+  updatedAt               DateTime                      @updatedAt
+  owner                   User                          @relation("OwnedGroups", fields: [ownerId], references: [id], onDelete: Cascade)
+  memberships             GroupMembership[]
+  markets                 Market[]
   /// S56: join requests from users seeking entry into REQUEST_TO_JOIN groups.
-  joinRequests  GroupJoinRequest[]
+  joinRequests            GroupJoinRequest[]
   /// S58: per-member notification preferences for this group.
   notificationPreferences GroupNotificationPreference[]
   /// S59: moderation audit trail.
-  moderationActions GroupModerationAction[]
+  moderationActions       GroupModerationAction[]
 
   @@index([ownerId, createdAt])
   @@index([visibility, createdAt])
@@ -408,9 +410,9 @@ model GroupJoinRequest {
   decidedById  String?
   decisionNote String?
 
-  group     Group  @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  user      User   @relation("JoinRequests", fields: [userId], references: [id], onDelete: Cascade)
-  decidedBy User?  @relation("JoinRequestDecider", fields: [decidedById], references: [id])
+  group     Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user      User  @relation("JoinRequests", fields: [userId], references: [id], onDelete: Cascade)
+  decidedBy User? @relation("JoinRequestDecider", fields: [decidedById], references: [id])
 
   @@unique([groupId, userId, status])
   @@index([groupId, status])
@@ -855,6 +857,8 @@ model Expert {
   updatedAt    DateTime        @updatedAt
   followers    ExpertFollow[]
   opinions     ExpertOpinion[]
+  /// Shadow portfolios (P3.1) auto-tracking this analyst's calls. See model Portfolio.
+  portfolios   Portfolio[]     @relation("PortfolioOwnerExpert")
 
   @@unique([name, organization])
 }
@@ -1014,27 +1018,27 @@ model WeeklyDigestRun {
 /// S62: Lightweight free-vote poll — no stake/pool/bond fields.
 /// Used for RBI MPC packs and future news polls. Fully separate from Market.
 model Poll {
-  id             String         @id @default(cuid())
-  question       String
-  description    String?
-  category       MarketCategory
-  status         PollStatus     @default(OPEN)
-  closeAt        DateTime
-  resolvedAt     DateTime?
+  id              String         @id @default(cuid())
+  question        String
+  description     String?
+  category        MarketCategory
+  status          PollStatus     @default(OPEN)
+  closeAt         DateTime
+  resolvedAt      DateTime?
   winningOptionId String?
-  structuredData Json?
+  structuredData  Json?
   /// Shared identifier grouping polls in the same pack (e.g., two RBI questions in one MPC pack).
-  packId         String?
+  packId          String?
   /// The real-world event time this poll is tied to (e.g., RBI announcement time).
-  eventAt        DateTime?
+  eventAt         DateTime?
   /// Optional link to a Story for future news polls. Null in Phase 1.
-  storyId        String?        @unique
-  createdById    String
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
-  createdBy      User           @relation("CreatedPolls", fields: [createdById], references: [id])
-  options        PollOption[]
-  votes          PollVote[]
+  storyId         String?        @unique
+  createdById     String
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  createdBy       User           @relation("CreatedPolls", fields: [createdById], references: [id])
+  options         PollOption[]
+  votes           PollVote[]
 
   @@index([status, closeAt])
   @@index([packId])
@@ -1429,28 +1433,28 @@ model GroupNotificationPreference {
 /// Fields are nullable so we can do keep-last-known-good updates:
 /// only overwrite a field when the new fetch returned a valid value.
 model MacroSnapshot {
-  id              String    @id @default(cuid())
+  id  String @id @default(cuid())
   /// Singleton discriminator — always "singleton".
-  key             String    @unique @default("singleton")
+  key String @unique @default("singleton")
 
   // RBI policy rates (scraped from rbi.org.in)
-  repoRate        Float?
-  crr             Float?
-  slr             Float?
-  sdf             Float?
-  msf             Float?
-  bankRate        Float?
-  rbiFetchedAt    DateTime?
+  repoRate     Float?
+  crr          Float?
+  slr          Float?
+  sdf          Float?
+  msf          Float?
+  bankRate     Float?
+  rbiFetchedAt DateTime?
 
   // IMF DataMapper projections for India
-  gdpGrowth       Float?
-  gdpGrowthYear   Int?
-  cpiInflation    Float?
+  gdpGrowth        Float?
+  gdpGrowthYear    Int?
+  cpiInflation     Float?
   cpiInflationYear Int?
-  imfFetchedAt    DateTime?
+  imfFetchedAt     DateTime?
 
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1611,4 +1615,119 @@ model StockEodQuote {
 
   @@unique([sessionDate, symbol])
   @@index([symbol, sessionDate(sort: Desc)])
+}
+
+// ─── Portfolios (P3.1) ──────────────────────────────────────────────────────────
+//
+// Virtual, cash-constrained, long-only paper-trading portfolios priced off
+// StockEodQuote closes. Structurally immutable: there is deliberately NO mutable
+// nav/cash/holdings field anywhere below — every derived figure (cash, holdings,
+// NAV, return%) is recomputed from (startingCapital, EXECUTED PortfolioTransaction
+// rows, StockEodQuote closes) by the pure functions in
+// packages/business-rules/src/portfolios/engine.ts. PortfolioDailyValue is a
+// nightly-cron CACHE of that computation, not a source of truth — safe to
+// truncate and fully recompute at any time.
+//
+// See apps/api/lib/portfolios/{settlement,valuation}.ts for the cron orchestration
+// and apps/web/lib/portfolios/*.ts for the request-time (web API route) orchestration.
+
+/// A virtual paper-trading portfolio. USER portfolios are self-directed (created via
+/// POST /api/portfolios, ownerUserId set, ownerExpertId null). SHADOW portfolios
+/// auto-track an analyst's calls (ownerExpertId set, ownerUserId null) — schema-only
+/// in P3.1, no creation path is wired up yet (future phase).
+model Portfolio {
+  id              String                 @id @default(cuid())
+  ownerUserId     String?
+  ownerExpertId   String?
+  kind            PortfolioKind
+  name            String
+  /// Globally unique, kebab-case. Collision-suffixed at creation (see
+  /// apps/web/lib/portfolios/slug.ts, mirrors apps/api/lib/finance/expertSlug.ts).
+  slug            String                 @unique
+  visibility      PortfolioVisibility    @default(PRIVATE)
+  description     String?
+  /// Fixed virtual starting capital in rupees. ₹10,00,000 = 1,000,000. Never changes
+  /// after creation — the only capital a portfolio ever has.
+  startingCapital Int                    @default(1000000)
+  createdAt       DateTime               @default(now())
+  /// Set once, the first time visibility flips PRIVATE -> PUBLIC. Persists across any
+  /// later PUBLIC -> PRIVATE -> PUBLIC toggles (never reset to null once set).
+  publicSince     DateTime?
+  ownerUser       User?                  @relation("PortfolioOwnerUser", fields: [ownerUserId], references: [id], onDelete: Cascade)
+  ownerExpert     Expert?                @relation("PortfolioOwnerExpert", fields: [ownerExpertId], references: [id], onDelete: Cascade)
+  transactions    PortfolioTransaction[]
+  dailyValues     PortfolioDailyValue[]
+
+  @@index([kind, visibility])
+  @@index([ownerUserId])
+  @@index([ownerExpertId])
+}
+
+/// A single BUY/SELL order against a Portfolio. PENDING orders may be cancelled;
+/// EXECUTED rows are never mutated after settlement (app-layer enforced — no update
+/// path exists for an EXECUTED row). See apps/api/app/api/cron/portfolios-settle for
+/// the fill algorithm and the next-session-close execution rule.
+model PortfolioTransaction {
+  id                   String    @id @default(cuid())
+  portfolioId          String
+  /// NSE symbol, matches StockEodQuote.symbol.
+  symbol               String
+  side                 TxSide
+  quantity             Int
+  requestedAt          DateTime  @default(now())
+  status               TxStatus  @default(PENDING)
+  /// StockEodQuote.sessionDate of the session this order filled (or would have
+  /// filled, for a CANCELLED-at-settlement row) at. Null while PENDING.
+  executionSessionDate DateTime?
+  /// Actual fill price (StockEodQuote.close of executionSessionDate). Null while
+  /// PENDING. Never an estimate — set only at settlement time.
+  priceAtTx            Float?
+  /// Cancellation/rejection reason, e.g. "Insufficient cash at fill time" or
+  /// "Cancelled by user". Null for EXECUTED rows and for PENDING rows.
+  note                 String?
+  createdAt            DateTime  @default(now())
+  portfolio            Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+
+  @@index([portfolioId, status])
+  @@index([status, requestedAt])
+  @@index([symbol, status])
+}
+
+/// Nightly-cron CACHE of a portfolio's end-of-session valuation. Fully recomputable
+/// from Portfolio + PortfolioTransaction + StockEodQuote — see the section doc above.
+model PortfolioDailyValue {
+  id            String    @id @default(cuid())
+  portfolioId   String
+  sessionDate   DateTime
+  cash          Float
+  holdingsValue Float
+  totalValue    Float
+  /// (totalValue - startingCapital) / startingCapital.
+  returnPct     Float
+  createdAt     DateTime  @default(now())
+  portfolio     Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+
+  @@unique([portfolioId, sessionDate])
+  @@index([portfolioId, sessionDate(sort: Desc)])
+}
+
+enum PortfolioKind {
+  USER
+  SHADOW
+}
+
+enum PortfolioVisibility {
+  PUBLIC
+  PRIVATE
+}
+
+enum TxSide {
+  BUY
+  SELL
+}
+
+enum TxStatus {
+  PENDING
+  EXECUTED
+  CANCELLED
 }

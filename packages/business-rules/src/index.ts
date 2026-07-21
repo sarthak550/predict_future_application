@@ -11,4 +11,6 @@ export * from "./marketPulse/newsQuality";
 export * from "./marketPulse/topHeadline";
 export * from "./news/category-map";
 export * from "./news/types";
+export * from "./portfolios/eligibility";
+export * from "./portfolios/engine";
 export * from "./stories/ranking";

@@ -18,6 +18,8 @@
     "./finance/voteTallies": "./src/finance/voteTallies.ts",
     "./news/category-map": "./src/news/category-map.ts",
     "./news/types": "./src/news/types.ts",
+    "./portfolios/eligibility": "./src/portfolios/eligibility.ts",
+    "./portfolios/engine": "./src/portfolios/engine.ts",
     "./stories/ranking": "./src/stories/ranking.ts"
   },
   "dependencies": {
