@@ -2,7 +2,10 @@
  * POST /api/cron/market-moves-movers
  *
  * Market Pulse — two enrichment sources feed `MarketMoverSnapshot`, one row
- * per (sessionDate, tickerSymbol):
+ * per (sessionDate, universe, tickerSymbol). Both sources write BOTH movers
+ * universes every run — "ALL" (every listed security, no market-cap cap) and
+ * "POPULAR" (NIFTY 100 constituents, the recognizable large-cap names) — so
+ * the Top Movers universe toggle always has fresh data on either side:
  *
  *  1. LIVE (intraday): polls NSE's `allSec` live-variations endpoint (see
  *     apps/api/lib/marketMoves/nse.ts — the same Akamai-blocking caveat
@@ -69,10 +72,13 @@
 import { NextResponse } from "next/server";
 
 import { fetchBhavcopySession, type FetchedEodQuote } from "@/lib/marketMoves/bhavcopy";
-import { fetchNseMovers } from "@/lib/marketMoves/nse";
+import { fetchNseMovers, type FetchedMoversByUniverse } from "@/lib/marketMoves/nse";
 import type { FetchedMarketMover } from "@/lib/marketMoves/types";
 import { isNseWeekdayMarketHours, getIstSessionDate } from "@/lib/marketMoves/marketHours";
 import { prisma } from "@/lib/prisma";
+
+/** MarketMoverSnapshot's `universe` column values — see the schema doc comment. */
+type MoversUniverse = "ALL" | "POPULAR";
 
 function hasCronAccess(request: Request): boolean {
   const secret = process.env.CRON_SECRET;
@@ -97,14 +103,15 @@ const TOP_N_PER_DIRECTION_EOD = 100; // full-market pass: NSE's bhavcopy has no 
 /**
  * Shared upsert path for both the LIVE and EOD passes: enriches company
  * names, computes the cross-sectional unusual-volume heuristic and rank,
- * and upserts into MarketMoverSnapshot keyed on (sessionDate, tickerSymbol).
- * Re-running with the same sessionDate is idempotent — later ranks simply
- * overwrite earlier ones for that day.
+ * and upserts into MarketMoverSnapshot keyed on (sessionDate, universe,
+ * tickerSymbol). Re-running with the same (sessionDate, universe) is
+ * idempotent — later ranks simply overwrite earlier ones for that day.
  */
 async function upsertMovers(
   movers: FetchedMarketMover[],
   sessionDate: Date,
-  topNPerDirection: number
+  topNPerDirection: number,
+  universe: MoversUniverse
 ): Promise<{ gainers: number; losers: number; upserted: number; failed: number }> {
   // Enrichment: fall back to the most recently seen announcement company name
   // for any symbol whose mover row didn't resolve one (e.g. missing from the
@@ -132,12 +139,14 @@ async function upsertMovers(
     .sort((a, b) => a.changePercent - b.changePercent)
     .slice(0, topNPerDirection);
 
-  // REPLACE the session's rows atomically instead of upserting by ticker.
-  // Upserting left orphans behind: a symbol written by an earlier pass (e.g.
-  // the intraday top-20) that doesn't appear in a later pass (the EOD top-100)
-  // kept its old rank/percent — so generations of writes interleaved and the
-  // "sorted" list came out shuffled with duplicate ranks. Delete-then-create
-  // in one transaction guarantees each pass owns the whole session snapshot.
+  // REPLACE the session's (sessionDate, universe) rows atomically instead of
+  // upserting by ticker. Upserting left orphans behind: a symbol written by an
+  // earlier pass (e.g. the intraday top-20) that doesn't appear in a later pass
+  // (the EOD top-100) kept its old rank/percent — so generations of writes
+  // interleaved and the "sorted" list came out shuffled with duplicate ranks.
+  // Delete-then-create in one transaction guarantees each pass owns the whole
+  // (session, universe) snapshot — scoped to `universe` so writing one universe
+  // never clobbers the other's rows for the same session.
   const now = new Date();
   const rows = [...gainers, ...losers].flatMap((m, idx) => {
     const rank = (idx < gainers.length ? idx : idx - gainers.length) + 1;
@@ -150,6 +159,7 @@ async function upsertMovers(
     const companyName = resolvedName ?? companyNameBySymbol.get(m.tickerSymbol) ?? m.companyName;
     return [{
       sessionDate,
+      universe,
       tickerSymbol: m.tickerSymbol,
       companyName,
       changePercent: m.changePercent,
@@ -168,31 +178,51 @@ async function upsertMovers(
   let failed = 0;
   try {
     await prisma.$transaction([
-      prisma.marketMoverSnapshot.deleteMany({ where: { sessionDate } }),
+      prisma.marketMoverSnapshot.deleteMany({ where: { sessionDate, universe } }),
       prisma.marketMoverSnapshot.createMany({ data: rows, skipDuplicates: true }),
     ]);
     upserted = rows.length;
   } catch (err) {
     failed = rows.length;
-    console.error(`[cron/market-moves-movers] session replace failed:`, err);
+    console.error(`[cron/market-moves-movers] session replace failed (universe=${universe}):`, err);
   }
 
   return { gainers: gainers.length, losers: losers.length, upserted, failed };
 }
 
-/** Runs the intraday LIVE pass (NSE's capped ~top-20/direction variations endpoint). */
+/** Per-universe result shape shared by the LIVE and EOD pass responses. */
+type UniversePassResult =
+  | { fetched: number; upserted: number; reason: "no_data" }
+  | { fetched: number; gainers: number; losers: number; upserted: number; failed: number };
+
+/** Upserts one universe's movers, or reports "no_data" without writing anything for an empty fetch. */
+async function upsertUniverse(
+  movers: FetchedMarketMover[],
+  sessionDate: Date,
+  topNPerDirection: number,
+  universe: MoversUniverse
+): Promise<UniversePassResult> {
+  if (movers.length === 0) {
+    return { fetched: 0, upserted: 0, reason: "no_data" };
+  }
+  const result = await upsertMovers(movers, sessionDate, topNPerDirection, universe);
+  return { fetched: movers.length, ...result };
+}
+
+/** Runs the intraday LIVE pass (NSE's capped ~top-20/direction variations endpoint) for BOTH universes. */
 async function runLivePass(sessionDate: Date) {
-  const movers = await fetchNseMovers().catch((err: unknown) => {
+  const moversByUniverse = await fetchNseMovers().catch((err: unknown) => {
     console.error("[cron/market-moves-movers] NSE live fetch threw unexpectedly:", err);
-    return [] as FetchedMarketMover[];
+    return { all: [], popular: [] } as FetchedMoversByUniverse;
   });
 
-  if (movers.length === 0) {
-    return NextResponse.json({ ok: true, source: "live", fetched: 0, upserted: 0, reason: "no_data" });
-  }
+  // Sequential, not Promise.all: each pass is its own delete+create transaction
+  // scoped to a disjoint `universe`, but running them one at a time keeps write
+  // load on the DB predictable rather than doubling concurrent transactions.
+  const all = await upsertUniverse(moversByUniverse.all, sessionDate, TOP_N_PER_DIRECTION_LIVE, "ALL");
+  const popular = await upsertUniverse(moversByUniverse.popular, sessionDate, TOP_N_PER_DIRECTION_LIVE, "POPULAR");
 
-  const result = await upsertMovers(movers, sessionDate, TOP_N_PER_DIRECTION_LIVE);
-  return NextResponse.json({ ok: true, source: "live", fetched: movers.length, ...result });
+  return NextResponse.json({ ok: true, source: "live", all, popular });
 }
 
 /** Batch size for StockEodQuote createMany calls — keeps each INSERT's param count modest even though a single ~2,000-row call is well within Postgres's per-query param limit. */
@@ -238,7 +268,7 @@ async function upsertQuotes(
   return { upserted, failed };
 }
 
-/** Runs the EOD full-market pass (NSE's uncapped bhavcopy). Returns null if the file isn't published yet. */
+/** Runs the EOD full-market pass (NSE's uncapped bhavcopy) for BOTH universes. Returns null if the file isn't published yet. */
 async function runEodPass(sessionDate: Date): Promise<ReturnType<typeof NextResponse.json> | null> {
   const session = await fetchBhavcopySession(sessionDate).catch((err: unknown) => {
     console.error("[cron/market-moves-movers] EOD bhavcopy fetch threw unexpectedly:", err);
@@ -246,7 +276,7 @@ async function runEodPass(sessionDate: Date): Promise<ReturnType<typeof NextResp
   });
 
   if (!session) return null; // not published yet / no session that day — let the caller decide the response
-  const { movers, quotes } = session;
+  const { allMovers, popularMovers, quotes } = session;
 
   // Write the full quote universe unconditionally — it doesn't depend on
   // there being any movers this session, and is the instrument-detail /
@@ -254,12 +284,10 @@ async function runEodPass(sessionDate: Date): Promise<ReturnType<typeof NextResp
   const quotesResult = await upsertQuotes(quotes, sessionDate);
   const quotesJson = { fetched: quotes.length, ...quotesResult };
 
-  if (movers.length === 0) {
-    return NextResponse.json({ ok: true, source: "eod", fetched: 0, upserted: 0, reason: "no_data", quotes: quotesJson });
-  }
+  const all = await upsertUniverse(allMovers, sessionDate, TOP_N_PER_DIRECTION_EOD, "ALL");
+  const popular = await upsertUniverse(popularMovers, sessionDate, TOP_N_PER_DIRECTION_EOD, "POPULAR");
 
-  const result = await upsertMovers(movers, sessionDate, TOP_N_PER_DIRECTION_EOD);
-  return NextResponse.json({ ok: true, source: "eod", fetched: movers.length, ...result, quotes: quotesJson });
+  return NextResponse.json({ ok: true, source: "eod", all, popular, quotes: quotesJson });
 }
 
 async function run(request: Request) {

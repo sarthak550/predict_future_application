@@ -261,17 +261,30 @@ export async function fetchEquityNames(): Promise<Map<string, string>> {
   }
 }
 
+/** Two parallel movers universes, fetched from the same NSE response in one pass. */
+export type FetchedMoversByUniverse = {
+  /** Every listed security, no market-cap cap — NSE's `allSec` group. */
+  all: FetchedMarketMover[];
+  /** NIFTY 100 constituents only (NIFTY 50 + NIFTY Next 50 merged) — the recognizable large-cap names. */
+  popular: FetchedMarketMover[];
+};
+
 /**
- * Fetches today's top gainers + losers from NSE's own variations endpoint.
- * The response groups movers by index (NIFTY, NIFTYNEXT50, allSec, ...); we use
- * the `allSec` group — the ALL-MARKET top movers across every listed security,
- * with no market-cap cap — per product choice. Never throws. `isUnusualVolume` is
- * computed downstream in the cron (a same-day cross-sectional heuristic; see
- * MarketMoverSnapshot doc).
+ * Fetches today's top gainers + losers from NSE's own variations endpoint, shaped
+ * into BOTH movers universes the Top Movers toggle needs (Popular default vs. All
+ * market) from a single set of API calls:
+ *   - `all`: NSE's `allSec` group — top movers across every listed security, with
+ *     no market-cap cap. Falls back to the `popular` merge only if `allSec` is
+ *     somehow absent, so the all-market universe never goes fully empty.
+ *   - `popular`: NIFTY + NIFTYNEXT50 merged = NIFTY 100 — the recognizable
+ *     large-cap names users expect from apps like Groww, as opposed to `allSec`'s
+ *     small/mid-caps hitting circuit limits.
+ * Never throws. `isUnusualVolume` is computed downstream in the cron (a same-day
+ * cross-sectional heuristic; see MarketMoverSnapshot doc).
  */
-export async function fetchNseMovers(): Promise<FetchedMarketMover[]> {
+export async function fetchNseMovers(): Promise<FetchedMoversByUniverse> {
   const cookie = await primeNseSession("/");
-  if (!cookie) return [];
+  if (!cookie) return { all: [], popular: [] };
 
   // Full company names for every NSE-listed equity (cached). The variations feed
   // has none, so this is the authoritative label source — the movers cron only
@@ -279,36 +292,12 @@ export async function fetchNseMovers(): Promise<FetchedMarketMover[]> {
   // somehow misses here (e.g. master fetch failed and no cache yet).
   const nameBySymbol = await fetchEquityNames();
 
-  const pull = async (index: "gainers" | "losers"): Promise<FetchedMarketMover[]> => {
-    // NSE's API spells losers "loosers" (double-o); "losers" returns
-    // {data:"Missing index or key"}. Both return the same grouped shape (NIFTY.data).
-    const nseIndexParam = index === "gainers" ? "gainers" : "loosers";
-    const raw = await nseApiGet(
-      `/api/live-analysis-variations?index=${nseIndexParam}`,
-      cookie,
-      "/market-data/top-gainers-losers"
-    );
-    if (!raw || typeof raw !== "object") return [];
-    const groups = raw as Record<string, NseVariationGroup | unknown>;
-    // ALL-MARKET universe: use NSE's `allSec` group — top movers across every
-    // listed security, with NO market-cap restriction (not Nifty 50/100/200/500).
-    // This is by explicit product choice: the strip shows the true market-wide
-    // top gainers/losers, which will often be small/mid-caps hitting circuit
-    // limits rather than large-cap index names. Fall back to the NIFTY 100 merge
-    // only if `allSec` is somehow absent, so the strip never goes empty.
-    const allSec = (groups.allSec as NseVariationGroup | undefined)?.data ?? [];
-    const rows =
-      allSec.length > 0
-        ? allSec
-        : [
-            ...((groups.NIFTY as NseVariationGroup | undefined)?.data ?? []),
-            ...((groups.NIFTYNEXT50 as NseVariationGroup | undefined)?.data ?? []),
-          ];
-    const direction = index === "gainers" ? "GAINER" : "LOSER";
-    return rows
-      // Sign must MATCH the direction: on a deeply red (or green) day NSE pads
-      // its own top-gainers (top-losers) table with the least-bad movers of the
-      // opposite sign — a negative "gainer" is never something we should show.
+  // Sign must MATCH the direction: on a deeply red (or green) day NSE pads its
+  // own top-gainers (top-losers) table with the least-bad movers of the opposite
+  // sign — a negative "gainer" is never something we should show. Applied
+  // identically to both universes so the guard can't silently drift between them.
+  const shapeRows = (rows: NseVariationRow[], direction: "GAINER" | "LOSER"): FetchedMarketMover[] =>
+    rows
       .filter((r) =>
         r.symbol &&
         typeof r.perChange === "number" &&
@@ -317,20 +306,47 @@ export async function fetchNseMovers(): Promise<FetchedMarketMover[]> {
       .map((r) => {
         const sym = (r.symbol as string).trim();
         return {
-        tickerSymbol: sym,
-        companyName: nameBySymbol.get(sym) ?? sym, // full company name; ticker only if unmapped
-        changePercent: r.perChange as number,
-        // Rupee change computed from real prices — NSE's net_price is a trap
-        // (it repeats the percentage; see NseVariationRow doc above).
-        changeAbs:
-          r.ltp != null && r.prev_price != null ? r.ltp - r.prev_price : 0,
-        volume: r.trade_quantity ?? 0,
-        lastPrice: typeof r.ltp === "number" ? r.ltp : null,
-        direction: direction as "GAINER" | "LOSER",
+          tickerSymbol: sym,
+          companyName: nameBySymbol.get(sym) ?? sym, // full company name; ticker only if unmapped
+          changePercent: r.perChange as number,
+          // Rupee change computed from real prices — NSE's net_price is a trap
+          // (it repeats the percentage; see NseVariationRow doc above).
+          changeAbs: r.ltp != null && r.prev_price != null ? r.ltp - r.prev_price : 0,
+          volume: r.trade_quantity ?? 0,
+          lastPrice: typeof r.ltp === "number" ? r.ltp : null,
+          direction: direction as "GAINER" | "LOSER",
         };
       });
+
+  const pull = async (index: "gainers" | "losers"): Promise<FetchedMoversByUniverse> => {
+    // NSE's API spells losers "loosers" (double-o); "losers" returns
+    // {data:"Missing index or key"}. Both return the same grouped shape (NIFTY.data).
+    const nseIndexParam = index === "gainers" ? "gainers" : "loosers";
+    const raw = await nseApiGet(
+      `/api/live-analysis-variations?index=${nseIndexParam}`,
+      cookie,
+      "/market-data/top-gainers-losers"
+    );
+    if (!raw || typeof raw !== "object") return { all: [], popular: [] };
+    const groups = raw as Record<string, NseVariationGroup | unknown>;
+    const direction = index === "gainers" ? "GAINER" : "LOSER";
+
+    const allSecRows = (groups.allSec as NseVariationGroup | undefined)?.data ?? [];
+    const popularRows = [
+      ...((groups.NIFTY as NseVariationGroup | undefined)?.data ?? []),
+      ...((groups.NIFTYNEXT50 as NseVariationGroup | undefined)?.data ?? []),
+    ];
+    const allRows = allSecRows.length > 0 ? allSecRows : popularRows;
+
+    return {
+      all: shapeRows(allRows, direction),
+      popular: shapeRows(popularRows, direction),
+    };
   };
 
   const [gainers, losers] = await Promise.all([pull("gainers"), pull("losers")]);
-  return [...gainers, ...losers];
+  return {
+    all: [...gainers.all, ...losers.all],
+    popular: [...gainers.popular, ...losers.popular],
+  };
 }

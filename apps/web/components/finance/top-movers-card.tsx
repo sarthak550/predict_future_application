@@ -9,6 +9,14 @@
  * Phase 1 interactivity sprint additions (read-only, no layout jump when
  * absent): last price, a truncated "why is it moving" headline linking to
  * its source, and an "analyst said" badge linking to the analyst's profile.
+ *
+ * Universe toggle (Popular | All market): "Popular" (NIFTY 100, the
+ * recognizable large-cap names — DEFAULT) vs. "All market" (every NSE-listed
+ * security — includes circuit-hit microcaps, the original/only behavior
+ * before this toggle). Both datasets are fetched server-side up front (see
+ * /pulse's page.tsx) and switched client-side — one shared "Show all" control
+ * applies to whichever universe is currently selected, matching the existing
+ * single-control convention above.
  */
 
 import Link from "next/link";
@@ -17,10 +25,15 @@ import { TrendingDown, TrendingUp } from "lucide-react";
 
 import { DirectionChip, VerdictBadge } from "@/components/finance/analyst-badges";
 import { Card, CardContent } from "@/components/ui/card";
-import type { MoverRow } from "@/lib/finance/marketPulse";
+import type { MoverRow, TopMovers } from "@/lib/finance/marketPulse";
 import { formatRelativeTime } from "@/lib/utils";
 
 const COLLAPSED_COUNT = 5;
+
+const UNIVERSE_LABEL: Record<"popular" | "all", string> = {
+  popular: "NIFTY 100 universe",
+  all: "Every NSE stock — includes circuit-hit microcaps",
+};
 
 /** "₹1,830.50" — Indian digit grouping, at most 2 decimal places. */
 function formatRupees(value: number): string {
@@ -33,14 +46,25 @@ function formatSignedRupees(value: number): string {
   return `${sign}₹${Math.abs(value).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 }
 
-export function TopMoversCard({ gainers, losers }: { gainers: MoverRow[]; losers: MoverRow[] }) {
+export function TopMoversCard({ popular, all }: { popular: TopMovers; all: TopMovers }) {
+  const [universe, setUniverse] = useState<"popular" | "all">("popular");
   const [showAll, setShowAll] = useState(false);
+
+  const { gainers, losers } = universe === "popular" ? popular : all;
   const maxRows = Math.max(gainers.length, losers.length);
   const hiddenCount = Math.max(0, maxRows - COLLAPSED_COUNT);
 
   return (
     <Card>
       <CardContent className="p-5">
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <UniverseTabButton active={universe === "popular"} onClick={() => setUniverse("popular")}>
+            Popular
+          </UniverseTabButton>
+          <UniverseTabButton active={universe === "all"} onClick={() => setUniverse("all")}>
+            All market
+          </UniverseTabButton>
+        </div>
         <div className="grid gap-6 sm:grid-cols-2 sm:divide-x sm:divide-ink-100">
           <MoverColumn title="Gainers" rows={gainers} tone="up" showAll={showAll} />
           <MoverColumn title="Losers" rows={losers} tone="down" showAll={showAll} className="sm:pl-6" />
@@ -54,8 +78,32 @@ export function TopMoversCard({ gainers, losers }: { gainers: MoverRow[]; losers
             {showAll ? "Show less" : `Show all ${maxRows}`}
           </button>
         ) : null}
+        <p className="mt-3 text-center text-[11px] text-ink-400">{UNIVERSE_LABEL[universe]}</p>
       </CardContent>
     </Card>
+  );
+}
+
+/** Same pill style as PulseTabs' TabButton (apps/web/components/finance/pulse-tabs.tsx) — kept local since that one isn't exported. */
+function UniverseTabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
+        active ? "bg-ink-900 text-white" : "border border-ink-200 bg-white text-ink-600 hover:bg-ink-50"
+      }`}
+    >
+      {children}
+    </button>
   );
 }
 

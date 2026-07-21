@@ -64,8 +64,12 @@ export async function buildNewsUniverse(now: Date = new Date()): Promise<NewsUni
 
 async function fetchTopMoverTickers(now: Date): Promise<NewsUniverseTicker[]> {
   const sessionDate = getIstSessionDate(now);
+  // MarketMoverSnapshot now carries TWO parallel universes per session (see the
+  // Top Movers universe toggle) — pin to "ALL" so this stays the original ~20
+  // tickers (rank <= 10 per direction) the doc comment above promises, instead
+  // of silently doubling to ~40 by pulling both universes' top-10s.
   const rows = await prisma.marketMoverSnapshot.findMany({
-    where: { sessionDate, rank: { lte: TOP_MOVERS_PER_DIRECTION } },
+    where: { sessionDate, universe: "ALL", rank: { lte: TOP_MOVERS_PER_DIRECTION } },
     select: { tickerSymbol: true, companyName: true, direction: true, rank: true },
     orderBy: [{ direction: "asc" }, { rank: "asc" }],
   });

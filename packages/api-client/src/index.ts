@@ -885,13 +885,16 @@ export function createApiClient(options: ApiClientOptions) {
     },
 
     /**
-     * Today's top gainers/losers over the curated NIFTY 200 universe. No auth
-     * required. Returns the FULL latest-session list per direction (~20
-     * each, not capped to a top-5 strip) — callers slice client-side for a
-     * collapsed "top 5 + show all" UI.
+     * Today's top gainers/losers. No auth required. Returns the FULL
+     * latest-session list per direction (not capped to a top-5 strip) —
+     * callers slice client-side for a collapsed "top 5 + show all" UI.
+     *
+     * `universe`: "popular" (NIFTY 100, the recognizable large-cap names —
+     * DEFAULT when omitted) or "all" (every NSE-listed security, no
+     * market-cap cap — includes circuit-hit microcaps).
      */
-    getMarketMovers() {
-      return request<ApiMarketMoversResponse>("/api/finance/market-moves/movers");
+    getMarketMovers(params?: { universe?: "popular" | "all" }) {
+      return request<ApiMarketMoversResponse>("/api/finance/market-moves/movers", params);
     },
 
     // ─── Market Pulse: Google News per-ticker headlines (Phase 1c) ────────

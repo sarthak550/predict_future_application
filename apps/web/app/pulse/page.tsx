@@ -9,6 +9,7 @@ import {
   fetchLatestFilings,
   fetchLatestNews,
   fetchTopMovers,
+  type TopMovers,
 } from "@/lib/finance/marketPulse";
 import { formatRelativeTime } from "@/lib/utils";
 
@@ -36,8 +37,9 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
 };
 
 export default async function MarketPulsePage() {
-  const [movers, news, filings] = await Promise.all([
-    fetchTopMovers(),
+  const [popularMovers, allMovers, news, filings] = await Promise.all([
+    fetchTopMovers("popular"),
+    fetchTopMovers("all"),
     fetchLatestNews(100),
     fetchLatestFilings(60),
   ]);
@@ -52,7 +54,7 @@ export default async function MarketPulsePage() {
         </p>
       </div>
 
-      <TopMoversSection movers={movers} />
+      <TopMoversSection popular={popularMovers} all={allMovers} />
 
       <PulseTabs
         news={news.map((item) => ({
@@ -79,22 +81,29 @@ export default async function MarketPulsePage() {
   );
 }
 
-function TopMoversSection({ movers }: { movers: Awaited<ReturnType<typeof fetchTopMovers>> }) {
+function TopMoversSection({ popular, all }: { popular: TopMovers; all: TopMovers }) {
+  const asOf = popular.asOf ?? all.asOf;
+  const isEmpty =
+    popular.gainers.length === 0 &&
+    popular.losers.length === 0 &&
+    all.gainers.length === 0 &&
+    all.losers.length === 0;
+
   return (
     <section className="space-y-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="text-xl font-semibold text-ink-900">Top movers</h2>
-        {movers.asOf && <p className="text-xs text-ink-400">As of {formatRelativeTime(movers.asOf)}</p>}
+        {asOf && <p className="text-xs text-ink-400">As of {formatRelativeTime(asOf)}</p>}
       </div>
 
-      {movers.gainers.length === 0 && movers.losers.length === 0 ? (
+      {isEmpty ? (
         <Card>
           <CardContent className="p-6 text-sm text-ink-500">
             No mover data captured yet — this fills in once the market-hours tracker has run.
           </CardContent>
         </Card>
       ) : (
-        <TopMoversCard gainers={movers.gainers} losers={movers.losers} />
+        <TopMoversCard popular={popular} all={all} />
       )}
     </section>
   );

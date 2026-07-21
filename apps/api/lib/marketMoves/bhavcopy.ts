@@ -33,6 +33,12 @@
  * than crash. This mirrors `fetchEquityNames`'s never-throws contract in
  * nse.ts, but returns `null` (not `[]`) specifically so the cron route can
  * distinguish "not published yet" from "published but genuinely empty".
+ *
+ * Top Movers universe toggle: `fetchBhavcopyMovers`/`fetchBhavcopySession` also
+ * derive a "Popular" (NIFTY 100) universe by filtering the same parsed rows to
+ * NIFTY 100 constituents (see `fetchNifty100Symbols`, a second keyless archives
+ * CSV) before the top-100/direction cut — mirroring the live pass's NIFTY +
+ * NIFTYNEXT50 merge in nse.ts.
  */
 
 import { fetchEquityNames } from "./nse";
@@ -55,6 +61,62 @@ const FETCH_TIMEOUT_MS = 20_000;
 
 /** Minimum today's traded quantity for a row to count as a liquid, tradeable name. */
 const MIN_LIQUIDITY_QTY = 10_000;
+
+/**
+ * NIFTY 100 constituent list — keyless CSV, same archives host (no Akamai cookie
+ * handshake needed) as the equity-master CSV in nse.ts. Used to filter the EOD
+ * bhavcopy down to the "Popular" movers universe (NIFTY 100 = the recognizable
+ * large-cap names), mirroring the live pass's NIFTY + NIFTYNEXT50 merge.
+ * Header row: "Company Name,Industry,Symbol,Series,ISIN Code" (no quoted fields);
+ * Symbol is the 3rd-from-last column. Cached in-module for 12h, same TTL/pattern
+ * as fetchEquityNames — index membership only changes on periodic NSE rebalances.
+ */
+const NSE_NIFTY100_URL = "https://nsearchives.nseindia.com/content/indices/ind_nifty100list.csv";
+const NIFTY100_TTL_MS = 12 * 60 * 60 * 1000;
+let nifty100Cache: { at: number; symbols: Set<string> } | null = null;
+
+/** Parses ind_nifty100list.csv ("Company Name,Industry,Symbol,Series,ISIN Code") → symbol set. */
+function parseNifty100Csv(csv: string): Set<string> {
+  const symbols = new Set<string>();
+  const lines = csv.split(/\r?\n/);
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    const cells = line.split(",").map((c) => c.trim());
+    // No quoted fields / no embedded commas — Symbol is always 3rd-from-last
+    // (…,Symbol,Series,ISIN Code), robust to "Company Name" itself containing commas.
+    if (cells.length < 3) continue;
+    const symbol = cells[cells.length - 3];
+    if (symbol) symbols.add(symbol);
+  }
+  return symbols;
+}
+
+/**
+ * Returns the current NIFTY 100 constituent symbol set. Cached 12h. On any
+ * fetch/parse failure returns the last good cache (or an empty set) so a
+ * membership check never blocks or breaks the movers pipeline — an empty set
+ * simply yields an empty Popular universe for that pass rather than throwing.
+ */
+export async function fetchNifty100Symbols(): Promise<Set<string>> {
+  const now = Date.now();
+  if (nifty100Cache && now - nifty100Cache.at < NIFTY100_TTL_MS) {
+    return nifty100Cache.symbols;
+  }
+  try {
+    const res = await fetch(NSE_NIFTY100_URL, { headers: ARCHIVE_HEADERS });
+    if (!res.ok) {
+      console.warn(`[marketMoves/bhavcopy] NIFTY 100 list CSV returned ${res.status}`);
+      return nifty100Cache?.symbols ?? new Set();
+    }
+    const symbols = parseNifty100Csv(await res.text());
+    if (symbols.size > 0) nifty100Cache = { at: now, symbols };
+    return nifty100Cache?.symbols ?? symbols;
+  } catch (err) {
+    console.warn(`[marketMoves/bhavcopy] NIFTY 100 list CSV fetch error: ${err instanceof Error ? err.message : err}`);
+    return nifty100Cache?.symbols ?? new Set();
+  }
+}
 
 /** How many names per direction the cron stores (mirrors TOP_N_PER_DIRECTION headroom, x4). */
 const TOP_N_PER_DIRECTION = 100;
@@ -212,22 +274,39 @@ async function fetchBhavcopyRows(sessionDate: Date): Promise<BhavcopyRow[] | nul
  * liquid (TTL_TRD_QNTY > 10,000) names, with company names resolved from the
  * same cached equity-master CSV `fetchNseMovers` uses (self-contained, same
  * contract as the intraday fetcher — callers don't need a separate join).
+ * `universe: "POPULAR"` additionally restricts the ranked pool to NIFTY 100
+ * constituents (via `fetchNifty100Symbols`) before the top-100/direction cut.
  *
  * Returns `null` (never throws) when the file isn't available yet (today not
  * yet published, or a weekend/holiday with no session) or on any network/parse
  * failure — the caller treats `null` as "nothing to enrich with this run".
  */
-export async function fetchBhavcopyMovers(sessionDate: Date): Promise<FetchedMarketMover[] | null> {
+export async function fetchBhavcopyMovers(
+  sessionDate: Date,
+  universe: "ALL" | "POPULAR" = "ALL"
+): Promise<FetchedMarketMover[] | null> {
   const rows = await fetchBhavcopyRows(sessionDate);
   if (!rows) return null;
   const nameBySymbol = await fetchEquityNames();
-  return shapeMovers(rows, nameBySymbol);
+  const universeSymbols = universe === "POPULAR" ? await fetchNifty100Symbols() : null;
+  return shapeMovers(rows, nameBySymbol, universeSymbols);
 }
 
-function shapeMovers(rows: BhavcopyRow[], nameBySymbol: Map<string, string>): FetchedMarketMover[] {
+/**
+ * Shapes validated bhavcopy rows into ranked movers. When `universeSymbols` is
+ * given, rows outside that set are dropped before the liquidity/sign checks —
+ * used to restrict the EOD pass to the NIFTY 100 ("Popular") universe. `null`
+ * (the default) keeps the original all-market behavior.
+ */
+function shapeMovers(
+  rows: BhavcopyRow[],
+  nameBySymbol: Map<string, string>,
+  universeSymbols?: Set<string> | null
+): FetchedMarketMover[] {
   const movers: FetchedMarketMover[] = [];
   for (const row of rows) {
     if (row.series !== "EQ") continue;
+    if (universeSymbols && !universeSymbols.has(row.symbol)) continue;
     if (row.ttlTrdQnty <= MIN_LIQUIDITY_QTY) continue;
     if (row.prevClose <= 0) continue; // guards divide-by-zero on newly-listed/bad rows
 
@@ -324,18 +403,25 @@ export async function fetchBhavcopyQuotes(sessionDate: Date): Promise<FetchedEod
 
 /**
  * Fetches NSE's full-market EOD bhavcopy ONCE for the given IST session date
- * and derives BOTH the top-100/direction movers shape AND the full liquid
- * quote-universe shape from the same parsed rows — the pairing the EOD cron
- * pass needs (movers feed `MarketMoverSnapshot`, quotes feed `StockEodQuote`)
- * without doubling the network fetch of the multi-MB CSV. Returns `null`
- * (never throws) under the same "not available yet" conditions as
+ * and derives the top-100/direction movers shape for BOTH universes (all-market
+ * and NIFTY 100 "Popular") AND the full liquid quote-universe shape, all from the
+ * same parsed rows — the pairing the EOD cron pass needs (movers feed
+ * `MarketMoverSnapshot` x2 universes, quotes feed `StockEodQuote`) without
+ * doubling the network fetch of the multi-MB CSV. Returns `null` (never throws)
+ * under the same "not available yet" conditions as
  * `fetchBhavcopyMovers`/`fetchBhavcopyQuotes`.
  */
-export async function fetchBhavcopySession(
-  sessionDate: Date
-): Promise<{ movers: FetchedMarketMover[]; quotes: FetchedEodQuote[] } | null> {
+export async function fetchBhavcopySession(sessionDate: Date): Promise<{
+  allMovers: FetchedMarketMover[];
+  popularMovers: FetchedMarketMover[];
+  quotes: FetchedEodQuote[];
+} | null> {
   const rows = await fetchBhavcopyRows(sessionDate);
   if (!rows) return null;
-  const nameBySymbol = await fetchEquityNames();
-  return { movers: shapeMovers(rows, nameBySymbol), quotes: shapeQuotes(rows, nameBySymbol) };
+  const [nameBySymbol, nifty100Symbols] = await Promise.all([fetchEquityNames(), fetchNifty100Symbols()]);
+  return {
+    allMovers: shapeMovers(rows, nameBySymbol, null),
+    popularMovers: shapeMovers(rows, nameBySymbol, nifty100Symbols),
+    quotes: shapeQuotes(rows, nameBySymbol),
+  };
 }

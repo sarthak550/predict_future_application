@@ -48,11 +48,21 @@ export interface TopMovers {
  * (see apps/api/app/api/finance/market-moves/movers/route.ts, which this
  * mirrors: a long-lived server process was observed serving stale NSE
  * responses over a persistent connection). Always returns the most recent
- * captured session so the strip stays populated after close/weekends/before
- * the first cron run of the day.
+ * captured session for the requested universe so the strip stays populated
+ * after close/weekends/before the first cron run of the day.
+ *
+ * `universe`: "popular" (NIFTY 100, the recognizable large-cap names —
+ * DEFAULT) or "all" (every NSE-listed security, no market-cap cap — includes
+ * circuit-hit microcaps). The cron writes both as parallel MarketMoverSnapshot
+ * rows every run (see the `universe` column doc comment in schema.prisma), so
+ * callers fetch each side of the toggle with a separate call to this function
+ * (see /pulse's page.tsx, which fetches both up front for the tab pair).
  */
-export async function fetchTopMovers(): Promise<TopMovers> {
+export async function fetchTopMovers(universe: "popular" | "all" = "popular"): Promise<TopMovers> {
+  const universeColumn = universe === "all" ? "ALL" : "POPULAR";
+
   const latest = await prisma.marketMoverSnapshot.findFirst({
+    where: { universe: universeColumn },
     orderBy: { snapshotAt: "desc" },
     select: { sessionDate: true },
   });
@@ -63,13 +73,13 @@ export async function fetchTopMovers(): Promise<TopMovers> {
 
   const [gainers, losers] = await Promise.all([
     prisma.marketMoverSnapshot.findMany({
-      where: { sessionDate: latest.sessionDate, direction: "GAINER", changePercent: { gt: 0 } },
+      where: { sessionDate: latest.sessionDate, universe: universeColumn, direction: "GAINER", changePercent: { gt: 0 } },
       // Sort by the actual move, not stored rank (see the API movers route —
       // guards against mixed-generation rank collisions).
       orderBy: { changePercent: "desc" },
     }),
     prisma.marketMoverSnapshot.findMany({
-      where: { sessionDate: latest.sessionDate, direction: "LOSER", changePercent: { lt: 0 } },
+      where: { sessionDate: latest.sessionDate, universe: universeColumn, direction: "LOSER", changePercent: { lt: 0 } },
       orderBy: { changePercent: "asc" },
     }),
   ]);

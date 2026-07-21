@@ -1903,6 +1903,8 @@ export type ApiMarketMoversResponse = {
   losers: ApiMarketMover[];
   /** ISO timestamp of the most recent snapshot in this response, or null if empty. */
   asOf: string | null;
+  /** Which movers universe this response was served from — echoes the `?universe=` query param (default "popular"). */
+  universe: "popular" | "all";
 };
 
 /**

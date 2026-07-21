@@ -1,25 +1,33 @@
 /**
  * GET /api/finance/market-moves/movers
  *
- * Market Pulse — all-market top gainers/losers, served from the warm
- * `MarketMoverSnapshot` store written by the market-moves-movers cron (every few
- * minutes during market hours). We deliberately do NOT fetch NSE live on the
- * request path: a long-lived server process was observed serving STALE NSE
- * responses over its persistent connection (frozen a full session behind), while
- * the scheduled cron — which runs during market hours and writes the snapshot —
- * stays correct. Reading the cron snapshot is therefore both robust and correct;
+ * Market Pulse — top gainers/losers, served from the warm `MarketMoverSnapshot`
+ * store written by the market-moves-movers cron (every few minutes during
+ * market hours). We deliberately do NOT fetch NSE live on the request path: a
+ * long-lived server process was observed serving STALE NSE responses over its
+ * persistent connection (frozen a full session behind), while the scheduled
+ * cron — which runs during market hours and writes the snapshot — stays
+ * correct. Reading the cron snapshot is therefore both robust and correct;
  * freshness comes from the cron cadence, not from per-request fetching.
  *
- * Always returns the MOST RECENT captured session, so the strip stays populated
- * after market close, on weekends/holidays, and before the day's first cron run.
+ * Universe toggle (`?universe=popular|all`, default `popular`): the cron writes
+ * TWO parallel universes every run — "popular" (NIFTY 100, the recognizable
+ * large-cap names) and "all" (every NSE-listed security, no market-cap cap,
+ * which surfaces circuit-hit microcaps unfamiliar to most users). Popular is
+ * the default because it matches what users expect from apps like Groww.
+ *
+ * Always returns the MOST RECENT captured session for the requested universe,
+ * so the strip stays populated after market close, on weekends/holidays, and
+ * before the day's first cron run.
  *
  * Public endpoint — no auth required.
- * Response: `{ gainers: [...], losers: [...], asOf: string | null }`
- * `gainers`/`losers` each return the FULL latest session (the DB holds ~20 per
- * direction — a tiny payload), in rank order. Clients render their own
- * collapsed "top 5 + show all" UI on top of this (web: MoverList, mobile:
- * MoverRow) rather than the server truncating. Empty arrays (not 404) when
- * the cron hasn't run yet — callers render their own empty state.
+ * Response: `{ gainers: [...], losers: [...], asOf: string | null, universe: "popular" | "all" }`
+ * `gainers`/`losers` each return the FULL latest session for that universe (the
+ * DB holds up to ~100 per direction for "all", ~50 for "popular" — still a tiny
+ * payload), in rank order. Clients render their own collapsed "top 5 + show
+ * all" UI on top of this (web: MoverList, mobile: MoverRow) rather than the
+ * server truncating. Empty arrays (not 404) when the cron hasn't run yet —
+ * callers render their own empty state.
  */
 
 import { NextResponse } from "next/server";
@@ -35,27 +43,34 @@ const HEADLINE_LOOKBACK_DAYS = 3;
 /** "Analyst said" badge: only consider opinions from the last 14 days. */
 const ANALYST_CALL_LOOKBACK_DAYS = 14;
 
-export async function GET() {
-  // Most recent captured session — not strictly today's — so the strip stays
-  // populated after close, on weekends/holidays, and before the first cron run.
+export async function GET(request: Request) {
+  const url = new URL(request.url);
+  // Default POPULAR: the recognizable NIFTY 100 names, not all-market microcaps.
+  const universe = url.searchParams.get("universe") === "all" ? "ALL" : "POPULAR";
+  const universeLabel = universe === "ALL" ? "all" : "popular";
+
+  // Most recent captured session for this universe — not strictly today's — so
+  // the strip stays populated after close, on weekends/holidays, and before
+  // the first cron run.
   const latest = await prisma.marketMoverSnapshot.findFirst({
+    where: { universe },
     orderBy: { snapshotAt: "desc" },
     select: { sessionDate: true },
   });
   if (!latest) {
-    return NextResponse.json({ gainers: [], losers: [], asOf: null });
+    return NextResponse.json({ gainers: [], losers: [], asOf: null, universe: universeLabel });
   }
   const sessionDate = latest.sessionDate;
 
   const [gainers, losers] = await Promise.all([
     prisma.marketMoverSnapshot.findMany({
-      where: { sessionDate, direction: "GAINER", changePercent: { gt: 0 } },
+      where: { sessionDate, universe, direction: "GAINER", changePercent: { gt: 0 } },
       // Sort by the actual move, not the stored rank — defense against any
       // mixed-generation rows where ranks from different passes collide.
       orderBy: { changePercent: "desc" },
     }),
     prisma.marketMoverSnapshot.findMany({
-      where: { sessionDate, direction: "LOSER", changePercent: { lt: 0 } },
+      where: { sessionDate, universe, direction: "LOSER", changePercent: { lt: 0 } },
       orderBy: { changePercent: "asc" },
     }),
   ]);
@@ -134,5 +149,6 @@ export async function GET() {
     gainers: gainers.map(shape).map((m, i) => ({ ...m, rank: i + 1 })),
     losers: losers.map(shape).map((m, i) => ({ ...m, rank: i + 1 })),
     asOf,
+    universe: universeLabel,
   });
 }

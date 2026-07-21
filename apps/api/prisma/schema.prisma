@@ -1522,9 +1522,10 @@ model MarketMoveEvent {
   @@index([source, announcedAt(sort: Desc)])
 }
 
-/// Market Pulse — EOD/15-min-delayed gainer/loser snapshot over the curated NIFTY 200
-/// universe. One row per (sessionDate, tickerSymbol); re-polled and upserted through
-/// the trading session so `rank`/`changePercent` reflect the latest scan (keep-latest,
+/// Market Pulse — gainer/loser snapshot, tracked over TWO parallel universes (see
+/// `universe`): "ALL" (every NSE-listed security) and "POPULAR" (NIFTY 100). One row
+/// per (sessionDate, universe, tickerSymbol); re-polled and upserted through the
+/// trading session so `rank`/`changePercent` reflect the latest scan (keep-latest,
 /// same pattern as MacroSnapshot). `isUnusualVolume` is a same-day cross-sectional
 /// heuristic (today's volume vs. today's scanned universe), NOT a true rolling
 /// historical average — there is no historical volume store in Phase 1.
@@ -1532,6 +1533,12 @@ model MarketMoverSnapshot {
   id              String              @id @default(cuid())
   /// Trading-session date (IST calendar day), stored at IST midnight converted to UTC.
   sessionDate     DateTime
+  /// Movers universe this row belongs to: "ALL" = every NSE-listed security, no
+  /// market-cap cap (the original/only universe pre-toggle); "POPULAR" = NIFTY 100
+  /// constituents only (the recognizable large-cap names, now the default read).
+  /// Defaults to "ALL" so rows written before this column existed keep their
+  /// original (all-market) meaning. Added for the Top Movers universe toggle.
+  universe        String              @default("ALL")
   tickerSymbol    String
   companyName     String
   changePercent   Float
@@ -1549,8 +1556,8 @@ model MarketMoverSnapshot {
   rank            Int
   snapshotAt      DateTime            @default(now())
 
-  @@unique([sessionDate, tickerSymbol])
-  @@index([sessionDate, direction, rank])
+  @@unique([sessionDate, universe, tickerSymbol])
+  @@index([sessionDate, universe, direction, rank])
 }
 
 /// Market Pulse push preference stub (Phase 1b — NOT activated in Phase 1; no

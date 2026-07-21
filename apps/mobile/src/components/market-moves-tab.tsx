@@ -106,11 +106,19 @@ export function MarketMovesTab() {
   const router = useRouter();
   const { status: authStatus } = useSession();
 
-  const [movers, setMovers] = useState<{ gainers: ApiMarketMover[]; losers: ApiMarketMover[]; asOf: string | null } | null>(null);
+  type MoversPayload = { gainers: ApiMarketMover[]; losers: ApiMarketMover[]; asOf: string | null };
+  const [moversPopular, setMoversPopular] = useState<MoversPayload | null>(null);
+  const [moversAll, setMoversAll] = useState<MoversPayload | null>(null);
   const [moversLoading, setMoversLoading] = useState(true);
   // One shared toggle for both directions — independent expansion left the
   // columns lopsided and doubled the taps for what reads as one action.
   const [showAllMovers, setShowAllMovers] = useState(false);
+  // Popular (NIFTY 100, recognizable large-cap names) is the default universe;
+  // "All market" surfaces every NSE-listed security including circuit-hit
+  // microcaps. Both are fetched once on mount (like the news/filings peer
+  // tabs below) and switched client-side — no per-tap network round trip.
+  const [moversUniverse, setMoversUniverse] = useState<"popular" | "all">("popular");
+  const movers = moversUniverse === "popular" ? moversPopular : moversAll;
 
   const [news, setNews] = useState<ApiMarketMoveNews[]>([]);
   const [newsShown, setNewsShown] = useState(SHOWN_INITIAL);
@@ -169,12 +177,18 @@ export function MarketMovesTab() {
     setNewsShown(SHOWN_INITIAL);
     setFilingsShown(SHOWN_INITIAL);
 
-    mobileApi
-      .getMarketMovers()
-      .then(setMovers)
+    Promise.all([
+      mobileApi.getMarketMovers({ universe: "popular" }),
+      mobileApi.getMarketMovers({ universe: "all" }),
+    ])
+      .then(([popular, all]) => {
+        setMoversPopular(popular);
+        setMoversAll(all);
+      })
       .catch((err: unknown) => {
         console.warn("[market-moves-tab] movers fetch failed:", err);
-        setMovers(null);
+        setMoversPopular(null);
+        setMoversAll(null);
       })
       .finally(() => setMoversLoading(false));
 
@@ -230,6 +244,40 @@ export function MarketMovesTab() {
 
   return (
     <View>
+      {/* Popular | All market universe toggle — mirrors the Stock News /
+          Filings & announcements peer-tab bar below (feedTabBar) for visual
+          consistency. Rendered unconditionally (not inside the loading/empty
+          branches) so it never disappears while movers are (re)loading. */}
+      <View style={styles.moversUniverseTabBar}>
+        <Pressable
+          onPress={() => setMoversUniverse("popular")}
+          style={[styles.moversUniverseTab, moversUniverse === "popular" && styles.moversUniverseTabActive]}
+          accessibilityRole="button"
+          accessibilityState={{ selected: moversUniverse === "popular" }}
+        >
+          <Text
+            style={[
+              styles.moversUniverseTabText,
+              moversUniverse === "popular" && styles.moversUniverseTabTextActive,
+            ]}
+          >
+            Popular
+          </Text>
+        </Pressable>
+        <Pressable
+          onPress={() => setMoversUniverse("all")}
+          style={[styles.moversUniverseTab, moversUniverse === "all" && styles.moversUniverseTabActive]}
+          accessibilityRole="button"
+          accessibilityState={{ selected: moversUniverse === "all" }}
+        >
+          <Text
+            style={[styles.moversUniverseTabText, moversUniverse === "all" && styles.moversUniverseTabTextActive]}
+          >
+            All market
+          </Text>
+        </Pressable>
+      </View>
+
       {/* Top Movers strip — pinned at the top of this tab, always visible
           (not collapsible), matching IndiaMacroCard's "no empty chrome when
           truly empty" convention. */}
@@ -270,7 +318,7 @@ export function MarketMovesTab() {
           <Text style={styles.emptyIcon}>📈</Text>
           <Text style={styles.emptyTitle}>Top Movers loading</Text>
           <Text style={styles.emptyText}>
-            The latest session's top NIFTY 200 gainers and losers will appear here shortly.
+            The latest session's top gainers and losers will appear here shortly.
           </Text>
         </View>
       )}
@@ -799,6 +847,39 @@ function InstrumentDetailSheet({
 
 const makeMarketMovesStyles = (t: ThemeContextValue) =>
   StyleSheet.create({
+    // Popular | All market universe toggle, above the Top Movers card — same
+    // pill pattern as feedTabBar/feedTab below (finance-mode.tsx scope-tab
+    // convention), just placed above the movers card instead of the news/
+    // filings feeds.
+    moversUniverseTabBar: {
+      flexDirection: "row",
+      gap: spacing.sm,
+      marginHorizontal: spacing.lg,
+      marginTop: spacing.xs,
+      marginBottom: spacing.xs,
+    },
+    moversUniverseTab: {
+      flex: 1,
+      paddingHorizontal: spacing.md,
+      paddingVertical: 10,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      backgroundColor: t.colors.surface,
+      alignItems: "center",
+    },
+    moversUniverseTabActive: {
+      backgroundColor: t.colors.accent,
+      borderColor: t.colors.accent,
+    },
+    moversUniverseTabText: {
+      fontSize: 13,
+      fontWeight: "700" as const,
+      color: t.colors.textMuted,
+    },
+    moversUniverseTabTextActive: {
+      color: "#FFFFFF",
+    },
     card: {
       marginHorizontal: spacing.lg,
       marginTop: spacing.xs,
