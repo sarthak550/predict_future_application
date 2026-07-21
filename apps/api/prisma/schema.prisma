@@ -1586,3 +1586,29 @@ model MarketMoveNews {
   @@index([tickerSymbol, publishedAt(sort: Desc)])
   @@index([publishedAt(sort: Desc)])
 }
+
+/// Market Pulse Phase 2 — one row per (sessionDate, symbol) NSE EOD close, sourced
+/// from the same bhavcopy CSV as MarketMoverSnapshot's EOD pass (see
+/// apps/api/lib/marketMoves/bhavcopy.ts) but covering every liquid EQ-series name,
+/// not just the top-100/direction movers. Written by the market-moves-movers cron's
+/// EOD pass (upsert-by-symbol, idempotent). Retention is UNBOUNDED BY DESIGN — this
+/// is also the future portfolios valuation source, not just the instrument-detail
+/// spark line, so old sessions are never pruned.
+model StockEodQuote {
+  id            String   @id @default(cuid())
+  /// Trading-session date (IST calendar day), stored at IST midnight converted to UTC.
+  sessionDate   DateTime
+  /// NSE symbol, e.g. "RELIANCE".
+  symbol        String
+  companyName   String
+  prevClose     Float
+  close         Float
+  changePercent Float
+  volume        Int
+  /// DELIV_PER from the bhavcopy — delivery percentage. Null when the source cell is '-' / absent.
+  deliveryPct   Float?
+  createdAt     DateTime @default(now())
+
+  @@unique([sessionDate, symbol])
+  @@index([symbol, sessionDate(sort: Desc)])
+}

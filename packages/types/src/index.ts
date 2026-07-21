@@ -1927,3 +1927,68 @@ export type ApiMarketMoveNewsResponse = {
   nextCursor: string | null;
   hasMore: boolean;
 };
+
+// ---------------------------------------------------------------------------
+// Market Pulse Phase 2 — instrument tap-through detail (GET
+// /api/finance/instruments/[symbol]). Powers apps/web's /instruments/[symbol]
+// page and the mobile stock bottom-sheet in market-moves-tab.tsx.
+// ---------------------------------------------------------------------------
+
+/** Latest StockEodQuote for an instrument, or null when no bhavcopy row has been seeded yet. */
+export type ApiInstrumentQuote = {
+  /** ISO date — the trading session this quote is for. */
+  sessionDate: string;
+  close: number;
+  prevClose: number;
+  changePercent: number;
+  volume: number;
+  /** Delivery percentage (NSE DELIV_PER), or null when not published for this row. */
+  deliveryPct: number | null;
+};
+
+/** One point of the trailing close-price trend line. */
+export type ApiInstrumentSparkPoint = {
+  sessionDate: string;
+  close: number;
+};
+
+/** One MarketMoveEvent filing scoped to an instrument's detail page. */
+export type ApiInstrumentFiling = {
+  id: string;
+  source: AppMarketMoveSource;
+  tickerSymbol: string;
+  companyName: string;
+  eventType: AppMarketMoveEventType;
+  headline: string;
+  detailUrl: string | null;
+  announcedAt: string;
+};
+
+/** One ExpertOpinion matched to an instrument via its Yahoo-style instrumentTicker. */
+export type ApiInstrumentOpinion = {
+  id: string;
+  quote: string;
+  direction: "BULLISH" | "BEARISH" | "NEUTRAL";
+  publishedAt: string;
+  resolutionStatus: "PENDING" | "RESOLVED_HIT" | "RESOLVED_MISS" | "NOT_GRADED";
+  expert: { name: string; slug: string | null };
+};
+
+/** Bullish/bearish/neutral counts among the instrument's last-90d matched opinions. */
+export type ApiInstrumentSentiment = {
+  bullish: number;
+  bearish: number;
+  neutral: number;
+};
+
+/** Response shape for GET /api/finance/instruments/[symbol]. 404s when the symbol is entirely unknown. */
+export type ApiInstrumentDetail = {
+  symbol: string;
+  companyName: string;
+  quote: ApiInstrumentQuote | null;
+  spark: ApiInstrumentSparkPoint[];
+  news: ApiMarketMoveNews[];
+  filings: ApiInstrumentFiling[];
+  opinions: ApiInstrumentOpinion[];
+  sentiment: ApiInstrumentSentiment;
+};

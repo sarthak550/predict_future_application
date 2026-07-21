@@ -13,11 +13,19 @@
  *     snapshots from the live endpoint. No holiday-calendar awareness in
  *     Phase 1 (see marketHours.ts doc comment).
  *
- *  2. EOD (full-market): fetches NSE's keyless end-of-day bhavcopy CSV (see
- *     apps/api/lib/marketMoves/bhavcopy.ts) covering EVERY listed EQ-series
- *     security (~2,380 names, ~1,993 after a liquidity filter) — not capped
- *     at 20/direction like the live endpoint. Stores the top 100
- *     gainers/losers by % change. This pass runs when either:
+ *  2. EOD (full-market): fetches NSE's keyless end-of-day bhavcopy CSV ONCE
+ *     (see apps/api/lib/marketMoves/bhavcopy.ts's fetchBhavcopySession)
+ *     covering EVERY listed EQ-series security (~2,380 names, ~1,993 after a
+ *     liquidity filter) and derives TWO shapes from that single fetch:
+ *       - the top 100 gainers/losers by % change → `MarketMoverSnapshot`
+ *         (not capped at 20/direction like the live endpoint), and
+ *       - every liquid (volume > 1,000) name's close/prevClose/volume/
+ *         delivery% → `StockEodQuote` (Market Pulse Phase 2 — powers the
+ *         /instruments/[symbol] detail page + mobile stock sheet, and is
+ *         also the intended future portfolio-valuation source, so it's
+ *         written unconditionally on every EOD pass regardless of whether
+ *         the session happened to produce any movers).
+ *     This pass runs when either:
  *       (a) the request is `?source=eod` explicitly, or
  *       (b) the request lands outside market hours (i.e. the case where the
  *           live-pass gate above would otherwise just skip) AND that day's
@@ -60,7 +68,7 @@
 
 import { NextResponse } from "next/server";
 
-import { fetchBhavcopyMovers } from "@/lib/marketMoves/bhavcopy";
+import { fetchBhavcopySession, type FetchedEodQuote } from "@/lib/marketMoves/bhavcopy";
 import { fetchNseMovers } from "@/lib/marketMoves/nse";
 import type { FetchedMarketMover } from "@/lib/marketMoves/types";
 import { isNseWeekdayMarketHours, getIstSessionDate } from "@/lib/marketMoves/marketHours";
@@ -187,20 +195,71 @@ async function runLivePass(sessionDate: Date) {
   return NextResponse.json({ ok: true, source: "live", fetched: movers.length, ...result });
 }
 
+/** Batch size for StockEodQuote createMany calls — keeps each INSERT's param count modest even though a single ~2,000-row call is well within Postgres's per-query param limit. */
+const QUOTE_UPSERT_BATCH_SIZE = 500;
+
+/**
+ * Idempotent full-quote-universe write into StockEodQuote, keyed on
+ * (sessionDate, symbol). Uses createMany/skipDuplicates rather than
+ * MarketMoverSnapshot's delete-then-create session-replace pattern: unlike
+ * the movers pass (which can legitimately re-rank across repeated runs before
+ * the file is final), a published bhavcopy session's quotes are immutable —
+ * once a (sessionDate, symbol) row exists it never needs to change, so
+ * skipping duplicates on rerun is both correct and cheaper than a
+ * delete+reinsert.
+ */
+async function upsertQuotes(
+  quotes: FetchedEodQuote[],
+  sessionDate: Date
+): Promise<{ upserted: number; failed: number }> {
+  const rows = quotes.map((q) => ({
+    sessionDate,
+    symbol: q.symbol,
+    companyName: q.companyName,
+    prevClose: q.prevClose,
+    close: q.close,
+    changePercent: q.changePercent,
+    volume: Math.round(q.volume),
+    deliveryPct: q.deliveryPct,
+  }));
+
+  let upserted = 0;
+  let failed = 0;
+  for (let i = 0; i < rows.length; i += QUOTE_UPSERT_BATCH_SIZE) {
+    const batch = rows.slice(i, i + QUOTE_UPSERT_BATCH_SIZE);
+    try {
+      const result = await prisma.stockEodQuote.createMany({ data: batch, skipDuplicates: true });
+      upserted += result.count;
+    } catch (err) {
+      failed += batch.length;
+      console.error(`[cron/market-moves-movers] StockEodQuote batch upsert failed (offset ${i}):`, err);
+    }
+  }
+  return { upserted, failed };
+}
+
 /** Runs the EOD full-market pass (NSE's uncapped bhavcopy). Returns null if the file isn't published yet. */
 async function runEodPass(sessionDate: Date): Promise<ReturnType<typeof NextResponse.json> | null> {
-  const movers = await fetchBhavcopyMovers(sessionDate).catch((err: unknown) => {
+  const session = await fetchBhavcopySession(sessionDate).catch((err: unknown) => {
     console.error("[cron/market-moves-movers] EOD bhavcopy fetch threw unexpectedly:", err);
     return null;
   });
 
-  if (!movers) return null; // not published yet / no session that day — let the caller decide the response
+  if (!session) return null; // not published yet / no session that day — let the caller decide the response
+  const { movers, quotes } = session;
+
+  // Write the full quote universe unconditionally — it doesn't depend on
+  // there being any movers this session, and is the instrument-detail /
+  // future-portfolio-valuation source of truth.
+  const quotesResult = await upsertQuotes(quotes, sessionDate);
+  const quotesJson = { fetched: quotes.length, ...quotesResult };
+
   if (movers.length === 0) {
-    return NextResponse.json({ ok: true, source: "eod", fetched: 0, upserted: 0, reason: "no_data" });
+    return NextResponse.json({ ok: true, source: "eod", fetched: 0, upserted: 0, reason: "no_data", quotes: quotesJson });
   }
 
   const result = await upsertMovers(movers, sessionDate, TOP_N_PER_DIRECTION_EOD);
-  return NextResponse.json({ ok: true, source: "eod", fetched: movers.length, ...result });
+  return NextResponse.json({ ok: true, source: "eod", fetched: movers.length, ...result, quotes: quotesJson });
 }
 
 async function run(request: Request) {

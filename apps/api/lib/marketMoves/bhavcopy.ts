@@ -89,6 +89,8 @@ type BhavcopyRow = {
   prevClose: number;
   closePrice: number;
   ttlTrdQnty: number;
+  /** DELIV_PER — delivery percentage. Null when the source cell is '-' (not published for this series) or unparseable. */
+  deliveryPct: number | null;
 };
 
 /** Parses the bhavcopy CSV text into typed rows. Skips any malformed line rather than throwing. */
@@ -103,6 +105,10 @@ function parseBhavcopyCsv(csv: string): BhavcopyRow[] {
   const prevCloseIdx = idx("PREV_CLOSE");
   const closePriceIdx = idx("CLOSE_PRICE");
   const ttlTrdQntyIdx = idx("TTL_TRD_QNTY");
+  // DELIV_PER is optional in principle (absent on very old/odd archive files) —
+  // unlike the other five columns this doesn't fail the whole parse when missing,
+  // it just leaves every row's deliveryPct null.
+  const deliveryPctIdx = idx("DELIV_PER");
 
   if (symbolIdx < 0 || seriesIdx < 0 || prevCloseIdx < 0 || closePriceIdx < 0 || ttlTrdQntyIdx < 0) {
     console.warn("[marketMoves/bhavcopy] unexpected CSV header shape, missing required column(s)");
@@ -123,23 +129,32 @@ function parseBhavcopyCsv(csv: string): BhavcopyRow[] {
     const ttlTrdQnty = Number(cells[ttlTrdQntyIdx]);
     if (!symbol || !series) continue;
     if (!Number.isFinite(prevClose) || !Number.isFinite(closePrice) || !Number.isFinite(ttlTrdQnty)) continue;
-    rows.push({ symbol, series, prevClose, closePrice, ttlTrdQnty });
+
+    let deliveryPct: number | null = null;
+    if (deliveryPctIdx >= 0) {
+      const rawDeliveryPct = cells[deliveryPctIdx];
+      const parsedDeliveryPct = Number(rawDeliveryPct);
+      deliveryPct = rawDeliveryPct && rawDeliveryPct !== "-" && Number.isFinite(parsedDeliveryPct)
+        ? parsedDeliveryPct
+        : null;
+    }
+
+    rows.push({ symbol, series, prevClose, closePrice, ttlTrdQnty, deliveryPct });
   }
   return rows;
 }
 
 /**
- * Fetches NSE's full-market EOD bhavcopy for the given IST session date and
- * returns the top 100 gainers + top 100 losers (by % change) among EQ-series,
- * liquid (TTL_TRD_QNTY > 10,000) names, with company names resolved from the
- * same cached equity-master CSV `fetchNseMovers` uses (self-contained, same
- * contract as the intraday fetcher — callers don't need a separate join).
- *
- * Returns `null` (never throws) when the file isn't available yet (today not
- * yet published, or a weekend/holiday with no session) or on any network/parse
- * failure — the caller treats `null` as "nothing to enrich with this run".
+ * Shared fetch + validate step used by both fetchBhavcopyMovers and
+ * fetchBhavcopyQuotes: GETs the bhavcopy CSV for the given IST session date,
+ * validates its in-file DATE1 against the requested session (see the module
+ * doc comment on stale-weekend-file risk), and returns the parsed rows.
+ * Returns `null` (never throws) for "not available yet" in every sense — a
+ * 404, a network/parse error, or a DATE1 mismatch — so callers can treat
+ * `null` uniformly as "nothing to enrich with this run" without duplicating
+ * the fetch/validate logic themselves.
  */
-export async function fetchBhavcopyMovers(sessionDate: Date): Promise<FetchedMarketMover[] | null> {
+async function fetchBhavcopyRows(sessionDate: Date): Promise<BhavcopyRow[] | null> {
   const url = bhavcopyUrl(sessionDate);
 
   let res: Response;
@@ -188,10 +203,28 @@ export async function fetchBhavcopyMovers(sessionDate: Date): Promise<FetchedMar
   }
 
   const rows = parseBhavcopyCsv(csv);
-  if (rows.length === 0) return null;
+  return rows.length > 0 ? rows : null;
+}
 
+/**
+ * Fetches NSE's full-market EOD bhavcopy for the given IST session date and
+ * returns the top 100 gainers + top 100 losers (by % change) among EQ-series,
+ * liquid (TTL_TRD_QNTY > 10,000) names, with company names resolved from the
+ * same cached equity-master CSV `fetchNseMovers` uses (self-contained, same
+ * contract as the intraday fetcher — callers don't need a separate join).
+ *
+ * Returns `null` (never throws) when the file isn't available yet (today not
+ * yet published, or a weekend/holiday with no session) or on any network/parse
+ * failure — the caller treats `null` as "nothing to enrich with this run".
+ */
+export async function fetchBhavcopyMovers(sessionDate: Date): Promise<FetchedMarketMover[] | null> {
+  const rows = await fetchBhavcopyRows(sessionDate);
+  if (!rows) return null;
   const nameBySymbol = await fetchEquityNames();
+  return shapeMovers(rows, nameBySymbol);
+}
 
+function shapeMovers(rows: BhavcopyRow[], nameBySymbol: Map<string, string>): FetchedMarketMover[] {
   const movers: FetchedMarketMover[] = [];
   for (const row of rows) {
     if (row.series !== "EQ") continue;
@@ -223,4 +256,86 @@ export async function fetchBhavcopyMovers(sessionDate: Date): Promise<FetchedMar
     .slice(0, TOP_N_PER_DIRECTION);
 
   return [...gainers, ...losers];
+}
+
+/** Minimum today's traded quantity for a row to be stored as a StockEodQuote (Phase 2 — deliberately looser than MIN_LIQUIDITY_QTY: the quote store also backs future portfolio valuation, so it should cover the broad liquid universe, not just movers-strip-worthy names). */
+const MIN_QUOTE_LIQUIDITY_QTY = 1_000;
+
+/** One full-market EOD quote row, keyed by (sessionDate, symbol) — see the StockEodQuote model. */
+export type FetchedEodQuote = {
+  symbol: string;
+  companyName: string;
+  prevClose: number;
+  close: number;
+  changePercent: number;
+  volume: number;
+  deliveryPct: number | null;
+};
+
+/**
+ * Unlike `fetchBhavcopyMovers`'s shaping, a zero-change row (close ===
+ * prevClose) is KEPT here — the quote store is a full-market ledger, not a
+ * "what moved" feed. A `prevClose <= 0` row (newly listed/bad data) still
+ * gets a row with `changePercent: 0` rather than being dropped, so
+ * newly-listed names aren't silently absent from the instrument-detail /
+ * portfolio-valuation store; their change simply reads as flat until a real
+ * prevClose exists the next session.
+ */
+function shapeQuotes(rows: BhavcopyRow[], nameBySymbol: Map<string, string>): FetchedEodQuote[] {
+  const quotes: FetchedEodQuote[] = [];
+  for (const row of rows) {
+    if (row.series !== "EQ") continue;
+    if (row.ttlTrdQnty <= MIN_QUOTE_LIQUIDITY_QTY) continue;
+
+    const changePercent = row.prevClose > 0 ? ((row.closePrice - row.prevClose) / row.prevClose) * 100 : 0;
+
+    quotes.push({
+      symbol: row.symbol,
+      companyName: nameBySymbol.get(row.symbol) ?? row.symbol,
+      prevClose: row.prevClose,
+      close: row.closePrice,
+      changePercent,
+      volume: row.ttlTrdQnty,
+      deliveryPct: row.deliveryPct,
+    });
+  }
+  return quotes;
+}
+
+/**
+ * Fetches NSE's full-market EOD bhavcopy for the given IST session date and
+ * returns EVERY liquid (TTL_TRD_QNTY > 1,000) EQ-series name — not just the
+ * top-100/direction movers `fetchBhavcopyMovers` keeps. Reuses the exact same
+ * fetch + DATE1-validated parse as `fetchBhavcopyMovers` (`fetchBhavcopyRows`).
+ * Standalone convenience wrapper — the cron route should prefer
+ * `fetchBhavcopySession` when it needs BOTH shapes for the same session, so
+ * it only fetches the (multi-MB) CSV once instead of twice.
+ *
+ * Returns `null` (never throws) under the same conditions as
+ * `fetchBhavcopyMovers` — not yet published, no session that date, or any
+ * network/parse failure.
+ */
+export async function fetchBhavcopyQuotes(sessionDate: Date): Promise<FetchedEodQuote[] | null> {
+  const rows = await fetchBhavcopyRows(sessionDate);
+  if (!rows) return null;
+  const nameBySymbol = await fetchEquityNames();
+  return shapeQuotes(rows, nameBySymbol);
+}
+
+/**
+ * Fetches NSE's full-market EOD bhavcopy ONCE for the given IST session date
+ * and derives BOTH the top-100/direction movers shape AND the full liquid
+ * quote-universe shape from the same parsed rows — the pairing the EOD cron
+ * pass needs (movers feed `MarketMoverSnapshot`, quotes feed `StockEodQuote`)
+ * without doubling the network fetch of the multi-MB CSV. Returns `null`
+ * (never throws) under the same "not available yet" conditions as
+ * `fetchBhavcopyMovers`/`fetchBhavcopyQuotes`.
+ */
+export async function fetchBhavcopySession(
+  sessionDate: Date
+): Promise<{ movers: FetchedMarketMover[]; quotes: FetchedEodQuote[] } | null> {
+  const rows = await fetchBhavcopyRows(sessionDate);
+  if (!rows) return null;
+  const nameBySymbol = await fetchEquityNames();
+  return { movers: shapeMovers(rows, nameBySymbol), quotes: shapeQuotes(rows, nameBySymbol) };
 }

@@ -13,6 +13,7 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
 import type {
+  ApiInstrumentDetail,
   ApiMarketMoveEvent,
   ApiMarketMoveNews,
   ApiMarketMover,
@@ -123,6 +124,37 @@ export function MarketMovesTab() {
 
   const [selectedEvent, setSelectedEvent] = useState<ApiMarketMoveEvent | null>(null);
 
+  // Instrument tap-through sheet (Market Pulse Phase 2) — opened from a
+  // MoverCard tap. Symbol drives both the Modal's visibility and the fetch;
+  // detail/loading/error are separate from the symbol so the sheet can show a
+  // spinner immediately on open and a stable "last good" render while closing.
+  const [selectedMoverSymbol, setSelectedMoverSymbol] = useState<string | null>(null);
+  const [instrumentDetail, setInstrumentDetail] = useState<ApiInstrumentDetail | null>(null);
+  const [instrumentLoading, setInstrumentLoading] = useState(false);
+  const [instrumentError, setInstrumentError] = useState(false);
+
+  const loadInstrumentDetail = useCallback((symbol: string) => {
+    setInstrumentLoading(true);
+    setInstrumentError(false);
+    mobileApi
+      .getInstrumentDetail(symbol)
+      .then(setInstrumentDetail)
+      .catch((err: unknown) => {
+        console.warn("[market-moves-tab] instrument detail fetch failed:", err);
+        setInstrumentError(true);
+      })
+      .finally(() => setInstrumentLoading(false));
+  }, []);
+
+  const openInstrumentSheet = useCallback(
+    (symbol: string) => {
+      setSelectedMoverSymbol(symbol);
+      setInstrumentDetail(null);
+      loadInstrumentDetail(symbol);
+    },
+    [loadInstrumentDetail]
+  );
+
   // Stock News / Filings & announcements peer tabs — News leads by default
   // (primary Zone 2 read surface); filings are one tap away instead of
   // buried behind a collapsed disclosure.
@@ -214,10 +246,10 @@ export function MarketMovesTab() {
             )}
           </View>
           {movers && movers.gainers.length > 0 && (
-            <MoverRow label="Gainers" items={movers.gainers} showAll={showAllMovers} />
+            <MoverRow label="Gainers" items={movers.gainers} showAll={showAllMovers} onSelect={openInstrumentSheet} />
           )}
           {movers && movers.losers.length > 0 && (
-            <MoverRow label="Losers" items={movers.losers} showAll={showAllMovers} />
+            <MoverRow label="Losers" items={movers.losers} showAll={showAllMovers} onSelect={openInstrumentSheet} />
           )}
           {movers &&
             Math.max(movers.gainers.length, movers.losers.length) > MOVERS_COLLAPSED_COUNT && (
@@ -344,6 +376,15 @@ export function MarketMovesTab() {
             : undefined
         }
       />
+
+      <InstrumentDetailSheet
+        symbol={selectedMoverSymbol}
+        detail={instrumentDetail}
+        loading={instrumentLoading}
+        error={instrumentError}
+        onRetry={() => selectedMoverSymbol && loadInstrumentDetail(selectedMoverSymbol)}
+        onClose={() => setSelectedMoverSymbol(null)}
+      />
     </View>
   );
 }
@@ -389,10 +430,12 @@ function MoverRow({
   label,
   items,
   showAll,
+  onSelect,
 }: {
   label: string;
   items: ApiMarketMover[];
   showAll: boolean;
+  onSelect: (symbol: string) => void;
 }) {
   const styles = useThemedStyles(makeMarketMovesStyles);
   const visible = showAll ? items : items.slice(0, MOVERS_COLLAPSED_COUNT);
@@ -401,14 +444,14 @@ function MoverRow({
       <Text style={styles.moverRowLabel}>{label}</Text>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.moverRowScroll}>
         {visible.map((m) => (
-          <MoverCard key={m.tickerSymbol} mover={m} />
+          <MoverCard key={m.tickerSymbol} mover={m} onPress={() => onSelect(m.tickerSymbol)} />
         ))}
       </ScrollView>
     </View>
   );
 }
 
-function MoverCard({ mover }: { mover: ApiMarketMover }) {
+function MoverCard({ mover, onPress }: { mover: ApiMarketMover; onPress: () => void }) {
   const styles = useThemedStyles(makeMarketMovesStyles);
   const { colors } = useTheme();
   const isGainer = mover.direction === "GAINER";
@@ -421,7 +464,7 @@ function MoverCard({ mover }: { mover: ApiMarketMover }) {
         : colors.textMuted;
 
   return (
-    <View style={styles.moverCard}>
+    <Pressable style={styles.moverCard} onPress={onPress}>
       <TickerChip symbol={mover.tickerSymbol} tickerType="STOCK" size="sm" />
       {mover.companyName !== mover.tickerSymbol && (
         <Text style={styles.moverCompanyName} numberOfLines={1}>{mover.companyName}</Text>
@@ -460,7 +503,7 @@ function MoverCard({ mover }: { mover: ApiMarketMover }) {
           ) : null}
         </Text>
       )}
-    </View>
+    </Pressable>
   );
 }
 
@@ -594,6 +637,161 @@ function EventDetailModal({
             </ScrollView>
           </>
         )}
+      </View>
+    </Modal>
+  );
+}
+
+/** Latest N news / opinion rows shown inside the instrument sheet — the full lists live on the web detail page, this is a glanceable summary. */
+const SHEET_NEWS_LIMIT = 5;
+const SHEET_OPINIONS_LIMIT = 3;
+
+/**
+ * Market Pulse Phase 2 — instrument tap-through bottom sheet, opened from a
+ * MoverCard tap. Follows the exact same Modal/backdrop/sheetContainer pattern
+ * as EventDetailModal above (this app has no shared reusable bottom-sheet
+ * primitive yet) rather than importing finance-mode.tsx's PulseSheet, which
+ * is a private, unexported function local to that (already 4,000+ line) file.
+ *
+ * `symbol` alone drives visibility (`visible={symbol != null}`) so the sheet
+ * can render its loading state immediately on open, before the fetch
+ * resolves — `detail` only arrives once `mobileApi.getInstrumentDetail`
+ * completes.
+ */
+function InstrumentDetailSheet({
+  symbol,
+  detail,
+  loading,
+  error,
+  onRetry,
+  onClose,
+}: {
+  symbol: string | null;
+  detail: ApiInstrumentDetail | null;
+  loading: boolean;
+  error: boolean;
+  onRetry: () => void;
+  onClose: () => void;
+}) {
+  const styles = useThemedStyles(makeMarketMovesStyles);
+  const { colors } = useTheme();
+
+  // Keep the last non-null symbol/detail around through the Modal's own close
+  // animation, same rationale as EventDetailModal's displayEvent.
+  const [displaySymbol, setDisplaySymbol] = useState<string | null>(null);
+  useEffect(() => {
+    if (symbol) setDisplaySymbol(symbol);
+  }, [symbol]);
+
+  const quote = detail?.quote ?? null;
+  const isUp = quote != null && quote.changePercent >= 0;
+
+  return (
+    <Modal visible={symbol != null} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={styles.sheetBackdrop} onPress={onClose} />
+      <View style={styles.sheetContainer}>
+        <View style={styles.sheetHandle} />
+        <View style={styles.sheetHeader}>
+          {displaySymbol && <TickerChip symbol={displaySymbol} tickerType="STOCK" />}
+          <Pressable onPress={onClose} hitSlop={12}>
+            <Text style={styles.sheetClose}>Done</Text>
+          </Pressable>
+        </View>
+
+        {loading ? (
+          <View style={{ paddingVertical: 40, alignItems: "center" }}>
+            <ActivityIndicator size="small" color={colors.accent} />
+          </View>
+        ) : error ? (
+          <View style={{ paddingVertical: 32, alignItems: "center", paddingHorizontal: spacing.lg }}>
+            <Text style={styles.emptyIcon}>⚠️</Text>
+            <Text style={styles.emptyTitle}>Couldn&apos;t load {displaySymbol}</Text>
+            <Pressable onPress={onRetry} style={styles.retryButton}>
+              <Text style={styles.retryButtonText}>Try again</Text>
+            </Pressable>
+          </View>
+        ) : detail ? (
+          <ScrollView contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingBottom: 40 }}>
+            <Text style={styles.companyName}>{detail.companyName}</Text>
+
+            {quote ? (
+              <>
+                <View style={styles.instrumentPriceRow}>
+                  <Text style={styles.instrumentPrice}>{formatRupees(quote.close)}</Text>
+                  <Text style={[styles.instrumentChange, isUp ? styles.gainerColor : styles.loserColor]}>
+                    {isUp ? "▲" : "▼"} {Math.abs(quote.changePercent).toFixed(2)}%
+                    {"  "}
+                    {formatSignedRupees(quote.close - quote.prevClose)}
+                  </Text>
+                </View>
+                <Text style={styles.footerMeta}>
+                  As of {new Date(quote.sessionDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}
+                </Text>
+                <View style={styles.instrumentStatRow}>
+                  <View style={styles.instrumentStat}>
+                    <Text style={styles.instrumentStatLabel}>Volume</Text>
+                    <Text style={styles.instrumentStatValue}>{quote.volume.toLocaleString("en-IN")}</Text>
+                  </View>
+                  {quote.deliveryPct != null && (
+                    <View style={styles.instrumentStat}>
+                      <Text style={styles.instrumentStatLabel}>Delivery %</Text>
+                      <Text style={styles.instrumentStatValue}>{quote.deliveryPct.toFixed(1)}%</Text>
+                    </View>
+                  )}
+                </View>
+              </>
+            ) : (
+              <Text style={[styles.footerMeta, { marginTop: spacing.xs }]}>Price data pending.</Text>
+            )}
+
+            {detail.news.length > 0 && (
+              <View style={{ marginTop: spacing.lg }}>
+                <Text style={styles.instrumentSectionTitle}>Latest news</Text>
+                {detail.news.slice(0, SHEET_NEWS_LIMIT).map((item) => (
+                  <Pressable
+                    key={item.id}
+                    onPress={() => void Linking.openURL(item.sourceUrl)}
+                    style={styles.instrumentNewsRow}
+                  >
+                    <Text style={styles.instrumentNewsHeadline} numberOfLines={2}>{item.headline}</Text>
+                    <Text style={styles.footerMeta}>
+                      {item.publisher} · {formatRelativeTime(item.publishedAt)}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            )}
+
+            {detail.opinions.length > 0 && (
+              <View style={{ marginTop: spacing.lg }}>
+                <Text style={styles.instrumentSectionTitle}>Analyst opinions</Text>
+                {detail.opinions.slice(0, SHEET_OPINIONS_LIMIT).map((opinion) => {
+                  const directionColor =
+                    opinion.direction === "BULLISH"
+                      ? colors.success
+                      : opinion.direction === "BEARISH"
+                        ? colors.danger
+                        : colors.textMuted;
+                  return (
+                    <View key={opinion.id} style={styles.instrumentOpinionRow}>
+                      <Text style={styles.instrumentOpinionAnalyst} numberOfLines={1}>{opinion.expert.name}</Text>
+                      <Text style={[styles.instrumentOpinionDirection, { color: directionColor }]}>
+                        {ANALYST_DIRECTION_LABEL[opinion.direction]}
+                        {ANALYST_RESOLUTION_LABEL[opinion.resolutionStatus]
+                          ? ` · ${ANALYST_RESOLUTION_LABEL[opinion.resolutionStatus]}`
+                          : ""}
+                      </Text>
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+
+            <Text style={[styles.footerMeta, { marginTop: spacing.lg }]}>
+              {detail.filings.length} filing{detail.filings.length === 1 ? "" : "s"} in the last 10 announcements tracked.
+            </Text>
+          </ScrollView>
+        ) : null}
       </View>
     </Modal>
   );
@@ -973,5 +1171,80 @@ const makeMarketMovesStyles = (t: ThemeContextValue) =>
       fontSize: 14,
       fontWeight: "700" as const,
       color: "#FFFFFF",
+    },
+    // Instrument tap-through sheet (Market Pulse Phase 2)
+    instrumentPriceRow: {
+      flexDirection: "row",
+      alignItems: "baseline",
+      gap: spacing.sm,
+      marginTop: spacing.sm,
+    },
+    instrumentPrice: {
+      fontSize: 24,
+      fontWeight: "800" as const,
+      color: t.colors.text,
+    },
+    instrumentChange: {
+      fontSize: 13,
+      fontWeight: "700" as const,
+    },
+    instrumentStatRow: {
+      flexDirection: "row",
+      gap: spacing.lg,
+      marginTop: spacing.md,
+    },
+    instrumentStat: {
+      gap: 2,
+    },
+    instrumentStatLabel: {
+      fontSize: 10,
+      fontWeight: "700" as const,
+      textTransform: "uppercase" as const,
+      letterSpacing: 0.4,
+      color: t.colors.textMuted,
+    },
+    instrumentStatValue: {
+      fontSize: 14,
+      fontWeight: "700" as const,
+      color: t.colors.text,
+    },
+    instrumentSectionTitle: {
+      fontSize: 12,
+      fontWeight: "700" as const,
+      textTransform: "uppercase" as const,
+      letterSpacing: 0.4,
+      color: t.colors.textMuted,
+      marginBottom: spacing.xs,
+    },
+    instrumentNewsRow: {
+      paddingVertical: spacing.xs,
+      borderBottomWidth: 1,
+      borderBottomColor: t.colors.border,
+      gap: 3,
+    },
+    instrumentNewsHeadline: {
+      fontSize: 13,
+      fontWeight: "600" as const,
+      color: t.colors.text,
+      lineHeight: 18,
+    },
+    instrumentOpinionRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      paddingVertical: spacing.xs,
+      borderBottomWidth: 1,
+      borderBottomColor: t.colors.border,
+      gap: spacing.sm,
+    },
+    instrumentOpinionAnalyst: {
+      flex: 1,
+      fontSize: 13,
+      fontWeight: "600" as const,
+      color: t.colors.text,
+    },
+    instrumentOpinionDirection: {
+      fontSize: 12,
+      fontWeight: "700" as const,
     },
   });

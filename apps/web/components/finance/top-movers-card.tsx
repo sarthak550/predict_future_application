@@ -92,32 +92,37 @@ function MoverColumn({
               row.analystCall?.resolutionStatus === "RESOLVED_MISS";
             return (
               <li key={row.tickerSymbol} className="py-2.5">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex min-w-0 items-baseline gap-2">
-                    <span className="w-6 shrink-0 text-xs tabular-nums text-ink-300">{row.rank}</span>
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium text-ink-900">{row.companyName}</p>
-                      <p className="text-xs text-ink-400">
-                        {row.tickerSymbol}
-                        {row.lastPrice != null ? (
-                          <span className="ml-1.5 text-ink-500">{formatRupees(row.lastPrice)}</span>
-                        ) : null}
+                <Link
+                  href={`/instruments/${row.tickerSymbol}`}
+                  className="block rounded-md transition-colors hover:bg-ink-50/60"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-baseline gap-2">
+                      <span className="w-6 shrink-0 text-xs tabular-nums text-ink-300">{row.rank}</span>
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-ink-900">{row.companyName}</p>
+                        <p className="text-xs text-ink-400">
+                          {row.tickerSymbol}
+                          {row.lastPrice != null ? (
+                            <span className="ml-1.5 text-ink-500">{formatRupees(row.lastPrice)}</span>
+                          ) : null}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <p className={`text-sm font-semibold ${toneClass}`}>
+                        {row.changePercent > 0 ? "+" : ""}
+                        {row.changePercent.toFixed(2)}%
                       </p>
+                      <p className="text-[11px] text-ink-400">{formatSignedRupees(row.changeAbs)}</p>
+                      {row.isUnusualVolume && (
+                        <p className="text-[10px] font-medium uppercase tracking-wide text-signal-amber">
+                          Unusual volume
+                        </p>
+                      )}
                     </div>
                   </div>
-                  <div className="shrink-0 text-right">
-                    <p className={`text-sm font-semibold ${toneClass}`}>
-                      {row.changePercent > 0 ? "+" : ""}
-                      {row.changePercent.toFixed(2)}%
-                    </p>
-                    <p className="text-[11px] text-ink-400">{formatSignedRupees(row.changeAbs)}</p>
-                    {row.isUnusualVolume && (
-                      <p className="text-[10px] font-medium uppercase tracking-wide text-signal-amber">
-                        Unusual volume
-                      </p>
-                    )}
-                  </div>
-                </div>
+                </Link>
                 {row.topHeadline ? (
                   <a
                     href={row.topHeadline.sourceUrl}

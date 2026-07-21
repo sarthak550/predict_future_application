@@ -20,8 +20,31 @@ const SITE_URL = "https://predictfuture.app";
  *
  * /calls/[id] pages are intentionally excluded — they're noindex share artifacts,
  * not sitemap content.
+ *
+ * /instruments/[symbol] entries (Market Pulse Phase 2) are capped to symbols
+ * with a quote in the MOST RECENT StockEodQuote session (~1,900-2,000 names,
+ * not the full historical ~2k-per-session backlog) — mirrors the indexable
+ * gating on that page itself (generateMetadata there noindexes any symbol
+ * without a quote), so nothing submitted here is ever a noindex page.
  */
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
+  const latestQuoteSession = await prisma.stockEodQuote.findFirst({
+    orderBy: { sessionDate: "desc" },
+    select: { sessionDate: true },
+  });
+  const instrumentRows = latestQuoteSession
+    ? await prisma.stockEodQuote.findMany({
+        where: { sessionDate: latestQuoteSession.sessionDate },
+        select: { symbol: true },
+      })
+    : [];
+  const instrumentEntries: MetadataRoute.Sitemap = instrumentRows.map((row) => ({
+    url: `${SITE_URL}/instruments/${row.symbol}`,
+    lastModified: latestQuoteSession!.sessionDate,
+    changeFrequency: "daily",
+    priority: 0.5,
+  }));
+
   const experts = await prisma.expert.findMany({
     where: { slug: { not: null } },
     select: {
@@ -69,5 +92,6 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       priority: 0.6,
     },
     ...analystEntries,
+    ...instrumentEntries,
   ];
 }

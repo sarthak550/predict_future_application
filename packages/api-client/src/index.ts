@@ -75,6 +75,8 @@ import type {
   ApiMarketMoversResponse,
   // Market Pulse (Phase 1c) — Google News per-ticker headlines
   ApiMarketMoveNewsResponse,
+  // Market Pulse (Phase 2) — instrument tap-through detail
+  ApiInstrumentDetail,
 } from "@predict-future/types";
 
 export type { ApiLeaderboardTimeWindow };
@@ -904,6 +906,18 @@ export function createApiClient(options: ApiClientOptions) {
         "/api/finance/market-moves/news",
         params
       );
+    },
+
+    // ─── Market Pulse: instrument tap-through detail (Phase 2) ────────────
+    /**
+     * Public tap-through stock detail for one NSE symbol — price/volume/
+     * delivery%, a 30-session trend, latest news/filings, and matched analyst
+     * opinions + sentiment split. No auth required. Throws (via `request`'s
+     * non-2xx handling) on an unknown symbol (404) — callers should catch and
+     * render an error/empty state, not assume this always resolves.
+     */
+    getInstrumentDetail(symbol: string) {
+      return request<ApiInstrumentDetail>(`/api/finance/instruments/${encodeURIComponent(symbol)}`);
     },
 
     /** Fetch a single ExpertOpinion's full detail by id. */

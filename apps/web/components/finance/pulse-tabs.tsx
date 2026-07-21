@@ -14,6 +14,7 @@
  */
 
 import { useState } from "react";
+import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -71,7 +72,19 @@ export function PulseTabs({ news, filings }: { news: PulseNewsItem[]; filings: P
                   rel="noreferrer"
                   className="flex items-start gap-3 px-5 py-4 transition hover:bg-ink-50/60"
                 >
-                  <Badge className="mt-0.5 shrink-0">{item.tickerSymbol.replace(/^BSE:/i, "")}</Badge>
+                  {/* NSE-symbol rows tap through to the instrument detail page; "BSE:<code>"
+                      rows have no reliable NSE mapping, so they stay a plain (non-linking) badge. */}
+                  {item.tickerSymbol.startsWith("BSE:") ? (
+                    <Badge className="mt-0.5 shrink-0">{item.tickerSymbol.replace(/^BSE:/i, "")}</Badge>
+                  ) : (
+                    <Link
+                      href={`/instruments/${item.tickerSymbol}`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="mt-0.5 shrink-0"
+                    >
+                      <Badge className="transition-colors hover:bg-ink-200">{item.tickerSymbol}</Badge>
+                    </Link>
+                  )}
                   <div className="min-w-0 flex-1">
                     <p className="text-sm leading-6 text-ink-900">{item.headline}</p>
                     <p className="mt-1 text-xs text-ink-400">
