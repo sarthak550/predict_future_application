@@ -187,7 +187,11 @@ export async function fetchNseAnnouncements(): Promise<FetchedMarketMoveEvent[]>
 type NseVariationRow = {
   symbol?: string | null;
   perChange?: number | null;   // percent change
-  net_price?: number | null;   // absolute change
+  /** MISLEADINGLY NAMED BY NSE: net_price carries the PERCENT change again
+   *  (verified: an ₹11,830 stock shows net_price 2.91 == perChange 2.91).
+   *  Never use it as a rupee change — compute from ltp - prev_price. */
+  net_price?: number | null;
+  prev_price?: number | null;  // previous close (₹)
   trade_quantity?: number | null;
   ltp?: number | null;         // last traded price
 };
@@ -316,7 +320,10 @@ export async function fetchNseMovers(): Promise<FetchedMarketMover[]> {
         tickerSymbol: sym,
         companyName: nameBySymbol.get(sym) ?? sym, // full company name; ticker only if unmapped
         changePercent: r.perChange as number,
-        changeAbs: r.net_price ?? 0,
+        // Rupee change computed from real prices — NSE's net_price is a trap
+        // (it repeats the percentage; see NseVariationRow doc above).
+        changeAbs:
+          r.ltp != null && r.prev_price != null ? r.ltp - r.prev_price : 0,
         volume: r.trade_quantity ?? 0,
         lastPrice: typeof r.ltp === "number" ? r.ltp : null,
         direction: direction as "GAINER" | "LOSER",
