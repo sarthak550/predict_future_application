@@ -20,6 +20,7 @@
     "./news/types": "./src/news/types.ts",
     "./portfolios/eligibility": "./src/portfolios/eligibility.ts",
     "./portfolios/engine": "./src/portfolios/engine.ts",
+    "./portfolios/shadow": "./src/portfolios/shadow.ts",
     "./stories/ranking": "./src/stories/ranking.ts"
   },
   "dependencies": {

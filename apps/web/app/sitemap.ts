@@ -1,6 +1,7 @@
 import type { MetadataRoute } from "next";
 
 import { getPublicProfileStats } from "@/lib/finance/publicProfile";
+import { listPublicEligiblePortfolioSlugsForSitemap } from "@/lib/portfolios/queries";
 import { prisma } from "@/lib/prisma";
 
 const SITE_URL = "https://predictfuture.app";
@@ -26,6 +27,12 @@ const SITE_URL = "https://predictfuture.app";
  * not the full historical ~2k-per-session backlog) — mirrors the indexable
  * gating on that page itself (generateMetadata there noindexes any symbol
  * without a quote), so nothing submitted here is ever a noindex page.
+ *
+ * /portfolios/[slug] entries (Portfolios P3.2) are PUBLIC + eligible-for-ranking
+ * only (isEligibleForPublicRanking) — a PUBLIC-but-too-new portfolio is still a
+ * real, indexable page (app/portfolios/[slug]'s own robots directive doesn't
+ * gate on eligibility), it's just not submitted to the sitemap until it has a
+ * real track record, mirroring how /opinions only submits its bare URL.
  */
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const latestQuoteSession = await prisma.stockEodQuote.findFirst({
@@ -66,6 +73,14 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       priority: 0.7,
     }));
 
+  const eligiblePortfolios = await listPublicEligiblePortfolioSlugsForSitemap();
+  const portfolioEntries: MetadataRoute.Sitemap = eligiblePortfolios.map((p) => ({
+    url: `${SITE_URL}/portfolios/${p.slug}`,
+    lastModified: p.lastModified,
+    changeFrequency: "daily",
+    priority: 0.6,
+  }));
+
   return [
     {
       url: SITE_URL,
@@ -91,7 +106,14 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       changeFrequency: "hourly",
       priority: 0.6,
     },
+    {
+      url: `${SITE_URL}/portfolios`,
+      lastModified: new Date(),
+      changeFrequency: "daily",
+      priority: 0.6,
+    },
     ...analystEntries,
     ...instrumentEntries,
+    ...portfolioEntries,
   ];
 }

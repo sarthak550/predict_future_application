@@ -4,16 +4,17 @@ import { SessionChip } from "@/components/finance/session-chip";
 
 /**
  * Site-wide chrome for every public, unauthenticated, indexable Finance page
- * (app/page.tsx, app/analysts/**, app/opinions/**, app/pulse/**, app/calls/**).
- * These pages render outside the (app) route group / AppShell — that shell
- * now only backs the (admin) console (see components/layout/app-shell.tsx) —
- * so this header needs to work standalone for a signed-out visitor arriving
- * from Google or a shared WhatsApp link.
+ * (app/page.tsx, app/analysts/**, app/opinions/**, app/pulse/**, app/calls/**,
+ * app/portfolios/**). These pages render outside the (app) route group /
+ * AppShell — that shell now only backs the (admin) console (see
+ * components/layout/app-shell.tsx) — so this header needs to work standalone
+ * for a signed-out visitor arriving from Google or a shared WhatsApp link.
  */
 const NAV_LINKS = [
   { href: "/analysts", label: "Analysts" },
   { href: "/opinions", label: "Opinions" },
   { href: "/pulse", label: "Market Pulse" },
+  { href: "/portfolios", label: "Portfolios" },
 ];
 
 export function PublicHeader() {

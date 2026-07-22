@@ -13,4 +13,5 @@ export * from "./news/category-map";
 export * from "./news/types";
 export * from "./portfolios/eligibility";
 export * from "./portfolios/engine";
+export * from "./portfolios/shadow";
 export * from "./stories/ranking";

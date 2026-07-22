@@ -1,5 +1,7 @@
 /**
- * Portfolios (P3.1) — read-side DB orchestration for apps/web/app/api/portfolios/*.
+ * Portfolios (P3.1 read-side, extended in P3.2 with the public directory/detail/
+ * sitemap queries) — DB orchestration for apps/web/app/api/portfolios/* and the
+ * public app/portfolios/** pages.
  *
  * All derived math (cash, holdings, NAV, return%) comes from the pure functions in
  * packages/business-rules/src/portfolios/engine.ts — Portfolio itself has no
@@ -8,7 +10,9 @@
 
 import type { EngineTransaction } from "@predict-future/business-rules/portfolios/engine";
 import { deriveCash, deriveHoldings, valuePortfolio } from "@predict-future/business-rules/portfolios/engine";
+import { isEligibleForPublicRanking } from "@predict-future/business-rules/portfolios/eligibility";
 
+import { getPortfolioOwnerUserLabel } from "@/lib/portfolios/displayName";
 import { prisma } from "@/lib/prisma";
 
 const EXECUTED_TX_SELECT = {
@@ -38,6 +42,78 @@ export async function getLatestCloseBySymbol(symbols: string[]): Promise<Map<str
 export async function symbolHasQuotes(symbol: string): Promise<boolean> {
   const row = await prisma.stockEodQuote.findFirst({ where: { symbol }, select: { id: true } });
   return row !== null;
+}
+
+interface ExecutedTxnAgg {
+  /** min(executionSessionDate) across EXECUTED rows — the eligibility anchor. */
+  firstExecutedAt: Date | null;
+  executedCount: number;
+}
+
+/**
+ * Batches the "first EXECUTED fill date + EXECUTED count" aggregate for a set of
+ * portfolios in one groupBy — the exact anchor isEligibleForPublicRanking expects
+ * (see packages/business-rules/src/portfolios/eligibility.ts: MUST be the first
+ * EXECUTED transaction, never Portfolio.createdAt — anti-gaming).
+ */
+async function getExecutedTxnAggByPortfolio(portfolioIds: string[]): Promise<Map<string, ExecutedTxnAgg>> {
+  if (portfolioIds.length === 0) return new Map();
+  const rows = await prisma.portfolioTransaction.groupBy({
+    by: ["portfolioId"],
+    where: { portfolioId: { in: portfolioIds }, status: "EXECUTED" },
+    _min: { executionSessionDate: true },
+    _count: { _all: true }
+  });
+  return new Map(
+    rows.map((row) => [row.portfolioId, { firstExecutedAt: row._min.executionSessionDate, executedCount: row._count._all }])
+  );
+}
+
+const OWNER_SELECT = {
+  ownerUser: { select: { username: true, displayMode: true } },
+  ownerExpert: { select: { name: true, slug: true, avatarUrl: true, organization: true } }
+} as const;
+
+interface OwnerRow {
+  ownerUserId: string | null;
+  ownerUser: { username: string; displayMode: string } | null;
+  ownerExpert: { name: string; slug: string | null; avatarUrl: string | null; organization: string } | null;
+}
+
+export interface PortfolioOwnerDisplay {
+  ownerLabel: string;
+  /** /analysts/[slug] for a SHADOW portfolio whose Expert has a slug; null otherwise. */
+  ownerHref: string | null;
+  ownerOrganization: string | null;
+  ownerAvatarUrl: string | null;
+}
+
+/**
+ * Resolves the public-facing owner label + link for a portfolio. USER-kind
+ * portfolios respect the owning User's displayMode (ANONYMOUS -> pseudonym) via
+ * getPortfolioOwnerUserLabel; SHADOW-kind portfolios show the Expert's real name
+ * and link to their public /analysts/[slug] profile when one exists.
+ */
+function resolvePortfolioOwner(portfolio: OwnerRow): PortfolioOwnerDisplay {
+  if (portfolio.ownerExpert) {
+    return {
+      ownerLabel: portfolio.ownerExpert.name,
+      ownerHref: portfolio.ownerExpert.slug ? `/analysts/${portfolio.ownerExpert.slug}` : null,
+      ownerOrganization: portfolio.ownerExpert.organization,
+      ownerAvatarUrl: portfolio.ownerExpert.avatarUrl
+    };
+  }
+  if (portfolio.ownerUser && portfolio.ownerUserId) {
+    return {
+      ownerLabel: getPortfolioOwnerUserLabel({ id: portfolio.ownerUserId, ...portfolio.ownerUser }),
+      ownerHref: null,
+      ownerOrganization: null,
+      ownerAvatarUrl: null
+    };
+  }
+  // Defensive fallback — schema allows both owner FKs to be null, though nothing
+  // in P3.1/P3.2 creates a portfolio that way.
+  return { ownerLabel: "Predict Future", ownerHref: null, ownerOrganization: null, ownerAvatarUrl: null };
 }
 
 export interface LivePortfolioState {
@@ -128,12 +204,94 @@ export async function listMyPortfolios(ownerUserId: string): Promise<PortfolioLi
   return results;
 }
 
-export type PortfolioDetailAccess = "owner" | "public" | "denied" | "not-found";
-
-export interface PortfolioDetail {
+export interface PublicPortfolioListItem extends PortfolioOwnerDisplay {
   id: string;
   slug: string;
   name: string;
+  kind: "USER" | "SHADOW";
+  description: string | null;
+  startingCapital: number;
+  createdAt: Date;
+  publicSince: Date | null;
+  live: { cash: number; holdingsValue: number; totalValue: number; returnPct: number };
+  executedTxnCount: number;
+  firstExecutedTransactionAt: Date | null;
+  /** Mirrors isEligibleForPublicRanking(firstExecutedTransactionAt, executedTxnCount). */
+  eligible: boolean;
+}
+
+/**
+ * Defensive cap on the public directory query — every row here does a live
+ * valuation pass (see listMyPortfolios's identical N+1 pattern, which this
+ * mirrors). Revisit with a materialized/cached ranking table if the public
+ * portfolio count ever approaches this.
+ */
+const PUBLIC_DIRECTORY_LIMIT = 300;
+
+/**
+ * All PUBLIC portfolios (both eligible-for-ranking and "too new to rank"),
+ * live-valued, for app/portfolios/page.tsx to sort/filter/section. Ranking
+ * eligibility (isEligibleForPublicRanking) is computed here but NOT filtered
+ * out — the directory page shows ineligible PUBLIC portfolios too, in a
+ * separate unranked section, so callers must branch on `.eligible` themselves.
+ */
+export async function listPublicPortfolios(): Promise<PublicPortfolioListItem[]> {
+  const portfolios = await prisma.portfolio.findMany({
+    where: { visibility: "PUBLIC" },
+    orderBy: { createdAt: "desc" },
+    take: PUBLIC_DIRECTORY_LIMIT,
+    include: OWNER_SELECT
+  });
+  if (portfolios.length === 0) return [];
+
+  const aggByPortfolio = await getExecutedTxnAggByPortfolio(portfolios.map((p) => p.id));
+
+  const results: PublicPortfolioListItem[] = [];
+  for (const portfolio of portfolios) {
+    const { cash, holdings } = await getLivePortfolioState(portfolio.id, portfolio.startingCapital);
+    const closeBySymbol = await getLatestCloseBySymbol([...holdings.keys()]);
+    const live = valuePortfolio(holdings, cash, closeBySymbol, portfolio.startingCapital);
+    const agg = aggByPortfolio.get(portfolio.id) ?? { firstExecutedAt: null, executedCount: 0 };
+
+    results.push({
+      id: portfolio.id,
+      slug: portfolio.slug,
+      name: portfolio.name,
+      kind: portfolio.kind,
+      description: portfolio.description,
+      startingCapital: portfolio.startingCapital,
+      createdAt: portfolio.createdAt,
+      publicSince: portfolio.publicSince,
+      ...resolvePortfolioOwner(portfolio),
+      live,
+      executedTxnCount: agg.executedCount,
+      firstExecutedTransactionAt: agg.firstExecutedAt,
+      eligible: isEligibleForPublicRanking(agg.firstExecutedAt, agg.executedCount)
+    });
+  }
+  return results;
+}
+
+export type PortfolioDetailAccess = "owner" | "public" | "denied" | "not-found";
+
+export interface PortfolioTransactionHistoryRow {
+  id: string;
+  symbol: string;
+  side: "BUY" | "SELL";
+  quantity: number;
+  /** Only EXECUTED or CANCELLED — PENDING orders are never exposed here (see pendingTransactions). */
+  status: "EXECUTED" | "CANCELLED";
+  requestedAt: Date;
+  executionSessionDate: Date | null;
+  priceAtTx: number | null;
+  note: string | null;
+}
+
+export interface PortfolioDetail extends PortfolioOwnerDisplay {
+  id: string;
+  slug: string;
+  name: string;
+  kind: "USER" | "SHADOW";
   visibility: "PUBLIC" | "PRIVATE";
   description: string | null;
   startingCapital: number;
@@ -148,6 +306,17 @@ export interface PortfolioDetail {
     | { id: string; symbol: string; side: "BUY" | "SELL"; quantity: number; requestedAt: Date }[]
     | null;
   executedTransactionCount: number;
+  firstExecutedTransactionAt: Date | null;
+  /** Mirrors isEligibleForPublicRanking — used for the "made public / eligible" framing on the detail page. */
+  eligibleForRanking: boolean;
+  /**
+   * Immutable EXECUTED + CANCELLED transaction record, newest first. Exposed to
+   * BOTH owner and public viewers (unlike pendingTransactions) — once an order
+   * has settled or been cancelled it's no longer a live trading intention, so
+   * the front-running concern that keeps pendingTransactions owner-only doesn't
+   * apply here.
+   */
+  transactionHistory: PortfolioTransactionHistoryRow[];
 }
 
 /**
@@ -159,7 +328,7 @@ export async function getPortfolioDetail(
   portfolioId: string,
   viewerUserId: string | null
 ): Promise<{ access: PortfolioDetailAccess; detail: PortfolioDetail | null }> {
-  const portfolio = await prisma.portfolio.findUnique({ where: { id: portfolioId } });
+  const portfolio = await prisma.portfolio.findUnique({ where: { id: portfolioId }, include: OWNER_SELECT });
   if (!portfolio) return { access: "not-found", detail: null };
 
   const isOwner = portfolio.ownerUserId !== null && portfolio.ownerUserId === viewerUserId;
@@ -176,8 +345,23 @@ export async function getPortfolioDetail(
     orderBy: { sessionDate: "asc" }
   });
 
-  const executedTransactionCount = await prisma.portfolioTransaction.count({
-    where: { portfolioId: portfolio.id, status: "EXECUTED" }
+  const aggByPortfolio = await getExecutedTxnAggByPortfolio([portfolio.id]);
+  const agg = aggByPortfolio.get(portfolio.id) ?? { firstExecutedAt: null, executedCount: 0 };
+
+  const transactionHistoryRows = await prisma.portfolioTransaction.findMany({
+    where: { portfolioId: portfolio.id, status: { in: ["EXECUTED", "CANCELLED"] } },
+    orderBy: { requestedAt: "desc" },
+    select: {
+      id: true,
+      symbol: true,
+      side: true,
+      quantity: true,
+      status: true,
+      requestedAt: true,
+      executionSessionDate: true,
+      priceAtTx: true,
+      note: true
+    }
   });
 
   let pendingTransactions: PortfolioDetail["pendingTransactions"] = null;
@@ -194,12 +378,14 @@ export async function getPortfolioDetail(
     id: portfolio.id,
     slug: portfolio.slug,
     name: portfolio.name,
+    kind: portfolio.kind,
     visibility: portfolio.visibility,
     description: portfolio.description,
     startingCapital: portfolio.startingCapital,
     createdAt: portfolio.createdAt,
     publicSince: portfolio.publicSince,
     isOwner,
+    ...resolvePortfolioOwner(portfolio),
     holdings: [...holdings.entries()].map(([symbol, lot]) => ({
       symbol,
       quantity: lot.quantity,
@@ -216,10 +402,66 @@ export async function getPortfolioDetail(
       returnPct: row.returnPct
     })),
     pendingTransactions,
-    executedTransactionCount
+    executedTransactionCount: agg.executedCount,
+    firstExecutedTransactionAt: agg.firstExecutedAt,
+    eligibleForRanking: isEligibleForPublicRanking(agg.firstExecutedAt, agg.executedCount),
+    transactionHistory: transactionHistoryRows.map((row) => ({
+      id: row.id,
+      symbol: row.symbol,
+      side: row.side,
+      quantity: row.quantity,
+      status: row.status as "EXECUTED" | "CANCELLED",
+      requestedAt: row.requestedAt,
+      executionSessionDate: row.executionSessionDate,
+      priceAtTx: row.priceAtTx,
+      note: row.note
+    }))
   };
 
   return { access: isOwner ? "owner" : "public", detail };
+}
+
+/**
+ * Slug-keyed variant of getPortfolioDetail for the public app/portfolios/[slug]
+ * page and its opengraph-image sibling. `viewerUserId` is always null on the
+ * ISR public page (no session is read there — see that page's doc comment), so
+ * in practice this only ever resolves to "public" or "denied"/"not-found".
+ */
+export async function getPortfolioDetailBySlug(
+  slug: string,
+  viewerUserId: string | null
+): Promise<{ access: PortfolioDetailAccess; detail: PortfolioDetail | null }> {
+  const portfolio = await prisma.portfolio.findUnique({ where: { slug }, select: { id: true } });
+  if (!portfolio) return { access: "not-found", detail: null };
+  return getPortfolioDetail(portfolio.id, viewerUserId);
+}
+
+export interface PublicEligiblePortfolioSitemapEntry {
+  slug: string;
+  lastModified: Date;
+}
+
+/**
+ * Lean slug list for sitemap.ts — PUBLIC + eligible-for-ranking only (mirrors
+ * the exact same isEligibleForPublicRanking gate the directory page uses),
+ * WITHOUT the live-valuation N+1 pass listPublicPortfolios does (a sitemap only
+ * needs slug + lastModified, not price data).
+ */
+export async function listPublicEligiblePortfolioSlugsForSitemap(): Promise<PublicEligiblePortfolioSitemapEntry[]> {
+  const portfolios = await prisma.portfolio.findMany({
+    where: { visibility: "PUBLIC" },
+    select: { id: true, slug: true, publicSince: true, createdAt: true }
+  });
+  if (portfolios.length === 0) return [];
+
+  const aggByPortfolio = await getExecutedTxnAggByPortfolio(portfolios.map((p) => p.id));
+
+  return portfolios
+    .filter((p) => {
+      const agg = aggByPortfolio.get(p.id) ?? { firstExecutedAt: null, executedCount: 0 };
+      return isEligibleForPublicRanking(agg.firstExecutedAt, agg.executedCount);
+    })
+    .map((p) => ({ slug: p.slug, lastModified: p.publicSince ?? p.createdAt }));
 }
 
 export interface SymbolSearchResult {
