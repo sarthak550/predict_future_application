@@ -3,7 +3,9 @@ import type { OpinionDirection, OpinionResolutionStatus } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 
-const SPARK_SESSIONS = 30;
+// Enough sessions for a 1Y timeframe on the interactive chart (~250 trading
+// days) — the mobile API keeps its own smaller window.
+const SPARK_SESSIONS = 260;
 const NEWS_LIMIT = 10;
 /** Over-fetch factor before the refineStockNews quality pipeline (dedup/quality can only shrink the set). */
 const NEWS_FETCH_MULTIPLE = 6;

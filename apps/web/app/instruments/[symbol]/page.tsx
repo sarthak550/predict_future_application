@@ -5,7 +5,7 @@ import { TrendingDown, TrendingUp } from "lucide-react";
 import { AnalystDisclaimerFooter } from "@/components/finance/disclaimer-footer";
 import { ExpandableCallsTable } from "@/components/finance/expandable-calls-table";
 import { InstrumentSentimentGauge } from "@/components/finance/instrument-sentiment-gauge";
-import { InstrumentSparkline } from "@/components/finance/instrument-sparkline";
+import { PriceChart } from "@/components/finance/price-chart";
 import { PulseTabs } from "@/components/finance/pulse-tabs";
 import { Card, CardContent } from "@/components/ui/card";
 import { fetchInstrumentDetail, type InstrumentDetail } from "@/lib/finance/instrument";
@@ -92,9 +92,14 @@ export default async function InstrumentDetailPage({
       <Card>
         <CardContent className="p-5">
           <p className="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-ink-400">
-            Last {instrument.spark.length} sessions
+            Price history
           </p>
-          <InstrumentSparkline points={instrument.spark} />
+          <PriceChart
+            series={instrument.spark.map((pt) => ({
+              date: pt.sessionDate.toISOString().slice(0, 10),
+              close: pt.close,
+            }))}
+          />
         </CardContent>
       </Card>
 
