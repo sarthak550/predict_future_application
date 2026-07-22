@@ -70,8 +70,35 @@ type ChartPoint = {
   label: string;
 };
 
+/** localStorage key for the last-picked timeframe — a device-wide viewing preference, not per-stock. */
+const TIMEFRAME_STORAGE_KEY = "pf.chart.timeframe";
+
+function isTimeframeKey(v: string | null): v is TimeframeKey {
+  return TIMEFRAMES.some((t) => t.key === v);
+}
+
 export function PriceChart({ series, symbol }: { series: PricePoint[]; symbol: string }) {
   const [timeframe, setTimeframe] = useState<TimeframeKey>("3M");
+
+  // Restore the last-picked timeframe AFTER hydration (reading localStorage
+  // during render would mismatch the server-rendered "3M" default).
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(TIMEFRAME_STORAGE_KEY);
+      if (isTimeframeKey(stored)) setTimeframe(stored);
+    } catch {
+      // Private mode / storage disabled — keep the default.
+    }
+  }, []);
+
+  const pickTimeframe = (key: TimeframeKey) => {
+    setTimeframe(key);
+    try {
+      window.localStorage.setItem(TIMEFRAME_STORAGE_KEY, key);
+    } catch {
+      // Preference just won't survive the refresh.
+    }
+  };
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const [intraday, setIntraday] = useState<IntradayFetchState>({ status: "idle" });
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -100,7 +127,7 @@ export function PriceChart({ series, symbol }: { series: PricePoint[]; symbol: s
       .then((body) => {
         const points: IntradayTick[] = Array.isArray(body.points)
           ? body.points
-              .filter((p) => Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1]))
+              .filter((p) => Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1]) && p[1] > 0)
               .map(([t, price]) => ({ t, price }))
           : [];
         if (points.length < 2) {
@@ -154,7 +181,7 @@ export function PriceChart({ series, symbol }: { series: PricePoint[]; symbol: s
           <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
           Loading intraday ticks…
         </div>
-        <TimeframeChips timeframe={timeframe} setTimeframe={setTimeframe} series={series} setHoverIdx={setHoverIdx} />
+        <TimeframeChips timeframe={timeframe} setTimeframe={pickTimeframe} series={series} setHoverIdx={setHoverIdx} />
       </div>
     );
   }
@@ -164,7 +191,7 @@ export function PriceChart({ series, symbol }: { series: PricePoint[]; symbol: s
         <div className="rounded-xl border border-ink-100 bg-ink-50/40 p-6 text-sm text-ink-500">
           Intraday unavailable right now — try a daily timeframe below, or check back during market hours.
         </div>
-        <TimeframeChips timeframe={timeframe} setTimeframe={setTimeframe} series={series} setHoverIdx={setHoverIdx} />
+        <TimeframeChips timeframe={timeframe} setTimeframe={pickTimeframe} series={series} setHoverIdx={setHoverIdx} />
       </div>
     );
   }
@@ -177,7 +204,7 @@ export function PriceChart({ series, symbol }: { series: PricePoint[]; symbol: s
             ? "Not enough intraday ticks yet — try again once trading is underway."
             : "Not enough price history for a chart yet — it builds daily as sessions close."}
         </div>
-        <TimeframeChips timeframe={timeframe} setTimeframe={setTimeframe} series={series} setHoverIdx={setHoverIdx} />
+        <TimeframeChips timeframe={timeframe} setTimeframe={pickTimeframe} series={series} setHoverIdx={setHoverIdx} />
       </div>
     );
   }
@@ -267,7 +294,7 @@ export function PriceChart({ series, symbol }: { series: PricePoint[]; symbol: s
 
       <TimeframeChips
         timeframe={timeframe}
-        setTimeframe={setTimeframe}
+        setTimeframe={pickTimeframe}
         series={series}
         setHoverIdx={setHoverIdx}
         trailingNote={footerNote}

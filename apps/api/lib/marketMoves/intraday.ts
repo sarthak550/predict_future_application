@@ -69,7 +69,9 @@ function zipYahooTicks(timestamps: unknown, closes: unknown): IntradayPoint[] {
   for (let i = 0; i < timestamps.length; i++) {
     const t = Number(timestamps[i]);
     const price = Number(closes[i]);
-    if (Number.isFinite(t) && Number.isFinite(price)) {
+    // price > 0: Yahoo emits 0 (not null) for the in-progress/unsettled
+    // minute — a real traded price is never 0, so drop those ticks.
+    if (Number.isFinite(t) && Number.isFinite(price) && price > 0) {
       points.push({ t: t * 1000, price });
     }
   }
@@ -163,9 +165,10 @@ async function fetchIntradaySeriesUncached(symbol: string): Promise<IntradaySeri
     if (points.length === 0) return null;
 
     const metaPrevClose = result.meta?.chartPreviousClose;
-    const prevClose = Number.isFinite(metaPrevClose as number)
-      ? (metaPrevClose as number)
-      : await fetchPrevCloseFromEod(symbol);
+    const prevClose =
+      Number.isFinite(metaPrevClose as number) && (metaPrevClose as number) > 0
+        ? (metaPrevClose as number)
+        : await fetchPrevCloseFromEod(symbol);
     const sessionLabel = formatIstSessionLabel(points[points.length - 1].t);
 
     return { points, prevClose, sessionLabel };
