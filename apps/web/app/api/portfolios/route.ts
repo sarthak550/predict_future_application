@@ -39,7 +39,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const { name, description, visibility } = parsed.data;
+  const { name, description, visibility, startingCapital } = parsed.data;
   const slug = await generateUniquePortfolioSlug(prisma, name);
   const resolvedVisibility = visibility ?? "PRIVATE";
 
@@ -50,6 +50,7 @@ export async function POST(request: Request) {
       name,
       slug,
       visibility: resolvedVisibility,
+      startingCapital: startingCapital ?? 1_000_000,
       description: description && description.length > 0 ? description : null,
       publicSince: resolvedVisibility === "PUBLIC" ? new Date() : null
     }

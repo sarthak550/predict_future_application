@@ -38,8 +38,15 @@ export function CreatePortfolioCta() {
   const href = checked && signedIn ? "/portfolios/new" : "/sign-in?callbackUrl=%2Fportfolios%2Fnew";
 
   return (
-    <Link href={href}>
-      <Button variant="primary">Create your portfolio</Button>
-    </Link>
+    <div className="flex flex-wrap items-center gap-2">
+      {checked && signedIn && (
+        <Link href="/portfolios/manage">
+          <Button variant="secondary">My portfolios</Button>
+        </Link>
+      )}
+      <Link href={href}>
+        <Button variant="primary">Create your portfolio</Button>
+      </Link>
+    </div>
   );
 }

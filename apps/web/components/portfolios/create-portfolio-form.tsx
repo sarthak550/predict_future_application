@@ -25,6 +25,7 @@ export function CreatePortfolioForm() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [visibility, setVisibility] = useState<"PRIVATE" | "PUBLIC">("PRIVATE");
+  const [capital, setCapital] = useState("1000000");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
@@ -64,7 +65,7 @@ export function CreatePortfolioForm() {
       const res = await fetch("/api/portfolios", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, description, visibility })
+        body: JSON.stringify({ name, description, visibility, startingCapital: Number(capital) || 1_000_000 })
       });
       if (!res.ok) {
         const payload = await res.json().catch(() => ({}));
@@ -127,8 +128,8 @@ export function CreatePortfolioForm() {
       <CardHeader>
         <CardTitle>Create a model portfolio</CardTitle>
         <CardDescription>
-          Starts with ₹10,00,000 in simulated capital. Orders you place fill at the next market close —
-          not immediately.
+          Choose your simulated starting capital (₹1,00,000 minimum). Orders you place fill at the next
+          market close — not immediately.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -142,6 +143,23 @@ export function CreatePortfolioForm() {
               maxLength={60}
               required
             />
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-ink-700">Starting capital (₹)</label>
+            <Input
+              type="number"
+              min={100000}
+              max={10000000000}
+              step={100000}
+              value={capital}
+              onChange={(e) => setCapital(e.target.value)}
+              required
+            />
+            <p className="text-xs text-ink-400">
+              {Number(capital) > 0
+                ? `₹${Number(capital).toLocaleString("en-IN")} simulated — set it to match how you actually invest`
+                : "Minimum ₹1,00,000"}
+            </p>
           </div>
           <div className="space-y-2">
             <label className="text-sm font-medium text-ink-700">Description (optional)</label>
