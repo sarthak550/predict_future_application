@@ -17,6 +17,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { notifyWebRevalidate } from "@/lib/webRevalidate";
 
 import { backfillDailyValues } from "@/lib/portfolios/valuation";
 
@@ -35,7 +36,8 @@ async function run(request: Request) {
 
   try {
     const result = await backfillDailyValues();
-    return NextResponse.json({ ok: true, ...result });
+    await notifyWebRevalidate(["/portfolios", ["/portfolios/[slug]", "page"]]);
+  return NextResponse.json({ ok: true, ...result });
   } catch (err) {
     console.error("[cron/portfolios-value] unexpected failure:", err);
     return NextResponse.json({ ok: false, error: "Unexpected failure." }, { status: 200 });

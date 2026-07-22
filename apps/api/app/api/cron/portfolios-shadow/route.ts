@@ -30,6 +30,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { notifyWebRevalidate } from "@/lib/webRevalidate";
 
 import { runShadowGeneration } from "@/lib/portfolios/shadowGenerator";
 
@@ -48,7 +49,8 @@ async function run(request: Request) {
 
   try {
     const result = await runShadowGeneration({ dryRun: false });
-    return NextResponse.json({ ok: true, ...result });
+    await notifyWebRevalidate(["/portfolios", ["/portfolios/[slug]", "page"]]);
+  return NextResponse.json({ ok: true, ...result });
   } catch (err) {
     console.error("[cron/portfolios-shadow] unexpected failure:", err);
     return NextResponse.json({ ok: false, error: "Unexpected failure." }, { status: 200 });

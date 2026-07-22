@@ -76,6 +76,7 @@ import { fetchNseMovers, type FetchedMoversByUniverse } from "@/lib/marketMoves/
 import type { FetchedMarketMover } from "@/lib/marketMoves/types";
 import { isNseWeekdayMarketHours, getIstSessionDate } from "@/lib/marketMoves/marketHours";
 import { prisma } from "@/lib/prisma";
+import { notifyWebRevalidate } from "@/lib/webRevalidate";
 
 /** MarketMoverSnapshot's `universe` column values — see the schema doc comment. */
 type MoversUniverse = "ALL" | "POPULAR";
@@ -222,6 +223,7 @@ async function runLivePass(sessionDate: Date) {
   const all = await upsertUniverse(moversByUniverse.all, sessionDate, TOP_N_PER_DIRECTION_LIVE, "ALL");
   const popular = await upsertUniverse(moversByUniverse.popular, sessionDate, TOP_N_PER_DIRECTION_LIVE, "POPULAR");
 
+  await notifyWebRevalidate(["/pulse", "/"]);
   return NextResponse.json({ ok: true, source: "live", all, popular });
 }
 
@@ -287,6 +289,7 @@ async function runEodPass(sessionDate: Date): Promise<ReturnType<typeof NextResp
   const all = await upsertUniverse(allMovers, sessionDate, TOP_N_PER_DIRECTION_EOD, "ALL");
   const popular = await upsertUniverse(popularMovers, sessionDate, TOP_N_PER_DIRECTION_EOD, "POPULAR");
 
+  await notifyWebRevalidate(["/pulse", "/", ["/instruments/[symbol]", "page"]]);
   return NextResponse.json({ ok: true, source: "eod", all, popular, quotes: quotesJson });
 }
 

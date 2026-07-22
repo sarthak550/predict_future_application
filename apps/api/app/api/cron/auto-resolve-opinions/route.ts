@@ -37,6 +37,7 @@
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { notifyWebRevalidate } from "@/lib/webRevalidate";
 import { parseOpinionTimeframe, evaluateOpinionResolution, wasLastCallRateLimited } from "@/lib/ai/evaluateOpinionResolution";
 import { notifyOpinionResolution } from "@/lib/notifyOpinionResolution";
 
@@ -383,6 +384,7 @@ export async function POST(request: Request) {
       `${resolveResult.notifiedVoters} voters notified, ${resolveResult.pushQueued} push queued`
     );
 
+    await notifyWebRevalidate(["/opinions", ["/analysts/[slug]", "page"], "/analysts", "/"]);
     return NextResponse.json({
       sweep: sweepResult,
       preprocess: preprocessResult,
