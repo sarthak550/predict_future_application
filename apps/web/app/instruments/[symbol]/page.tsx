@@ -95,6 +95,7 @@ export default async function InstrumentDetailPage({
             Price history
           </p>
           <PriceChart
+            symbol={instrument.symbol}
             series={instrument.spark.map((pt) => ({
               date: formatIstSessionDate(pt.sessionDate),
               close: pt.close,

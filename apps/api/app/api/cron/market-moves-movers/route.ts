@@ -98,7 +98,7 @@ function median(values: number[]): number {
 }
 
 const UNUSUAL_VOLUME_MULTIPLE = 3;
-const TOP_N_PER_DIRECTION_LIVE = 25; // headroom above the 5+5 the mobile strip shows, for future ranking tweaks
+const TOP_N_PER_DIRECTION_LIVE = 100; // union of NSE's variation groups yields ~60–90/direction; never cap below what the source provides
 const TOP_N_PER_DIRECTION_EOD = 100; // full-market pass: NSE's bhavcopy has no 20/direction cap, so we can store far deeper
 
 /**

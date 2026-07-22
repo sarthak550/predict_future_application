@@ -65,8 +65,11 @@ function cookieHeaderFrom(res: Response): string {
  * Primes an NSE session: GET the given warm-up path, return the Cookie header
  * to replay on the follow-up API call. Never throws — returns null on any
  * failure so callers can log-and-skip rather than crash the cron.
+ *
+ * Exported so other NSE fetchers (e.g. intraday.ts) can reuse the same
+ * handshake instead of reimplementing the Akamai cookie dance.
  */
-async function primeNseSession(warmUpPath: string): Promise<string | null> {
+export async function primeNseSession(warmUpPath: string): Promise<string | null> {
   try {
     const res = await fetch(`${NSE_ORIGIN}${warmUpPath}`, { headers: HTML_HEADERS });
     // Do NOT bail on a non-200 warm-up: NSE's Akamai serves a 403 challenge to
@@ -84,8 +87,14 @@ async function primeNseSession(warmUpPath: string): Promise<string | null> {
   }
 }
 
-/** GETs an NSE API path with a primed cookie + matching referer. Never throws. */
-async function nseApiGet(apiPath: string, cookie: string, refererPath: string): Promise<unknown | null> {
+/**
+ * GETs an NSE API path with a primed cookie + matching referer. Never throws.
+ *
+ * Exported so other NSE fetchers (e.g. intraday.ts) can reuse the same
+ * no-store + cache-busting + full-browser-header GET instead of
+ * reimplementing it.
+ */
+export async function nseApiGet(apiPath: string, cookie: string, refererPath: string): Promise<unknown | null> {
   try {
     // cache: "no-store" + a cache-busting param: a long-lived server process
     // once served stale NSE responses over a persistent connection (the strip
@@ -263,9 +272,9 @@ export async function fetchEquityNames(): Promise<Map<string, string>> {
 
 /** Two parallel movers universes, fetched from the same NSE response in one pass. */
 export type FetchedMoversByUniverse = {
-  /** Every listed security, no market-cap cap — NSE's `allSec` group. */
+  /** Every listed security — union of NSE's allSec/SecGtr20/SecLwr20/FOSec/index groups, deduped. */
   all: FetchedMarketMover[];
-  /** NIFTY 100 constituents only (NIFTY 50 + NIFTY Next 50 merged) — the recognizable large-cap names. */
+  /** Large-cap names only — union of the NIFTY, BANKNIFTY and NIFTYNEXT50 groups, deduped. */
   popular: FetchedMarketMover[];
 };
 
@@ -273,11 +282,11 @@ export type FetchedMoversByUniverse = {
  * Fetches today's top gainers + losers from NSE's own variations endpoint, shaped
  * into BOTH movers universes the Top Movers toggle needs (Popular default vs. All
  * market) from a single set of API calls:
- *   - `all`: NSE's `allSec` group — top movers across every listed security, with
- *     no market-cap cap. Falls back to the `popular` merge only if `allSec` is
- *     somehow absent, so the all-market universe never goes fully empty.
- *   - `popular`: NIFTY + NIFTYNEXT50 merged = NIFTY 100 — the recognizable
- *     large-cap names users expect from apps like Groww, as opposed to `allSec`'s
+ *   - `all`: union of every variation group NSE publishes (allSec + SecGtr20 +
+ *     SecLwr20 + FOSec + the index groups), deduped by symbol — NSE caps each
+ *     group at ~20 rows/direction, so the union is what lifts depth past 20.
+ *   - `popular`: NIFTY + BANKNIFTY + NIFTYNEXT50 union — the recognizable
+ *     large-cap names users expect from apps like Groww, as opposed to the
  *     small/mid-caps hitting circuit limits.
  * Never throws. `isUnusualVolume` is computed downstream in the cron (a same-day
  * cross-sectional heuristic; see MarketMoverSnapshot doc).
@@ -331,12 +340,37 @@ export async function fetchNseMovers(): Promise<FetchedMoversByUniverse> {
     const groups = raw as Record<string, NseVariationGroup | unknown>;
     const direction = index === "gainers" ? "GAINER" : "LOSER";
 
-    const allSecRows = (groups.allSec as NseVariationGroup | undefined)?.data ?? [];
-    const popularRows = [
-      ...((groups.NIFTY as NseVariationGroup | undefined)?.data ?? []),
-      ...((groups.NIFTYNEXT50 as NseVariationGroup | undefined)?.data ?? []),
-    ];
-    const allRows = allSecRows.length > 0 ? allSecRows : popularRows;
+    const rowsOf = (key: string): NseVariationRow[] =>
+      (groups[key] as NseVariationGroup | undefined)?.data ?? [];
+
+    // NSE caps EVERY group at ~20 rows per direction, so any single group
+    // yields a shallow list. Union all seven groups (deduped by symbol,
+    // first occurrence wins — a symbol repeats with identical numbers) to
+    // lift intraday depth to ~60–90 distinct movers per direction.
+    const dedupBySymbol = (rows: NseVariationRow[]): NseVariationRow[] => {
+      const seen = new Set<string>();
+      return rows.filter((r) => {
+        const sym = typeof r.symbol === "string" ? r.symbol.trim() : "";
+        if (!sym || seen.has(sym)) return false;
+        seen.add(sym);
+        return true;
+      });
+    };
+
+    const popularRows = dedupBySymbol([
+      ...rowsOf("NIFTY"),
+      ...rowsOf("BANKNIFTY"),
+      ...rowsOf("NIFTYNEXT50"),
+    ]);
+    const allRows = dedupBySymbol([
+      ...rowsOf("allSec"),
+      ...rowsOf("SecGtr20"),
+      ...rowsOf("SecLwr20"),
+      ...rowsOf("FOSec"),
+      ...rowsOf("NIFTY"),
+      ...rowsOf("BANKNIFTY"),
+      ...rowsOf("NIFTYNEXT50"),
+    ]);
 
     return {
       all: shapeRows(allRows, direction),
