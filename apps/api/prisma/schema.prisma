@@ -1615,7 +1615,7 @@ model StockEodQuote {
   prevClose     Float
   close         Float
   changePercent Float
-  volume        Int
+  volume        Float
   /// DELIV_PER from the bhavcopy — delivery percentage. Null when the source cell is '-' / absent.
   deliveryPct   Float?
   createdAt     DateTime @default(now())
