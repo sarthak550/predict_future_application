@@ -9,7 +9,7 @@ import { PriceChart } from "@/components/finance/price-chart";
 import { PulseTabs } from "@/components/finance/pulse-tabs";
 import { Card, CardContent } from "@/components/ui/card";
 import { fetchInstrumentDetail, type InstrumentDetail } from "@/lib/finance/instrument";
-import { formatDateOnly, formatNumericValue, formatRelativeTime } from "@/lib/utils";
+import { formatIstSessionDate, formatNumericValue, formatRelativeTime } from "@/lib/utils";
 
 export const revalidate = 900;
 
@@ -46,7 +46,7 @@ export async function generateMetadata({
 
   const title = `${instrument.companyName} (${instrument.symbol}) share price, analyst opinions & news — Predict Future`;
   const description = instrument.quote
-    ? `${instrument.companyName} (${instrument.symbol}) closed at ₹${instrument.quote.close.toLocaleString("en-IN", { maximumFractionDigits: 2 })} (${instrument.quote.changePercent >= 0 ? "+" : ""}${instrument.quote.changePercent.toFixed(2)}%) on ${formatDateOnly(instrument.quote.sessionDate)}. Analyst calls, live news and exchange filings, sourced back to the original article.`
+    ? `${instrument.companyName} (${instrument.symbol}) closed at ₹${instrument.quote.close.toLocaleString("en-IN", { maximumFractionDigits: 2 })} (${instrument.quote.changePercent >= 0 ? "+" : ""}${instrument.quote.changePercent.toFixed(2)}%) on ${formatIstSessionDate(instrument.quote.sessionDate)}. Analyst calls, live news and exchange filings, sourced back to the original article.`
     : `${instrument.companyName} (${instrument.symbol}) — analyst calls, live news and exchange filings, sourced back to the original article. Not investment advice.`;
 
   const url = `https://predictfuture.app/instruments/${instrument.symbol}`;
@@ -96,7 +96,7 @@ export default async function InstrumentDetailPage({
           </p>
           <PriceChart
             series={instrument.spark.map((pt) => ({
-              date: pt.sessionDate.toISOString().slice(0, 10),
+              date: formatIstSessionDate(pt.sessionDate),
               close: pt.close,
             }))}
           />
@@ -124,10 +124,10 @@ export default async function InstrumentDetailPage({
                   instrument: o.instrument,
                   direction: o.direction,
                   sourceUrl: o.sourceUrl,
-                  publishedAtLabel: formatDateOnly(o.publishedAt),
+                  publishedAtLabel: formatIstSessionDate(o.publishedAt),
                   resolutionStatus: o.resolutionStatus,
                   resolutionNote: o.resolutionNote,
-                  resolvedAtLabel: o.resolvedAt ? formatDateOnly(o.resolvedAt) : null,
+                  resolvedAtLabel: o.resolvedAt ? formatIstSessionDate(o.resolvedAt) : null,
                   analyst: { name: o.expert.name, slug: o.expert.slug },
                 }))}
               />
@@ -207,7 +207,7 @@ function QuoteHeader({ instrument }: { instrument: InstrumentDetail }) {
             )}
             <div>
               <p className="text-xs text-white/50">As of</p>
-              <p className="mt-0.5 font-medium">{formatDateOnly(quote.sessionDate)}</p>
+              <p className="mt-0.5 font-medium">{formatIstSessionDate(quote.sessionDate)}</p>
             </div>
           </div>
         )}

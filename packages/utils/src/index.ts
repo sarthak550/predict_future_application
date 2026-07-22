@@ -41,6 +41,21 @@ export function formatDateOnly(date: Date | string) {
   return format(new Date(date), "dd MMM yyyy");
 }
 
+/**
+ * Formats an IST trading-session instant (stored as IST-midnight-in-UTC, e.g.
+ * the 21 Jul session = 2026-07-20T18:30Z) as its IST calendar date. Pinned to
+ * Asia/Kolkata so SSR on a UTC server can't shift it back a day — the trap
+ * formatDateOnly (runtime-local tz) falls into for session dates.
+ */
+export function formatIstSessionDate(date: Date | string) {
+  return new Intl.DateTimeFormat("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    timeZone: "Asia/Kolkata",
+  }).format(new Date(date));
+}
+
 export function formatRelativeTime(date: Date | string) {
   return `${formatDistanceToNowStrict(new Date(date), { addSuffix: true })}`;
 }

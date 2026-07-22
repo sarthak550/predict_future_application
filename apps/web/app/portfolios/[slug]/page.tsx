@@ -11,7 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@/components/ui/table";
 import { formatRupees, formatSignedPercent, formatSignedRupees } from "@/lib/portfolios/format";
 import { getPortfolioDetailBySlug, type PortfolioDetail } from "@/lib/portfolios/queries";
-import { formatDateOnly } from "@/lib/utils";
+import { formatDateOnly, formatIstSessionDate } from "@/lib/utils";
 
 /**
  * Public, unauthenticated portfolio page. This is an ISR page that reads NO
@@ -208,7 +208,7 @@ export default async function PortfolioDetailPage({ params }: { params: { slug: 
                 <TableBody>
                   {portfolio.transactionHistory.map((tx) => (
                     <TableRow key={tx.id}>
-                      <TableCell>{formatDateOnly(tx.executionSessionDate ?? tx.requestedAt)}</TableCell>
+                      <TableCell>{formatIstSessionDate(tx.executionSessionDate ?? tx.requestedAt)}</TableCell>
                       <TableCell>
                         <Badge variant={tx.side === "BUY" ? "success" : "danger"}>{tx.side}</Badge>
                       </TableCell>
