@@ -9,9 +9,9 @@ export const dynamic = "force-dynamic";
  *
  * Public "1D" tick series for the instrument price chart — 1-minute ticks
  * for the current (or, after close, the last completed) NSE trading session,
- * sourced live from NSE's own chart-databyindex endpoint via
- * `fetchIntradaySeries` (lib/marketMoves/intraday.ts). Not stored in our DB
- * — always a live upstream fetch (cached in-module 60s).
+ * sourced live from Yahoo's chart API via `fetchIntradaySeries`
+ * (lib/marketMoves/intraday.ts — see there for why not NSE's own endpoint).
+ * Not stored in our DB — always a live upstream fetch (cached in-module 60s).
  *
  * `symbol` is an NSE symbol (case-insensitive on input, uppercased before
  * any upstream call), matching the sibling `/api/finance/instruments/[symbol]`
@@ -45,6 +45,7 @@ export async function GET(_request: Request, { params }: { params: { symbol: str
     points: series.points.map((p) => [p.t, p.price] as [number, number]),
     asOf: new Date().toISOString(),
     sessionLabel: series.sessionLabel,
+    volume: series.volume,
   });
   response.headers.set("Cache-Control", "public, max-age=60");
   return response;

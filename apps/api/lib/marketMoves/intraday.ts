@@ -34,13 +34,15 @@ export type IntradaySeries = {
   prevClose: number | null;
   /** Human label for the session the points belong to, e.g. "22 Jul 2026" (IST calendar date of the last tick). */
   sessionLabel: string;
+  /** Session volume so far (Yahoo's regularMarketVolume). Null when the source omits it. */
+  volume: number | null;
 };
 
 /** The slice of Yahoo's v8 chart response this module reads. */
 type YahooChartResponse = {
   chart?: {
     result?: Array<{
-      meta?: { chartPreviousClose?: number | null };
+      meta?: { chartPreviousClose?: number | null; regularMarketVolume?: number | null };
       timestamp?: unknown;
       indicators?: { quote?: Array<{ close?: unknown }> };
     } | null> | null;
@@ -170,8 +172,10 @@ async function fetchIntradaySeriesUncached(symbol: string): Promise<IntradaySeri
         ? (metaPrevClose as number)
         : await fetchPrevCloseFromEod(symbol);
     const sessionLabel = formatIstSessionLabel(points[points.length - 1].t);
+    const rawVolume = result.meta?.regularMarketVolume;
+    const volume = Number.isFinite(rawVolume as number) && (rawVolume as number) > 0 ? (rawVolume as number) : null;
 
-    return { points, prevClose, sessionLabel };
+    return { points, prevClose, sessionLabel, volume };
   } catch (err) {
     console.warn(`[marketMoves/intraday] fetch failed for ${symbol}: ${err instanceof Error ? err.message : err}`);
     return null;

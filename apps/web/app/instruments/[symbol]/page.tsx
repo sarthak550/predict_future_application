@@ -1,15 +1,15 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { TrendingDown, TrendingUp } from "lucide-react";
 
 import { AnalystDisclaimerFooter } from "@/components/finance/disclaimer-footer";
 import { ExpandableCallsTable } from "@/components/finance/expandable-calls-table";
 import { InstrumentSentimentGauge } from "@/components/finance/instrument-sentiment-gauge";
 import { PriceChart } from "@/components/finance/price-chart";
 import { PulseTabs } from "@/components/finance/pulse-tabs";
+import { QuoteHeader } from "@/components/finance/quote-header";
 import { Card, CardContent } from "@/components/ui/card";
-import { fetchInstrumentDetail, type InstrumentDetail } from "@/lib/finance/instrument";
-import { formatIstSessionDate, formatNumericValue, formatRelativeTime } from "@/lib/utils";
+import { fetchInstrumentDetail } from "@/lib/finance/instrument";
+import { formatIstSessionDate, formatRelativeTime } from "@/lib/utils";
 
 export const revalidate = 900;
 
@@ -20,17 +20,6 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
   RATING_CHANGE: "Rating Change",
   OTHER_MATERIAL: "Material Update",
 };
-
-/** "₹1,830.50" — Indian digit grouping, at most 2 decimal places. */
-function formatRupees(value: number): string {
-  return `₹${value.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
-}
-
-/** "+₹52.00" / "-₹12.30" — signed rupee change. */
-function formatSignedRupees(value: number): string {
-  const sign = value > 0 ? "+" : value < 0 ? "-" : "";
-  return `${sign}₹${Math.abs(value).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
-}
 
 export async function generateMetadata({
   params,
@@ -87,7 +76,23 @@ export default async function InstrumentDetailPage({
       {/* eslint-disable-next-line react/no-danger */}
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
 
-      <QuoteHeader instrument={instrument} />
+      <QuoteHeader
+        symbol={instrument.symbol}
+        companyName={instrument.companyName}
+        quote={
+          instrument.quote
+            ? {
+                close: instrument.quote.close,
+                prevClose: instrument.quote.prevClose,
+                changePercent: instrument.quote.changePercent,
+                volume: instrument.quote.volume,
+                deliveryPct: instrument.quote.deliveryPct,
+                sessionDateIso: instrument.quote.sessionDate.toISOString(),
+                sessionDateLabel: formatIstSessionDate(instrument.quote.sessionDate),
+              }
+            : null
+        }
+      />
 
       <Card>
         <CardContent className="p-5">
@@ -162,57 +167,3 @@ export default async function InstrumentDetailPage({
   );
 }
 
-function QuoteHeader({ instrument }: { instrument: InstrumentDetail }) {
-  const { quote } = instrument;
-  const isUp = quote != null && quote.changePercent >= 0;
-  const TrendIcon = isUp ? TrendingUp : TrendingDown;
-
-  return (
-    <Card className="overflow-hidden border-0 bg-ink-900 text-white">
-      <CardContent className="p-6">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-white/50">{instrument.symbol} · NSE</p>
-            <h1 className="mt-1 text-2xl font-semibold">{instrument.companyName}</h1>
-          </div>
-
-          {quote ? (
-            <div className="text-right">
-              <p className="text-3xl font-semibold">{formatRupees(quote.close)}</p>
-              <p className={`mt-1 flex items-center justify-end gap-1 text-sm font-semibold ${isUp ? "text-emerald-400" : "text-rose-400"}`}>
-                <TrendIcon className="h-4 w-4" />
-                {quote.changePercent >= 0 ? "+" : ""}
-                {quote.changePercent.toFixed(2)}% ({formatSignedRupees(quote.close - quote.prevClose)})
-              </p>
-            </div>
-          ) : (
-            <div className="rounded-[16px] bg-white/10 px-4 py-2 text-sm text-white/70">Price data pending</div>
-          )}
-        </div>
-
-        {quote && (
-          <div className="mt-5 grid grid-cols-2 gap-4 border-t border-white/10 pt-4 text-sm sm:grid-cols-4">
-            <div>
-              <p className="text-xs text-white/50">Prev. close</p>
-              <p className="mt-0.5 font-medium">{formatRupees(quote.prevClose)}</p>
-            </div>
-            <div>
-              <p className="text-xs text-white/50">Volume</p>
-              <p className="mt-0.5 font-medium">{formatNumericValue(quote.volume, { precision: 0 })}</p>
-            </div>
-            {quote.deliveryPct != null && (
-              <div>
-                <p className="text-xs text-white/50">Delivery %</p>
-                <p className="mt-0.5 font-medium">{quote.deliveryPct.toFixed(1)}%</p>
-              </div>
-            )}
-            <div>
-              <p className="text-xs text-white/50">As of</p>
-              <p className="mt-0.5 font-medium">{formatIstSessionDate(quote.sessionDate)}</p>
-            </div>
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
