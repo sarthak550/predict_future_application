@@ -54,9 +54,9 @@ export function PortfolioCard({
               <div className="mt-1.5 flex items-center gap-2">
                 {kind === "SHADOW" && <Avatar name={ownerLabel} src={ownerAvatarUrl} className="h-6 w-6 text-[10px]" />}
                 {ownerHref ? (
+                  {/* Server component: no event handlers (RSC serialization). */}
                   <Link
                     href={ownerHref}
-                    onClick={(e) => e.stopPropagation()}
                     className="truncate text-sm text-ink-500 hover:text-signal-sky hover:underline"
                   >
                     {ownerLabel}
