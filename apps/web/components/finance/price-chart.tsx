@@ -78,10 +78,17 @@ export function PriceChart({ series, symbol }: { series: PricePoint[]; symbol: s
 
   // Lazy-fetch: only hits the network the first time "1D" is selected, never
   // on mount and never for the EOD timeframes.
+  // Guards the fetch to once per symbol. A ref (not `intraday.status` in the
+  // dep array) because setIntraday inside the effect would re-run it and fire
+  // the previous run's cleanup — a self-cancellation that froze the chart on
+  // "loading" forever. No mid-flight cancellation: settling state while the
+  // user is on another timeframe is harmless (rendering is gated on
+  // `timeframe === "1D"`), and React ignores setState after unmount.
+  const intradayFetchedFor = useRef<string | null>(null);
   useEffect(() => {
-    if (timeframe !== "1D" || intraday.status !== "idle") return;
+    if (timeframe !== "1D" || intradayFetchedFor.current === symbol) return;
+    intradayFetchedFor.current = symbol;
 
-    let cancelled = false;
     setIntraday({ status: "loading" });
 
     fetch(`/api/instruments/${encodeURIComponent(symbol)}/intraday`)
@@ -91,7 +98,6 @@ export function PriceChart({ series, symbol }: { series: PricePoint[]; symbol: s
         return body as { prevClose: number | null; points: [number, number][]; sessionLabel?: string };
       })
       .then((body) => {
-        if (cancelled) return;
         const points: IntradayTick[] = Array.isArray(body.points)
           ? body.points
               .filter((p) => Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1]))
@@ -109,13 +115,9 @@ export function PriceChart({ series, symbol }: { series: PricePoint[]; symbol: s
         });
       })
       .catch(() => {
-        if (!cancelled) setIntraday({ status: "error" });
+        setIntraday({ status: "error" });
       });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [timeframe, intraday.status, symbol]);
+  }, [timeframe, symbol]);
 
   const points = useMemo<ChartPoint[]>(() => {
     if (timeframe === "1D") {
