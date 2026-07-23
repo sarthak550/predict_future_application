@@ -5,6 +5,7 @@ import { ArrowUpRight } from "lucide-react";
 
 import { AnalystDisclaimerFooter } from "@/components/finance/disclaimer-footer";
 import { DirectionChip, VerdictBadge } from "@/components/finance/analyst-badges";
+import { PaperTradeCta } from "@/components/finance/paper-trade-cta";
 import { TakeASide } from "@/components/finance/take-a-side";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -23,6 +24,7 @@ async function fetchResolvedCall(id: string) {
       id: true,
       quote: true,
       instrument: true,
+      instrumentTicker: true,
       direction: true,
       sourceUrl: true,
       publishedAt: true,
@@ -147,6 +149,7 @@ export default async function CallSharePage({ params }: { params: { id: string }
             <p className="text-sm leading-6 text-ink-600">{opinion.resolutionNote}</p>
           )}
           <TakeASide opinionId={opinion.id} resolutionStatus={opinion.resolutionStatus} />
+          <PaperTradeCta opinionId={opinion.id} direction={opinion.direction} instrumentTicker={opinion.instrumentTicker} />
           <a
             href={opinion.sourceUrl}
             target="_blank"

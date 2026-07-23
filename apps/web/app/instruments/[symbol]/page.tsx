@@ -128,6 +128,7 @@ export default async function InstrumentDetailPage({
                   quote: o.quote,
                   headline: o.headline,
                   instrument: o.instrument,
+                  instrumentTicker: o.instrumentTicker,
                   direction: o.direction,
                   sourceUrl: o.sourceUrl,
                   publishedAtLabel: formatIstSessionDate(o.publishedAt),

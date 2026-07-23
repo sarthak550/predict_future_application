@@ -15,6 +15,7 @@ const NAV_LINKS = [
   { href: "/opinions", label: "Opinions" },
   { href: "/pulse", label: "Market Pulse" },
   { href: "/portfolios", label: "Portfolios" },
+  { href: "/paper-trading", label: "Paper Trading" },
 ];
 
 export function PublicHeader() {

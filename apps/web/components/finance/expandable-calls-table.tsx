@@ -40,6 +40,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { DirectionChip, VerdictBadge } from "@/components/finance/analyst-badges";
+import { PaperTradeCta } from "@/components/finance/paper-trade-cta";
 import { TakeASide } from "@/components/finance/take-a-side";
 
 export type ExpandableCall = {
@@ -47,6 +48,8 @@ export type ExpandableCall = {
   quote: string;
   headline: string | null;
   instrument: string | null;
+  /** Yahoo Finance ticker, e.g. "RELIANCE.NS" — feeds the "Paper trade this call" CTA (see components/finance/paper-trade-cta.tsx). Null/index/non-NSE tickers hide the CTA. */
+  instrumentTicker: string | null;
   direction: OpinionDirection;
   sourceUrl: string;
   publishedAtLabel: string;
@@ -224,6 +227,7 @@ export function ExpandableCallsTable({ calls }: { calls: ExpandableCall[] }) {
                           ) : null}
                         </div>
                         <TakeASide opinionId={call.id} resolutionStatus={call.resolutionStatus} />
+                        <PaperTradeCta opinionId={call.id} direction={call.direction} instrumentTicker={call.instrumentTicker} />
                       </div>
                     </TableCell>
                   </TableRow>

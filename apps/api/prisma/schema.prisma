@@ -97,6 +97,8 @@ model User {
   pollVotes                        PollVote[]                        @relation("PollVotes")
   /// Portfolios (P3.1) owned by this user. See model Portfolio.
   portfolios                       Portfolio[]                       @relation("PortfolioOwnerUser")
+  /// Paper Trading Phase 1 accounts (all generations — ACTIVE + ARCHIVED). See model PaperTradingAccount.
+  paperTradingAccounts             PaperTradingAccount[]             @relation("PaperTradingAccountOwner")
 }
 
 model LeaderboardSnapshot {
@@ -917,6 +919,8 @@ model ExpertOpinion {
   expert                  Expert                  @relation(fields: [expertId], references: [id])
   story                   Story?                  @relation(fields: [storyId], references: [id])
   votes                   ExpertOpinionVote[]
+  /// Paper Trading Phase 1 orders placed via "Paper trade this call". See model PaperOrder.
+  paperOrders             PaperOrder[]
 
   @@unique([expertId, storyId, quoteHash])
   @@index([expertId, publishedAt])
@@ -1737,4 +1741,115 @@ enum TxStatus {
   PENDING
   EXECUTED
   CANCELLED
+}
+
+// ─── Paper Trading (Phase 1) ─────────────────────────────────────────────────────
+//
+// A SEPARATE domain from Portfolios above — similar-looking (virtual ₹, positions,
+// NSE symbols) but semantically different: immediate fills at delayed intraday LTP
+// (not next-session-close), the full Indian retail cost stack simulated on every
+// fill (Portfolios models none), DELIVERY/INTRADAY product-type distinction with
+// real regulatory rules (no delivery shorting; INTRADAY must square off same day),
+// and exactly one private account per user (no multi-account directory/leaderboard
+// — that's Portfolios' job). See packages/business-rules/src/papertrading/ for the
+// pure cost/replay math (costs.ts, replay.ts) shared identically by apps/api (the
+// square-off cron) and apps/web (the order-placement/account routes).
+//
+// PaperOrder is the single source of truth and is immutable once written — every
+// row is filled SYNCHRONOUSLY at creation (no PENDING state, unlike
+// PortfolioTransaction), so cash/holdings/P&L are always a pure replay of this log.
+
+/// One virtual paper-trading account per user per generation. Exactly one ACTIVE
+/// account per user at a time (app-layer enforced — see
+/// apps/web/lib/paperTrading/account.ts, same enforcement style as
+/// PortfolioTransaction's "no update path for EXECUTED" convention). Lazily created
+/// on first visit to /paper-trading. "Reset" archives the current account and
+/// creates a new one at generation + 1 rather than deleting history — prior
+/// generations remain queryable read-only forever.
+model PaperTradingAccount {
+  id              String                    @id @default(cuid())
+  userId          String
+  status          PaperTradingAccountStatus @default(ACTIVE)
+  /// 1 on first creation, incremented by each reset. Distinguishes historical
+  /// ARCHIVED accounts for the same user.
+  generation      Int                       @default(1)
+  /// Fixed virtual starting capital in rupees. ₹1,00,000 = 100000 — deliberately
+  /// smaller than Portfolios' ₹10,00,000 ("retail trader", not "model portfolio").
+  startingCapital Int                       @default(100000)
+  createdAt       DateTime                  @default(now())
+  /// Set when a reset archives this account. Null while ACTIVE.
+  archivedAt      DateTime?
+  user            User                      @relation("PaperTradingAccountOwner", fields: [userId], references: [id], onDelete: Cascade)
+  orders          PaperOrder[]
+
+  @@index([userId, status])
+}
+
+/// A single executed BUY/SELL leg against a PaperTradingAccount. Immutable once
+/// written (filled synchronously at the delayed intraday LTP available at request
+/// time — no PENDING state, no settlement cron). One row per executed leg; every
+/// individual cost line is stored (not just totalCosts) because the itemized
+/// breakdown is the product's core promise. See
+/// packages/business-rules/src/papertrading/costs.ts for the exact rate constants
+/// and packages/business-rules/src/papertrading/replay.ts for how a log of these
+/// rows becomes holdings/cash/P&L.
+model PaperOrder {
+  id              String              @id @default(cuid())
+  accountId       String
+  /// NSE symbol, matches StockEodQuote.symbol.
+  symbol          String
+  side            TxSide
+  productType     PaperProductType
+  quantity        Int
+  /// Fill price — the last delayed intraday tick at request time.
+  fillPrice       Float
+  /// Timestamp of the actual upstream tick used as the fill price (NOT
+  /// createdAt — the tick can be up to ~60s stale, the intraday fetcher's own
+  /// cache TTL). Persisted so the UI can honestly label "priced as of HH:MM,
+  /// delayed data" on every fill rather than implying a live match.
+  fillTickAt      DateTime
+  grossAmount     Float
+  brokerage       Float
+  sttAmount       Float
+  exchangeCharge  Float
+  sebiFee         Float
+  stampDuty       Float
+  gstAmount       Float
+  dpCharge        Float
+  totalCosts      Float
+  /// grossAmount + totalCosts (BUY, cash debited) or grossAmount - totalCosts
+  /// (SELL, cash credited).
+  netAmount       Float
+  /// Set when this order was placed via "Paper trade this call". Later legs
+  /// against the same symbol continue to accrue against the same linked opinion
+  /// for P&L purposes only while explicitly linked — joined on this field, never
+  /// inferred from symbol alone (see the "Calls I've traded" spec).
+  linkedOpinionId String?
+  /// True for a leg the user placed specifically to flatten an existing
+  /// position (manual square-off). Distinct from autoSquaredOff below.
+  isSquareOff     Boolean             @default(false)
+  /// True only for a closing leg written by the intraday auto square-off cron
+  /// (apps/api/app/api/cron/paper-trading-squareoff). Real discount brokers
+  /// force-close open intraday positions near session close rather than letting
+  /// them convert to delivery — this flag is what makes that mechanic visible
+  /// in the order history rather than looking like a normal manual trade.
+  autoSquaredOff  Boolean             @default(false)
+  createdAt       DateTime            @default(now())
+  account         PaperTradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  linkedOpinion   ExpertOpinion?      @relation(fields: [linkedOpinionId], references: [id])
+
+  @@index([accountId, symbol])
+  @@index([accountId, createdAt])
+  @@index([linkedOpinionId])
+  @@index([productType, createdAt])
+}
+
+enum PaperTradingAccountStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum PaperProductType {
+  DELIVERY
+  INTRADAY
 }

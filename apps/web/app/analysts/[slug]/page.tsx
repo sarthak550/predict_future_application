@@ -209,6 +209,7 @@ export default async function AnalystProfilePage({
                 quote: call.quote,
                 headline: call.headline,
                 instrument: call.instrument,
+                instrumentTicker: call.instrumentTicker,
                 direction: call.direction,
                 sourceUrl: call.sourceUrl,
                 publishedAtLabel: formatDateOnly(call.publishedAt),

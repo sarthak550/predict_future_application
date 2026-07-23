@@ -91,6 +91,7 @@ export default async function OpinionsPage({ searchParams }: { searchParams: Sea
             quote: call.quote,
             headline: call.headline,
             instrument: call.instrument,
+            instrumentTicker: call.instrumentTicker,
             direction: call.direction,
             sourceUrl: call.sourceUrl,
             publishedAtLabel: formatDateOnly(call.publishedAt),

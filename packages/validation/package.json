@@ -10,6 +10,7 @@
     "./group": "./src/group.ts",
     "./market": "./src/market.ts",
     "./news": "./src/news.ts",
+    "./paperTrading": "./src/paperTrading.ts",
     "./portfolio": "./src/portfolio.ts",
     "./story": "./src/story.ts"
   },

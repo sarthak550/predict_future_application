@@ -54,6 +54,7 @@ export interface InstrumentOpinionRow {
   quote: string;
   headline: string | null;
   instrument: string | null;
+  instrumentTicker: string | null;
   sourceUrl: string;
   direction: OpinionDirection;
   publishedAt: Date;
@@ -209,6 +210,7 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
       quote: o.quote,
       headline: o.headline,
       instrument: o.instrument,
+      instrumentTicker: o.instrumentTicker,
       sourceUrl: o.sourceUrl,
       direction: o.direction,
       publishedAt: o.publishedAt,
