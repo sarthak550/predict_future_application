@@ -14,7 +14,8 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 
-import { OptionChainBrowser, type SelectedContract } from "@/components/paper-trading/option-chain-browser";
+import { OptionChainBrowser, type OptionChainSnapshot, type SelectedContract } from "@/components/paper-trading/option-chain-browser";
+import { useVisiblePolling } from "@/components/paper-trading/use-visible-polling";
 import { OptionTradePanel, type PlacedOptionOrderPayload } from "@/components/paper-trading/option-trade-panel";
 import { PaperTradingDisclaimerFooter } from "@/components/paper-trading/paper-trading-disclaimer-footer";
 import { Button } from "@/components/ui/button";
@@ -55,6 +56,24 @@ export function OptionsPageClient() {
     } catch {
       setError("Couldn't load your Paper Trading account — check your connection.");
     }
+  }, []);
+
+  // Positions/cash tick along with the chain instead of freezing until a manual
+  // refresh — paused while the tab is hidden.
+  useVisiblePolling(() => void loadAccount(), 60_000, state === "ready");
+
+  // Every chain load (initial + 30s polls) flows through here: if the user has
+  // a contract selected, keep its premium (and the spot) live so the trade
+  // panel's cost estimate tracks what the fill will actually use.
+  const handleChainData = useCallback((chain: OptionChainSnapshot) => {
+    setSelectedContract((selected) => {
+      if (!selected || selected.underlying !== chain.underlying || selected.expiry !== chain.expiry) return selected;
+      const row = chain.strikes.find((s) => s.strikePrice === selected.strikePrice);
+      const livePremium = row?.[selected.optionType]?.lastPrice;
+      if (livePremium == null || livePremium <= 0) return selected;
+      if (livePremium === selected.premium && chain.underlyingValue === selected.underlyingValue) return selected;
+      return { ...selected, premium: livePremium, underlyingValue: chain.underlyingValue };
+    });
   }, []);
 
   useEffect(() => {
@@ -139,7 +158,7 @@ export function OptionsPageClient() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <OptionChainBrowser onSelectContract={setSelectedContract} />
+          <OptionChainBrowser onSelectContract={setSelectedContract} onChainData={handleChainData} />
         </CardContent>
       </Card>
 

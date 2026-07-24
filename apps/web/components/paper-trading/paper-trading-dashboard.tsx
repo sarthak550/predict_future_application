@@ -17,6 +17,7 @@ import { NewTradeForm, type PlacedOrderPayload } from "@/components/paper-tradin
 import { OrderConfirmation } from "@/components/paper-trading/order-confirmation";
 import { OrderHistoryTable, type OrderHistoryEntry } from "@/components/paper-trading/order-history-table";
 import { PaperTradingDisclaimerFooter } from "@/components/paper-trading/paper-trading-disclaimer-footer";
+import { useVisiblePolling } from "@/components/paper-trading/use-visible-polling";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@/components/ui/table";
@@ -104,6 +105,10 @@ export function PaperTradingDashboard() {
       setError("Couldn't load your Paper Trading account — check your connection.");
     }
   }, []);
+
+  // Positions mark-to-market and cash tick on their own (delayed feed) instead
+  // of freezing until a manual refresh — paused while the tab is hidden.
+  useVisiblePolling(() => void loadAccount(), 60_000, state === "ready");
 
   useEffect(() => {
     let cancelled = false;
