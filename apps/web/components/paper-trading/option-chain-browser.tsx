@@ -89,7 +89,8 @@ export function OptionChainBrowser({
   onSelectContract,
   onChainData,
   initialUnderlying,
-  initialOptionType
+  initialOptionType,
+  initialExpiry
 }: {
   onSelectContract: (contract: SelectedContract) => void;
   /** Fires on EVERY successful chain load, initial and polled — lets the page keep a selected contract's premium live. */
@@ -98,6 +99,8 @@ export function OptionChainBrowser({
   initialUnderlying?: string | null;
   /** Phase 3 deep-link pre-fill (from ?optionType=): highlights this column once a chain loads. */
   initialOptionType?: "CE" | "PE" | null;
+  /** Sell deep-link pre-fill (from ?expiry=): selects this expiry (when the live list contains it) instead of the nearest one. */
+  initialExpiry?: string | null;
 }) {
   const deepLinkIsStock = Boolean(initialUnderlying) && !isIndexUnderlying(initialUnderlying as string);
   const [mode, setMode] = useState<ChainMode>(deepLinkIsStock ? "stock" : "index");
@@ -138,6 +141,11 @@ export function OptionChainBrowser({
     };
   }, [mode, fnoUniverse.length]);
 
+  // Deep-link pre-fills, frozen at mount (refs, not deps — they must not
+  // re-trigger the expiries effect on later renders).
+  const initialExpiryRef = useRef(initialExpiry ?? null);
+  const initialUnderlyingRef = useRef(initialUnderlying ?? null);
+
   // Refs so the polled loader never has to be re-created on data/parent renders
   // (a fresh callback identity would re-arm effects — the price-chart lesson).
   const chainRef = useRef<OptionChainSnapshot | null>(null);
@@ -164,7 +172,14 @@ export function OptionChainBrowser({
         if (cancelled) return;
         const list: string[] = Array.isArray(data?.expiries) ? data.expiries : [];
         setExpiries(list);
-        setExpiry(list[0] ?? "");
+        // Sell deep-link may target a later expiry than the nearest — honor it
+        // when the live list actually contains it (only on first load for the
+        // deep-linked underlying; switching underlyings falls back to nearest).
+        const preferred =
+          initialExpiryRef.current && underlying === initialUnderlyingRef.current && list.includes(initialExpiryRef.current)
+            ? initialExpiryRef.current
+            : list[0];
+        setExpiry(preferred ?? "");
         if (list.length === 0) setExpiriesError("No expiries available right now — try again shortly.");
       })
       .catch(() => {

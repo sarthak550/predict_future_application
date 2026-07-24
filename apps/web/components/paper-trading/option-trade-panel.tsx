@@ -20,10 +20,11 @@
  * guardrail), this is purely the UX-level guidance + the T9 explainer for why
  * writing/selling isn't offered at all beyond an existing long.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { computeOptionOrderCosts } from "@predict-future/business-rules/papertrading/optionsCosts";
 import { formatOptionContractLabel } from "@predict-future/business-rules/papertrading/optionContract";
+import { isNseWeekdayMarketHours } from "@predict-future/business-rules/papertrading/marketHours";
 
 import { CostBreakdownTable } from "@/components/paper-trading/cost-breakdown-table";
 import { Button } from "@/components/ui/button";
@@ -63,6 +64,7 @@ export function OptionTradePanel({
   cash,
   heldLots,
   linkedOpinionId,
+  initialSide,
   onOrderPlaced,
   onClose
 }: {
@@ -73,14 +75,21 @@ export function OptionTradePanel({
   heldLots: number;
   /** Phase 3 (T8) — set when the contract was reached via PaperTradeCta's "Trade options on this call" deep-link; forwarded to the order route so the fill joins "Calls I've traded" (schema field existed forward-compatibly since Phase 2). */
   linkedOpinionId?: string | null;
+  /** Pre-select a side — the positions table's "Sell" action opens the panel SELL-first. Ignored for SELL when nothing is held. */
+  initialSide?: "BUY" | "SELL";
   onOrderPlaced: (order: PlacedOptionOrderPayload) => void;
   onClose: () => void;
 }) {
-  const [side, setSide] = useState<"BUY" | "SELL">("BUY");
+  const [side, setSide] = useState<"BUY" | "SELL">(initialSide === "SELL" && heldLots > 0 ? "SELL" : "BUY");
   const [lots, setLots] = useState(1);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState("");
   const [showWhySection, setShowWhySection] = useState(false);
+  // Mount-computed (not render-computed) so the SSR pass and hydration agree.
+  const [marketClosed, setMarketClosed] = useState(false);
+  useEffect(() => {
+    setMarketClosed(!isNseWeekdayMarketHours());
+  }, []);
 
   const quantity = lots * contract.lotSize;
   const estimate = computeOptionOrderCosts({ side, quantity, price: contract.premium });
@@ -221,6 +230,12 @@ export function OptionTradePanel({
         {exceedsHolding && (
           <p className="text-xs text-rose-600">
             You hold {heldLots} lot(s) — can&apos;t sell {lots}.
+          </p>
+        )}
+        {marketClosed && (
+          <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            Market closed — orders fill only during NSE hours, 09:15–15:30 IST Mon–Fri. You can preview costs now;
+            placing the order will be rejected until the market opens.
           </p>
         )}
         {formError && <p className="text-xs text-rose-600">{formError}</p>}

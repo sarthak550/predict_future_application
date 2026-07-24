@@ -21,7 +21,7 @@
  * inventing a new one. `linkedOpinionId` from the same deep-link is threaded
  * through to the trade panel's order submission (T8).
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 
@@ -52,6 +52,12 @@ export function OptionsPageClient() {
   const deepLinkOptionTypeRaw = searchParams.get("optionType");
   const deepLinkOptionType = deepLinkOptionTypeRaw === "CE" || deepLinkOptionTypeRaw === "PE" ? deepLinkOptionTypeRaw : null;
   const deepLinkOpinionId = searchParams.get("linkedOpinionId");
+  // Positions-table "Sell" deep-link: fully specifies a held contract so the
+  // trade panel opens pre-selected on the SELL side without hunting the ladder.
+  const deepLinkExpiry = searchParams.get("expiry");
+  const deepLinkStrikeRaw = searchParams.get("strike");
+  const deepLinkStrike = deepLinkStrikeRaw != null && deepLinkStrikeRaw !== "" ? Number(deepLinkStrikeRaw) : null;
+  const deepLinkSide = searchParams.get("side") === "SELL" ? ("SELL" as const) : null;
 
   const [state, setState] = useState<LoadState>("loading");
   const [cash, setCash] = useState(0);
@@ -79,19 +85,54 @@ export function OptionsPageClient() {
   // refresh — paused while the tab is hidden.
   useVisiblePolling(() => void loadAccount(), 60_000, state === "ready");
 
+  // One-shot guard: the Sell deep-link auto-opens its contract on the FIRST
+  // matching chain snapshot only — after that the user owns the selection.
+  const autoSelectedRef = useRef(false);
+
   // Every chain load (initial + 30s polls) flows through here: if the user has
   // a contract selected, keep its premium (and the spot) live so the trade
-  // panel's cost estimate tracks what the fill will actually use.
-  const handleChainData = useCallback((chain: OptionChainSnapshot) => {
-    setSelectedContract((selected) => {
-      if (!selected || selected.underlying !== chain.underlying || selected.expiry !== chain.expiry) return selected;
-      const row = chain.strikes.find((s) => s.strikePrice === selected.strikePrice);
-      const livePremium = row?.[selected.optionType]?.lastPrice;
-      if (livePremium == null || livePremium <= 0) return selected;
-      if (livePremium === selected.premium && chain.underlyingValue === selected.underlyingValue) return selected;
-      return { ...selected, premium: livePremium, underlyingValue: chain.underlyingValue };
-    });
-  }, []);
+  // panel's cost estimate tracks what the fill will actually use. Also fulfils
+  // the positions-table Sell deep-link by auto-selecting the specified contract.
+  const handleChainData = useCallback(
+    (chain: OptionChainSnapshot) => {
+      if (
+        !autoSelectedRef.current &&
+        deepLinkUnderlying &&
+        deepLinkExpiry &&
+        deepLinkStrike != null &&
+        Number.isFinite(deepLinkStrike) &&
+        deepLinkOptionType &&
+        chain.underlying === deepLinkUnderlying &&
+        chain.expiry === deepLinkExpiry &&
+        chain.lotSize
+      ) {
+        const row = chain.strikes.find((s) => s.strikePrice === deepLinkStrike);
+        const quote = row?.[deepLinkOptionType];
+        if (quote?.lastPrice != null && quote.lastPrice > 0) {
+          autoSelectedRef.current = true;
+          setSelectedContract({
+            underlying: chain.underlying,
+            expiry: chain.expiry,
+            strikePrice: deepLinkStrike,
+            optionType: deepLinkOptionType,
+            premium: quote.lastPrice,
+            lotSize: chain.lotSize,
+            underlyingValue: chain.underlyingValue
+          });
+          return;
+        }
+      }
+      setSelectedContract((selected) => {
+        if (!selected || selected.underlying !== chain.underlying || selected.expiry !== chain.expiry) return selected;
+        const row = chain.strikes.find((s) => s.strikePrice === selected.strikePrice);
+        const livePremium = row?.[selected.optionType]?.lastPrice;
+        if (livePremium == null || livePremium <= 0) return selected;
+        if (livePremium === selected.premium && chain.underlyingValue === selected.underlyingValue) return selected;
+        return { ...selected, premium: livePremium, underlyingValue: chain.underlyingValue };
+      });
+    },
+    [deepLinkUnderlying, deepLinkExpiry, deepLinkStrike, deepLinkOptionType]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -186,6 +227,7 @@ export function OptionsPageClient() {
             onChainData={handleChainData}
             initialUnderlying={deepLinkUnderlying}
             initialOptionType={deepLinkOptionType}
+            initialExpiry={deepLinkExpiry}
           />
         </CardContent>
       </Card>
@@ -196,6 +238,7 @@ export function OptionsPageClient() {
           cash={cash}
           heldLots={heldLotsForSelected}
           linkedOpinionId={deepLinkOpinionId}
+          initialSide={deepLinkSide ?? undefined}
           onOrderPlaced={(order) => {
             setLastOrder(order);
             setSelectedContract(null);

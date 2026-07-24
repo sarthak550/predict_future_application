@@ -13,6 +13,8 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 
+import { formatNseExpiryDate } from "@predict-future/business-rules/papertrading/optionContract";
+
 import { NewTradeForm, type PlacedOrderPayload } from "@/components/paper-trading/new-trade-form";
 import { OrderConfirmation } from "@/components/paper-trading/order-confirmation";
 import { OrderHistoryTable, type OrderHistoryEntry } from "@/components/paper-trading/order-history-table";
@@ -399,6 +401,9 @@ function OptionPositionsTable({ rows }: { rows: OptionPositionRow[] }) {
             <TableHeaderCell>Unrealized</TableHeaderCell>
             <TableHeaderCell>Net P&L</TableHeaderCell>
             <TableHeaderCell>Expiry</TableHeaderCell>
+            <TableHeaderCell>
+              <span className="sr-only">Actions</span>
+            </TableHeaderCell>
           </TableRow>
         </TableHead>
         <TableBody>
@@ -440,6 +445,14 @@ function OptionPositionsTable({ rows }: { rows: OptionPositionRow[] }) {
                     {row.daysToExpiry === 0 ? "Today" : `${row.daysToExpiry}d`}
                   </span>{" "}
                   <span className="text-ink-400">({formatExpiryLabel(row.expiryDate)})</span>
+                </TableCell>
+                <TableCell>
+                  <Link
+                    href={`/paper-trading/options?underlying=${encodeURIComponent(row.underlyingSymbol)}&expiry=${encodeURIComponent(formatNseExpiryDate(new Date(row.expiryDate)))}&strike=${row.strikePrice}&optionType=${row.optionType}&side=SELL`}
+                    className="rounded-lg border border-rose-200 px-3 py-1 text-xs font-semibold text-rose-600 hover:bg-rose-50"
+                  >
+                    Sell
+                  </Link>
                 </TableCell>
               </TableRow>
             );
