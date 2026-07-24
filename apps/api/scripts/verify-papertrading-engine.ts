@@ -22,15 +22,28 @@ import {
   INTRADAY_BROKERAGE_RATE,
   INTRADAY_STAMP_DUTY_RATE,
   INTRADAY_STT_RATE,
-  SEBI_TURNOVER_FEE_RATE
+  SEBI_TURNOVER_FEE_RATE,
+  type PaperProductType
 } from "@predict-future/business-rules/papertrading/costs";
 import {
+  computeIntrinsicValue,
+  computeOptionOrderCosts,
+  OPTIONS_BROKERAGE_FLAT,
+  OPTIONS_EXCHANGE_TXN_CHARGE_RATE,
+  OPTIONS_STAMP_DUTY_RATE,
+  OPTIONS_STT_EXERCISE_RATE,
+  OPTIONS_STT_SELL_RATE
+} from "@predict-future/business-rules/papertrading/optionsCosts";
+import {
   deriveAllDeliveryPositions,
+  deriveAllOptionPositions,
   deriveCash,
   deriveDeliveryHoldings,
   deriveIntradayDailyPositions,
+  deriveOptionPositions,
   isFirstDeliverySellOfScripToday,
   netPnl,
+  openExpiringPositions,
   openIntradayPositions,
   replayPosition,
   unrealizedGrossPnl,
@@ -79,7 +92,11 @@ function istInstant(y: number, m: number, d: number, hour: number, minute: numbe
   return new Date(Date.UTC(y, m - 1, d, hour - 5, minute - 30));
 }
 
-type OrderInput = Omit<PaperEngineOrder, "totalCosts" | "netAmount"> & { isFirstDeliverySellOfScripToday?: boolean };
+type OrderInput = Omit<PaperEngineOrder, "totalCosts" | "netAmount" | "productType"> & {
+  /** Equity test orders always carry a real (non-null) productType — the schema's nullable-for-options relaxation doesn't apply to this file's EQUITY test cases. */
+  productType: PaperProductType;
+  isFirstDeliverySellOfScripToday?: boolean;
+};
 
 /** Builds a PaperEngineOrder by running the real computeOrderCosts() over the given fill — every test order's cost fields are the SAME function under test, never hand-filled, so a case can't accidentally "pass" against a wrong totalCosts. */
 function order(input: OrderInput): PaperEngineOrder {
@@ -292,6 +309,272 @@ async function main() {
     const day2 = daily.find((d) => d.dayKey === 20260721);
     assertClose(day1!.realizedGrossPnl, 50 * (610 - 600), "Day 1's long round trip realized P&L computed independently");
     assertClose(day2!.realizedGrossPnl, 20 * (605 - 600), "Day 2's short round trip realized P&L computed independently, unaffected by day 1's entry price");
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Paper Trading Phase 2 — Index Options (optionsCosts.ts + replay.ts extension)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /** Builds an INDEX_OPTION PaperEngineOrder fixture, running the real computeOptionOrderCosts() over the given fill — same "never hand-filled" discipline as order() above. */
+  function optionOrder(input: {
+    underlyingSymbol: string;
+    optionType: "CE" | "PE";
+    strikePrice: number;
+    expiryDate: Date;
+    lotSize: number;
+    side: "BUY" | "SELL";
+    quantity: number;
+    fillPrice: number;
+    createdAt: Date;
+    isExpirySettlement?: boolean;
+    intrinsicValue?: number;
+  }): PaperEngineOrder {
+    const isExpirySettlement = input.isExpirySettlement ?? false;
+    const costs = computeOptionOrderCosts({
+      side: input.side,
+      quantity: input.quantity,
+      price: input.fillPrice,
+      isExpirySettlement,
+      intrinsicValue: input.intrinsicValue
+    });
+    return {
+      symbol: `${input.underlyingSymbol}${input.strikePrice}${input.optionType}`,
+      side: input.side,
+      productType: null,
+      quantity: input.quantity,
+      fillPrice: isExpirySettlement ? (input.intrinsicValue ?? 0) : input.fillPrice,
+      totalCosts: costs.totalCosts,
+      netAmount: costs.netAmount,
+      createdAt: input.createdAt,
+      instrumentKind: "INDEX_OPTION",
+      underlyingSymbol: input.underlyingSymbol,
+      optionType: input.optionType,
+      strikePrice: input.strikePrice,
+      expiryDate: input.expiryDate,
+      lotSize: input.lotSize
+    };
+  }
+
+  const utcDate = (y: number, m: number, d: number) => new Date(Date.UTC(y, m - 1, d));
+
+  // ── 11. Options costs — BUY + manual SELL round trip (75 units @ ₹100 -> ₹150) ──
+  console.log("\n11. Options costs — BUY + manual SELL round trip");
+  {
+    const buy = computeOptionOrderCosts({ side: "BUY", quantity: 75, price: 100 });
+    assertClose(buy.grossAmount, 7500, "BUY grossAmount = 75 * ₹100");
+    assertClose(buy.brokerage, OPTIONS_BROKERAGE_FLAT, "BUY brokerage = flat ₹20/leg (not a min(20,%) formula)");
+    assertClose(buy.stt, 0, "BUY STT is 0 (STT applies only on SELL/exercise)");
+    assertClose(buy.exchangeCharge, OPTIONS_EXCHANGE_TXN_CHARGE_RATE * 7500, "BUY exchange charge = 0.03553% of premium");
+    assertClose(buy.stampDuty, OPTIONS_STAMP_DUTY_RATE * 7500, "BUY stamp duty = 0.003% of premium, BUY side only");
+    assertClose(buy.dpCharge, 0, "DP charge is always 0 for options");
+    assertClose(buy.totalCosts, 26.978255, "BUY totalCosts (hand-calculated)");
+    assertClose(buy.netAmount, 7526.978255, "BUY netAmount = gross + totalCosts (cash debited)");
+
+    const sell = computeOptionOrderCosts({ side: "SELL", quantity: 75, price: 150 });
+    assertClose(sell.stt, OPTIONS_STT_SELL_RATE * 11250, "Manual SELL STT = 0.15% of premium (grossAmount)");
+    assertClose(sell.stampDuty, 0, "SELL stamp duty = 0 (BUY side only)");
+    assertClose(sell.dpCharge, 0, "DP charge is always 0 for options, even on SELL");
+    assertClose(sell.totalCosts, 45.2048825, "SELL totalCosts (hand-calculated)");
+    assertClose(sell.netAmount, 11204.7951175, "SELL netAmount = gross - totalCosts (cash credited)");
+  }
+
+  // ── 12. OTM expiry settlement — ₹0 fill, ₹0 STT, ₹0 net proceeds (total loss) ──
+  console.log("\n12. Options costs — OTM expiry settlement (total premium loss)");
+  {
+    const otm = computeOptionOrderCosts({ side: "SELL", quantity: 75, price: 0, isExpirySettlement: true, intrinsicValue: 0 });
+    assertClose(otm.grossAmount, 0, "OTM settlement grossAmount = 0 (intrinsic value is 0)");
+    assertClose(otm.brokerage, 0, "OTM settlement brokerage = 0 (never charged on a cron-driven settlement leg)");
+    assertClose(otm.stt, 0, "OTM settlement STT = 0 (0.15% of an intrinsic value of 0)");
+    assertClose(otm.exchangeCharge, 0, "OTM settlement exchange charge = 0");
+    assertClose(otm.totalCosts, 0, "OTM settlement totalCosts = 0");
+    assertClose(otm.netAmount, 0, "OTM settlement netAmount = 0 — the full premium paid on entry is lost, correctly reflected as ₹0 proceeds");
+  }
+
+  // ── 13. ITM expiry settlement — exercise STT on INTRINSIC VALUE, not premium ──
+  console.log("\n13. Options costs — ITM expiry settlement (exercise STT on intrinsic value)");
+  {
+    const itm = computeOptionOrderCosts({ side: "SELL", quantity: 75, price: 0, isExpirySettlement: true, intrinsicValue: 50 });
+    assertClose(itm.grossAmount, 3750, "ITM settlement grossAmount = 75 * ₹50 intrinsic value (NOT the original premium paid)");
+    assertClose(itm.brokerage, 0, "ITM settlement brokerage = 0, same as OTM — never charged on a settlement leg");
+    assertClose(itm.stt, OPTIONS_STT_EXERCISE_RATE * 3750, "Exercise STT = 0.15% of intrinsic value (₹3,750), not premium");
+    assertClose(itm.exchangeCharge, OPTIONS_EXCHANGE_TXN_CHARGE_RATE * 3750, "Exchange charge on the settlement leg is on intrinsic value too");
+    assertClose(itm.stampDuty, 0, "No stamp duty on a settlement leg");
+    assertClose(itm.totalCosts, 7.2016275, "ITM settlement totalCosts (hand-calculated)");
+    assertClose(itm.netAmount, 3742.7983725, "ITM settlement netAmount = intrinsic value - totalCosts (cash credited)");
+  }
+
+  // ── 14. Brokerage is correctly 0 on EVERY isExpirySettlement:true leg, BUY or SELL side value ──
+  console.log("\n14. Brokerage is 0 on isExpirySettlement legs regardless of the side field");
+  {
+    const settlementAsBuySide = computeOptionOrderCosts({ side: "BUY", quantity: 75, price: 0, isExpirySettlement: true, intrinsicValue: 30 });
+    assertClose(settlementAsBuySide.brokerage, 0, "isExpirySettlement forces brokerage to 0 regardless of the side field passed in");
+    assertClose(
+      settlementAsBuySide.netAmount,
+      settlementAsBuySide.grossAmount - settlementAsBuySide.totalCosts,
+      "A settlement leg is always a credit (grossAmount - totalCosts), never a debit, even if side happened to be BUY"
+    );
+  }
+
+  // ── 15. Option replay — open position's unrealized P&L ──────────────────────
+  console.log("\n15. deriveOptionPositions — open position, unrealized P&L via the shared unrealizedGrossPnl helper");
+  {
+    const expiry = utcDate(2026, 8, 28);
+    const orders: PaperEngineOrder[] = [
+      optionOrder({
+        underlyingSymbol: "NIFTY",
+        optionType: "CE",
+        strikePrice: 24700,
+        expiryDate: expiry,
+        lotSize: 75,
+        side: "BUY",
+        quantity: 75,
+        fillPrice: 100,
+        createdAt: istInstant(2026, 7, 20, 10, 0)
+      })
+    ];
+    const open = deriveOptionPositions(orders);
+    assertEqual(open.length, 1, "Exactly one open option contract");
+    const position = open[0];
+    assertClose(position.quantity, 75, "Open long quantity = 75 units (1 lot of 75)");
+    assertClose(position.lots, 1, "lots = quantity / lotSize = 75 / 75 = 1");
+    assertClose(position.avgCost, 100, "avgCost = the single BUY fill's premium");
+    assertClose(
+      unrealizedGrossPnl(position.quantity, position.avgCost, 130),
+      75 * (130 - 100),
+      "Unrealized P&L at a live premium of ₹130 = (ltp - avgCost) * quantity"
+    );
+  }
+
+  // ── 16. Option replay — closed (manually sold) position's realized P&L ──────
+  console.log("\n16. deriveOptionPositions / deriveAllOptionPositions — closed position's realized P&L");
+  {
+    const expiry = utcDate(2026, 8, 28);
+    const orders: PaperEngineOrder[] = [
+      optionOrder({
+        underlyingSymbol: "NIFTY",
+        optionType: "CE",
+        strikePrice: 24700,
+        expiryDate: expiry,
+        lotSize: 75,
+        side: "BUY",
+        quantity: 75,
+        fillPrice: 100,
+        createdAt: istInstant(2026, 7, 20, 10, 0)
+      }),
+      optionOrder({
+        underlyingSymbol: "NIFTY",
+        optionType: "CE",
+        strikePrice: 24700,
+        expiryDate: expiry,
+        lotSize: 75,
+        side: "SELL",
+        quantity: 75,
+        fillPrice: 150,
+        createdAt: istInstant(2026, 7, 25, 11, 0)
+      })
+    ];
+    assertEqual(deriveOptionPositions(orders).length, 0, "A fully-closed contract is excluded from deriveOptionPositions (nothing currently held)");
+    const all = deriveAllOptionPositions(orders);
+    assertEqual(all.length, 1, "...but deriveAllOptionPositions still returns it (lifetime rollup needs closed history)");
+    assertClose(all[0].realizedGrossPnl, 75 * (150 - 100), "Realized P&L on the manual close = qty * (exitPremium - avgCost)");
+  }
+
+  // ── 17. Option replay — OTM-expired position shows a full realized loss of the premium paid ──
+  console.log("\n17. An OTM-expired option position's realized P&L is a full loss of the original premium");
+  {
+    const expiry = utcDate(2026, 8, 28);
+    const orders: PaperEngineOrder[] = [
+      optionOrder({
+        underlyingSymbol: "NIFTY",
+        optionType: "PE",
+        strikePrice: 24000,
+        expiryDate: expiry,
+        lotSize: 75,
+        side: "BUY",
+        quantity: 75,
+        fillPrice: 80,
+        createdAt: istInstant(2026, 8, 1, 10, 0)
+      }),
+      optionOrder({
+        underlyingSymbol: "NIFTY",
+        optionType: "PE",
+        strikePrice: 24000,
+        expiryDate: expiry,
+        lotSize: 75,
+        side: "SELL", // expiry settlement's closing leg is always a SELL of the long, whether ITM or OTM
+        quantity: 75,
+        fillPrice: 0,
+        createdAt: istInstant(2026, 8, 28, 15, 40),
+        isExpirySettlement: true,
+        intrinsicValue: 0
+      })
+    ];
+    const all = deriveAllOptionPositions(orders);
+    assertEqual(all.length, 1, "One contract, now fully settled");
+    assertClose(all[0].quantity, 0, "Position is flat after expiry settlement");
+    assertClose(
+      all[0].realizedGrossPnl,
+      75 * (0 - 80),
+      "Realized P&L = qty * (settlementPrice(0) - avgCost) = -6,000 — a full loss of the ₹80/unit premium originally paid, exactly the 'expired worthless' outcome"
+    );
+  }
+
+  // ── 18. openExpiringPositions — day-scoped detection for the expiry-settlement cron ──
+  console.log("\n18. openExpiringPositions — finds only today's expiring, still-open contracts");
+  {
+    const today = istInstant(2026, 8, 28, 15, 40);
+    const orders: PaperEngineOrder[] = [
+      // Expires today, still open — should appear.
+      optionOrder({
+        underlyingSymbol: "NIFTY",
+        optionType: "CE",
+        strikePrice: 24700,
+        expiryDate: utcDate(2026, 8, 28),
+        lotSize: 75,
+        side: "BUY",
+        quantity: 75,
+        fillPrice: 100,
+        createdAt: istInstant(2026, 8, 1, 10, 0)
+      }),
+      // Expires next week, still open — must NOT appear (wrong expiry).
+      optionOrder({
+        underlyingSymbol: "NIFTY",
+        optionType: "CE",
+        strikePrice: 24800,
+        expiryDate: utcDate(2026, 9, 4),
+        lotSize: 75,
+        side: "BUY",
+        quantity: 75,
+        fillPrice: 90,
+        createdAt: istInstant(2026, 8, 1, 10, 0)
+      }),
+      // Expires today but already manually closed — must NOT appear (flat).
+      optionOrder({
+        underlyingSymbol: "NIFTY",
+        optionType: "PE",
+        strikePrice: 24600,
+        expiryDate: utcDate(2026, 8, 28),
+        lotSize: 75,
+        side: "BUY",
+        quantity: 75,
+        fillPrice: 60,
+        createdAt: istInstant(2026, 8, 1, 10, 0)
+      }),
+      optionOrder({
+        underlyingSymbol: "NIFTY",
+        optionType: "PE",
+        strikePrice: 24600,
+        expiryDate: utcDate(2026, 8, 28),
+        lotSize: 75,
+        side: "SELL",
+        quantity: 75,
+        fillPrice: 70,
+        createdAt: istInstant(2026, 8, 20, 10, 0)
+      })
+    ];
+    const expiringToday = openExpiringPositions(orders, today);
+    assertEqual(expiringToday.length, 1, "Exactly one contract is open AND expiring today");
+    assertClose(expiringToday[0].strikePrice, 24700, "The 24700 CE (open, expiring today) is the one found");
   }
 
   console.log(`\n${passCount} passed, ${failCount} failed.`);

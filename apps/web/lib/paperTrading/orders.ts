@@ -190,5 +190,9 @@ export async function placeOrder(userId: string, input: PlaceOrderInput): Promis
     }
   });
 
-  return { ok: true, order: created };
+  // `productType` is nullable in the DB (Phase 2 relaxed it for INDEX_OPTION
+  // rows), but THIS route only ever writes EQUITY orders with a real value
+  // (input.productType, validated non-null by placePaperOrderSchema above) —
+  // the cast reflects that write-path guarantee, not a runtime assumption.
+  return { ok: true, order: created as PlacedOrder };
 }

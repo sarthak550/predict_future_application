@@ -1796,12 +1796,21 @@ model PaperTradingAccount {
 model PaperOrder {
   id              String              @id @default(cuid())
   accountId       String
-  /// NSE symbol, matches StockEodQuote.symbol.
+  /// NSE symbol, matches StockEodQuote.symbol. For an INDEX_OPTION row this is
+  /// the synthetic contract symbol (e.g. "NIFTY24700CE28AUG26"), NOT the bare
+  /// underlyingSymbol — see instrumentKind doc below.
   symbol          String
   side            TxSide
-  productType     PaperProductType
+  /// Nullable as of Phase 2 (Index Options): genuinely meaningless for an
+  /// options leg (see "what's simpler" reasoning in the Phase 2 brief — a fully
+  /// prepaid option has no DELIVERY/INTRADAY distinction). Always set for
+  /// EQUITY rows, both existing and future — this relaxation changes no
+  /// existing query or write path.
+  productType     PaperProductType?
   quantity        Int
-  /// Fill price — the last delayed intraday tick at request time.
+  /// Fill price — the last delayed intraday tick at request time (EQUITY), the
+  /// option premium at request time (INDEX_OPTION manual BUY/SELL), or the
+  /// settled intrinsic value (INDEX_OPTION expiry settlement leg).
   fillPrice       Float
   /// Timestamp of the actual upstream tick used as the fill price (NOT
   /// createdAt — the tick can be up to ~60s stale, the intraday fetcher's own
@@ -1818,7 +1827,7 @@ model PaperOrder {
   dpCharge        Float
   totalCosts      Float
   /// grossAmount + totalCosts (BUY, cash debited) or grossAmount - totalCosts
-  /// (SELL, cash credited).
+  /// (SELL or expiry settlement, cash credited).
   netAmount       Float
   /// Set when this order was placed via "Paper trade this call". Later legs
   /// against the same symbol continue to accrue against the same linked opinion
@@ -1828,20 +1837,51 @@ model PaperOrder {
   /// True for a leg the user placed specifically to flatten an existing
   /// position (manual square-off). Distinct from autoSquaredOff below.
   isSquareOff     Boolean             @default(false)
-  /// True only for a closing leg written by the intraday auto square-off cron
-  /// (apps/api/app/api/cron/paper-trading-squareoff). Real discount brokers
-  /// force-close open intraday positions near session close rather than letting
-  /// them convert to delivery — this flag is what makes that mechanic visible
-  /// in the order history rather than looking like a normal manual trade.
+  /// True for a closing leg written by a cron rather than the user directly —
+  /// either the EQUITY intraday auto square-off cron (Phase 1,
+  /// apps/api/app/api/cron/paper-trading-squareoff) or the INDEX_OPTION expiry
+  /// settlement cron (Phase 2, apps/api/app/api/cron/paper-trading-options-expiry).
+  /// squareOffReason below distinguishes which one.
   autoSquaredOff  Boolean             @default(false)
   createdAt       DateTime            @default(now())
   account         PaperTradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
   linkedOpinion   ExpertOpinion?      @relation(fields: [linkedOpinionId], references: [id])
 
+  // ─── Phase 2 (Index Options) — additive columns, all null for EQUITY rows ───
+  //
+  // Same unified PaperOrder table as Phase 1's equity flow (see the schema
+  // section of cto_assignment_brief_paper_trading_phase2.md for why this is
+  // deliberately NOT a separate PaperOptionOrder table): one account, one cash
+  // ledger, one order log across both asset classes.
+
+  /// Discriminates which asset-class shape this row carries. EQUITY rows (all
+  /// of Phase 1's history) default here and leave every field below null.
+  instrumentKind   PaperInstrumentKind   @default(EQUITY)
+  /// "NIFTY" | "BANKNIFTY" — the index, not the contract. Null for EQUITY rows.
+  underlyingSymbol String?
+  optionType       PaperOptionType?
+  strikePrice      Float?
+  /// The CONTRACT's expiry date, not the order's createdAt.
+  expiryDate       DateTime?
+  /// Lot size snapshotted from the live NSE option-chain response AT FILL TIME
+  /// — never a hardcoded constant (lot sizes are a recurring regulatory change,
+  /// most recently Jan 2026). Snapshotting is what keeps a position's historical
+  /// P&L math stable if the live lot size changes after the position was opened.
+  lotSize          Int?
+  /// Number of lots (quantity = lots * lotSize, always kept in sync at write
+  /// time). `quantity` stays the canonical total-unit count so replay.ts's core
+  /// math never needs an instrumentKind branch — this is purely a UI/display
+  /// convenience field.
+  lots             Int?
+  /// Set only when autoSquaredOff is true; distinguishes the two cron sources
+  /// in UI copy ("auto-closed at session close" vs. "settled at expiry").
+  squareOffReason  PaperSquareOffReason?
+
   @@index([accountId, symbol])
   @@index([accountId, createdAt])
   @@index([linkedOpinionId])
   @@index([productType, createdAt])
+  @@index([accountId, instrumentKind, expiryDate])
 }
 
 enum PaperTradingAccountStatus {
@@ -1852,4 +1892,24 @@ enum PaperTradingAccountStatus {
 enum PaperProductType {
   DELIVERY
   INTRADAY
+}
+
+/// Phase 2 (Index Options). Discriminates PaperOrder's two asset-class shapes.
+enum PaperInstrumentKind {
+  EQUITY
+  INDEX_OPTION
+}
+
+/// Phase 2 (Index Options). CE (call) or PE (put) — long-only, no writing.
+enum PaperOptionType {
+  CE
+  PE
+}
+
+/// Phase 2 (Index Options). Distinguishes the two automated-closing-leg
+/// sources for UI copy — INTRADAY_SESSION_CLOSE is Phase 1's existing equity
+/// cron, OPTION_EXPIRY is this phase's new expiry-settlement cron.
+enum PaperSquareOffReason {
+  INTRADAY_SESSION_CLOSE
+  OPTION_EXPIRY
 }

@@ -8,6 +8,8 @@
 import { Fragment, useState } from "react";
 import { ChevronDown } from "lucide-react";
 
+import { formatOptionContractLabel } from "@predict-future/business-rules/papertrading/optionContract";
+
 import { CostBreakdownTable } from "@/components/paper-trading/cost-breakdown-table";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@/components/ui/table";
@@ -16,7 +18,8 @@ export interface OrderHistoryEntry {
   id: string;
   symbol: string;
   side: "BUY" | "SELL";
-  productType: "DELIVERY" | "INTRADAY";
+  /** Null for an INDEX_OPTION row (Phase 2). */
+  productType: "DELIVERY" | "INTRADAY" | null;
   quantity: number;
   fillPrice: number;
   grossAmount: number;
@@ -32,6 +35,22 @@ export interface OrderHistoryEntry {
   isSquareOff: boolean;
   autoSquaredOff: boolean;
   createdAt: string;
+  /** Phase 2 — discriminates the equity vs. option row shape below. */
+  instrumentKind: "EQUITY" | "INDEX_OPTION";
+  underlyingSymbol: string | null;
+  optionType: "CE" | "PE" | null;
+  strikePrice: number | null;
+  expiryDate: string | null;
+  lots: number | null;
+  squareOffReason: "INTRADAY_SESSION_CLOSE" | "OPTION_EXPIRY" | null;
+}
+
+/** Human label for one row: the contract label for an option leg, the plain symbol for an equity leg. */
+function orderLabel(order: OrderHistoryEntry): string {
+  if (order.instrumentKind === "INDEX_OPTION" && order.underlyingSymbol && order.strikePrice != null && order.optionType && order.expiryDate) {
+    return formatOptionContractLabel(order.underlyingSymbol, order.strikePrice, order.optionType, new Date(order.expiryDate));
+  }
+  return order.symbol;
 }
 
 export function OrderHistoryTable({ orders }: { orders: OrderHistoryEntry[] }) {
@@ -58,6 +77,8 @@ export function OrderHistoryTable({ orders }: { orders: OrderHistoryEntry[] }) {
         <TableBody>
           {orders.map((order) => {
             const isOpen = openId === order.id;
+            const isOption = order.instrumentKind === "INDEX_OPTION";
+            const isWorthlessExpiry = isOption && order.squareOffReason === "OPTION_EXPIRY" && order.fillPrice === 0;
             return (
               <Fragment key={order.id}>
                 <TableRow className="cursor-pointer select-none" onClick={() => setOpenId(isOpen ? null : order.id)}>
@@ -66,17 +87,23 @@ export function OrderHistoryTable({ orders }: { orders: OrderHistoryEntry[] }) {
                       <ChevronDown
                         className={`h-3.5 w-3.5 shrink-0 text-ink-400 transition-transform ${isOpen ? "rotate-180" : ""}`}
                       />
-                      {order.symbol}
+                      {orderLabel(order)}
+                      {isOption && order.lots != null && <span className="text-ink-400">({order.lots} lot{order.lots === 1 ? "" : "s"})</span>}
                     </span>
                   </TableCell>
                   <TableCell>
                     <Badge variant={order.side === "BUY" ? "success" : "danger"}>{order.side}</Badge>
                   </TableCell>
                   <TableCell className="text-ink-600">
-                    {order.productType}
-                    {order.autoSquaredOff && (
+                    {isOption ? "OPTION" : order.productType}
+                    {order.autoSquaredOff && order.squareOffReason === "INTRADAY_SESSION_CLOSE" && (
                       <Badge variant="warning" className="ml-1.5">
                         AUTO SQUARE-OFF
+                      </Badge>
+                    )}
+                    {order.autoSquaredOff && order.squareOffReason === "OPTION_EXPIRY" && (
+                      <Badge variant={isWorthlessExpiry ? "danger" : "warning"} className="ml-1.5">
+                        {isWorthlessExpiry ? "EXPIRED WORTHLESS — FULL LOSS" : "SETTLED AT EXPIRY"}
                       </Badge>
                     )}
                   </TableCell>

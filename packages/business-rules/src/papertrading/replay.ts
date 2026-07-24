@@ -20,12 +20,27 @@
 
 export type ReplayOrderSide = "BUY" | "SELL";
 export type ReplayProductType = "DELIVERY" | "INTRADAY";
+export type ReplayInstrumentKind = "EQUITY" | "INDEX_OPTION";
+export type ReplayOptionType = "CE" | "PE";
 
-/** Minimal PaperOrder shape the replay engine needs — callers map their Prisma rows to this. */
+/**
+ * Minimal PaperOrder shape the replay engine needs — callers map their Prisma
+ * rows to this. Phase 2 (Index Options) fields are all optional/nullable and
+ * ignored by every EQUITY-path function (deriveAllDeliveryPositions,
+ * deriveIntradayDailyPositions, openIntradayPositions, etc.) — those filter on
+ * `productType`, which is always null for an INDEX_OPTION row, so an option
+ * order can never accidentally leak into an equity grouping. `deriveCash` is
+ * the one function that intentionally does NOT filter by instrumentKind: cash
+ * is a single unified pool across both asset classes (see the Phase 2 brief's
+ * schema-decision section) and deriveCash's existing side+netAmount-only logic
+ * already treats every order identically regardless of instrument, so it
+ * required no changes at all to support options correctly.
+ */
 export interface PaperEngineOrder {
   symbol: string;
   side: ReplayOrderSide;
-  productType: ReplayProductType;
+  /** Null for an INDEX_OPTION row (Phase 2) — genuinely meaningless for a fully-prepaid option, see the schema doc. Always set for an EQUITY row. */
+  productType: ReplayProductType | null;
   quantity: number;
   fillPrice: number;
   /** Sum of every individual cost line for this leg (brokerage+stt+exchangeCharge+sebiFee+stampDuty+gst+dpCharge). */
@@ -33,6 +48,15 @@ export interface PaperEngineOrder {
   /** grossAmount ± totalCosts — see costs.ts. Used directly for cash replay so cash math automatically nets out every cost line without re-deriving it. */
   netAmount: number;
   createdAt: Date;
+  /** Phase 2: defaults to "EQUITY" on Prisma rows via the schema's @default. */
+  instrumentKind?: ReplayInstrumentKind;
+  underlyingSymbol?: string | null;
+  optionType?: ReplayOptionType | null;
+  strikePrice?: number | null;
+  /** The CONTRACT's expiry date (not this order's createdAt). */
+  expiryDate?: Date | null;
+  /** Snapshotted at fill time — see the schema doc on PaperOrder.lotSize for why this is never a live-recomputed value. */
+  lotSize?: number | null;
 }
 
 export interface PaperHoldingLot {
@@ -298,4 +322,98 @@ export function isFirstDeliverySellOfScripToday(
       o.side === "SELL" &&
       istCalendarDateNumber(o.createdAt) === targetDay
   );
+}
+
+// ─── Phase 2: Index Options ────────────────────────────────────────────────────
+//
+// Long-only (BUY CE / BUY PE) means every option position's signed quantity is
+// always >= 0 — replayPosition's short-capable math still applies unmodified
+// (nothing here needed a new formula), it just never sees a negative delta
+// because option order placement (apps/web/lib/paperTrading/optionOrders.ts)
+// rejects any SELL that doesn't match an existing long holding before a fill is
+// ever written — the same "validation happens before the write" convention as
+// Phase 1's no-delivery-shorting rule.
+
+export interface OptionContractPosition extends PositionReplayResult {
+  underlyingSymbol: string;
+  optionType: ReplayOptionType;
+  strikePrice: number;
+  expiryDate: Date;
+  /** The most recently snapshotted lotSize among this contract's orders. Contracts are traded under one specific expiry month, so every fill against the same contract key should carry the same lotSize in practice — this is the "if it ever somehow differs" tie-break, not an expected case. */
+  lotSize: number | null;
+  /** abs(quantity) / lotSize, rounded — 0 when lotSize is unknown (defensive; should not happen for a real filled order, which always snapshots a lotSize at write time). */
+  lots: number;
+}
+
+function optionContractKey(o: PaperEngineOrder): string {
+  const expiryKey = o.expiryDate ? o.expiryDate.toISOString().slice(0, 10) : "unknown";
+  return `${o.underlyingSymbol ?? "unknown"}::${o.strikePrice ?? "unknown"}::${expiryKey}::${o.optionType ?? "unknown"}`;
+}
+
+function groupByOptionContract(orders: PaperEngineOrder[]): Map<string, PaperEngineOrder[]> {
+  const groups = new Map<string, PaperEngineOrder[]>();
+  for (const order of orders) {
+    const key = optionContractKey(order);
+    const list = groups.get(key);
+    if (list) list.push(order);
+    else groups.set(key, [order]);
+  }
+  return groups;
+}
+
+function toOptionContractPosition(contractOrders: PaperEngineOrder[]): OptionContractPosition {
+  const position = replayPosition(contractOrders);
+  // Every order in one contract group carries identical underlyingSymbol/
+  // strikePrice/expiryDate/optionType (that's the grouping key) — read them off
+  // any member, oldest-first convention means [0] is safe and deterministic.
+  const first = contractOrders[0];
+  const lotSize = contractOrders.reduce<number | null>((acc, o) => o.lotSize ?? acc, null);
+  return {
+    ...position,
+    underlyingSymbol: first.underlyingSymbol as string,
+    optionType: first.optionType as ReplayOptionType,
+    strikePrice: first.strikePrice as number,
+    expiryDate: first.expiryDate as Date,
+    lotSize,
+    lots: lotSize ? Math.round(Math.abs(position.quantity) / lotSize) : 0
+  };
+}
+
+/**
+ * Every INDEX_OPTION contract EVER traded on this account, one entry per
+ * (underlyingSymbol, strikePrice, expiryDate, optionType) — including
+ * fully-closed/settled ones (quantity 0). Used for lifetime rollups, exactly
+ * the same "closed positions still count" reasoning as
+ * deriveAllDeliveryPositions above. Most callers want the currently-open subset
+ * instead — see deriveOptionPositions below.
+ */
+export function deriveAllOptionPositions(orders: PaperEngineOrder[]): OptionContractPosition[] {
+  const optionOrders = orders.filter((o) => o.instrumentKind === "INDEX_OPTION");
+  const results: OptionContractPosition[] = [];
+  for (const contractOrders of groupByOptionContract(optionOrders).values()) {
+    results.push(toOptionContractPosition(contractOrders));
+  }
+  return results;
+}
+
+/**
+ * INDEX_OPTION contracts CURRENTLY held (quantity !== 0) — long-only by
+ * validation, so every returned quantity is positive in practice, mirroring
+ * deriveDeliveryHoldings' identical caveat for DELIVERY.
+ */
+export function deriveOptionPositions(orders: PaperEngineOrder[]): OptionContractPosition[] {
+  return deriveAllOptionPositions(orders).filter((p) => p.quantity !== 0);
+}
+
+/**
+ * Every OPEN option position whose expiryDate falls on the IST calendar day
+ * `today` falls on — exactly what the expiry-settlement cron (T6) needs to find
+ * same-day expiries to settle. Mirrors openIntradayPositions' day-scoped
+ * detection shape, but keyed on the CONTRACT's expiryDate rather than the
+ * order's createdAt (an option can be held for weeks/months before its expiry
+ * day arrives, unlike an INTRADAY equity position which is always same-day).
+ */
+export function openExpiringPositions(orders: PaperEngineOrder[], today: Date): OptionContractPosition[] {
+  const targetDay = istCalendarDateNumber(today);
+  return deriveOptionPositions(orders).filter((p) => istCalendarDateNumber(p.expiryDate) === targetDay);
 }

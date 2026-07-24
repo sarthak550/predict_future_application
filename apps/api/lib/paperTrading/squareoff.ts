@@ -143,7 +143,11 @@ async function squareOffAccount(accountId: string, now: Date, result: SquareOffR
         totalCosts: costs.totalCosts,
         netAmount: costs.netAmount,
         isSquareOff: true,
-        autoSquaredOff: true
+        autoSquaredOff: true,
+        // Phase 2 added squareOffReason to distinguish this cron's closing legs
+        // from the options expiry-settlement cron's — purely additive tagging,
+        // no change to this row's fill price, costs, or any Phase 1 behavior.
+        squareOffReason: "INTRADAY_SESSION_CLOSE"
       }
     });
 

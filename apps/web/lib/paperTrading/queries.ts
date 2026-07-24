@@ -8,18 +8,22 @@
 
 import {
   deriveAllDeliveryPositions,
+  deriveAllOptionPositions,
   deriveCash,
   deriveIntradayDailyPositions,
   netPnl,
   openIntradayPositions,
   replayPosition,
   unrealizedGrossPnl,
+  type OptionContractPosition,
   type PaperEngineOrder,
   type SymbolPosition
 } from "@predict-future/business-rules/papertrading/replay";
+import { daysToExpiry, formatNseExpiryDate } from "@predict-future/business-rules/papertrading/optionContract";
 
 import { getOrCreateActiveAccount, getResetEligibility, type PaperAccountRow } from "@/lib/paperTrading/account";
 import { fetchDelayedLtp } from "@/lib/paperTrading/ltp";
+import { fetchOptionChainSnapshot, findOptionQuote } from "@/lib/paperTrading/optionQuote";
 import { prisma } from "@/lib/prisma";
 
 const ENGINE_ORDER_SELECT = {
@@ -30,7 +34,13 @@ const ENGINE_ORDER_SELECT = {
   fillPrice: true,
   totalCosts: true,
   netAmount: true,
-  createdAt: true
+  createdAt: true,
+  instrumentKind: true,
+  underlyingSymbol: true,
+  optionType: true,
+  strikePrice: true,
+  expiryDate: true,
+  lotSize: true
 } as const;
 
 const RECENT_ORDERS_LIMIT = 200;
@@ -52,7 +62,8 @@ export interface OrderHistoryRow {
   id: string;
   symbol: string;
   side: "BUY" | "SELL";
-  productType: "DELIVERY" | "INTRADAY";
+  /** Null for an INDEX_OPTION row (Phase 2) — see instrumentKind below. */
+  productType: "DELIVERY" | "INTRADAY" | null;
   quantity: number;
   fillPrice: number;
   fillTickAt: Date;
@@ -70,6 +81,33 @@ export interface OrderHistoryRow {
   isSquareOff: boolean;
   autoSquaredOff: boolean;
   createdAt: Date;
+  /** Phase 2 — discriminates the equity vs. option row shape below. */
+  instrumentKind: "EQUITY" | "INDEX_OPTION";
+  underlyingSymbol: string | null;
+  optionType: "CE" | "PE" | null;
+  strikePrice: number | null;
+  expiryDate: Date | null;
+  lotSize: number | null;
+  lots: number | null;
+  squareOffReason: "INTRADAY_SESSION_CLOSE" | "OPTION_EXPIRY" | null;
+}
+
+/** Phase 2 — one open (or, for the lifetime rollup, ever-traded) index-option contract position. */
+export interface OptionPositionRow {
+  underlyingSymbol: string;
+  optionType: "CE" | "PE";
+  strikePrice: number;
+  expiryDate: Date;
+  lotSize: number | null;
+  lots: number;
+  quantity: number;
+  avgCost: number;
+  latestPremium: number | null;
+  realizedGrossPnl: number;
+  unrealizedGrossPnl: number | null;
+  totalCosts: number;
+  netPnl: number | null;
+  daysToExpiry: number;
 }
 
 export interface PaperAccountDetail {
@@ -77,6 +115,7 @@ export interface PaperAccountDetail {
   cash: number;
   deliveryHoldings: PositionRow[];
   openIntradayPositions: PositionRow[];
+  optionPositions: OptionPositionRow[];
   lifetimeCostsPaid: number;
   lifetimeRealizedGrossPnl: number;
   lifetimeUnrealizedGrossPnl: number;
@@ -102,12 +141,51 @@ function toPositionRow(position: SymbolPosition, ltp: { price: number; tickAt: D
   };
 }
 
+/** Chain-lookup key for a group of option positions that share one underlying+expiry — one live chain fetch covers every strike in the group. */
+function optionChainKey(underlyingSymbol: string, expiryDate: Date): string {
+  return `${underlyingSymbol}::${expiryDate.toISOString()}`;
+}
+
+function toOptionPositionRow(
+  position: OptionContractPosition,
+  quote: { lastPrice: number | null } | null
+): OptionPositionRow {
+  const latestPremium = quote?.lastPrice ?? null;
+  const unrealized =
+    position.quantity !== 0 && latestPremium != null
+      ? unrealizedGrossPnl(position.quantity, position.avgCost, latestPremium)
+      : position.quantity === 0
+        ? 0
+        : null;
+  return {
+    underlyingSymbol: position.underlyingSymbol,
+    optionType: position.optionType,
+    strikePrice: position.strikePrice,
+    expiryDate: position.expiryDate,
+    lotSize: position.lotSize,
+    lots: position.lots,
+    quantity: position.quantity,
+    avgCost: position.avgCost,
+    latestPremium,
+    realizedGrossPnl: position.realizedGrossPnl,
+    unrealizedGrossPnl: unrealized,
+    totalCosts: position.totalCosts,
+    netPnl: unrealized !== null ? netPnl(position.realizedGrossPnl, unrealized, position.totalCosts) : null,
+    daysToExpiry: daysToExpiry(position.expiryDate)
+  };
+}
+
 /**
  * Full account read: lazily creates the ACTIVE account if this is the caller's
  * first visit, then builds cash/holdings/lifetime rollups by replaying the order
- * log. Fetches a live delayed LTP for every symbol with an open position (held
- * DELIVERY + today's still-open INTRADAY) — bounded and cheap at Phase 1 order
- * volumes per the brief's own "do not over-engineer" guidance.
+ * log. Fetches a live delayed LTP for every symbol with an open EQUITY position
+ * (held DELIVERY + today's still-open INTRADAY) — bounded and cheap at Phase 1
+ * order volumes per the brief's own "do not over-engineer" guidance. Phase 2:
+ * fetches ONE live option-chain snapshot per distinct (underlyingSymbol,
+ * expiryDate) the account currently holds a position in — not one fetch per
+ * strike, since a single chain response already carries every strike's premium.
+ * `cash` is a single unified pool across both asset classes (deriveCash needed
+ * no Phase 2 changes at all — see replay.ts's doc comment on PaperEngineOrder).
  */
 export async function getAccountDetail(userId: string): Promise<PaperAccountDetail> {
   const account = await getOrCreateActiveAccount(userId);
@@ -117,7 +195,7 @@ export async function getAccountDetail(userId: string): Promise<PaperAccountDeta
     orderBy: { createdAt: "asc" },
     select: ENGINE_ORDER_SELECT
   });
-  const engineOrders = orderRows as PaperEngineOrder[];
+  const engineOrders = orderRows as unknown as PaperEngineOrder[];
 
   const cash = deriveCash(account.startingCapital, engineOrders);
 
@@ -136,9 +214,34 @@ export async function getAccountDetail(userId: string): Promise<PaperAccountDeta
   const deliveryHoldingRows = currentDeliveryHoldings.map((p) => toPositionRow(p, ltpBySymbol.get(p.symbol) ?? null));
   const openIntradayRows = openIntraday.map((p) => toPositionRow(p, ltpBySymbol.get(p.symbol) ?? null));
 
-  // Lifetime rollup: every DELIVERY symbol + every (symbol, day) INTRADAY group ever
-  // traded, closed positions included — realized P&L and totalCosts are always
-  // known for a closed group; unrealized only applies to the (small) still-open subset.
+  // ── Phase 2: option positions ──────────────────────────────────────────────
+  const allOptionPositions = deriveAllOptionPositions(engineOrders);
+  const currentOptionPositions = allOptionPositions.filter((p) => p.quantity !== 0);
+
+  const neededChains = new Map<string, { underlying: "NIFTY" | "BANKNIFTY"; expiryStr: string }>();
+  for (const p of currentOptionPositions) {
+    const key = optionChainKey(p.underlyingSymbol, p.expiryDate);
+    if (!neededChains.has(key)) {
+      neededChains.set(key, { underlying: p.underlyingSymbol as "NIFTY" | "BANKNIFTY", expiryStr: formatNseExpiryDate(p.expiryDate) });
+    }
+  }
+  const chainEntries = await Promise.all(
+    [...neededChains.entries()].map(async ([key, { underlying, expiryStr }]) => [key, await fetchOptionChainSnapshot(underlying, expiryStr)] as const)
+  );
+  const chainByKey = new Map(chainEntries);
+
+  const quoteFor = (p: OptionContractPosition) => {
+    const chain = chainByKey.get(optionChainKey(p.underlyingSymbol, p.expiryDate));
+    return chain ? findOptionQuote(chain, p.strikePrice, p.optionType) : null;
+  };
+
+  const optionPositionRows = currentOptionPositions.map((p) => toOptionPositionRow(p, quoteFor(p)));
+
+  // Lifetime rollup: every DELIVERY symbol + every (symbol, day) INTRADAY group +
+  // every option contract ever traded, closed positions included — realized P&L
+  // and totalCosts are always known for a closed group; unrealized only applies
+  // to the (small) still-open subset. A single unified rollup across both asset
+  // classes, per the Phase 2 brief's "one account, one ledger" decision.
   let lifetimeCostsPaid = 0;
   let lifetimeRealizedGrossPnl = 0;
   let lifetimeUnrealizedGrossPnl = 0;
@@ -158,10 +261,19 @@ export async function getAccountDetail(userId: string): Promise<PaperAccountDeta
       if (ltp) lifetimeUnrealizedGrossPnl += unrealizedGrossPnl(p.quantity, p.avgCost, ltp.price);
     }
   }
+  for (const p of allOptionPositions) {
+    lifetimeCostsPaid += p.totalCosts;
+    lifetimeRealizedGrossPnl += p.realizedGrossPnl;
+    if (p.quantity !== 0) {
+      const quote = quoteFor(p);
+      if (quote?.lastPrice != null) lifetimeUnrealizedGrossPnl += unrealizedGrossPnl(p.quantity, p.avgCost, quote.lastPrice);
+    }
+  }
   const lifetimeNetPnl = lifetimeRealizedGrossPnl + lifetimeUnrealizedGrossPnl - lifetimeCostsPaid;
 
   const holdingsValue = deliveryHoldingRows.reduce((sum, h) => sum + h.quantity * (h.latestLtp ?? h.avgCost), 0);
-  const totalValue = cash + holdingsValue;
+  const optionsValue = optionPositionRows.reduce((sum, o) => sum + o.quantity * (o.latestPremium ?? o.avgCost), 0);
+  const totalValue = cash + holdingsValue + optionsValue;
 
   const resetEligibility = getResetEligibility(account);
 
@@ -182,6 +294,7 @@ export async function getAccountDetail(userId: string): Promise<PaperAccountDeta
     cash,
     deliveryHoldings: deliveryHoldingRows,
     openIntradayPositions: openIntradayRows,
+    optionPositions: optionPositionRows,
     lifetimeCostsPaid,
     lifetimeRealizedGrossPnl,
     lifetimeUnrealizedGrossPnl,
@@ -210,7 +323,15 @@ export async function getAccountDetail(userId: string): Promise<PaperAccountDeta
       linkedOpinionId: o.linkedOpinionId,
       isSquareOff: o.isSquareOff,
       autoSquaredOff: o.autoSquaredOff,
-      createdAt: o.createdAt
+      createdAt: o.createdAt,
+      instrumentKind: o.instrumentKind,
+      underlyingSymbol: o.underlyingSymbol,
+      optionType: o.optionType,
+      strikePrice: o.strikePrice,
+      expiryDate: o.expiryDate,
+      lotSize: o.lotSize,
+      lots: o.lots,
+      squareOffReason: o.squareOffReason
     }))
   };
 }

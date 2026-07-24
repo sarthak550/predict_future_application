@@ -34,11 +34,30 @@ interface PositionRow {
   netPnl: number | null;
 }
 
+/** Phase 2 — mirrors lib/paperTrading/queries.ts's OptionPositionRow, JSON-serialized (Date -> ISO string). */
+interface OptionPositionRow {
+  underlyingSymbol: string;
+  optionType: "CE" | "PE";
+  strikePrice: number;
+  expiryDate: string;
+  lotSize: number | null;
+  lots: number;
+  quantity: number;
+  avgCost: number;
+  latestPremium: number | null;
+  realizedGrossPnl: number;
+  unrealizedGrossPnl: number | null;
+  totalCosts: number;
+  netPnl: number | null;
+  daysToExpiry: number;
+}
+
 interface AccountDetail {
   account: { id: string; generation: number; startingCapital: number; createdAt: string; status: "ACTIVE" | "ARCHIVED" };
   cash: number;
   deliveryHoldings: PositionRow[];
   openIntradayPositions: PositionRow[];
+  optionPositions: OptionPositionRow[];
   lifetimeCostsPaid: number;
   lifetimeRealizedGrossPnl: number;
   lifetimeUnrealizedGrossPnl: number;
@@ -187,6 +206,11 @@ export function PaperTradingDashboard() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Link href="/paper-trading/options">
+            <Button variant="secondary" size="sm">
+              Options
+            </Button>
+          </Link>
           <Link href="/paper-trading/calls-traded">
             <Button variant="secondary" size="sm">
               Calls I&apos;ve traded
@@ -274,6 +298,23 @@ export function PaperTradingDashboard() {
         </Card>
       )}
 
+      {account.optionPositions.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Option positions</CardTitle>
+            <CardDescription>
+              Held to expiry unless you close manually — settles automatically at intrinsic value on expiry day.{" "}
+              <Link href="/paper-trading/options" className="underline">
+                Trade options
+              </Link>
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <OptionPositionsTable rows={account.optionPositions} />
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle>Order history</CardTitle>
@@ -322,6 +363,70 @@ function PositionsTable({ rows, emptyLabel }: { rows: PositionRow[]; emptyLabel:
               </TableCell>
             </TableRow>
           ))}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
+function formatExpiryLabel(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleDateString("en-IN", { timeZone: "UTC", day: "2-digit", month: "short", year: "2-digit" });
+}
+
+/** Phase 2 — renders open option positions distinctly from equity holdings: contract label, lots, avg/live premium, unrealized P&L, and a days-to-expiry chip (per the brief's positions-view spec). */
+function OptionPositionsTable({ rows }: { rows: OptionPositionRow[] }) {
+  return (
+    <div className="overflow-x-auto">
+      <Table>
+        <TableHead>
+          <TableRow>
+            <TableHeaderCell>Contract</TableHeaderCell>
+            <TableHeaderCell>Lots</TableHeaderCell>
+            <TableHeaderCell>Avg premium</TableHeaderCell>
+            <TableHeaderCell>Live premium</TableHeaderCell>
+            <TableHeaderCell>Unrealized</TableHeaderCell>
+            <TableHeaderCell>Net P&L</TableHeaderCell>
+            <TableHeaderCell>Expiry</TableHeaderCell>
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {rows.map((row) => {
+            const key = `${row.underlyingSymbol}-${row.strikePrice}-${row.optionType}-${row.expiryDate}`;
+            const expiringSoon = row.daysToExpiry <= 2;
+            return (
+              <TableRow key={key}>
+                <TableCell className="font-medium text-ink-900">
+                  {row.underlyingSymbol} {row.strikePrice.toLocaleString("en-IN")} {row.optionType}
+                </TableCell>
+                <TableCell>{row.lots}</TableCell>
+                <TableCell>{formatRupees(row.avgCost)}</TableCell>
+                <TableCell>{row.latestPremium != null ? formatRupees(row.latestPremium) : "— (delayed price unavailable)"}</TableCell>
+                <TableCell
+                  className={
+                    row.unrealizedGrossPnl != null
+                      ? pnlTone(row.unrealizedGrossPnl) === "up"
+                        ? "text-emerald-600"
+                        : row.unrealizedGrossPnl < 0
+                          ? "text-rose-600"
+                          : undefined
+                      : undefined
+                  }
+                >
+                  {row.unrealizedGrossPnl != null ? formatSignedRupees(row.unrealizedGrossPnl) : "—"}
+                </TableCell>
+                <TableCell className={row.netPnl != null ? (row.netPnl >= 0 ? "text-emerald-600" : "text-rose-600") : undefined}>
+                  {row.netPnl != null ? formatSignedRupees(row.netPnl) : "—"}
+                </TableCell>
+                <TableCell>
+                  <span className={expiringSoon ? "font-medium text-amber-700" : "text-ink-500"}>
+                    {row.daysToExpiry === 0 ? "Today" : `${row.daysToExpiry}d`}
+                  </span>{" "}
+                  <span className="text-ink-400">({formatExpiryLabel(row.expiryDate)})</span>
+                </TableCell>
+              </TableRow>
+            );
+          })}
         </TableBody>
       </Table>
     </div>
