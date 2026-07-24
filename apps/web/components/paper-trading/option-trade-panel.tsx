@@ -54,12 +54,15 @@ export interface PlacedOptionOrderPayload {
   netAmount: number;
   linkedOpinionId: string | null;
   createdAt: string;
+  /** Phase 3 — which settlement mechanism this contract uses (index cash-settlement vs. stock forced square-off), for the order-filled banner's settlement-type note. */
+  instrumentKind: "INDEX_OPTION" | "STOCK_OPTION";
 }
 
 export function OptionTradePanel({
   contract,
   cash,
   heldLots,
+  linkedOpinionId,
   onOrderPlaced,
   onClose
 }: {
@@ -68,6 +71,8 @@ export function OptionTradePanel({
   cash: number;
   /** Lots currently held for this EXACT contract (0 if none) — determines whether SELL is even offered. */
   heldLots: number;
+  /** Phase 3 (T8) — set when the contract was reached via PaperTradeCta's "Trade options on this call" deep-link; forwarded to the order route so the fill joins "Calls I've traded" (schema field existed forward-compatibly since Phase 2). */
+  linkedOpinionId?: string | null;
   onOrderPlaced: (order: PlacedOptionOrderPayload) => void;
   onClose: () => void;
 }) {
@@ -102,7 +107,8 @@ export function OptionTradePanel({
           strikePrice: contract.strikePrice,
           expiryDate: contract.expiry,
           side,
-          lots
+          lots,
+          ...(linkedOpinionId ? { linkedOpinionId } : {})
         })
       });
       if (!res.ok) {
@@ -119,6 +125,8 @@ export function OptionTradePanel({
     }
   }
 
+  const isStockOption = contract.underlying !== "NIFTY" && contract.underlying !== "BANKNIFTY";
+
   return (
     <div className="space-y-4 rounded-[24px] border border-ink-100 bg-white p-5">
       <div className="flex items-start justify-between gap-3">
@@ -129,6 +137,12 @@ export function OptionTradePanel({
             Live premium ₹{contract.premium.toLocaleString("en-IN")} · Lot size {contract.lotSize} · Spot{" "}
             {contract.underlyingValue.toLocaleString("en-IN")}
           </p>
+          {isStockOption && (
+            <p className="mt-2 max-w-md text-xs leading-5 text-amber-700">
+              Stock options are physically settled at expiry — like most discount brokers, we close open positions
+              before expiry rather than take delivery into a demat account we don&apos;t model.
+            </p>
+          )}
         </div>
         <Button variant="ghost" size="sm" onClick={onClose}>
           Close

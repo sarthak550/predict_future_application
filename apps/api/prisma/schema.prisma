@@ -1894,10 +1894,16 @@ enum PaperProductType {
   INTRADAY
 }
 
-/// Phase 2 (Index Options). Discriminates PaperOrder's two asset-class shapes.
+/// Phase 2 (Index Options) added INDEX_OPTION; Phase 3 (Stock Options) added
+/// STOCK_OPTION. Discriminates PaperOrder's asset-class shapes — see the Phase 3
+/// brief for why stock options are a DISTINCT value from INDEX_OPTION despite
+/// sharing every cost-stack formula: settlement mechanism differs (forced
+/// square-off vs. cash-settlement-at-intrinsic), which is exactly what this
+/// enum exists to let downstream code (crons, UI badges) branch on.
 enum PaperInstrumentKind {
   EQUITY
   INDEX_OPTION
+  STOCK_OPTION
 }
 
 /// Phase 2 (Index Options). CE (call) or PE (put) — long-only, no writing.
@@ -1906,10 +1912,18 @@ enum PaperOptionType {
   PE
 }
 
-/// Phase 2 (Index Options). Distinguishes the two automated-closing-leg
-/// sources for UI copy — INTRADAY_SESSION_CLOSE is Phase 1's existing equity
-/// cron, OPTION_EXPIRY is this phase's new expiry-settlement cron.
+/// Distinguishes the automated-closing-leg sources for UI copy —
+/// INTRADAY_SESSION_CLOSE is Phase 1's equity cron, OPTION_EXPIRY is Phase 2's
+/// index-option cash-settlement cron, STOCK_OPTION_EXPIRY_SQUAREOFF is Phase
+/// 3's stock-option forced-square-off cron. STOCK_OPTION_EXPIRY_SQUAREOFF is
+/// deliberately distinct from OPTION_EXPIRY even though both fire on expiry
+/// day: OPTION_EXPIRY legs are ₹0-brokerage cash settlements at intrinsic
+/// value, STOCK_OPTION_EXPIRY_SQUAREOFF legs are full-cost manual-SELL-shaped
+/// market orders (see optionsCosts.ts's computeOptionOrderCosts call site in
+/// stockOptionSquareOff.ts) — copy that said "settled at expiry" for a stock
+/// option would misrepresent physical settlement as cash settlement.
 enum PaperSquareOffReason {
   INTRADAY_SESSION_CLOSE
   OPTION_EXPIRY
+  STOCK_OPTION_EXPIRY_SQUAREOFF
 }

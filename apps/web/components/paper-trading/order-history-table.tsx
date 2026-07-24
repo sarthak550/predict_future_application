@@ -18,7 +18,7 @@ export interface OrderHistoryEntry {
   id: string;
   symbol: string;
   side: "BUY" | "SELL";
-  /** Null for an INDEX_OPTION row (Phase 2). */
+  /** Null for an option row (Phase 2/3). */
   productType: "DELIVERY" | "INTRADAY" | null;
   quantity: number;
   fillPrice: number;
@@ -35,19 +35,20 @@ export interface OrderHistoryEntry {
   isSquareOff: boolean;
   autoSquaredOff: boolean;
   createdAt: string;
-  /** Phase 2 — discriminates the equity vs. option row shape below. */
-  instrumentKind: "EQUITY" | "INDEX_OPTION";
+  /** Phase 2 added INDEX_OPTION, Phase 3 added STOCK_OPTION — discriminates the equity vs. option row shape below, and which settlement mechanism an option row uses. */
+  instrumentKind: "EQUITY" | "INDEX_OPTION" | "STOCK_OPTION";
   underlyingSymbol: string | null;
   optionType: "CE" | "PE" | null;
   strikePrice: number | null;
   expiryDate: string | null;
   lots: number | null;
-  squareOffReason: "INTRADAY_SESSION_CLOSE" | "OPTION_EXPIRY" | null;
+  squareOffReason: "INTRADAY_SESSION_CLOSE" | "OPTION_EXPIRY" | "STOCK_OPTION_EXPIRY_SQUAREOFF" | null;
 }
 
-/** Human label for one row: the contract label for an option leg, the plain symbol for an equity leg. */
+/** Human label for one row: the contract label for an option leg (index OR stock), the plain symbol for an equity leg. */
 function orderLabel(order: OrderHistoryEntry): string {
-  if (order.instrumentKind === "INDEX_OPTION" && order.underlyingSymbol && order.strikePrice != null && order.optionType && order.expiryDate) {
+  const isOption = order.instrumentKind === "INDEX_OPTION" || order.instrumentKind === "STOCK_OPTION";
+  if (isOption && order.underlyingSymbol && order.strikePrice != null && order.optionType && order.expiryDate) {
     return formatOptionContractLabel(order.underlyingSymbol, order.strikePrice, order.optionType, new Date(order.expiryDate));
   }
   return order.symbol;
@@ -77,8 +78,10 @@ export function OrderHistoryTable({ orders }: { orders: OrderHistoryEntry[] }) {
         <TableBody>
           {orders.map((order) => {
             const isOpen = openId === order.id;
-            const isOption = order.instrumentKind === "INDEX_OPTION";
-            const isWorthlessExpiry = isOption && order.squareOffReason === "OPTION_EXPIRY" && order.fillPrice === 0;
+            const isIndexOption = order.instrumentKind === "INDEX_OPTION";
+            const isStockOption = order.instrumentKind === "STOCK_OPTION";
+            const isOption = isIndexOption || isStockOption;
+            const isWorthlessExpiry = isIndexOption && order.squareOffReason === "OPTION_EXPIRY" && order.fillPrice === 0;
             return (
               <Fragment key={order.id}>
                 <TableRow className="cursor-pointer select-none" onClick={() => setOpenId(isOpen ? null : order.id)}>
@@ -95,7 +98,7 @@ export function OrderHistoryTable({ orders }: { orders: OrderHistoryEntry[] }) {
                     <Badge variant={order.side === "BUY" ? "success" : "danger"}>{order.side}</Badge>
                   </TableCell>
                   <TableCell className="text-ink-600">
-                    {isOption ? "OPTION" : order.productType}
+                    {isIndexOption ? "INDEX OPTION" : isStockOption ? "STOCK OPTION" : order.productType}
                     {order.autoSquaredOff && order.squareOffReason === "INTRADAY_SESSION_CLOSE" && (
                       <Badge variant="warning" className="ml-1.5">
                         AUTO SQUARE-OFF
@@ -104,6 +107,11 @@ export function OrderHistoryTable({ orders }: { orders: OrderHistoryEntry[] }) {
                     {order.autoSquaredOff && order.squareOffReason === "OPTION_EXPIRY" && (
                       <Badge variant={isWorthlessExpiry ? "danger" : "warning"} className="ml-1.5">
                         {isWorthlessExpiry ? "EXPIRED WORTHLESS — FULL LOSS" : "SETTLED AT EXPIRY"}
+                      </Badge>
+                    )}
+                    {order.autoSquaredOff && order.squareOffReason === "STOCK_OPTION_EXPIRY_SQUAREOFF" && (
+                      <Badge variant="warning" className="ml-1.5">
+                        CLOSED BEFORE EXPIRY — NOT SETTLED
                       </Badge>
                     )}
                   </TableCell>

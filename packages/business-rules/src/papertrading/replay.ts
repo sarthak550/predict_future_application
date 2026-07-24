@@ -20,26 +20,27 @@
 
 export type ReplayOrderSide = "BUY" | "SELL";
 export type ReplayProductType = "DELIVERY" | "INTRADAY";
-export type ReplayInstrumentKind = "EQUITY" | "INDEX_OPTION";
+/** Phase 2 added INDEX_OPTION; Phase 3 added STOCK_OPTION — see optionContractKey/groupByOptionContract below, which were never NIFTY/BANKNIFTY-specific and needed no change beyond this type + the deriveAllOptionPositions filter widening. */
+export type ReplayInstrumentKind = "EQUITY" | "INDEX_OPTION" | "STOCK_OPTION";
 export type ReplayOptionType = "CE" | "PE";
 
 /**
  * Minimal PaperOrder shape the replay engine needs — callers map their Prisma
- * rows to this. Phase 2 (Index Options) fields are all optional/nullable and
+ * rows to this. Phase 2/3 (Options) fields are all optional/nullable and
  * ignored by every EQUITY-path function (deriveAllDeliveryPositions,
  * deriveIntradayDailyPositions, openIntradayPositions, etc.) — those filter on
- * `productType`, which is always null for an INDEX_OPTION row, so an option
- * order can never accidentally leak into an equity grouping. `deriveCash` is
- * the one function that intentionally does NOT filter by instrumentKind: cash
- * is a single unified pool across both asset classes (see the Phase 2 brief's
+ * `productType`, which is always null for an option row, so an option order
+ * can never accidentally leak into an equity grouping. `deriveCash` is the one
+ * function that intentionally does NOT filter by instrumentKind: cash is a
+ * single unified pool across every asset class (see the Phase 2 brief's
  * schema-decision section) and deriveCash's existing side+netAmount-only logic
  * already treats every order identically regardless of instrument, so it
- * required no changes at all to support options correctly.
+ * required no changes at all to support options (index OR stock) correctly.
  */
 export interface PaperEngineOrder {
   symbol: string;
   side: ReplayOrderSide;
-  /** Null for an INDEX_OPTION row (Phase 2) — genuinely meaningless for a fully-prepaid option, see the schema doc. Always set for an EQUITY row. */
+  /** Null for an option row (Phase 2/3) — genuinely meaningless for a fully-prepaid option, see the schema doc. Always set for an EQUITY row. */
   productType: ReplayProductType | null;
   quantity: number;
   fillPrice: number;
@@ -343,6 +344,15 @@ export interface OptionContractPosition extends PositionReplayResult {
   lotSize: number | null;
   /** abs(quantity) / lotSize, rounded — 0 when lotSize is unknown (defensive; should not happen for a real filled order, which always snapshots a lotSize at write time). */
   lots: number;
+  /**
+   * Phase 3: which settlement mechanism this contract uses — read off the
+   * group's first order (every order in one contract group shares the same
+   * instrumentKind, since underlyingSymbol alone already discriminates index
+   * vs. stock). Lets every downstream consumer (UI badges, the two
+   * expiry/square-off crons) branch on settlement type without re-deriving it
+   * from the underlying symbol string.
+   */
+  instrumentKind: "INDEX_OPTION" | "STOCK_OPTION";
 }
 
 function optionContractKey(o: PaperEngineOrder): string {
@@ -364,8 +374,10 @@ function groupByOptionContract(orders: PaperEngineOrder[]): Map<string, PaperEng
 function toOptionContractPosition(contractOrders: PaperEngineOrder[]): OptionContractPosition {
   const position = replayPosition(contractOrders);
   // Every order in one contract group carries identical underlyingSymbol/
-  // strikePrice/expiryDate/optionType (that's the grouping key) — read them off
-  // any member, oldest-first convention means [0] is safe and deterministic.
+  // strikePrice/expiryDate/optionType/instrumentKind (that's the grouping
+  // key, plus instrumentKind is a pure function of underlyingSymbol) — read
+  // them off any member, oldest-first convention means [0] is safe and
+  // deterministic.
   const first = contractOrders[0];
   const lotSize = contractOrders.reduce<number | null>((acc, o) => o.lotSize ?? acc, null);
   return {
@@ -375,20 +387,27 @@ function toOptionContractPosition(contractOrders: PaperEngineOrder[]): OptionCon
     strikePrice: first.strikePrice as number,
     expiryDate: first.expiryDate as Date,
     lotSize,
-    lots: lotSize ? Math.round(Math.abs(position.quantity) / lotSize) : 0
+    lots: lotSize ? Math.round(Math.abs(position.quantity) / lotSize) : 0,
+    instrumentKind: first.instrumentKind as "INDEX_OPTION" | "STOCK_OPTION"
   };
 }
 
 /**
- * Every INDEX_OPTION contract EVER traded on this account, one entry per
- * (underlyingSymbol, strikePrice, expiryDate, optionType) — including
- * fully-closed/settled ones (quantity 0). Used for lifetime rollups, exactly
- * the same "closed positions still count" reasoning as
- * deriveAllDeliveryPositions above. Most callers want the currently-open subset
- * instead — see deriveOptionPositions below.
+ * Every option contract (INDEX_OPTION or STOCK_OPTION) EVER traded on this
+ * account, one entry per (underlyingSymbol, strikePrice, expiryDate,
+ * optionType) — including fully-closed/settled ones (quantity 0). Used for
+ * lifetime rollups, exactly the same "closed positions still count" reasoning
+ * as deriveAllDeliveryPositions above. Most callers want the currently-open
+ * subset instead — see deriveOptionPositions below.
+ *
+ * Phase 3: widened from `=== "INDEX_OPTION"` to also include STOCK_OPTION —
+ * no other change needed here. optionContractKey/groupByOptionContract were
+ * never NIFTY/BANKNIFTY-specific; they already group purely on
+ * underlyingSymbol+strikePrice+expiryDate+optionType strings, which works
+ * identically for a stock underlying.
  */
 export function deriveAllOptionPositions(orders: PaperEngineOrder[]): OptionContractPosition[] {
-  const optionOrders = orders.filter((o) => o.instrumentKind === "INDEX_OPTION");
+  const optionOrders = orders.filter((o) => o.instrumentKind === "INDEX_OPTION" || o.instrumentKind === "STOCK_OPTION");
   const results: OptionContractPosition[] = [];
   for (const contractOrders of groupByOptionContract(optionOrders).values()) {
     results.push(toOptionContractPosition(contractOrders));
@@ -397,21 +416,25 @@ export function deriveAllOptionPositions(orders: PaperEngineOrder[]): OptionCont
 }
 
 /**
- * INDEX_OPTION contracts CURRENTLY held (quantity !== 0) — long-only by
- * validation, so every returned quantity is positive in practice, mirroring
- * deriveDeliveryHoldings' identical caveat for DELIVERY.
+ * Option contracts (index or stock) CURRENTLY held (quantity !== 0) —
+ * long-only by validation, so every returned quantity is positive in
+ * practice, mirroring deriveDeliveryHoldings' identical caveat for DELIVERY.
  */
 export function deriveOptionPositions(orders: PaperEngineOrder[]): OptionContractPosition[] {
   return deriveAllOptionPositions(orders).filter((p) => p.quantity !== 0);
 }
 
 /**
- * Every OPEN option position whose expiryDate falls on the IST calendar day
- * `today` falls on — exactly what the expiry-settlement cron (T6) needs to find
- * same-day expiries to settle. Mirrors openIntradayPositions' day-scoped
+ * Every OPEN option position (index OR stock — mixed in the same result set)
+ * whose expiryDate falls on the IST calendar day `today` falls on — exactly
+ * what Phase 2's cash-settlement cron and Phase 3's stock square-off cron both
+ * need to find same-day expiries. Mirrors openIntradayPositions' day-scoped
  * detection shape, but keyed on the CONTRACT's expiryDate rather than the
  * order's createdAt (an option can be held for weeks/months before its expiry
  * day arrives, unlike an INTRADAY equity position which is always same-day).
+ * No signature change needed for Phase 3: each cron filters its own
+ * `instrumentKind` out of this (now mixed) result set — see
+ * optionsExpiry.ts / stockOptionSquareOff.ts.
  */
 export function openExpiringPositions(orders: PaperEngineOrder[], today: Date): OptionContractPosition[] {
   const targetDay = istCalendarDateNumber(today);

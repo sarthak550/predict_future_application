@@ -165,3 +165,63 @@ export function computePutIntrinsicValue(spot: number, strike: number): number {
 export function computeIntrinsicValue(optionType: "CE" | "PE", spot: number, strike: number): number {
   return optionType === "CE" ? computeCallIntrinsicValue(spot, strike) : computePutIntrinsicValue(spot, strike);
 }
+
+// ─── Phase 3 — stock-option square-off pricing fallback ──────────────────────
+
+/**
+ * Phase 3 stock-option square-off cron (T6): which tier resolved the fill
+ * price, threaded through to the order-confirmation/position UI so a
+ * thin-liquidity fill is visibly flagged rather than presented as a clean
+ * market execution — mirrors how Phase 2's cron surfaces `usedSpotFallback`.
+ * Not a DB column — a transient value on the cron's per-position result.
+ */
+export type SquareOffPricingSource = "LAST_PRICE" | "BID_ASK_MID" | "INTRINSIC_ESTIMATE";
+
+export interface ResolveSquareOffPriceInput {
+  /** Live last-traded premium from the option-chain snapshot, if any. */
+  lastPrice: number | null;
+  bidPrice: number | null;
+  askPrice: number | null;
+  optionType: "CE" | "PE";
+  /** Live underlying spot value — only consulted for the tier-3 intrinsic-value estimate. */
+  spot: number;
+  strikePrice: number;
+}
+
+export interface ResolveSquareOffPriceResult {
+  price: number;
+  source: SquareOffPricingSource;
+}
+
+/**
+ * The 3-tier fallback the Phase 3 stock-option square-off cron uses to price
+ * a forced-close fill, because single-stock strikes frequently go quote-dark
+ * (unlike NIFTY/BANKNIFTY, which always have a live lastPrice near spot):
+ *
+ *   1. Live lastPrice, when present and > 0 (a real traded price always wins).
+ *   2. Bid/ask midpoint, when lastPrice is null/zero but BOTH quotes exist
+ *      (a one-sided quote — bid with no ask, or vice versa — does NOT count
+ *      as "both exist" and falls through to tier 3; a lone quote isn't a
+ *      reliable two-sided market).
+ *   3. Intrinsic-value estimate (computeIntrinsicValue), when neither a
+ *      trade price nor a two-sided quote exists at all — used purely as a
+ *      PRICE ESTIMATOR here, not as a settlement mechanism (the settlement
+ *      mechanism is still "square off as a normal SELL", see
+ *      computeOptionOrderCosts's cost-trap doc comment).
+ *
+ * Pure function — the cron (apps/api/lib/paperTrading/stockOptionSquareOff.ts)
+ * is the only I/O-performing caller; this is independently unit-testable
+ * without a live chain fetch, which is what the verify script's tier-selection
+ * assertions exercise.
+ */
+export function resolveSquareOffPrice(input: ResolveSquareOffPriceInput): ResolveSquareOffPriceResult {
+  const { lastPrice, bidPrice, askPrice, optionType, spot, strikePrice } = input;
+
+  if (lastPrice != null && lastPrice > 0) {
+    return { price: lastPrice, source: "LAST_PRICE" };
+  }
+  if (bidPrice != null && askPrice != null) {
+    return { price: (bidPrice + askPrice) / 2, source: "BID_ASK_MID" };
+  }
+  return { price: computeIntrinsicValue(optionType, spot, strikePrice), source: "INTRINSIC_ESTIMATE" };
+}

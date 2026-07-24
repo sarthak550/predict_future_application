@@ -1,18 +1,20 @@
 import { NextResponse } from "next/server";
 
-import { fetchOptionChain, type OptionUnderlying } from "@/lib/marketMoves/optionChain";
+import { fetchOptionChain, isTradableOptionUnderlying } from "@/lib/marketMoves/optionChain";
 
 export const dynamic = "force-dynamic";
 
-const VALID_UNDERLYINGS: OptionUnderlying[] = ["NIFTY", "BANKNIFTY"];
-
 /**
- * GET /api/finance/options/chain?underlying=NIFTY|BANKNIFTY&expiry=DD-MMM-YYYY
+ * GET /api/finance/options/chain?underlying=<NIFTY|BANKNIFTY|F&O stock symbol>&expiry=DD-MMM-YYYY
  *
  * Full strike ladder (CE + PE premiums per strike), live underlying spot value,
  * and the contract-month-snapshotted lot size for the requested underlying+
  * expiry — see lib/marketMoves/optionChain.ts for the full fetch/parse/cache
- * pipeline (built on the existing NSE cookie-handshake fetcher).
+ * pipeline (built on the existing NSE cookie-handshake fetcher). Phase 3:
+ * `underlying` is no longer restricted to the two indices — any live member of
+ * the F&O stock universe (see GET /api/finance/options/fo-universe) is valid
+ * too, checked at runtime via isTradableOptionUnderlying (never a hardcoded
+ * stock allowlist).
  *
  * `expiry` must be exactly one of the strings GET /api/finance/options/expiries
  * returned for the same underlying — passed straight through to NSE, not
@@ -31,14 +33,14 @@ export async function GET(request: Request) {
   const underlying = searchParams.get("underlying")?.toUpperCase();
   const expiry = searchParams.get("expiry");
 
-  if (!underlying || !VALID_UNDERLYINGS.includes(underlying as OptionUnderlying)) {
-    return NextResponse.json({ error: "underlying must be NIFTY or BANKNIFTY." }, { status: 400 });
+  if (!underlying || !(await isTradableOptionUnderlying(underlying))) {
+    return NextResponse.json({ error: "underlying must be NIFTY, BANKNIFTY, or a live F&O-eligible stock symbol." }, { status: 400 });
   }
   if (!expiry || expiry.trim().length === 0) {
     return NextResponse.json({ error: "expiry is required." }, { status: 400 });
   }
 
-  const snapshot = await fetchOptionChain(underlying as OptionUnderlying, expiry.trim());
+  const snapshot = await fetchOptionChain(underlying, expiry.trim());
   if (!snapshot) {
     return NextResponse.json({ error: "Option chain temporarily unavailable." }, { status: 502 });
   }

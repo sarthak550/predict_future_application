@@ -1,27 +1,37 @@
 /**
- * Paper Trading Phase 2 — NIFTY/BANKNIFTY index option-chain fetcher.
+ * Paper Trading Phase 2 (NIFTY/BANKNIFTY index options) + Phase 3 (single-stock
+ * F&O options) — option-chain fetcher.
  *
  * Built on the existing primeNseSession/nseApiGet cookie handshake in nse.ts
  * (same file/pattern precedent as fetchNseAnnouncements/fetchNseMovers) — does
  * NOT reimplement the Akamai cookie dance.
  *
- * VERIFICATION STATUS (2026-07-23): both endpoints below returned live 200 JSON
- * from this build sandbox at the time this file was written (NIFTY: 18 expiries,
- * weekly cadence out to ~Sep-2026 then monthly/quarterly; BANKNIFTY: monthly
- * cadence throughout — confirmed empirically, never hardcoded here). This is a
- * fragility caveat, not a guarantee: the brief flags this as the same
+ * VERIFICATION STATUS (2026-07-23, Phase 2): both endpoints below returned live
+ * 200 JSON from this build sandbox at the time this file was written (NIFTY: 18
+ * expiries, weekly cadence out to ~Sep-2026 then monthly/quarterly; BANKNIFTY:
+ * monthly cadence throughout — confirmed empirically, never hardcoded here).
+ * VERIFICATION STATUS (2026-07-24, Phase 3): `type=Equity` on the same
+ * option-chain-v3 endpoint confirmed live against RELIANCE — 45 strike rows,
+ * spot 1280.5, three listed monthly expiries (28-Jul/25-Aug/29-Sep-2026), same
+ * cookie handshake and response shape as the index (`type=Indices`) path. Both
+ * are a fragility caveat, not a guarantee: the brief flags this as the same
  * unofficial, Akamai-fronted endpoint class as the movers/announcements pipe
  * already running in production. Accepted risk — every function here returns
  * null/[] on any failure, never throws.
  *
  * Endpoints (all under https://www.nseindia.com):
- *   - GET /api/option-chain-contract-info?symbol=NIFTY|BANKNIFTY
+ *   - GET /api/option-chain-contract-info?symbol=<underlying>
  *       -> { expiryDates: string[] ("28-Jul-2026" format), strikePrice: string[] }
- *   - GET /api/option-chain-v3?type=Indices&symbol=NIFTY|BANKNIFTY&expiry=DD-MMM-YYYY
+ *     No `type` param needed for either index or stock underlyings — confirmed
+ *     empirically to work unmodified for both (Phase 3 brief's "zero new code
+ *     here" call-out).
+ *   - GET /api/option-chain-v3?type=Indices|Equity&symbol=<underlying>&expiry=DD-MMM-YYYY
  *       -> { records: { data: [{ strikePrice, expiryDates, CE?: {...}, PE?: {...} }],
  *                        underlyingValue: number, timestamp: "DD-MMM-YYYY HH:mm:ss" (IST) } }
- *     Passing `expiry` filters server-side to that expiry's rows only (verified
- *     empirically — every returned row's own expiryDates matches the query param).
+ *     `type=Indices` for NIFTY/BANKNIFTY, `type=Equity` for every single-stock
+ *     F&O underlying (see isIndexUnderlying below). Passing `expiry` filters
+ *     server-side to that expiry's rows only (verified empirically — every
+ *     returned row's own expiryDates matches the query param).
  *
  * LOT SIZE — NOT carried by either endpoint above (verified empirically: neither
  * payload has a marketLot/lotSize field anywhere, contradicting the brief's
@@ -33,12 +43,48 @@
  * — lot sizes can differ between near and far months during a SEBI rebalancing
  * phase-in, so this module resolves lot size for the SPECIFIC requested expiry's
  * calendar month, not just "the underlying's lot size". See resolveLotSize below.
+ *
+ * PHASE 3 UNIVERSE — this CSV also lists every F&O-eligible single-stock
+ * underlying (verified live 2026-07-24: 216 total rows, 5 index-derivative rows
+ * — NIFTY, BANKNIFTY, FINNIFTY, MIDCPNIFTY, NIFTYNXT50 — leaving 211 stock
+ * rows). Phase 2 originally parsed this into a hardcoded 2-entry map
+ * (NIFTY/BANKNIFTY only), silently dropping every other row. This file now
+ * retains every row and derives the tradable stock universe as "every row not
+ * in the index-derivative denylist" — see INDEX_DERIVATIVE_DENYLIST and
+ * fetchFnoStockUniverse below. The denylist is intentionally short and
+ * hardcoded (new index derivatives are a rare regulatory event); the ~211-name
+ * stock list is never hardcoded anywhere — it's derived fresh from this CSV on
+ * every (cache-gated) fetch.
  */
 
 import { primeNseSession, nseApiGet } from "./nse";
+import { fetchEquityNames } from "./nse";
 
-export type OptionUnderlying = "NIFTY" | "BANKNIFTY";
+/**
+ * Widened from a closed "NIFTY" | "BANKNIFTY" literal union (Phase 2) to a
+ * plain string (Phase 3) — the stock half of the tradable universe changes
+ * over time (quarterly F&O-eligibility reviews), so it can never be a
+ * compile-time type. Every call site validates membership at runtime instead
+ * — see isIndexUnderlying / isTradableOptionUnderlying below.
+ */
+export type OptionUnderlying = string;
 export type OptionType = "CE" | "PE";
+
+/** The only two underlyings Phase 2's index-options chain supports — `type=Indices` on the chain endpoint, cash-settled-at-intrinsic on expiry. Every other tradable underlying (the Phase 3 stock universe) is `type=Equity` and forced-square-off on expiry. */
+export function isIndexUnderlying(symbol: string): boolean {
+  return symbol === "NIFTY" || symbol === "BANKNIFTY";
+}
+
+/**
+ * Recognized index-derivative SYMBOL values in fo_mktlots.csv that must NEVER
+ * be treated as part of the Phase 3 stock universe — confirmed against the
+ * live file 2026-07-24. Only NIFTY/BANKNIFTY are actually tradable as index
+ * options in this app (see isIndexUnderlying); FINNIFTY/MIDCPNIFTY/NIFTYNXT50
+ * are excluded from the stock universe too even though this app doesn't offer
+ * them as index options either — they are categorically not single-stock
+ * names and must not appear in the stock combobox.
+ */
+export const INDEX_DERIVATIVE_DENYLIST = new Set(["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "NIFTYNXT50"]);
 
 export interface OptionQuote {
   lastPrice: number | null;
@@ -98,7 +144,7 @@ export async function fetchOptionChainExpiries(underlying: OptionUnderlying): Pr
   return data.length > 0 ? data : (cached?.data ?? []);
 }
 
-async function fetchOptionChainExpiriesUncached(underlying: OptionUnderlying): Promise<string[]> {
+async function fetchOptionChainExpiriesUncached(underlying: string): Promise<string[]> {
   const cookie = await primeNseSession("/");
   if (!cookie) return [];
 
@@ -112,27 +158,29 @@ async function fetchOptionChainExpiriesUncached(underlying: OptionUnderlying): P
   return raw.expiryDates.filter((d): d is string => typeof d === "string" && d.length > 0);
 }
 
-// ─── Lot size (fo_mktlots.csv) ────────────────────────────────────────────────
+// ─── Lot size + universe (fo_mktlots.csv) ─────────────────────────────────────
 
-/** underlying -> ordered list of { monthLabel ("JUL-26"), lotSize } parsed from the CSV header/row. */
-type MktLotsTable = Map<OptionUnderlying, { monthLabel: string; lotSize: number }[]>;
+/** underlying SYMBOL -> ordered list of { monthLabel ("JUL-26"), lotSize } parsed from the CSV header/row. Phase 3: retains EVERY row (not just NIFTY/BANKNIFTY) — this table doubles as the source of the F&O stock universe, see fetchFnoStockUniverse below. */
+type MktLotsTable = Map<string, { monthLabel: string; lotSize: number }[]>;
 
 const MKTLOTS_TTL_MS = 6 * 60 * 60 * 1000; // 6h — lot sizes change on regulatory events (most recently Jan 2026), not daily; short enough to pick up a same-day SEBI change without refetching every request.
 let mktLotsCache: { at: number; table: MktLotsTable } | null = null;
 
-/** Header row's underlying label -> our OptionUnderlying enum. NSE's SYMBOL column (2nd column) is the authoritative short code. */
-const SYMBOL_TO_UNDERLYING: Record<string, OptionUnderlying> = { NIFTY: "NIFTY", BANKNIFTY: "BANKNIFTY" };
-
 /**
  * Parses fo_mktlots.csv: header row's month columns (e.g. "JUL-26", "AUG-26", …)
  * map to each data row's per-month lot size for that row's SYMBOL column.
- * Format (verified live 2026-07-23):
+ * Format (verified live 2026-07-24):
  *   UNDERLYING,SYMBOL,JUL-26,AUG-26,SEP-26,DEC-26,...
  *   NIFTY 50  ,NIFTY ,65    ,65    ,65    ,65    ,...
  *   NIFTY BANK,BANKNIFTY,30 ,30    ,30    ,30    ,...
+ *   RELIANCE INDUSTRIES,RELIANCE,500,500,500,,...
  * Trailing/leading whitespace padding in every field is stripped. Blank cells
  * (a contract month not yet listed for that underlying) are skipped, not
- * zero-filled.
+ * zero-filled. Phase 3: every row with a non-empty SYMBOL column and at least
+ * one valid lot-size entry is retained (216 rows confirmed live 2026-07-24,
+ * 211 of them single-stock) — the index-derivative vs. stock split happens at
+ * READ time (isIndexUnderlying / INDEX_DERIVATIVE_DENYLIST), not at parse time,
+ * so this function never silently drops a row.
  */
 function parseMktLotsCsv(csv: string): MktLotsTable {
   const table: MktLotsTable = new Map();
@@ -146,8 +194,7 @@ function parseMktLotsCsv(csv: string): MktLotsTable {
     const cells = lines[i].split(",").map((c) => c.trim());
     if (cells.length < 2) continue;
     const symbol = cells[1];
-    const underlying = SYMBOL_TO_UNDERLYING[symbol];
-    if (!underlying) continue; // not one of the two underlyings this feature supports
+    if (!symbol) continue;
 
     const entries: { monthLabel: string; lotSize: number }[] = [];
     for (let col = 0; col < monthColumns.length; col++) {
@@ -157,7 +204,7 @@ function parseMktLotsCsv(csv: string): MktLotsTable {
         entries.push({ monthLabel: monthColumns[col], lotSize });
       }
     }
-    if (entries.length > 0) table.set(underlying, entries);
+    if (entries.length > 0) table.set(symbol, entries);
   }
   return table;
 }
@@ -202,7 +249,7 @@ function expiryToMonthLabel(expiryDdMmmYyyy: string): string | null {
  * for a far-dated contract not yet individually listed). Returns null only when
  * the underlying has no lot-size data at all (upstream fetch failed).
  */
-export async function resolveLotSize(underlying: OptionUnderlying, expiry: string): Promise<number | null> {
+export async function resolveLotSize(underlying: string, expiry: string): Promise<number | null> {
   const table = await fetchMktLotsTable();
   const entries = table.get(underlying);
   if (!entries || entries.length === 0) return null;
@@ -216,6 +263,49 @@ export async function resolveLotSize(underlying: OptionUnderlying, expiry: strin
   // recent known lot size is the best available estimate for a month not yet
   // individually published.
   return entries[0].lotSize;
+}
+
+// ─── Phase 3 — F&O stock universe ─────────────────────────────────────────────
+
+export interface FnoStockUniverseEntry {
+  symbol: string;
+  companyName: string;
+}
+
+/**
+ * Every F&O-eligible single-stock underlying, with a display company name
+ * attached via fetchEquityNames() (the same symbol->name map Phase 1's equity
+ * search already relies on). Derived fresh from fetchMktLotsTable() on every
+ * call — never a separate cache layer here, since fetchMktLotsTable's own 6h
+ * TTL already gates the network call this depends on (re-deriving the ~211-row
+ * array from an already-cached Map is cheap). Sorted alphabetically by symbol
+ * for a stable combobox order. A stock with no equity-master name match falls
+ * back to its own symbol as the display name rather than being dropped.
+ */
+export async function fetchFnoStockUniverse(): Promise<FnoStockUniverseEntry[]> {
+  const [table, names] = await Promise.all([fetchMktLotsTable(), fetchEquityNames()]);
+  const universe: FnoStockUniverseEntry[] = [];
+  for (const symbol of table.keys()) {
+    if (INDEX_DERIVATIVE_DENYLIST.has(symbol)) continue;
+    universe.push({ symbol, companyName: names.get(symbol) ?? symbol });
+  }
+  universe.sort((a, b) => a.symbol.localeCompare(b.symbol));
+  return universe;
+}
+
+/**
+ * Runtime membership check used at every boundary that used to trust the
+ * compile-time "NIFTY" | "BANKNIFTY" union (route validation, order
+ * placement) — true for the two supported index underlyings or any live
+ * member of today's F&O stock universe, false for anything else (including a
+ * plausible-looking but non-F&O-eligible stock symbol). Always re-derives the
+ * stock universe from the (cache-backed) live table — never hardcodes the
+ * stock half of this check.
+ */
+export async function isTradableOptionUnderlying(symbol: string): Promise<boolean> {
+  if (isIndexUnderlying(symbol)) return true;
+  const universe = await fetchFnoStockUniverse();
+  return universe.some((entry) => entry.symbol === symbol);
 }
 
 // ─── Option chain snapshot ─────────────────────────────────────────────────────
@@ -272,7 +362,7 @@ const chainCache = new Map<string, { at: number; data: OptionChainSnapshot | nul
  * "unavailable" state rather than a 500 or an infinite spinner. Cached
  * in-module for CHAIN_CACHE_TTL_MS (60s) per (underlying, expiry) pair.
  */
-export async function fetchOptionChain(underlying: OptionUnderlying, expiry: string): Promise<OptionChainSnapshot | null> {
+export async function fetchOptionChain(underlying: string, expiry: string): Promise<OptionChainSnapshot | null> {
   const cacheKey = `${underlying}::${expiry}`;
   const cached = chainCache.get(cacheKey);
   if (cached && Date.now() - cached.at < CHAIN_CACHE_TTL_MS) return cached.data;
@@ -282,13 +372,19 @@ export async function fetchOptionChain(underlying: OptionUnderlying, expiry: str
   return result;
 }
 
-async function fetchOptionChainUncached(underlying: OptionUnderlying, expiry: string): Promise<OptionChainSnapshot | null> {
+async function fetchOptionChainUncached(underlying: string, expiry: string): Promise<OptionChainSnapshot | null> {
   const cookie = await primeNseSession("/");
   if (!cookie) return null;
 
+  // NIFTY/BANKNIFTY (Phase 2) use `type=Indices`; every single-stock F&O
+  // underlying (Phase 3) uses `type=Equity` — verified live 2026-07-24 against
+  // RELIANCE (45 strike rows, real premiums). Same endpoint, same cookie
+  // handshake, same referer — only this one query param differs.
+  const chainType = isIndexUnderlying(underlying) ? "Indices" : "Equity";
+
   const [raw, lotSize] = await Promise.all([
     nseApiGet(
-      `/api/option-chain-v3?type=Indices&symbol=${underlying}&expiry=${encodeURIComponent(expiry)}`,
+      `/api/option-chain-v3?type=${chainType}&symbol=${underlying}&expiry=${encodeURIComponent(expiry)}`,
       cookie,
       REFERER_PATH
     ) as Promise<RawChainResponse | null>,

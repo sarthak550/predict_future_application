@@ -18,6 +18,7 @@ import { OrderConfirmation } from "@/components/paper-trading/order-confirmation
 import { OrderHistoryTable, type OrderHistoryEntry } from "@/components/paper-trading/order-history-table";
 import { PaperTradingDisclaimerFooter } from "@/components/paper-trading/paper-trading-disclaimer-footer";
 import { useVisiblePolling } from "@/components/paper-trading/use-visible-polling";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@/components/ui/table";
@@ -35,7 +36,7 @@ interface PositionRow {
   netPnl: number | null;
 }
 
-/** Phase 2 — mirrors lib/paperTrading/queries.ts's OptionPositionRow, JSON-serialized (Date -> ISO string). */
+/** Phase 2/3 — mirrors lib/paperTrading/queries.ts's OptionPositionRow, JSON-serialized (Date -> ISO string). */
 interface OptionPositionRow {
   underlyingSymbol: string;
   optionType: "CE" | "PE";
@@ -51,6 +52,8 @@ interface OptionPositionRow {
   totalCosts: number;
   netPnl: number | null;
   daysToExpiry: number;
+  /** Phase 3 — which settlement mechanism this contract uses. */
+  instrumentKind: "INDEX_OPTION" | "STOCK_OPTION";
 }
 
 interface AccountDetail {
@@ -308,7 +311,9 @@ export function PaperTradingDashboard() {
           <CardHeader>
             <CardTitle>Option positions</CardTitle>
             <CardDescription>
-              Held to expiry unless you close manually — settles automatically at intrinsic value on expiry day.{" "}
+              Index options (NIFTY/BANKNIFTY) settle automatically at intrinsic value on expiry day. Stock options are
+              physically settled at expiry — like most discount brokers, we close open positions before expiry rather
+              than take delivery into a demat account we don&apos;t model.{" "}
               <Link href="/paper-trading/options" className="underline">
                 Trade options
               </Link>
@@ -379,7 +384,7 @@ function formatExpiryLabel(iso: string): string {
   return d.toLocaleDateString("en-IN", { timeZone: "UTC", day: "2-digit", month: "short", year: "2-digit" });
 }
 
-/** Phase 2 — renders open option positions distinctly from equity holdings: contract label, lots, avg/live premium, unrealized P&L, and a days-to-expiry chip (per the brief's positions-view spec). */
+/** Phase 2/3 — renders open option positions (index OR stock) distinctly from equity holdings: contract label, a settlement-type badge, lots, avg/live premium, unrealized P&L, and a days-to-expiry chip (per the brief's positions-view spec). */
 function OptionPositionsTable({ rows }: { rows: OptionPositionRow[] }) {
   return (
     <div className="overflow-x-auto">
@@ -387,6 +392,7 @@ function OptionPositionsTable({ rows }: { rows: OptionPositionRow[] }) {
         <TableHead>
           <TableRow>
             <TableHeaderCell>Contract</TableHeaderCell>
+            <TableHeaderCell>Settlement</TableHeaderCell>
             <TableHeaderCell>Lots</TableHeaderCell>
             <TableHeaderCell>Avg premium</TableHeaderCell>
             <TableHeaderCell>Live premium</TableHeaderCell>
@@ -399,10 +405,16 @@ function OptionPositionsTable({ rows }: { rows: OptionPositionRow[] }) {
           {rows.map((row) => {
             const key = `${row.underlyingSymbol}-${row.strikePrice}-${row.optionType}-${row.expiryDate}`;
             const expiringSoon = row.daysToExpiry <= 2;
+            const isStockOption = row.instrumentKind === "STOCK_OPTION";
             return (
               <TableRow key={key}>
                 <TableCell className="font-medium text-ink-900">
                   {row.underlyingSymbol} {row.strikePrice.toLocaleString("en-IN")} {row.optionType}
+                </TableCell>
+                <TableCell>
+                  <Badge variant={isStockOption ? "warning" : "default"} className="whitespace-nowrap">
+                    {isStockOption ? "Squares off before expiry" : "Cash-settled at expiry"}
+                  </Badge>
                 </TableCell>
                 <TableCell>{row.lots}</TableCell>
                 <TableCell>{formatRupees(row.avgCost)}</TableCell>

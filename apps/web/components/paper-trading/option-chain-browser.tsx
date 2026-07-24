@@ -1,13 +1,21 @@
 "use client";
 
 /**
- * Paper Trading Phase 2 — option-chain browser (T7): underlying selector,
- * expiry picker (populated from the live expiry list — never assumes weekly
- * vs. monthly cadence), and a strike ladder (CE premium | strike | PE premium)
- * with the ATM strike visually highlighted against the live underlyingValue.
- * Tapping a CE/PE cell calls onSelectContract, which the page composes with
- * OptionTradePanel (T8) to open the trade panel pre-filled with that exact
- * contract.
+ * Paper Trading Phase 2 (index options) + Phase 3 (stock options) —
+ * option-chain browser (T7): an Index/Stock mode toggle, an underlying
+ * selector (NIFTY/BANKNIFTY buttons in Index mode, a searchable F&O-stock
+ * combobox in Stock mode), an expiry picker (populated from the live expiry
+ * list — never assumes weekly vs. monthly cadence), and a strike ladder (CE
+ * premium | strike | PE premium) with the ATM strike visually highlighted
+ * against the live underlyingValue. Tapping a CE/PE cell calls
+ * onSelectContract, which the page composes with OptionTradePanel (T8) to
+ * open the trade panel pre-filled with that exact contract.
+ *
+ * Index mode is pixel-identical to pre-Phase-3 behavior — the NIFTY/BANKNIFTY
+ * toggle, strike ladder, ATM highlighting, 30s live-polling UX, and
+ * market-closed banner were already underlying-agnostic (keyed off
+ * `underlyingValue`/`asOf` from the generic chain snapshot type), so Stock
+ * mode integrates WITH the existing polling rather than duplicating it.
  *
  * Hits GET /api/paper-trading/options/expiries and
  * GET /api/paper-trading/options/chain — both public loopback proxies to
@@ -20,6 +28,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Select } from "@/components/ui/select";
 
 import { useVisiblePolling } from "./use-visible-polling";
+import { fetchFnoUniverseClient, type FnoUniverseEntry } from "@/lib/paperTrading/fnoUniverseClient";
 
 export interface OptionQuote {
   lastPrice: number | null;
@@ -36,7 +45,8 @@ interface OptionStrikeRow {
 }
 
 export interface OptionChainSnapshot {
-  underlying: "NIFTY" | "BANKNIFTY";
+  /** Phase 3: widened from "NIFTY" | "BANKNIFTY" to any validated string (index or F&O stock symbol). */
+  underlying: string;
   expiry: string;
   underlyingValue: number;
   asOf: string | null;
@@ -45,7 +55,7 @@ export interface OptionChainSnapshot {
 }
 
 export interface SelectedContract {
-  underlying: "NIFTY" | "BANKNIFTY";
+  underlying: string;
   expiry: string;
   strikePrice: number;
   optionType: "CE" | "PE";
@@ -54,7 +64,9 @@ export interface SelectedContract {
   underlyingValue: number;
 }
 
-const UNDERLYINGS: Array<"NIFTY" | "BANKNIFTY"> = ["NIFTY", "BANKNIFTY"];
+type ChainMode = "index" | "stock";
+
+const INDEX_UNDERLYINGS: Array<"NIFTY" | "BANKNIFTY"> = ["NIFTY", "BANKNIFTY"];
 const STRIKES_AROUND_ATM = 10; // shown each side of the ATM strike — a full chain can run 100+ strikes deep, most of them illiquid tails no retail user is trading
 
 // Auto-refresh cadence. The upstream chain is cached ~60s server-side, so 30s
@@ -69,15 +81,37 @@ function formatRupees(value: number): string {
   return `₹${value.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 }
 
+function isIndexUnderlying(symbol: string): symbol is "NIFTY" | "BANKNIFTY" {
+  return symbol === "NIFTY" || symbol === "BANKNIFTY";
+}
+
 export function OptionChainBrowser({
   onSelectContract,
-  onChainData
+  onChainData,
+  initialUnderlying,
+  initialOptionType
 }: {
   onSelectContract: (contract: SelectedContract) => void;
   /** Fires on EVERY successful chain load, initial and polled — lets the page keep a selected contract's premium live. */
   onChainData?: (chain: OptionChainSnapshot) => void;
+  /** Phase 3 deep-link pre-fill (from ?underlying=): a non-index symbol opens the browser directly in Stock mode with this underlying selected. NIFTY/BANKNIFTY (or omitted) keeps Index mode, unchanged from pre-Phase-3 behavior. */
+  initialUnderlying?: string | null;
+  /** Phase 3 deep-link pre-fill (from ?optionType=): highlights this column once a chain loads. */
+  initialOptionType?: "CE" | "PE" | null;
 }) {
-  const [underlying, setUnderlying] = useState<"NIFTY" | "BANKNIFTY">("NIFTY");
+  const deepLinkIsStock = Boolean(initialUnderlying) && !isIndexUnderlying(initialUnderlying as string);
+  const [mode, setMode] = useState<ChainMode>(deepLinkIsStock ? "stock" : "index");
+  // Empty string means "no underlying selected yet" — only reachable in Stock
+  // mode before the user picks a stock from the combobox; every fetch effect
+  // below no-ops on an empty underlying rather than accidentally requesting a
+  // stale/wrong symbol's chain.
+  const [underlying, setUnderlying] = useState<string>(
+    initialUnderlying && (deepLinkIsStock || isIndexUnderlying(initialUnderlying)) ? initialUnderlying : "NIFTY"
+  );
+  const [stockQuery, setStockQuery] = useState(deepLinkIsStock ? (initialUnderlying as string) : "");
+  const [stockComboboxOpen, setStockComboboxOpen] = useState(false);
+  const [fnoUniverse, setFnoUniverse] = useState<FnoUniverseEntry[]>([]);
+  const highlightOptionType = initialOptionType ?? null;
   const [expiries, setExpiries] = useState<string[]>([]);
   const [expiry, setExpiry] = useState("");
   const [chain, setChain] = useState<OptionChainSnapshot | null>(null);
@@ -90,6 +124,20 @@ export function OptionChainBrowser({
   const [flashes, setFlashes] = useState<ReadonlyMap<string, FlashDirection>>(new Map());
   const [spotFlash, setSpotFlash] = useState<FlashDirection | null>(null);
 
+  // Stock mode's F&O universe: fetched once (cached client-side, see
+  // fnoUniverseClient.ts), needed for the searchable combobox.
+  useEffect(() => {
+    let cancelled = false;
+    if (mode === "stock" && fnoUniverse.length === 0) {
+      fetchFnoUniverseClient().then((list) => {
+        if (!cancelled) setFnoUniverse(list);
+      });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, fnoUniverse.length]);
+
   // Refs so the polled loader never has to be re-created on data/parent renders
   // (a fresh callback identity would re-arm effects — the price-chart lesson).
   const chainRef = useRef<OptionChainSnapshot | null>(null);
@@ -98,6 +146,14 @@ export function OptionChainBrowser({
   const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    if (!underlying) {
+      // Stock mode, nothing picked yet — nothing to fetch.
+      setExpiries([]);
+      setExpiry("");
+      setLoadingExpiries(false);
+      setExpiriesError("");
+      return;
+    }
     let cancelled = false;
     setLoadingExpiries(true);
     setExpiriesError("");
@@ -127,7 +183,7 @@ export function OptionChainBrowser({
 
   const loadChain = useCallback(
     async (opts: { silent: boolean }) => {
-      if (!expiry) return;
+      if (!expiry || !underlying) return;
       if (!opts.silent) {
         setLoadingChain(true);
         setChainError("");
@@ -246,23 +302,105 @@ export function OptionChainBrowser({
     });
   }
 
+  const stockMatches = useMemo(() => {
+    if (mode !== "stock") return [];
+    const q = stockQuery.trim().toUpperCase();
+    if (q.length === 0) return fnoUniverse.slice(0, 30);
+    return fnoUniverse.filter((e) => e.symbol.includes(q) || e.companyName.toUpperCase().includes(q)).slice(0, 30);
+  }, [mode, stockQuery, fnoUniverse]);
+
+  function selectStock(entry: FnoUniverseEntry) {
+    setUnderlying(entry.symbol);
+    setStockQuery(entry.symbol);
+    setStockComboboxOpen(false);
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <div className="inline-flex rounded-2xl border border-ink-200 bg-white p-1">
-          {UNDERLYINGS.map((u) => (
+          {(["index", "stock"] as ChainMode[]).map((m) => (
             <button
-              key={u}
+              key={m}
               type="button"
-              onClick={() => setUnderlying(u)}
-              className={`rounded-xl px-4 py-2 text-sm font-medium transition ${
-                underlying === u ? "bg-ink-900 text-white" : "text-ink-600 hover:text-ink-900"
+              onClick={() => {
+                setMode(m);
+                if (m === "index") {
+                  setUnderlying("NIFTY");
+                } else if (!isIndexUnderlying(underlying)) {
+                  // Already had a stock selected (e.g. toggled back and forth) — keep it.
+                } else {
+                  // Coming from Index mode with no stock chosen yet — don't
+                  // fetch a stale NIFTY/BANKNIFTY chain under the Stock label.
+                  setUnderlying("");
+                  setStockQuery("");
+                }
+              }}
+              className={`rounded-xl px-4 py-2 text-sm font-medium capitalize transition ${
+                mode === m ? "bg-ink-900 text-white" : "text-ink-600 hover:text-ink-900"
               }`}
             >
-              {u}
+              {m}
             </button>
           ))}
         </div>
+
+        {mode === "index" ? (
+          <div className="inline-flex rounded-2xl border border-ink-200 bg-white p-1">
+            {INDEX_UNDERLYINGS.map((u) => (
+              <button
+                key={u}
+                type="button"
+                onClick={() => setUnderlying(u)}
+                className={`rounded-xl px-4 py-2 text-sm font-medium transition ${
+                  underlying === u ? "bg-ink-900 text-white" : "text-ink-600 hover:text-ink-900"
+                }`}
+              >
+                {u}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="relative w-full max-w-xs">
+            <input
+              value={stockQuery}
+              onChange={(e) => {
+                setStockQuery(e.target.value);
+                setStockComboboxOpen(true);
+              }}
+              onFocus={() => setStockComboboxOpen(true)}
+              placeholder="Search F&O stock…"
+              autoComplete="off"
+              className="h-10 w-full rounded-2xl border border-ink-200 bg-white px-3 text-sm text-ink-900 outline-none focus:border-ink-400"
+            />
+            {stockComboboxOpen && (
+              <div className="absolute z-10 mt-1 max-h-64 w-full overflow-y-auto rounded-2xl border border-ink-200 bg-white shadow-lg">
+                {fnoUniverse.length === 0 ? (
+                  <p className="px-4 py-3 text-sm text-ink-400">Loading F&O universe…</p>
+                ) : stockMatches.length === 0 ? (
+                  <p className="px-4 py-3 text-sm text-ink-400">No matches.</p>
+                ) : (
+                  stockMatches.map((entry) => (
+                    <button
+                      key={entry.symbol}
+                      type="button"
+                      className={`flex w-full items-center justify-between px-4 py-2.5 text-left text-sm hover:bg-ink-50 ${
+                        entry.symbol === underlying ? "bg-signal-sky/10" : ""
+                      }`}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => selectStock(entry)}
+                    >
+                      <span className="min-w-0 truncate">
+                        <span className="font-medium text-ink-900">{entry.symbol}</span>{" "}
+                        <span className="text-ink-400">{entry.companyName}</span>
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         <Select
           value={expiry}
@@ -292,6 +430,9 @@ export function OptionChainBrowser({
         )}
       </div>
 
+      {mode === "stock" && !underlying && (
+        <p className="text-sm text-ink-400">Search and select an F&amp;O stock above to see its option chain.</p>
+      )}
       {expiriesError && <p className="text-sm text-rose-600">{expiriesError}</p>}
       {chainError && <p className="text-sm text-rose-600">{chainError}</p>}
       {loadingChain && !chain && <p className="text-sm text-ink-400">Loading chain…</p>}
@@ -312,9 +453,17 @@ export function OptionChainBrowser({
           <table className="w-full min-w-[520px] text-sm">
             <thead className="bg-ink-50 text-ink-500">
               <tr>
-                <th className="px-3 py-2 text-right font-medium">CE premium</th>
+                <th
+                  className={`px-3 py-2 text-right font-medium ${highlightOptionType === "CE" ? "bg-signal-sky/15 text-signal-sky" : ""}`}
+                >
+                  CE premium
+                </th>
                 <th className="px-3 py-2 text-center font-medium">Strike</th>
-                <th className="px-3 py-2 text-left font-medium">PE premium</th>
+                <th
+                  className={`px-3 py-2 text-left font-medium ${highlightOptionType === "PE" ? "bg-signal-sky/15 text-signal-sky" : ""}`}
+                >
+                  PE premium
+                </th>
               </tr>
             </thead>
             <tbody>

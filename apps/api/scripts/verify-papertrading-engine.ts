@@ -32,7 +32,8 @@ import {
   OPTIONS_EXCHANGE_TXN_CHARGE_RATE,
   OPTIONS_STAMP_DUTY_RATE,
   OPTIONS_STT_EXERCISE_RATE,
-  OPTIONS_STT_SELL_RATE
+  OPTIONS_STT_SELL_RATE,
+  resolveSquareOffPrice
 } from "@predict-future/business-rules/papertrading/optionsCosts";
 import {
   deriveAllDeliveryPositions,
@@ -315,7 +316,7 @@ async function main() {
   // Paper Trading Phase 2 — Index Options (optionsCosts.ts + replay.ts extension)
   // ═══════════════════════════════════════════════════════════════════════════
 
-  /** Builds an INDEX_OPTION PaperEngineOrder fixture, running the real computeOptionOrderCosts() over the given fill — same "never hand-filled" discipline as order() above. */
+  /** Builds an option PaperEngineOrder fixture (INDEX_OPTION by default, STOCK_OPTION when specified), running the real computeOptionOrderCosts() over the given fill — same "never hand-filled" discipline as order() above. */
   function optionOrder(input: {
     underlyingSymbol: string;
     optionType: "CE" | "PE";
@@ -328,6 +329,7 @@ async function main() {
     createdAt: Date;
     isExpirySettlement?: boolean;
     intrinsicValue?: number;
+    instrumentKind?: "INDEX_OPTION" | "STOCK_OPTION";
   }): PaperEngineOrder {
     const isExpirySettlement = input.isExpirySettlement ?? false;
     const costs = computeOptionOrderCosts({
@@ -346,7 +348,7 @@ async function main() {
       totalCosts: costs.totalCosts,
       netAmount: costs.netAmount,
       createdAt: input.createdAt,
-      instrumentKind: "INDEX_OPTION",
+      instrumentKind: input.instrumentKind ?? "INDEX_OPTION",
       underlyingSymbol: input.underlyingSymbol,
       optionType: input.optionType,
       strikePrice: input.strikePrice,
@@ -575,6 +577,113 @@ async function main() {
     const expiringToday = openExpiringPositions(orders, today);
     assertEqual(expiringToday.length, 1, "Exactly one contract is open AND expiring today");
     assertClose(expiringToday[0].strikePrice, 24700, "The 24700 CE (open, expiring today) is the one found");
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Paper Trading Phase 3 — Stock Options (replay.ts widening + stockOptionSquareOff.ts)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // ── 19. deriveOptionPositions groups INDEX_OPTION and STOCK_OPTION independently, both correctly tagged ──
+  console.log("\n19. replay.ts widening — an INDEX_OPTION and a STOCK_OPTION position on the same account both appear, correctly tagged");
+  {
+    const orders: PaperEngineOrder[] = [
+      optionOrder({
+        underlyingSymbol: "NIFTY",
+        optionType: "CE",
+        strikePrice: 24700,
+        expiryDate: utcDate(2026, 8, 28),
+        lotSize: 75,
+        side: "BUY",
+        quantity: 75,
+        fillPrice: 100,
+        createdAt: istInstant(2026, 8, 1, 10, 0),
+        instrumentKind: "INDEX_OPTION"
+      }),
+      optionOrder({
+        underlyingSymbol: "RELIANCE",
+        optionType: "CE",
+        strikePrice: 1300,
+        expiryDate: utcDate(2026, 8, 27),
+        lotSize: 500,
+        side: "BUY",
+        quantity: 500,
+        fillPrice: 20,
+        createdAt: istInstant(2026, 8, 1, 10, 0),
+        instrumentKind: "STOCK_OPTION"
+      })
+    ];
+    const open = deriveOptionPositions(orders);
+    assertEqual(open.length, 2, "Both contracts appear — INDEX_OPTION and STOCK_OPTION are independent groups, never merged");
+    const niftyPos = open.find((p) => p.underlyingSymbol === "NIFTY");
+    const reliancePos = open.find((p) => p.underlyingSymbol === "RELIANCE");
+    assertTrue(niftyPos !== undefined, "NIFTY index-option position found");
+    assertEqual(niftyPos?.instrumentKind, "INDEX_OPTION", "NIFTY position is correctly tagged INDEX_OPTION");
+    assertTrue(reliancePos !== undefined, "RELIANCE stock-option position found");
+    assertEqual(reliancePos?.instrumentKind, "STOCK_OPTION", "RELIANCE position is correctly tagged STOCK_OPTION");
+    assertClose(reliancePos!.lots, 1, "RELIANCE lots = 500 / 500 = 1");
+  }
+
+  // ── 20. Stock-option square-off cost trap — full manual-SELL costs, NOT the index isExpirySettlement path ──
+  console.log("\n20. Stock-option square-off cost contrast — full brokerage+STT-on-premium vs. index's ₹0-brokerage/STT-on-intrinsic settlement");
+  {
+    // The stock square-off leg: computeOptionOrderCosts({ side: "SELL", ... })
+    // with isExpirySettlement OMITTED — literally the same call shape as a
+    // manual close, per the brief's cost-trap section. This is what
+    // stockOptionSquareOff.ts must call.
+    const stockSquareOff = computeOptionOrderCosts({ side: "SELL", quantity: 500, price: 35 });
+    assertClose(stockSquareOff.grossAmount, 17500, "Stock square-off grossAmount = 500 * ₹35 traded premium (a real market SELL, not an intrinsic-value settlement)");
+    assertClose(stockSquareOff.brokerage, OPTIONS_BROKERAGE_FLAT, "Stock square-off brokerage = full flat ₹20 — a real broker-forced market SELL, not a ₹0 exchange settlement");
+    assertClose(stockSquareOff.stt, OPTIONS_STT_SELL_RATE * 17500, "Stock square-off STT = 0.15% of the TRADED PREMIUM (grossAmount) — the SELL_RATE/premium basis, not EXERCISE_RATE/intrinsic-value");
+    assertClose(stockSquareOff.stampDuty, 0, "Stock square-off stamp duty = 0 (SELL side, buy-side-only tax)");
+    assertClose(stockSquareOff.dpCharge, 0, "Stock square-off DP charge = 0 — squared off before physical delivery, never enters demat");
+
+    // The index cash-settlement leg for an IDENTICAL notional (same quantity,
+    // fill price standing in for intrinsic value) — computeOptionOrderCosts
+    // called the OTHER way, isExpirySettlement: true. Same underlying economics,
+    // deliberately different cost treatment — this is the exact contrast the
+    // brief calls out as the ticket most likely to get miscopied.
+    const indexSettlement = computeOptionOrderCosts({ side: "SELL", quantity: 500, price: 35, isExpirySettlement: true, intrinsicValue: 35 });
+    assertClose(indexSettlement.brokerage, 0, "Index cash-settlement brokerage = ₹0 — no broker order was ever placed for an automatic exchange settlement");
+    assertClose(indexSettlement.stt, OPTIONS_STT_EXERCISE_RATE * 17500, "Index cash-settlement STT uses EXERCISE_RATE on intrinsic value (same rate value today, but a different constant/basis than the stock square-off's SELL_RATE/premium — see optionsCosts.ts's doc comment on why these are two distinct constants)");
+    assertTrue(
+      stockSquareOff.brokerage !== indexSettlement.brokerage,
+      "THE TRAP: at identical quantity/price, stock square-off brokerage (₹20) must differ from index settlement brokerage (₹0) — a stockOptionSquareOff.ts that accidentally copies optionsExpiry.ts's isExpirySettlement:true call would silently collapse this to equal and undercharge every stock square-off"
+    );
+    assertClose(
+      stockSquareOff.totalCosts - indexSettlement.totalCosts,
+      23.6,
+      "At identical notional, the stock square-off costs ₹23.60 more than the index settlement: the ₹20 brokerage line the isExpirySettlement flag zeroes out, PLUS the 18% GST cascading off that same ₹20 (GST_RATE * 20 = ₹3.60) — GST is computed on brokerage+exchangeCharge+sebiFee, so zeroing brokerage doesn't just save ₹20, it also shrinks the GST base"
+    );
+  }
+
+  // ── 21. Stock-option square-off 3-tier pricing fallback (lastPrice -> bid/ask mid -> intrinsic estimate) ──
+  console.log("\n21. Stock-option square-off pricing fallback tiers (pure selection logic, mirrors stockOptionSquareOff.ts's resolveSquareOffPrice)");
+  {
+    // Tier 1: live lastPrice always wins when present, regardless of bid/ask or intrinsic.
+    const tier1 = resolveSquareOffPrice({ lastPrice: 42, bidPrice: 40, askPrice: 44, optionType: "CE", spot: 1300, strikePrice: 1250 });
+    assertClose(tier1.price, 42, "Tier 1: lastPrice used when present");
+    assertEqual(tier1.source, "LAST_PRICE", "Tier 1 tagged LAST_PRICE");
+
+    // Tier 2: lastPrice null/zero, both quotes present -> midpoint.
+    const tier2 = resolveSquareOffPrice({ lastPrice: null, bidPrice: 38, askPrice: 42, optionType: "CE", spot: 1300, strikePrice: 1250 });
+    assertClose(tier2.price, 40, "Tier 2: bid/ask midpoint = (38+42)/2 = 40 when lastPrice is null");
+    assertEqual(tier2.source, "BID_ASK_MID", "Tier 2 tagged BID_ASK_MID");
+
+    const tier2Zero = resolveSquareOffPrice({ lastPrice: 0, bidPrice: 10, askPrice: 12, optionType: "PE", spot: 1300, strikePrice: 1250 });
+    assertClose(tier2Zero.price, 11, "Tier 2 also triggers on lastPrice === 0, not just null");
+    assertEqual(tier2Zero.source, "BID_ASK_MID", "lastPrice=0 case tagged BID_ASK_MID");
+
+    // Tier 3: neither a trade price nor a two-sided quote -> intrinsic-value estimate.
+    const tier3Itm = resolveSquareOffPrice({ lastPrice: null, bidPrice: null, askPrice: null, optionType: "CE", spot: 1300, strikePrice: 1250 });
+    assertClose(tier3Itm.price, 50, "Tier 3 CE: intrinsic estimate = max(0, spot-strike) = max(0, 1300-1250) = 50");
+    assertEqual(tier3Itm.source, "INTRINSIC_ESTIMATE", "Tier 3 tagged INTRINSIC_ESTIMATE");
+
+    const tier3OneSidedQuote = resolveSquareOffPrice({ lastPrice: null, bidPrice: 5, askPrice: null, optionType: "PE", spot: 1300, strikePrice: 1250 });
+    assertClose(tier3OneSidedQuote.price, 0, "Tier 3 PE: a ONE-sided quote (bid only, no ask) is not a two-sided quote — falls through to intrinsic estimate = max(0, 1250-1300) = 0 (OTM)");
+    assertEqual(tier3OneSidedQuote.source, "INTRINSIC_ESTIMATE", "One-sided-quote case correctly falls to tier 3, not treated as tier 2");
+
+    const tier3Pe = resolveSquareOffPrice({ lastPrice: null, bidPrice: null, askPrice: null, optionType: "PE", spot: 1200, strikePrice: 1250 });
+    assertClose(tier3Pe.price, 50, "Tier 3 PE: intrinsic estimate = max(0, strike-spot) = max(0, 1250-1200) = 50");
   }
 
   console.log(`\n${passCount} passed, ${failCount} failed.`);

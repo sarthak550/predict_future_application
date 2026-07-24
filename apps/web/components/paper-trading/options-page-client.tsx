@@ -1,18 +1,29 @@
 "use client";
 
 /**
- * Paper Trading Phase 2 — /paper-trading/options page composition (T7 + T8).
- * Same session-aware client-side pattern as PaperTradingDashboard (T5/T6/T9,
- * Phase 1) — signed-in personal utility page, never indexed.
+ * Paper Trading Phase 2 (index options) + Phase 3 (stock options) —
+ * /paper-trading/options page composition (T7 + T8). Same session-aware
+ * client-side pattern as PaperTradingDashboard (T5/T6/T9, Phase 1) —
+ * signed-in personal utility page, never indexed.
  *
  * Composes OptionChainBrowser (the strike ladder) with OptionTradePanel (the
  * trade form) — selecting a CE/PE cell in the chain opens the trade panel
  * pre-filled with that exact contract. `heldLots` for the SELL long-only UX
  * hint comes from the account's own option positions (already computed
  * server-side by lib/paperTrading/queries.ts's getAccountDetail).
+ *
+ * Phase 3 (T7): reads `?underlying=&optionType=` (from PaperTradeCta's "Trade
+ * options on this call" secondary link, or any other future deep-link source)
+ * and passes it through to OptionChainBrowser, which opens directly in Stock
+ * mode with that underlying pre-selected and that option-type column
+ * highlighted. Mirrors the main dashboard page's existing CTA-deep-link
+ * pattern (?symbol=&side=&productType=&linkedOpinionId=) rather than
+ * inventing a new one. `linkedOpinionId` from the same deep-link is threaded
+ * through to the trade panel's order submission (T8).
  */
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 
 import { OptionChainBrowser, type OptionChainSnapshot, type SelectedContract } from "@/components/paper-trading/option-chain-browser";
 import { useVisiblePolling } from "@/components/paper-trading/use-visible-polling";
@@ -36,6 +47,12 @@ function formatRupees(value: number): string {
 }
 
 export function OptionsPageClient() {
+  const searchParams = useSearchParams();
+  const deepLinkUnderlying = searchParams.get("underlying");
+  const deepLinkOptionTypeRaw = searchParams.get("optionType");
+  const deepLinkOptionType = deepLinkOptionTypeRaw === "CE" || deepLinkOptionTypeRaw === "PE" ? deepLinkOptionTypeRaw : null;
+  const deepLinkOpinionId = searchParams.get("linkedOpinionId");
+
   const [state, setState] = useState<LoadState>("loading");
   const [cash, setCash] = useState(0);
   const [optionPositions, setOptionPositions] = useState<OptionPositionSummary[]>([]);
@@ -143,6 +160,11 @@ export function OptionsPageClient() {
             Gross {formatRupees(lastOrder.grossAmount)} → Costs {formatRupees(lastOrder.totalCosts)} →{" "}
             {lastOrder.side === "BUY" ? "You paid" : "You received"} {formatRupees(lastOrder.netAmount)}
           </p>
+          <p className="mt-1 text-xs text-emerald-800/80">
+            {lastOrder.instrumentKind === "STOCK_OPTION"
+              ? "Squares off before expiry close — stock options are physically settled, we won't take delivery."
+              : "Cash-settled at intrinsic value on expiry day."}
+          </p>
           <Button variant="ghost" size="sm" className="mt-2" onClick={() => setLastOrder(null)}>
             Dismiss
           </Button>
@@ -153,12 +175,18 @@ export function OptionsPageClient() {
         <CardHeader>
           <CardTitle>Option chain</CardTitle>
           <CardDescription>
-            NIFTY and BANKNIFTY index options — buy CE or PE only. Tap a premium to open the trade panel. Cash
-            available: <span className="font-medium text-ink-900">{formatRupees(cash)}</span>.
+            NIFTY/BANKNIFTY index options or F&amp;O-eligible single-stock options — buy CE or PE only. Tap a
+            premium to open the trade panel. Cash available:{" "}
+            <span className="font-medium text-ink-900">{formatRupees(cash)}</span>.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <OptionChainBrowser onSelectContract={setSelectedContract} onChainData={handleChainData} />
+          <OptionChainBrowser
+            onSelectContract={setSelectedContract}
+            onChainData={handleChainData}
+            initialUnderlying={deepLinkUnderlying}
+            initialOptionType={deepLinkOptionType}
+          />
         </CardContent>
       </Card>
 
@@ -167,6 +195,7 @@ export function OptionsPageClient() {
           contract={selectedContract}
           cash={cash}
           heldLots={heldLotsForSelected}
+          linkedOpinionId={deepLinkOpinionId}
           onOrderPlaced={(order) => {
             setLastOrder(order);
             setSelectedContract(null);

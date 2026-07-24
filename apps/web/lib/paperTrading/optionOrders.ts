@@ -1,6 +1,7 @@
 /**
- * Paper Trading Phase 2 — index-option order placement orchestration for
- * POST /api/paper-trading/options/orders (T5).
+ * Paper Trading Phase 2 (index options) + Phase 3 (stock options) — option
+ * order placement orchestration for POST /api/paper-trading/options/orders
+ * (T5).
  *
  * Same synchronous-fill contract as Phase 1's equity orders.ts: no PENDING
  * state, the response IS the fill confirmation. All pure cost/validation math
@@ -8,10 +9,19 @@
  * this file is DB + upstream-chain orchestration only.
  *
  * Long-only enforcement point (per the Phase 2 brief's scope decision — no
- * writing/selling options): a SELL is accepted ONLY when it closes part or all
- * of an EXISTING long holding of the exact same contract key (underlyingSymbol
- * + strikePrice + expiryDate + optionType). There is no code path anywhere in
- * this file that can open a new short position.
+ * writing/selling options, unchanged posture for Phase 3 stock options): a
+ * SELL is accepted ONLY when it closes part or all of an EXISTING long
+ * holding of the exact same contract key (underlyingSymbol + strikePrice +
+ * expiryDate + optionType). There is no code path anywhere in this file that
+ * can open a new short position.
+ *
+ * Phase 3 widening: `underlyingSymbol` is no longer restricted to NIFTY/
+ * BANKNIFTY — any live member of the F&O stock universe is accepted, checked
+ * via isTradableOptionUnderlying (never a hardcoded stock allowlist).
+ * `instrumentKind` is set conditionally: INDEX_OPTION for NIFTY/BANKNIFTY,
+ * STOCK_OPTION for a validated stock symbol. Cost computation
+ * (computeOptionOrderCosts) and every other validation step below are
+ * UNCHANGED — they were never underlying-specific.
  */
 
 import { computeOptionOrderCosts } from "@predict-future/business-rules/papertrading/optionsCosts";
@@ -26,6 +36,7 @@ import type { TxSide } from "@prisma/client";
 
 import { getOrCreateActiveAccount } from "@/lib/paperTrading/account";
 import { fetchOptionChainSnapshot, findOptionQuote } from "@/lib/paperTrading/optionQuote";
+import { isIndexUnderlyingServer, isTradableOptionUnderlyingServer } from "@/lib/paperTrading/fnoUniverseServer";
 import { prisma } from "@/lib/prisma";
 
 const ENGINE_ORDER_SELECT = {
@@ -46,7 +57,8 @@ const ENGINE_ORDER_SELECT = {
 } as const;
 
 export interface PlaceOptionOrderInput {
-  underlyingSymbol: "NIFTY" | "BANKNIFTY";
+  /** Phase 3: widened from "NIFTY" | "BANKNIFTY" to any validated string — see isTradableOptionUnderlyingServer below. */
+  underlyingSymbol: string;
   optionType: "CE" | "PE";
   strikePrice: number;
   /** NSE's own "DD-MMM-YYYY" expiry string, as returned by GET /api/paper-trading/options/expiries. */
@@ -81,6 +93,8 @@ export interface PlacedOptionOrder {
   netAmount: number;
   linkedOpinionId: string | null;
   createdAt: Date;
+  /** Phase 3 — discriminates settlement mechanism downstream (UI badges, which cron will eventually close this). */
+  instrumentKind: "INDEX_OPTION" | "STOCK_OPTION";
 }
 
 export type PlaceOptionOrderResult =
@@ -88,12 +102,13 @@ export type PlaceOptionOrderResult =
   | { ok: false; status: 400 | 422 | 502; reason: string };
 
 /**
- * Places and immediately fills one BUY/SELL index-option leg for `userId`'s
- * ACTIVE account. See the module doc above for the long-only enforcement point.
+ * Places and immediately fills one BUY/SELL option leg (index OR stock, Phase
+ * 2/3) for `userId`'s ACTIVE account. See the module doc above for the
+ * long-only enforcement point and the Phase 3 underlying-widening notes.
  *
  * Same known-limitation caveat as Phase 1's placeOrder: validation reads
  * cash/holdings, THEN writes the order — an acceptable, explicitly-flagged gap
- * at Phase 1/2's single-retail-user trade volumes, not a reason to add
+ * at Phase 1/2/3's single-retail-user trade volumes, not a reason to add
  * row-level order-book locking (see orders.ts's identical note).
  */
 export async function placeOptionOrder(userId: string, input: PlaceOptionOrderInput): Promise<PlaceOptionOrderResult> {
@@ -104,6 +119,20 @@ export async function placeOptionOrder(userId: string, input: PlaceOptionOrderIn
       reason: "Orders can only be placed during NSE market hours (Mon-Fri, 09:15-15:30 IST)."
     };
   }
+
+  // Phase 3: reject anything that isn't NIFTY/BANKNIFTY or a live F&O-eligible
+  // stock BEFORE any chain fetch is attempted — the T5 acceptance criteria's
+  // "rejected with a clear error before any chain fetch" requirement.
+  if (!(await isTradableOptionUnderlyingServer(input.underlyingSymbol))) {
+    return {
+      ok: false,
+      status: 400,
+      reason: `${input.underlyingSymbol} isn't NIFTY, BANKNIFTY, or a currently F&O-eligible stock — options aren't tradable on this symbol.`
+    };
+  }
+  const instrumentKind: "INDEX_OPTION" | "STOCK_OPTION" = isIndexUnderlyingServer(input.underlyingSymbol)
+    ? "INDEX_OPTION"
+    : "STOCK_OPTION";
 
   const expiryDate = parseNseExpiryDate(input.expiryDate);
   if (!expiryDate) {
@@ -214,7 +243,7 @@ export async function placeOptionOrder(userId: string, input: PlaceOptionOrderIn
       totalCosts: costs.totalCosts,
       netAmount: costs.netAmount,
       linkedOpinionId: input.linkedOpinionId ?? null,
-      instrumentKind: "INDEX_OPTION",
+      instrumentKind,
       underlyingSymbol: input.underlyingSymbol,
       optionType: input.optionType,
       strikePrice: input.strikePrice,
@@ -246,7 +275,8 @@ export async function placeOptionOrder(userId: string, input: PlaceOptionOrderIn
       totalCosts: true,
       netAmount: true,
       linkedOpinionId: true,
-      createdAt: true
+      createdAt: true,
+      instrumentKind: true
     }
   });
 

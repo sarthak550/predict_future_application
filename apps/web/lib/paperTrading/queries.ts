@@ -81,18 +81,18 @@ export interface OrderHistoryRow {
   isSquareOff: boolean;
   autoSquaredOff: boolean;
   createdAt: Date;
-  /** Phase 2 — discriminates the equity vs. option row shape below. */
-  instrumentKind: "EQUITY" | "INDEX_OPTION";
+  /** Phase 2 added INDEX_OPTION, Phase 3 added STOCK_OPTION — discriminates the equity vs. option row shape below, and (for an option row) which settlement mechanism applies. */
+  instrumentKind: "EQUITY" | "INDEX_OPTION" | "STOCK_OPTION";
   underlyingSymbol: string | null;
   optionType: "CE" | "PE" | null;
   strikePrice: number | null;
   expiryDate: Date | null;
   lotSize: number | null;
   lots: number | null;
-  squareOffReason: "INTRADAY_SESSION_CLOSE" | "OPTION_EXPIRY" | null;
+  squareOffReason: "INTRADAY_SESSION_CLOSE" | "OPTION_EXPIRY" | "STOCK_OPTION_EXPIRY_SQUAREOFF" | null;
 }
 
-/** Phase 2 — one open (or, for the lifetime rollup, ever-traded) index-option contract position. */
+/** Phase 2/3 — one open (or, for the lifetime rollup, ever-traded) option contract position (index OR stock). */
 export interface OptionPositionRow {
   underlyingSymbol: string;
   optionType: "CE" | "PE";
@@ -108,6 +108,8 @@ export interface OptionPositionRow {
   totalCosts: number;
   netPnl: number | null;
   daysToExpiry: number;
+  /** Phase 3 — which settlement mechanism this contract uses, for the positions-view badge (T8). */
+  instrumentKind: "INDEX_OPTION" | "STOCK_OPTION";
 }
 
 export interface PaperAccountDetail {
@@ -171,7 +173,8 @@ function toOptionPositionRow(
     unrealizedGrossPnl: unrealized,
     totalCosts: position.totalCosts,
     netPnl: unrealized !== null ? netPnl(position.realizedGrossPnl, unrealized, position.totalCosts) : null,
-    daysToExpiry: daysToExpiry(position.expiryDate)
+    daysToExpiry: daysToExpiry(position.expiryDate),
+    instrumentKind: position.instrumentKind
   };
 }
 
@@ -214,15 +217,15 @@ export async function getAccountDetail(userId: string): Promise<PaperAccountDeta
   const deliveryHoldingRows = currentDeliveryHoldings.map((p) => toPositionRow(p, ltpBySymbol.get(p.symbol) ?? null));
   const openIntradayRows = openIntraday.map((p) => toPositionRow(p, ltpBySymbol.get(p.symbol) ?? null));
 
-  // ── Phase 2: option positions ──────────────────────────────────────────────
+  // ── Phase 2/3: option positions (index OR stock) ────────────────────────────
   const allOptionPositions = deriveAllOptionPositions(engineOrders);
   const currentOptionPositions = allOptionPositions.filter((p) => p.quantity !== 0);
 
-  const neededChains = new Map<string, { underlying: "NIFTY" | "BANKNIFTY"; expiryStr: string }>();
+  const neededChains = new Map<string, { underlying: string; expiryStr: string }>();
   for (const p of currentOptionPositions) {
     const key = optionChainKey(p.underlyingSymbol, p.expiryDate);
     if (!neededChains.has(key)) {
-      neededChains.set(key, { underlying: p.underlyingSymbol as "NIFTY" | "BANKNIFTY", expiryStr: formatNseExpiryDate(p.expiryDate) });
+      neededChains.set(key, { underlying: p.underlyingSymbol, expiryStr: formatNseExpiryDate(p.expiryDate) });
     }
   }
   const chainEntries = await Promise.all(

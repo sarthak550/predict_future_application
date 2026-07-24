@@ -27,7 +27,8 @@ export interface OptionStrikeRow {
 }
 
 export interface OptionChainSnapshot {
-  underlying: "NIFTY" | "BANKNIFTY";
+  /** Phase 3: widened from "NIFTY" | "BANKNIFTY" to any validated string (index or F&O stock symbol). */
+  underlying: string;
   expiry: string;
   underlyingValue: number;
   asOf: Date | null;
@@ -36,16 +37,14 @@ export interface OptionChainSnapshot {
 }
 
 /**
- * Fetches the full option-chain snapshot for `underlying`/`expiry`. Returns
- * null on any upstream failure, timeout, or malformed response — callers
- * (order placement, the client pre-trade estimate's server round-trip) must
- * treat that as "no fill price available right now" (502), never fall back to
- * a stale/estimated premium for an actual fill.
+ * Fetches the full option-chain snapshot for `underlying`/`expiry` (index OR
+ * stock, Phase 2/3). Returns null on any upstream failure, timeout, or
+ * malformed response — callers (order placement, the client pre-trade
+ * estimate's server round-trip) must treat that as "no fill price available
+ * right now" (502), never fall back to a stale/estimated premium for an
+ * actual fill.
  */
-export async function fetchOptionChainSnapshot(
-  underlying: "NIFTY" | "BANKNIFTY",
-  expiry: string
-): Promise<OptionChainSnapshot | null> {
+export async function fetchOptionChainSnapshot(underlying: string, expiry: string): Promise<OptionChainSnapshot | null> {
   const apiBase = process.env.API_INTERNAL_URL ?? DEFAULT_API_INTERNAL_URL;
   const url = `${apiBase}/api/finance/options/chain?underlying=${encodeURIComponent(underlying)}&expiry=${encodeURIComponent(expiry)}`;
 

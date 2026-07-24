@@ -34,10 +34,22 @@ export const placePaperOrderSchema = z.object({
 /** Sanity ceiling on lots per order — not a real market-depth constraint, same judgment call as PAPER_TRADING_MAX_QUANTITY above. */
 export const PAPER_TRADING_MAX_OPTION_LOTS = 10_000;
 
+/**
+ * Phase 3 widened underlyingSymbol from a closed z.enum(["NIFTY","BANKNIFTY"])
+ * to a validated free-form string: the F&O stock universe (~210 names) changes
+ * over time (quarterly eligibility reviews), so it can never be a compile-time
+ * enum. Format/length is checked here (cheap, synchronous); ACTUAL membership
+ * (NIFTY/BANKNIFTY or a live F&O stock symbol) is re-validated server-side
+ * against the live universe in lib/paperTrading/optionOrders.ts's
+ * placeOptionOrder, which is the only place that can afford the async check.
+ */
 export const placePaperOptionOrderSchema = z.object({
-  underlyingSymbol: z.enum(["NIFTY", "BANKNIFTY"], {
-    errorMap: () => ({ message: "underlyingSymbol must be NIFTY or BANKNIFTY." })
-  }),
+  underlyingSymbol: z
+    .string()
+    .trim()
+    .min(1, "underlyingSymbol is required.")
+    .max(32, "underlyingSymbol is too long.")
+    .transform((value) => value.toUpperCase()),
   optionType: z.enum(["CE", "PE"]),
   strikePrice: z.number().positive("Strike price must be positive."),
   /** NSE's own "DD-MMM-YYYY" expiry string, exactly as returned by GET /api/paper-trading/options/expiries — re-validated server-side against the live chain, never trusted as-is for pricing. */
@@ -49,10 +61,11 @@ export const placePaperOptionOrderSchema = z.object({
     .min(1, "Lots must be at least 1.")
     .max(PAPER_TRADING_MAX_OPTION_LOTS, "Too many lots."),
   /**
-   * Set when the order was placed via "Paper trade this call" — same
-   * linkage semantics as placePaperOrderSchema above. Options legs are not
-   * currently wired to any CTA (Phase 2 scope), but the field is accepted for
-   * forward-compatibility with the shared PaperOrder.linkedOpinionId column.
+   * Set when the order was placed via "Paper trade this call" — same linkage
+   * semantics as placePaperOrderSchema above. Unused by Phase 2 (index options
+   * had no index-opinion pairing to exploit); wired for real by Phase 3's
+   * "Trade options on this call" secondary CTA (BULLISH -> CE, BEARISH -> PE
+   * on the linked call's F&O-eligible stock).
    */
   linkedOpinionId: z.string().trim().min(1).optional()
 });
