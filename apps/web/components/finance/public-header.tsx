@@ -17,6 +17,7 @@ const NAV_LINKS = [
   { href: "/analysts", label: "Analysts" },
   { href: "/opinions", label: "Opinions" },
   { href: "/pulse", label: "Market Pulse" },
+  { href: "/indices", label: "Indices" },
   { href: "/paper-trading", label: "Paper Trading" },
 ];
 

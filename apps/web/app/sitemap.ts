@@ -1,5 +1,6 @@
 import type { MetadataRoute } from "next";
 
+import { fetchAllIndices } from "@/lib/finance/indices";
 import { getPublicProfileStats } from "@/lib/finance/publicProfile";
 import { listPublicEligiblePortfolioSlugsForSitemap } from "@/lib/portfolios/queries";
 import { prisma } from "@/lib/prisma";
@@ -33,6 +34,13 @@ const SITE_URL = "https://predictfuture.app";
  * real, indexable page (app/portfolios/[slug]'s own robots directive doesn't
  * gate on eligibility), it's just not submitted to the sitemap until it has a
  * real track record, mirroring how /opinions only submits its bare URL.
+ *
+ * /indices/[slug] entries (All-Indices informational layer) are sourced from
+ * the SAME live NSE fetch every other /indices page uses (fetchAllIndices) —
+ * every index that page shows is indexable, so every one is submitted here
+ * too. `fetchAllIndices` never throws (returns null on any upstream
+ * failure); a null result here just means the index detail pages are
+ * omitted from this particular sitemap generation, not a broken build.
  */
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const latestQuoteSession = await prisma.stockEodQuote.findFirst({
@@ -81,6 +89,15 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     priority: 0.6,
   }));
 
+  const allIndices = await fetchAllIndices();
+  const now = new Date();
+  const indexEntries: MetadataRoute.Sitemap = (allIndices?.indices ?? []).map((row) => ({
+    url: `${SITE_URL}/indices/${row.slug}`,
+    lastModified: now,
+    changeFrequency: "daily",
+    priority: 0.4,
+  }));
+
   return [
     {
       url: SITE_URL,
@@ -112,8 +129,15 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       changeFrequency: "daily",
       priority: 0.6,
     },
+    {
+      url: `${SITE_URL}/indices`,
+      lastModified: new Date(),
+      changeFrequency: "hourly",
+      priority: 0.6,
+    },
     ...analystEntries,
     ...instrumentEntries,
     ...portfolioEntries,
+    ...indexEntries,
   ];
 }

@@ -2,17 +2,22 @@
 
 /**
  * Nav-bar global instrument search: type a stock or index name anywhere on
- * the site → jump straight to its /instruments/[symbol] page (price history,
- * analyst opinions, news, filings) without detouring through Market Pulse or
- * Paper Trading. Debounced against /api/instruments/search; keyboard: Enter
+ * the site → jump straight to the right page — a stock or F&O-tradable
+ * index goes to /instruments/[symbol] (price history, analyst opinions,
+ * news, filings), any other NSE index (All-Indices informational layer,
+ * e.g. "auto" -> NIFTY AUTO) goes to /indices/[slug]. The destination is
+ * resolved server-side (route.ts returns a ready `href` per result) — this
+ * component just renders label/sublabel and navigates, no route-templating
+ * logic here. Debounced against /api/instruments/search; keyboard: Enter
  * opens the top result, Escape closes.
  */
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 interface SearchResult {
-  symbol: string;
-  companyName: string;
+  href: string;
+  label: string;
+  sublabel: string | null;
 }
 
 const DEBOUNCE_MS = 250;
@@ -55,11 +60,11 @@ export function GlobalSymbolSearch() {
     return () => document.removeEventListener("pointerdown", onPointerDown);
   }, []);
 
-  function go(symbol: string) {
+  function go(href: string) {
     setOpen(false);
     setQuery("");
     setResults([]);
-    router.push(`/instruments/${encodeURIComponent(symbol)}`);
+    router.push(href);
   }
 
   return (
@@ -72,7 +77,7 @@ export function GlobalSymbolSearch() {
         }}
         onFocus={() => setOpen(true)}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && results.length > 0) go(results[0].symbol);
+          if (e.key === "Enter" && results.length > 0) go(results[0].href);
           if (e.key === "Escape") setOpen(false);
         }}
         placeholder="Search stocks & indices…"
@@ -88,13 +93,13 @@ export function GlobalSymbolSearch() {
           ) : (
             results.map((r) => (
               <button
-                key={r.symbol}
+                key={r.href}
                 type="button"
-                onClick={() => go(r.symbol)}
+                onClick={() => go(r.href)}
                 className="block w-full px-4 py-2.5 text-left transition hover:bg-ink-50"
               >
-                <span className="text-sm font-semibold text-ink-900">{r.symbol}</span>
-                {r.companyName && <span className="ml-2 text-xs text-ink-500">{r.companyName}</span>}
+                <span className="text-sm font-semibold text-ink-900">{r.label}</span>
+                {r.sublabel && <span className="ml-2 text-xs text-ink-500">{r.sublabel}</span>}
               </button>
             ))
           )}
