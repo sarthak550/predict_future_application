@@ -73,17 +73,16 @@ export function GlobalSymbolSearch() {
     setHighlightIdx(0);
   }, []);
 
-  // Debounced fetch.
+  // Debounced fetch. An empty/short query STILL fetches — the server returns
+  // per-tab "popular" defaults (today's movers, tradable indices, top ETFs)
+  // so the modal is useful before a single keystroke (founder spec).
   useEffect(() => {
+    if (!modalOpen) return;
     if (debounceRef.current) clearTimeout(debounceRef.current);
     const trimmed = query.trim();
-    if (trimmed.length < 2) {
-      setPayload(null);
-      return;
-    }
     debounceRef.current = setTimeout(() => {
       setLoading(true);
-      fetch(`/api/instruments/search?q=${encodeURIComponent(trimmed)}`)
+      fetch(`/api/instruments/search?q=${encodeURIComponent(trimmed.length >= 2 ? trimmed : "")}`)
         .then((r) => (r.ok ? r.json() : null))
         .then((data) => {
           setPayload(data ?? null);
@@ -95,7 +94,7 @@ export function GlobalSymbolSearch() {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [query]);
+  }, [query, modalOpen]);
 
   // Autofocus when the modal opens; Esc closes from anywhere in it.
   useEffect(() => {
@@ -180,9 +179,7 @@ export function GlobalSymbolSearch() {
             </div>
 
             <div className="min-h-[120px] flex-1 overflow-y-auto">
-              {query.trim().length < 2 ? (
-                <p className="px-5 py-6 text-sm text-ink-400">Type at least 2 characters to search.</p>
-              ) : loading && visibleResults.length === 0 ? (
+              {loading && visibleResults.length === 0 ? (
                 <p className="px-5 py-6 text-sm text-ink-400">Searching…</p>
               ) : visibleResults.length === 0 ? (
                 <p className="px-5 py-6 text-sm text-ink-400">{EMPTY_CATEGORY_COPY[activeCategory] ?? "No matches."}</p>

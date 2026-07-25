@@ -136,19 +136,23 @@ export default async function IndexDetailPage({ params }: { params: { slug: stri
       {(index.advances != null || index.declines != null || index.unchanged != null) && (
         <Card>
           <CardContent className="p-5">
-            <p className="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-ink-400">Constituent breadth</p>
+            <p className="mb-1 text-xs font-semibold uppercase tracking-[0.2em] text-ink-400">Member stocks today</p>
+            <p className="mb-3 text-xs text-ink-400">
+              How many of this index&apos;s member stocks rose or fell today — a broad move and a few-heavyweights move look very
+              different here.
+            </p>
             <div className="grid grid-cols-3 gap-4 text-center">
               <div>
                 <p className="text-xl font-semibold text-emerald-600">{index.advances ?? "—"}</p>
-                <p className="text-xs text-ink-400">Advances</p>
+                <p className="text-xs text-ink-400">Rose</p>
               </div>
               <div>
                 <p className="text-xl font-semibold text-rose-600">{index.declines ?? "—"}</p>
-                <p className="text-xs text-ink-400">Declines</p>
+                <p className="text-xs text-ink-400">Fell</p>
               </div>
               <div>
                 <p className="text-xl font-semibold text-ink-600">{index.unchanged ?? "—"}</p>
-                <p className="text-xs text-ink-400">Unchanged</p>
+                <p className="text-xs text-ink-400">Flat</p>
               </div>
             </div>
           </CardContent>

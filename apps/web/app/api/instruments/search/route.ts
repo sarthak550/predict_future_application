@@ -60,10 +60,113 @@ function isFundRow(row: { symbol: string; companyName: string }): boolean {
   );
 }
 
+/**
+ * Empty-query defaults (founder spec: "one can have top stocks/indices
+ * already there making search easier for popular assets") — the modal opens
+ * pre-populated per tab: today's actual top movers for Stocks (live
+ * MarketMoverSnapshot, popular universe), the 5 tradable indices + today's
+ * biggest-moving informational indices, top ETFs by traded volume, and the
+ * index option chains.
+ */
+async function buildDefaults(): Promise<NextResponse> {
+  const [allIndices, latestMoverSession, latestEodSession] = await Promise.all([
+    fetchAllIndices(),
+    prisma.marketMoverSnapshot.findFirst({ orderBy: { sessionDate: "desc" }, select: { sessionDate: true } }),
+    prisma.stockEodQuote.findFirst({ orderBy: { sessionDate: "desc" }, select: { sessionDate: true } }),
+  ]);
+
+  const [gainers, losers, topFunds] = await Promise.all([
+    latestMoverSession
+      ? prisma.marketMoverSnapshot.findMany({
+          where: { sessionDate: latestMoverSession.sessionDate, universe: "POPULAR", direction: "GAINER" },
+          orderBy: { changePercent: "desc" },
+          take: 3,
+          select: { tickerSymbol: true, companyName: true, changePercent: true },
+        })
+      : [],
+    latestMoverSession
+      ? prisma.marketMoverSnapshot.findMany({
+          where: { sessionDate: latestMoverSession.sessionDate, universe: "POPULAR", direction: "LOSER" },
+          orderBy: { changePercent: "asc" },
+          take: 3,
+          select: { tickerSymbol: true, companyName: true, changePercent: true },
+        })
+      : [],
+    latestEodSession
+      ? prisma.stockEodQuote.findMany({
+          where: {
+            sessionDate: latestEodSession.sessionDate,
+            OR: [{ symbol: { endsWith: "ETF" } }, { symbol: { endsWith: "BEES" } }, { symbol: { endsWith: "IETF" } }],
+          },
+          orderBy: { volume: "desc" },
+          take: MAX_PER_CATEGORY,
+          select: { symbol: true, companyName: true },
+        })
+      : [],
+  ]);
+
+  const pct = (v: number) => `${v >= 0 ? "+" : ""}${v.toFixed(2)}% today`;
+
+  const stockResults: SearchResultItem[] = [...gainers, ...losers].map((m) => ({
+    href: `/instruments/${m.tickerSymbol}`,
+    label: m.tickerSymbol,
+    sublabel: `${m.companyName} · ${pct(m.changePercent)}`,
+    category: "stock" as const,
+  }));
+
+  const topMovingInfoIndices = (allIndices?.indices ?? [])
+    .filter((idx) => !(idx.slug in INDEX_SLUG_TO_TRADABLE_UNDERLYING))
+    .sort((a, b) => Math.abs(b.changePercent ?? 0) - Math.abs(a.changePercent ?? 0))
+    .slice(0, 3);
+  const indexResults: SearchResultItem[] = [
+    ...TRADABLE_INDEX_ENTRIES.map((e) => ({
+      href: `/instruments/${e.symbol}`,
+      label: e.symbol,
+      sublabel: e.companyName,
+      category: "index" as const,
+    })),
+    ...topMovingInfoIndices.map((idx) => ({
+      href: `/indices/${idx.slug}`,
+      label: idx.name,
+      sublabel: idx.changePercent != null ? pct(idx.changePercent) : "NSE index",
+      category: "index" as const,
+    })),
+  ];
+
+  const fundResults: SearchResultItem[] = topFunds.map((r) => ({
+    href: `/instruments/${r.symbol}`,
+    label: r.symbol,
+    sublabel: r.companyName,
+    category: "fund" as const,
+  }));
+
+  const optionResults: SearchResultItem[] = TRADABLE_INDEX_ENTRIES.map((e) => ({
+    href: `/paper-trading/options?underlying=${encodeURIComponent(e.symbol)}`,
+    label: `${e.symbol} option chain`,
+    sublabel: "Paper Trading",
+    category: "option" as const,
+  }));
+
+  const allView: SearchResultItem[] = [
+    ...indexResults.slice(0, 2),
+    ...stockResults.slice(0, 4),
+    ...indexResults.slice(5, 7),
+    ...fundResults.slice(0, 1),
+    ...optionResults.slice(0, 1),
+  ].slice(0, MAX_ALL_VIEW);
+
+  const response = NextResponse.json({
+    results: allView,
+    byCategory: { index: indexResults, stock: stockResults, fund: fundResults, option: optionResults, bond: [], future: [] },
+  });
+  response.headers.set("Cache-Control", "public, max-age=120");
+  return response;
+}
+
 export async function GET(request: Request) {
   const q = new URL(request.url).searchParams.get("q")?.trim() ?? "";
   if (q.length < 2) {
-    return NextResponse.json({ results: [] });
+    return buildDefaults();
   }
 
   const needle = q.toUpperCase();
