@@ -11,13 +11,13 @@ import { SessionChip } from "@/components/finance/session-chip";
  * components/layout/app-shell.tsx) — so this header needs to work standalone
  * for a signed-out visitor arriving from Google or a shared WhatsApp link.
  */
-// Portfolios hidden 2026-07-25 (founder: launch later, not required now) —
-// the feature's code/crons stay live behind a redirect, only discovery is off.
+// Portfolios hidden 2026-07-25 (founder: launch later); Indices directory page
+// removed same day (founder: search categories replace it — /indices/[slug]
+// detail pages remain as search destinations).
 const NAV_LINKS = [
   { href: "/analysts", label: "Analysts" },
   { href: "/opinions", label: "Opinions" },
   { href: "/pulse", label: "Market Pulse" },
-  { href: "/indices", label: "Indices" },
   { href: "/paper-trading", label: "Paper Trading" },
 ];
 
