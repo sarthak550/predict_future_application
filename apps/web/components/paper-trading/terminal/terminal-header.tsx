@@ -4,9 +4,7 @@
  * Trading Terminal UI Overhaul (Sprint A, T4) — sticky header strip: spot +
  * day change (sourced from PriceChart's own onQuoteChange callback — no
  * second fetch, per the brief), account cash, today's trading P&L, total
- * (lifetime) net P&L. `expressControls` (options terminal only, T7) renders
- * the Express toggle + lots-preset selector inline in this same strip, per
- * the brief's exact placement spec.
+ * (lifetime) net P&L.
  *
  * Pure presentation — reads props only, no data fetching, no business logic.
  *
@@ -42,7 +40,6 @@ export function TerminalHeader({
   cash,
   todayPnl,
   totalPnl,
-  expressControls,
   navSlot
 }: {
   /** e.g. "RELIANCE" (equity terminal) or "NIFTY 24700 CE" (options terminal, once a contract is selected). */
@@ -52,8 +49,6 @@ export function TerminalHeader({
   /** Null while the account's order history hasn't loaded yet — renders a placeholder, never a fabricated 0. */
   todayPnl: number | null;
   totalPnl: number;
-  /** Options terminal only (T7) — the Express toggle + lots-preset chip row. */
-  expressControls?: ReactNode;
   /** Back link / Options-Equity cross-nav, "Calls I've traded", reset — kept out of this component's own concerns, just a slot. */
   navSlot?: ReactNode;
 }) {
@@ -93,7 +88,6 @@ export function TerminalHeader({
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          {expressControls}
           {navSlot}
         </div>
       </div>

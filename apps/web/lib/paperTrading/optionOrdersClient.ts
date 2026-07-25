@@ -2,10 +2,7 @@
  * Trading Terminal UI Overhaul (Sprint A, T6/T7) — the option-order submit
  * call, EXTRACTED from option-trade-panel.tsx's inline handleSubmit into a
  * standalone function so it has exactly ONE implementation shared by:
- *   - the docked ticket's manual "Confirm" click (Express OFF, or any
- *     manual fill regardless of Express state),
- *   - Express's instant-fill path (a ladder [B]/[S] tap while armed, which
- *     never opens the ticket at all).
+ *   - the docked ticket's manual "Confirm" click (the only order path),
  * Same endpoint, same request body shape, same response handling as before —
  * this is a pure extraction, not a new order-placement code path. The server
  * route (POST /api/paper-trading/options/orders -> lib/paperTrading/optionOrders.ts)

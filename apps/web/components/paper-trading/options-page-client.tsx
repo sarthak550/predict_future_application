@@ -5,15 +5,12 @@
  * /paper-trading/options page composition.
  *
  * Trading Terminal UI Overhaul (Sprint A, T6/T7) — rebuilt onto the shared
- * terminal shell: sticky header (spot + day/total P&L + cash + Express
- * controls), the underlying's spot chart LEFT, the restyled option chain
- * (inline [B]/[S] chips) CENTER, a DOCKED order ticket RIGHT that never
- * disappears off-screen, and a shared PositionsStrip (equity + option mixed)
- * pinned bottom. Express mode (options terminal only, per the brief's scope
- * decision) lets an armed [B]/[S] tap fill INSTANTLY at the selected lots
- * preset, bypassing the ticket's Confirm click entirely — every other tap
- * (Express off, or Express on but disarmed) still pre-fills the ticket for an
- * explicit Confirm, exactly as before.
+ * terminal shell: sticky header (spot + day/total P&L + cash), the
+ * underlying's spot chart LEFT, the restyled option chain (inline [B]/[S]
+ * chips) CENTER, a DOCKED order ticket RIGHT that never disappears
+ * off-screen, and a shared PositionsStrip (equity + option mixed) pinned
+ * bottom. Every [B]/[S] tap pre-fills the ticket for one explicit Confirm —
+ * that is the only order path.
  *
  * `?underlying=&optionType=&linkedOpinionId=` (PaperTradeCta's "Trade options
  * on this call") and `?underlying=&expiry=&strike=&optionType=&side=SELL`
@@ -35,17 +32,13 @@ import { useVisiblePolling } from "@/components/paper-trading/use-visible-pollin
 import type { PlacedOptionOrderPayload } from "@/components/paper-trading/option-trade-panel";
 import { PaperTradingDisclaimerFooter } from "@/components/paper-trading/paper-trading-disclaimer-footer";
 import { DockedOrderTicket } from "@/components/paper-trading/terminal/docked-order-ticket";
-import { ExpressAcknowledgeModal, ExpressControls } from "@/components/paper-trading/terminal/express-controls";
-import { ExpressFillToast } from "@/components/paper-trading/terminal/express-fill-toast";
 import { PositionsStrip, type PositionChip } from "@/components/paper-trading/terminal/positions-strip";
 import { TerminalHeader, type TerminalSpotQuote } from "@/components/paper-trading/terminal/terminal-header";
 import { TerminalShell } from "@/components/paper-trading/terminal/terminal-shell";
 import { useEodSeries } from "@/components/paper-trading/terminal/use-eod-series";
-import { useExpressMode, type ExpressModeState } from "@/components/paper-trading/terminal/use-express-mode";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { getLastLotsForContract, rememberLotsForContract } from "@/lib/paperTrading/lastLotsMemory";
-import { submitOptionOrder } from "@/lib/paperTrading/optionOrdersClient";
+import { getLastLotsForContract } from "@/lib/paperTrading/lastLotsMemory";
 
 type LoadState = "loading" | "signed-out" | "ready";
 
@@ -97,43 +90,16 @@ function isIndexUnderlying(symbol: string): boolean {
  * deliberate user action (this is a signed-in personal utility page, not a
  * hot path) — same reasoning documented inline on `autoSelectedRef` below.
  *
- * QA FIX (2026-07-25, blocking bug on the first Sprint A QA pass): Express's
- * `armed` state MUST NOT live inside the remounted inner component — a
- * remount would silently re-derive `armed` from the persisted `enabled`
- * preference on every deep-link navigation, including one that happens
- * shortly after an auto-disarm (idle timeout or tab-hidden) fired with the
- * SAME persisted `enabled=true` still on disk. That re-arms Express with
- * zero explicit re-tap, directly violating "re-arming after any disarm
- * requires an explicit tap, never automatic." `useExpressMode()` is called
- * HERE instead — in the stable OUTER wrapper, which never remounts on a
- * searchParams change — so `armed` (and every other piece of Express's
- * session state) survives a deep-link-triggered inner remount exactly like
- * it would survive any other in-page re-render. The ONLY thing that still
- * resets Express state is a genuine fresh mount of this whole page (a real
- * navigation TO /paper-trading/options, e.g. a hard reload or a link from
- * elsewhere in the app) — which is exactly the "mounts with the tab visible"
- * moment the brief's auto-re-arm rule is describing.
- *
- * Chosen behavior for the two QA-specified cases:
- *   1. Armed → idle-disarms (or tab-hidden-disarms) → Sell-chip navigation
- *      (remount) → Express stays DISARMED, requires an explicit re-tap.
- *      (`armed` React state here is untouched by the child remount — it was
- *      already `false` from the disarm, and nothing re-derives it.)
- *   2. Armed → Sell-chip navigation immediately (no disarm event happened)
- *      → Express STAYS ARMED across the remount. This is deliberate: the
- *      remount is an implementation detail of the deep-link fix, not a real
- *      "leaving and returning to the terminal" — the guardrail cares about
- *      idle/hidden risk, not about internal re-render mechanics, and
- *      forcing a re-tap on every ordinary in-page navigation would be
- *      friction the spec never asked for.
+ * (Express mode lived here in the first Sprint A cut; the founder cut the
+ * feature on 2026-07-25 — every ladder tap now pre-fills the docked ticket
+ * for one explicit Confirm, no instant-fill path exists.)
  */
 export function OptionsPageClient() {
   const searchParams = useSearchParams();
-  const express = useExpressMode();
-  return <OptionsPageClientInner key={searchParams.toString()} express={express} />;
+  return <OptionsPageClientInner key={searchParams.toString()} />;
 }
 
-function OptionsPageClientInner({ express }: { express: ExpressModeState }) {
+function OptionsPageClientInner() {
   const searchParams = useSearchParams();
   const deepLinkUnderlying = searchParams.get("underlying");
   const deepLinkOptionTypeRaw = searchParams.get("optionType");
@@ -154,8 +120,6 @@ function OptionsPageClientInner({ express }: { express: ExpressModeState }) {
   const [selectionNonce, setSelectionNonce] = useState(0);
 
   const [lastOrder, setLastOrder] = useState<PlacedOptionOrderPayload | null>(null);
-  const [expressToastOrder, setExpressToastOrder] = useState<PlacedOptionOrderPayload | null>(null);
-  const [showAcknowledgeModal, setShowAcknowledgeModal] = useState(false);
 
   const [chartUnderlying, setChartUnderlying] = useState<string | null>(deepLinkUnderlying);
   const [chartQuote, setChartQuote] = useState<TerminalSpotQuote | null>(null);
@@ -203,11 +167,9 @@ function OptionsPageClientInner({ express }: { express: ExpressModeState }) {
   // this ref rather than being silently swallowed by a stale "already used"
   // guard.)
   const autoSelectedRef = useRef(false);
-  const latestChainRef = useRef<OptionChainSnapshot | null>(null);
 
   const handleChainData = useCallback(
     (chain: OptionChainSnapshot) => {
-      latestChainRef.current = chain;
       setChartUnderlying((prev) => (prev === chain.underlying ? prev : chain.underlying));
 
       if (
@@ -298,65 +260,9 @@ function OptionsPageClientInner({ express }: { express: ExpressModeState }) {
     setSelectionNonce((n) => n + 1);
   }
 
-  async function fireExpressOrder(contract: SelectedContract, side: "BUY" | "SELL") {
-    const held = side === "SELL" ? getHeldLots(contract.underlying, contract.strikePrice, contract.optionType, contract.expiry) : Infinity;
-    const lots = side === "SELL" ? Math.min(express.lotsPreset, held) : express.lotsPreset;
-    if (side === "SELL" && lots <= 0) return; // defensive — the chip should already be disabled
-
-    const result = await submitOptionOrder({
-      underlyingSymbol: contract.underlying,
-      optionType: contract.optionType,
-      strikePrice: contract.strikePrice,
-      expiryDate: contract.expiry,
-      side,
-      lots,
-      linkedOpinionId: deepLinkOpinionId
-    });
-    express.noteActivity();
-    if (!result.ok) {
-      setError(result.error);
-      return;
-    }
-    rememberLotsForContract(contract.underlying, contract.strikePrice, contract.optionType, contract.expiry, lots);
-    setExpressToastOrder(result.order);
-    void loadAccount();
-  }
-
-  function handleLadderAction(contract: SelectedContract, side: "BUY" | "SELL") {
-    if (express.armed) {
-      void fireExpressOrder(contract, side);
-    } else {
-      openTicketForLadderTap(contract, side);
-    }
-  }
-
-  function handleReverse(order: PlacedOptionOrderPayload) {
-    const oppositeSide: "BUY" | "SELL" = order.side === "BUY" ? "SELL" : "BUY";
-    const expiryNse = formatNseExpiryDate(new Date(order.expiryDate));
-    const chain = latestChainRef.current;
-    const livePremium =
-      chain && chain.underlying === order.underlyingSymbol && chain.expiry === expiryNse
-        ? (chain.strikes.find((s) => s.strikePrice === order.strikePrice)?.[order.optionType]?.lastPrice ?? order.fillPrice)
-        : order.fillPrice;
-    const underlyingValue = chain && chain.underlying === order.underlyingSymbol ? chain.underlyingValue : order.fillPrice;
-
-    setSelectedContract({
-      underlying: order.underlyingSymbol,
-      expiry: expiryNse,
-      strikePrice: order.strikePrice,
-      optionType: order.optionType,
-      premium: livePremium,
-      lotSize: order.lotSize,
-      underlyingValue
-    });
-    // Reverse ALWAYS pre-fills for an explicit Confirm — never an instant
-    // Express fire, even while Express is armed (per the brief: "a reversal
-    // always requires the explicit Confirm click, never fires instantly").
-    setPresetSide(oppositeSide);
-    setPresetLots(order.lots);
-    setSelectionNonce((n) => n + 1);
-    setExpressToastOrder(null);
-  }
+  // Every ladder [B]/[S] tap pre-fills the docked ticket for one explicit
+  // Confirm — the only order path. (Express instant-fill was cut 2026-07-25.)
+  const handleLadderAction = openTicketForLadderTap;
 
   if (state === "loading") {
     return (
@@ -439,15 +345,6 @@ function OptionsPageClientInner({ express }: { express: ExpressModeState }) {
             cash={account.cash}
             todayPnl={account.todayNetPnl}
             totalPnl={account.lifetimeNetPnl}
-            expressControls={
-              <ExpressControls
-                express={express}
-                onToggleTap={() => {
-                  const result = express.handleToggleTap();
-                  if (result === "needs-acknowledgement") setShowAcknowledgeModal(true);
-                }}
-              />
-            }
             navSlot={
               <Link href="/paper-trading">
                 <Button variant="secondary" size="sm">
@@ -480,27 +377,12 @@ function OptionsPageClientInner({ express }: { express: ExpressModeState }) {
             presetLots={presetLots}
             onOrderPlaced={(order) => {
               setLastOrder(order);
-              express.noteActivity();
               void loadAccount();
             }}
           />
         }
         positions={<PositionsStrip positions={positionChips} />}
       />
-
-      {expressToastOrder && (
-        <ExpressFillToast order={expressToastOrder} onReverse={() => handleReverse(expressToastOrder)} onDismiss={() => setExpressToastOrder(null)} />
-      )}
-
-      {showAcknowledgeModal && (
-        <ExpressAcknowledgeModal
-          onConfirm={() => {
-            express.confirmAcknowledgementAndEnable();
-            setShowAcknowledgeModal(false);
-          }}
-          onCancel={() => setShowAcknowledgeModal(false)}
-        />
-      )}
 
       <PaperTradingDisclaimerFooter />
     </div>

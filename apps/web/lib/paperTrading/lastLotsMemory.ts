@@ -1,7 +1,7 @@
 /**
  * Trading Terminal UI Overhaul (Sprint A, T6) — remembers the last lot count
- * used for each specific option contract, so a ladder [B]/[S] tap (Express
- * OFF) can default to "the last-used lot count for that contract, or 1" per
+ * used for each specific option contract, so a ladder [B]/[S] tap
+ * can default to "the last-used lot count for that contract, or 1" per
  * the brief's exact spec. Device-wide, localStorage-backed, bounded to a
  * small most-recently-used set (a Paper Trading account only ever touches a
  * handful of distinct contracts in practice — no need for a real LRU).

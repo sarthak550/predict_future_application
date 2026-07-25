@@ -11,8 +11,7 @@
  * value + a compact [B]/[S] chip pair (Trading Terminal UI Overhaul, Sprint A
  * T6 — replaces the original single clickable premium cell); tapping a chip
  * calls onSelectContract(contract, side), which options-page-client.tsx uses
- * to pre-fill the terminal's DOCKED order ticket (or, if Express mode is
- * armed, to fire an instant fill — see that file for the Express wiring).
+ * to pre-fill the terminal's DOCKED order ticket for one explicit Confirm.
  *
  * Index mode is pixel-identical to pre-Phase-3 behavior — the NIFTY/BANKNIFTY
  * toggle, strike ladder, ATM highlighting, 30s live-polling UX, and
