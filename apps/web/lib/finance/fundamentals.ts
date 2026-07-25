@@ -304,3 +304,35 @@ export async function fetchKeyStats(symbol: string): Promise<KeyStats | null> {
   put("trailingEps", raw(ks, "trailingEps"));
   return stats;
 }
+
+// ── Debt level and coverage (TradingView-style, founder 2026-07-26) ──────────
+
+/** Each series null when Yahoo has no coverage. Quarterly FCF is empty for NSE names (cash-flow reports annually); balance-sheet items report semi-annually — expect ~2 quarterly points, not 4. Verified EC2 2026-07-26: RELIANCE annualTotalDebt 3.98T / annualFreeCashFlow 691.97B / annualCashAndCashEquivalents 1.37T, 4 pts each. */
+export interface DebtCoverage {
+  annualDebt: FundamentalsPoint[] | null;
+  annualFreeCashFlow: FundamentalsPoint[] | null;
+  annualCash: FundamentalsPoint[] | null;
+  quarterlyDebt: FundamentalsPoint[] | null;
+  quarterlyCash: FundamentalsPoint[] | null;
+}
+
+export async function fetchDebtCoverage(symbol: string): Promise<DebtCoverage> {
+  const map = await fetchFundamentalsTimeseries(
+    symbol,
+    [
+      "annualTotalDebt",
+      "annualFreeCashFlow",
+      "annualCashAndCashEquivalents",
+      "quarterlyTotalDebt",
+      "quarterlyCashAndCashEquivalents",
+    ],
+    ANNUAL_LOOKBACK_YEARS
+  );
+  return {
+    annualDebt: map.get("annualTotalDebt") ?? null,
+    annualFreeCashFlow: map.get("annualFreeCashFlow") ?? null,
+    annualCash: map.get("annualCashAndCashEquivalents") ?? null,
+    quarterlyDebt: map.get("quarterlyTotalDebt") ?? null,
+    quarterlyCash: map.get("quarterlyCashAndCashEquivalents") ?? null,
+  };
+}

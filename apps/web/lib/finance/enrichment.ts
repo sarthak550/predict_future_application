@@ -25,9 +25,11 @@ import {
   fetchAnnualFundamentals,
   fetchDividendHistory,
   fetchQuarterlyFundamentals,
+  fetchDebtCoverage,
   fetchKeyStats,
   type DividendPoint,
   type FundamentalsPoint,
+  type DebtCoverage,
   type KeyStats,
 } from "@/lib/finance/fundamentals";
 import { fetchGoogleNewsForTicker } from "@/lib/finance/googleNews";
@@ -49,6 +51,8 @@ export type InstrumentEnrichmentData = {
   dividends: DividendPoint[] | null;
   /** TradingView-style Key Stats snapshot (crumb-authenticated Yahoo quoteSummary) — null until first successful fetch. */
   keyStats: KeyStats | null;
+  /** Debt level and coverage series — null until first successful fetch. */
+  debtCoverage: DebtCoverage | null;
   /** Null = never successfully attempted. Surfaced so the UI can caption "as of <date>" per the house honesty convention. */
   fundamentalsFetchedAt: Date | null;
 };
@@ -63,6 +67,7 @@ export const EMPTY_INSTRUMENT_ENRICHMENT: InstrumentEnrichmentData = {
   quarterlyDilutedEps: null,
   dividends: null,
   keyStats: null,
+  debtCoverage: null,
   fundamentalsFetchedAt: null,
 };
 
@@ -90,10 +95,11 @@ async function refreshFundamentalsInBackground(symbol: string, companyName: stri
     return;
   }
 
-  const [annual, quarterly, dividends] = await Promise.all([
+  const [annual, quarterly, dividends, debtCoverage] = await Promise.all([
     fetchAnnualFundamentals(symbol),
     fetchQuarterlyFundamentals(symbol),
     fetchDividendHistory(symbol),
+    fetchDebtCoverage(symbol),
   ]);
 
   const data: Prisma.InstrumentEnrichmentUpdateInput = {};
@@ -106,6 +112,8 @@ async function refreshFundamentalsInBackground(symbol: string, companyName: stri
   // dividends: null means the fetch itself failed (keep old value); [] is a
   // valid "no dividends declared" answer and MUST be written, not skipped.
   if (dividends !== null) data.dividends = dividends as Prisma.InputJsonValue;
+  // debtCoverage: write when ANY series returned — per-series absence inside the blob is the honest signal.
+  if (Object.values(debtCoverage).some((s) => s !== null)) data.debtCoverage = debtCoverage as unknown as Prisma.InputJsonValue;
 
   if (Object.keys(data).length === 0) return; // total failure across every series — nothing to persist.
 
@@ -216,6 +224,7 @@ export async function getOrFetchInstrumentEnrichment(
     quarterlyDilutedEps: (row.quarterlyDilutedEps as FundamentalsPoint[] | null) ?? null,
     dividends: (row.dividends as DividendPoint[] | null) ?? null,
     keyStats: (row.keyStats as KeyStats | null) ?? null,
+    debtCoverage: (row.debtCoverage as DebtCoverage | null) ?? null,
     fundamentalsFetchedAt: row.fundamentalsFetchedAt,
   };
 }
@@ -250,4 +259,28 @@ async function refreshKeyStatsInBackground(symbol: string, companyName: string):
   } catch (err) {
     console.error(`[enrichment] key-stats result-write failed for ${symbol}:`, err);
   }
+}
+
+/**
+ * Warm-up batch processor for the warm-enrichment cron: awaits the SAME
+ * refresh functions the read-through path fires (fundamentals + key stats;
+ * news stays visit-driven — pre-fetching Google News for 2,100 unvisited
+ * symbols would be ~waste and rate-limit risk for pages nobody opened).
+ * Sequential with a small politeness delay between symbols.
+ */
+export async function warmEnrichmentBatch(
+  batch: { symbol: string; companyName: string }[]
+): Promise<{ processed: number; symbols: string[] }> {
+  const symbols: string[] = [];
+  for (const { symbol, companyName } of batch) {
+    try {
+      await refreshFundamentalsInBackground(symbol, companyName);
+      await refreshKeyStatsInBackground(symbol, companyName);
+      symbols.push(symbol);
+    } catch (err) {
+      console.error(`[enrichment] warm batch failed for ${symbol}:`, err);
+    }
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  return { processed: symbols.length, symbols };
 }

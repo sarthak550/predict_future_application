@@ -28,6 +28,14 @@ export type FundamentalsPanelProps = {
   quarterlyNetIncome: FundamentalsPoint[] | null;
   quarterlyDilutedEps: FundamentalsPoint[] | null;
   dividends: DividendPoint[] | null;
+  /** Debt level and coverage (three series aligned by period) — null until fetched; individual series may be absent (esp. quarterly). */
+  debtCoverage: {
+    annualDebt: FundamentalsPoint[] | null;
+    annualFreeCashFlow: FundamentalsPoint[] | null;
+    annualCash: FundamentalsPoint[] | null;
+    quarterlyDebt: FundamentalsPoint[] | null;
+    quarterlyCash: FundamentalsPoint[] | null;
+  } | null;
   /** TradingView-style Key Stats (founder request 2026-07-26) — null until the crumb-authenticated snapshot lands. */
   keyStats: {
     marketCap?: number;
@@ -77,6 +85,9 @@ const REVENUE_COLOR = "#2563eb"; // house blue
 const NET_INCOME_COLOR = "#10b981"; // emerald
 const EPS_COLOR = "#0ea5e9"; // sky
 const DIVIDEND_COLOR = "#f59e0b"; // amber — dividends visually distinct from the earnings series
+const DEBT_COLOR = "#ec4899"; // pink (TradingView convention)
+const FCF_COLOR = "#14b8a6"; // teal
+const CASH_COLOR = "#3b82f6"; // blue
 
 interface PeriodGroup {
   label: string;
@@ -267,6 +278,118 @@ function SmallBars({
   );
 }
 
+/** Debt level and coverage — three series aligned by period (TradingView-style; founder 2026-07-26). Same readout/hover conventions as FinancialsBars. */
+function DebtCoverageBars({
+  debt,
+  freeCashFlow,
+  cash,
+  mode,
+}: {
+  debt: FundamentalsPoint[] | null;
+  freeCashFlow: FundamentalsPoint[] | null;
+  cash: FundamentalsPoint[] | null;
+  mode: "annual" | "quarterly";
+}) {
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+
+  const byPeriod = new Map<string, { label: string; debt: number | null; fcf: number | null; cash: number | null }>();
+  const put = (series: FundamentalsPoint[] | null, key: "debt" | "fcf" | "cash") => {
+    for (const p of series ?? []) {
+      const existing = byPeriod.get(p.periodEnd) ?? {
+        label: compactPeriodLabel(p.periodEnd, mode),
+        debt: null,
+        fcf: null,
+        cash: null,
+      };
+      existing[key] = p.value;
+      byPeriod.set(p.periodEnd, existing);
+    }
+  };
+  put(debt, "debt");
+  put(freeCashFlow, "fcf");
+  put(cash, "cash");
+  const groups = [...byPeriod.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, g]) => g);
+  const values = groups.flatMap((g) => [g.debt, g.fcf, g.cash]).filter((v): v is number => v != null);
+  if (values.length === 0) return null;
+
+  const maxV = Math.max(...values, 0);
+  const minV = Math.min(...values, 0);
+  const span = maxV - minV || 1;
+  const AXIS_W = 56;
+  const innerW = CHART_W - CHART_PAD.left - CHART_PAD.right - AXIS_W;
+  const innerH = CHART_H - CHART_PAD.top - CHART_PAD.bottom;
+  const groupW = innerW / groups.length;
+  const barW = Math.min(20, groupW / 4.5);
+  const y = (v: number) => CHART_PAD.top + ((maxV - v) / span) * innerH;
+  const zeroY = y(0);
+  const active = groups[hoverIdx ?? groups.length - 1];
+
+  const bar = (cx: number, v: number | null, color: string) =>
+    v != null && (
+      <rect x={cx} width={barW} y={Math.min(y(v), zeroY)} height={Math.max(2, Math.abs(y(v) - zeroY))} rx={3} fill={color} />
+    );
+
+  return (
+    <div>
+      <p className="mb-1 text-xs text-ink-600">
+        <span className="font-semibold text-ink-900">{active.label}</span>
+        {active.debt != null && (
+          <>
+            {" · "}Debt <span className="font-semibold" style={{ color: DEBT_COLOR }}>{formatCompactINR(active.debt)}</span>
+          </>
+        )}
+        {active.fcf != null && (
+          <>
+            {" · "}Free cash flow <span className="font-semibold" style={{ color: FCF_COLOR }}>{formatCompactINR(active.fcf)}</span>
+          </>
+        )}
+        {active.cash != null && (
+          <>
+            {" · "}Cash <span className="font-semibold" style={{ color: CASH_COLOR }}>{formatCompactINR(active.cash)}</span>
+          </>
+        )}
+      </p>
+      <svg
+        viewBox={`0 0 ${CHART_W} ${CHART_H}`}
+        className="w-full touch-none"
+        role="img"
+        aria-label="Debt, free cash flow and cash by period"
+        onPointerLeave={() => setHoverIdx(null)}
+      >
+        {[maxV, (maxV + Math.min(minV, 0)) / 2].map((gv) => (
+          <g key={gv}>
+            <line x1={CHART_PAD.left} x2={CHART_W - CHART_PAD.right - AXIS_W} y1={y(gv)} y2={y(gv)} stroke="#f1f5f9" strokeWidth="1" />
+            <text x={CHART_W - CHART_PAD.right - AXIS_W + 6} y={y(gv) + 3} fontSize="10" fill="#94a3b8">
+              {formatCompactINR(gv)}
+            </text>
+          </g>
+        ))}
+        <line x1={CHART_PAD.left} x2={CHART_W - CHART_PAD.right - AXIS_W} y1={zeroY} y2={zeroY} stroke="#e2e8f0" strokeWidth="1" />
+        {groups.map((g, i) => {
+          const cx = CHART_PAD.left + groupW * i + groupW / 2;
+          const dim = hoverIdx !== null && hoverIdx !== i;
+          return (
+            <g key={g.label} opacity={dim ? 0.35 : 1} onPointerEnter={() => setHoverIdx(i)} onPointerDown={() => setHoverIdx(i)}>
+              <rect x={CHART_PAD.left + groupW * i} y={0} width={groupW} height={CHART_H} fill="transparent" />
+              {bar(cx - barW * 1.5 - 3, g.debt, DEBT_COLOR)}
+              {bar(cx - barW / 2, g.fcf, FCF_COLOR)}
+              {bar(cx + barW / 2 + 3, g.cash, CASH_COLOR)}
+              <text x={cx} y={CHART_H - 8} textAnchor="middle" fontSize="11" fill={dim ? "#cbd5e1" : "#94a3b8"}>
+                {g.label}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+      <div className="mt-1 flex flex-wrap gap-4">
+        <LegendDot color={DEBT_COLOR} label="Debt" />
+        <LegendDot color={FCF_COLOR} label="Free cash flow" />
+        <LegendDot color={CASH_COLOR} label="Cash & equivalents" />
+      </div>
+    </div>
+  );
+}
+
 function EpsBars({ points, mode }: { points: FundamentalsPoint[]; mode: "annual" | "quarterly" }) {
   return (
     <SmallBars
@@ -296,6 +419,7 @@ export function FundamentalsPanel({
   quarterlyNetIncome,
   quarterlyDilutedEps,
   dividends,
+  debtCoverage,
   keyStats,
   fetchedAt,
 }: FundamentalsPanelProps) {
@@ -388,6 +512,18 @@ export function FundamentalsPanel({
               <div>
                 <p className="mb-1 text-xs font-semibold text-ink-500">Diluted EPS (₹)</p>
                 <EpsBars points={eps} mode={activeMode} />
+              </div>
+            )}
+
+            {debtCoverage && (
+              <div>
+                <p className="mb-1 text-xs font-semibold text-ink-500">Debt level and coverage</p>
+                <DebtCoverageBars
+                  debt={activeMode === "annual" ? debtCoverage.annualDebt : debtCoverage.quarterlyDebt}
+                  freeCashFlow={activeMode === "annual" ? debtCoverage.annualFreeCashFlow : null}
+                  cash={activeMode === "annual" ? debtCoverage.annualCash : debtCoverage.quarterlyCash}
+                  mode={activeMode}
+                />
               </div>
             )}
           </div>

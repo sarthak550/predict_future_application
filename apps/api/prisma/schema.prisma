@@ -2026,6 +2026,13 @@ model InstrumentEnrichment {
   /// [{ date: ISO date string, amount: number (raw INR per share) }], oldest first.
   dividends Json?
 
+  /// Debt level and coverage (TradingView-style, founder 2026-07-26):
+  /// { annualDebt, annualFreeCashFlow, annualCash, quarterlyDebt,
+  ///   quarterlyCash: FundamentalsPoint[] } — series Yahoo omits are absent
+  /// (quarterly FCF is empty for NSE names; balance-sheet items report
+  /// semi-annually in India).
+  debtCoverage Json?
+
   /// Last successful-or-attempted fundamentals fetch. Null = never fetched.
   /// A background refresh triggers when this is null or older than the
   /// 7-day TTL (Decision 1) — checked, not enforced, by enrichment.ts.

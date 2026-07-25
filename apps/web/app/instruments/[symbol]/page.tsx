@@ -171,6 +171,7 @@ export default async function InstrumentDetailPage({
         quarterlyDilutedEps={instrument.enrichment.quarterlyDilutedEps}
         dividends={instrument.enrichment.dividends}
         keyStats={instrument.enrichment.keyStats}
+        debtCoverage={instrument.enrichment.debtCoverage}
         fetchedAt={instrument.enrichment.fundamentalsFetchedAt}
       />
 
