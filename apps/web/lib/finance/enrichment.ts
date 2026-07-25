@@ -25,13 +25,17 @@ import {
   fetchAnnualFundamentals,
   fetchDividendHistory,
   fetchQuarterlyFundamentals,
+  fetchKeyStats,
   type DividendPoint,
   type FundamentalsPoint,
+  type KeyStats,
 } from "@/lib/finance/fundamentals";
 import { fetchGoogleNewsForTicker } from "@/lib/finance/googleNews";
 
 /** Fundamentals are quarterly-cadence data — a week-old cache is still fresh. */
 const FUNDAMENTALS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/** Key stats include trailing P/E which moves with price — refresh daily, not weekly. */
+const KEY_STATS_TTL_MS = 24 * 60 * 60 * 1000;
 /** News moves intraday — recheck a visited long-tail symbol every 6h, matching the Market Pulse cron's own freshness bar for its universe. */
 const NEWS_TTL_MS = 6 * 60 * 60 * 1000;
 
@@ -43,6 +47,8 @@ export type InstrumentEnrichmentData = {
   quarterlyNetIncome: FundamentalsPoint[] | null;
   quarterlyDilutedEps: FundamentalsPoint[] | null;
   dividends: DividendPoint[] | null;
+  /** TradingView-style Key Stats snapshot (crumb-authenticated Yahoo quoteSummary) — null until first successful fetch. */
+  keyStats: KeyStats | null;
   /** Null = never successfully attempted. Surfaced so the UI can caption "as of <date>" per the house honesty convention. */
   fundamentalsFetchedAt: Date | null;
 };
@@ -56,6 +62,7 @@ export const EMPTY_INSTRUMENT_ENRICHMENT: InstrumentEnrichmentData = {
   quarterlyNetIncome: null,
   quarterlyDilutedEps: null,
   dividends: null,
+  keyStats: null,
   fundamentalsFetchedAt: null,
 };
 
@@ -191,6 +198,13 @@ export async function getOrFetchInstrumentEnrichment(
     );
   }
 
+  const keyStatsStale = !row?.keyStatsFetchedAt || Date.now() - row.keyStatsFetchedAt.getTime() > KEY_STATS_TTL_MS;
+  if (keyStatsStale) {
+    void refreshKeyStatsInBackground(symbol, companyName).catch((err) =>
+      console.error(`[enrichment] unhandled key-stats refresh error for ${symbol}:`, err)
+    );
+  }
+
   if (!row) return EMPTY_INSTRUMENT_ENRICHMENT;
 
   return {
@@ -201,6 +215,39 @@ export async function getOrFetchInstrumentEnrichment(
     quarterlyNetIncome: (row.quarterlyNetIncome as FundamentalsPoint[] | null) ?? null,
     quarterlyDilutedEps: (row.quarterlyDilutedEps as FundamentalsPoint[] | null) ?? null,
     dividends: (row.dividends as DividendPoint[] | null) ?? null,
+    keyStats: (row.keyStats as KeyStats | null) ?? null,
     fundamentalsFetchedAt: row.fundamentalsFetchedAt,
   };
+}
+
+/**
+ * Background Key Stats refresh — same optimistic-lock pattern as the
+ * fundamentals refresher: stamp keyStatsFetchedAt FIRST (cheap race guard),
+ * then fetch via the crumb session and persist only on success (a transport/
+ * auth failure keeps yesterday's snapshot rather than blanking it).
+ */
+async function refreshKeyStatsInBackground(symbol: string, companyName: string): Promise<void> {
+  const now = new Date();
+  try {
+    await prisma.instrumentEnrichment.upsert({
+      where: { symbol },
+      update: { keyStatsFetchedAt: now, companyName },
+      create: { symbol, companyName, keyStatsFetchedAt: now },
+    });
+  } catch (err) {
+    console.error(`[enrichment] key-stats lock-write failed for ${symbol}:`, err);
+    return;
+  }
+
+  const stats = await fetchKeyStats(symbol);
+  if (!stats || Object.keys(stats).length === 0) return; // fail/empty → keep previous snapshot
+
+  try {
+    await prisma.instrumentEnrichment.update({
+      where: { symbol },
+      data: { keyStats: stats as Prisma.InputJsonValue },
+    });
+  } catch (err) {
+    console.error(`[enrichment] key-stats result-write failed for ${symbol}:`, err);
+  }
 }

@@ -134,7 +134,8 @@ export default async function InstrumentDetailPage({
           </Card>
         ) : (
           <Card>
-            <CardContent>
+            {/* Founder 2026-07-26: every call visible — the card scrolls instead of truncating at 10. */}
+            <CardContent className="max-h-[560px] overflow-y-auto">
               <ExpandableCallsTable
                 calls={instrument.opinions.map((o) => ({
                   id: o.id,
@@ -169,6 +170,7 @@ export default async function InstrumentDetailPage({
         quarterlyNetIncome={instrument.enrichment.quarterlyNetIncome}
         quarterlyDilutedEps={instrument.enrichment.quarterlyDilutedEps}
         dividends={instrument.enrichment.dividends}
+        keyStats={instrument.enrichment.keyStats}
         fetchedAt={instrument.enrichment.fundamentalsFetchedAt}
       />
 

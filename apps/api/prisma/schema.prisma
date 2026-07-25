@@ -2031,6 +2031,14 @@ model InstrumentEnrichment {
   /// 7-day TTL (Decision 1) — checked, not enforced, by enrichment.ts.
   fundamentalsFetchedAt DateTime?
 
+  /// TradingView-style Key Stats snapshot from Yahoo quoteSummary (crumb-
+  /// authenticated — see lib/finance/yahooCrumb.ts): { marketCap, trailingPE,
+  /// dividendYield, beta, floatShares, trailingEps }, raw values. Missing
+  /// fields omitted, never zeroed. Shorter TTL than fundamentals (P/E moves
+  /// with price daily) — 1 day, gated on keyStatsFetchedAt.
+  keyStats          Json?
+  keyStatsFetchedAt DateTime?
+
   /// Last time the on-demand news refresh ran for this symbol, hit or miss
   /// (set optimistically BEFORE the fetch, as a cheap check-and-set race
   /// guard — see enrichment.ts). Independent of fundamentalsFetchedAt: gates

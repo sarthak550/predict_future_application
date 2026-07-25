@@ -60,6 +60,8 @@
  * 10,000,000 again on top of this (that would be a double-conversion bug).
  */
 
+import { fetchQuoteSummary } from "@/lib/finance/yahooCrumb";
+
 const FUNDAMENTALS_TIMESERIES_BASE =
   "https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries";
 const CHART_BASE = "https://query1.finance.yahoo.com/v8/finance/chart";
@@ -252,4 +254,53 @@ export async function fetchDividendHistory(symbol: string): Promise<DividendPoin
   }
 
   return points.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+// ── Key Stats (TradingView-style) — crumb-authenticated quoteSummary ─────────
+
+/** Raw-value snapshot; every field optional — Yahoo omits per-symbol, we never fabricate. dividendYield is a FRACTION (0.0047 = 0.47%). */
+export interface KeyStats {
+  marketCap?: number;
+  trailingPE?: number;
+  dividendYield?: number;
+  beta?: number;
+  floatShares?: number;
+  trailingEps?: number;
+}
+
+/**
+ * Fetches Key Stats via the crumb-authenticated quoteSummary (see
+ * yahooCrumb.ts — verified from EC2 2026-07-26 with values matching
+ * TradingView's display for RELIANCE). Returns null on any transport/auth
+ * failure; an empty object when the symbol resolves but carries no stats.
+ * NOTE: Yahoo's `beta` here is its 5Y-monthly convention — label it as such,
+ * it is NOT TradingView's "Beta (1Y)".
+ */
+export async function fetchKeyStats(symbol: string): Promise<KeyStats | null> {
+  const data = await fetchQuoteSummary(`${symbol}.NS`, ["summaryDetail", "defaultKeyStatistics"]);
+  if (!data) return null;
+  const result = ((data as Record<string, unknown>)?.quoteSummary as Record<string, unknown> | undefined)?.result as
+    | Record<string, unknown>[]
+    | undefined;
+  const row = result?.[0];
+  if (!row) return null;
+
+  const raw = (module: unknown, key: string): number | undefined => {
+    const v = ((module as Record<string, unknown> | undefined)?.[key] as { raw?: unknown } | undefined)?.raw;
+    return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+  };
+  const sd = row.summaryDetail;
+  const ks = row.defaultKeyStatistics;
+
+  const stats: KeyStats = {};
+  const put = (k: keyof KeyStats, v: number | undefined) => {
+    if (v !== undefined) stats[k] = v;
+  };
+  put("marketCap", raw(sd, "marketCap"));
+  put("trailingPE", raw(sd, "trailingPE"));
+  put("dividendYield", raw(sd, "dividendYield"));
+  put("beta", raw(sd, "beta"));
+  put("floatShares", raw(ks, "floatShares"));
+  put("trailingEps", raw(ks, "trailingEps"));
+  return stats;
 }

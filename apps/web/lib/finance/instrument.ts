@@ -13,7 +13,7 @@ const NEWS_LIMIT = 10;
 /** Over-fetch factor before the refineStockNews quality pipeline (dedup/quality can only shrink the set). */
 const NEWS_FETCH_MULTIPLE = 6;
 const FILINGS_LIMIT = 10;
-const OPINIONS_LIMIT = 10;
+const OPINIONS_LIMIT = 100; // founder 2026-07-26: show ALL calls (card scrolls); 100 = sane hard cap per the unbounded-findMany audit rule
 /** Opinions considered "recent enough to match" for both the returned list and the sentiment split. */
 const OPINION_LOOKBACK_DAYS = 90;
 
