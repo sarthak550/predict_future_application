@@ -82,15 +82,22 @@ export interface OrderHistoryRow {
   isSquareOff: boolean;
   autoSquaredOff: boolean;
   createdAt: Date;
-  /** Phase 2 added INDEX_OPTION, Phase 3 added STOCK_OPTION — discriminates the equity vs. option row shape below, and (for an option row) which settlement mechanism applies. */
-  instrumentKind: "EQUITY" | "INDEX_OPTION" | "STOCK_OPTION";
+  /** Phase 2 added INDEX_OPTION, Phase 3 added STOCK_OPTION, Phase 4 added INDEX_FUTURE (engine-only this sprint — no futures order-placement/UI route writes this row shape yet, but Prisma's PaperInstrumentKind enum now includes it, so this literal union must too or every raw-row read of an existing order fails to typecheck). */
+  instrumentKind: "EQUITY" | "INDEX_OPTION" | "STOCK_OPTION" | "INDEX_FUTURE";
   underlyingSymbol: string | null;
   optionType: "CE" | "PE" | null;
   strikePrice: number | null;
   expiryDate: Date | null;
   lotSize: number | null;
   lots: number | null;
-  squareOffReason: "INTRADAY_SESSION_CLOSE" | "OPTION_EXPIRY" | "STOCK_OPTION_EXPIRY_SQUAREOFF" | null;
+  /** Phase 4 added FUTURES_EXPIRY_SETTLEMENT and FUTURES_MARGIN_CALL — same "enum widened, literal union must follow" reasoning as instrumentKind above. */
+  squareOffReason:
+    | "INTRADAY_SESSION_CLOSE"
+    | "OPTION_EXPIRY"
+    | "STOCK_OPTION_EXPIRY_SQUAREOFF"
+    | "FUTURES_EXPIRY_SETTLEMENT"
+    | "FUTURES_MARGIN_CALL"
+    | null;
 }
 
 /** Phase 2/3 — one open (or, for the lifetime rollup, ever-traded) option contract position (index OR stock). */

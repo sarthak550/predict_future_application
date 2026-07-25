@@ -37,13 +37,16 @@ import {
 } from "@predict-future/business-rules/papertrading/optionsCosts";
 import {
   deriveAllDeliveryPositions,
+  deriveAllFuturesPositions,
   deriveAllOptionPositions,
   deriveCash,
   deriveDeliveryHoldings,
+  deriveFuturesPositions,
   deriveIntradayDailyPositions,
   deriveOptionPositions,
   isFirstDeliverySellOfScripToday,
   netPnl,
+  openExpiringFuturesPositions,
   openExpiringPositions,
   openIntradayPositions,
   replayPosition,
@@ -51,6 +54,21 @@ import {
   type PaperEngineOrder
 } from "@predict-future/business-rules/papertrading/replay";
 import { isNseWeekdayMarketHours } from "@predict-future/business-rules/papertrading/marketHours";
+import {
+  computeFuturesOrderCosts,
+  FUTURES_BROKERAGE_CAP,
+  FUTURES_BROKERAGE_RATE,
+  FUTURES_EXCHANGE_TXN_CHARGE_RATE,
+  FUTURES_STAMP_DUTY_RATE,
+  FUTURES_STT_SELL_RATE,
+  zeroDailyMtmCosts
+} from "@predict-future/business-rules/papertrading/futuresCosts";
+import { computeFuturesMarginRequired, INDEX_FUTURES_MARGIN_RATE } from "@predict-future/business-rules/papertrading/futuresMargin";
+import { INDEX_FUTURES_INSTRUMENT_TYPE } from "@/lib/marketMoves/foBhavcopy";
+import {
+  formatFuturesContractLabel,
+  formatFuturesContractSymbol
+} from "@predict-future/business-rules/papertrading/futuresContract";
 
 let passCount = 0;
 let failCount = 0;
@@ -110,6 +128,48 @@ function order(input: OrderInput): PaperEngineOrder {
     isFirstDeliverySellOfScripToday: isFirstDeliverySellOfScripToday ?? false
   });
   return { ...rest, totalCosts: costs.totalCosts, netAmount: costs.netAmount };
+}
+
+type FuturesTradeLegInput = Omit<PaperEngineOrder, "totalCosts" | "netAmount" | "productType" | "isDailyMtm"> & {
+  isExpirySettlement?: boolean;
+  settlementPrice?: number;
+};
+
+/** Builds a REAL futures trade leg (open/add/close/flip, or a margin-call/expiry-settlement leg) via the real computeFuturesOrderCosts() — same "never hand-fill the cost fields" discipline as order() above. */
+function futuresOrder(input: FuturesTradeLegInput): PaperEngineOrder {
+  const { isExpirySettlement, settlementPrice, ...rest } = input;
+  const costs = computeFuturesOrderCosts({
+    side: rest.side,
+    quantity: rest.quantity,
+    price: rest.fillPrice,
+    isExpirySettlement,
+    settlementPrice
+  });
+  return { ...rest, productType: null, isDailyMtm: false, totalCosts: costs.totalCosts, netAmount: costs.netAmount };
+}
+
+type MtmLegInput = Pick<PaperEngineOrder, "symbol" | "underlyingSymbol" | "expiryDate" | "lotSize" | "createdAt" | "instrumentKind"> & {
+  /** The position's signed quantity BEFORE this mark — the caller computes this from the prior leg(s), same as replayFuturesContract does internally, so the test's expected netAmount is independently hand-derivable from the (ltp - referencePrice) * quantity formula rather than calling the engine to compute its own test fixture. */
+  precedingSignedQuantity: number;
+  precedingReferencePrice: number;
+  settlementPrice: number;
+};
+
+/** Builds a daily-MTM leg exactly as the (Sprint-2) daily-MTM cron will: quantity 0, all-zero costs via zeroDailyMtmCosts(), side stored "SELL" by the documented convention (deriveCash's isDailyMtm carve-out ignores it), netAmount = the signed variation-margin cash flow = (settlementPrice - referencePrice) * signedQuantity. */
+function mtmLeg(input: MtmLegInput): PaperEngineOrder {
+  const { precedingSignedQuantity, precedingReferencePrice, settlementPrice, ...rest } = input;
+  const zero = zeroDailyMtmCosts();
+  const netAmount = (settlementPrice - precedingReferencePrice) * precedingSignedQuantity;
+  return {
+    ...rest,
+    side: "SELL",
+    quantity: 0,
+    fillPrice: settlementPrice,
+    productType: null,
+    isDailyMtm: true,
+    totalCosts: zero.totalCosts,
+    netAmount
+  };
 }
 
 async function main() {
@@ -684,6 +744,301 @@ async function main() {
 
     const tier3Pe = resolveSquareOffPrice({ lastPrice: null, bidPrice: null, askPrice: null, optionType: "PE", spot: 1200, strikePrice: 1250 });
     assertClose(tier3Pe.price, 50, "Tier 3 PE: intrinsic estimate = max(0, strike-spot) = max(0, 1250-1200) = 50");
+  }
+
+  // ── 22. Phase 4 — Futures costs: manual open/close (long round trip, real market orders) ──
+  console.log("\n22. Futures manual round trip — LONG 130 units (2 lots x 65) NIFTY, entry ₹24,000, exit ₹24,200");
+  {
+    const open = computeFuturesOrderCosts({ side: "BUY", quantity: 130, price: 24000 });
+    assertClose(open.grossAmount, 3120000, "Open (BUY) grossAmount = ₹31,20,000");
+    assertClose(open.brokerage, Math.min(FUTURES_BROKERAGE_CAP, FUTURES_BROKERAGE_RATE * 3120000), "Open brokerage = min(₹20, 0.03% of turnover) = ₹20 (0.03% of turnover is ₹936, capped)");
+    assertClose(open.stt, 0, "Futures STT is 0 on the BUY leg (sell-side only, same posture as every other segment in this codebase)");
+    assertClose(open.exchangeCharge, FUTURES_EXCHANGE_TXN_CHARGE_RATE * 3120000, "Open exchange charge = 0.00183% of turnover");
+    assertClose(open.stampDuty, FUTURES_STAMP_DUTY_RATE * 3120000, "Open stamp duty = 0.002% of turnover, BUY side only");
+    assertClose(open.totalCosts, 157.05488, "Open totalCosts (hand-calculated)");
+    assertClose(open.netAmount, 3120157.05488, "Open netAmount = gross + totalCosts (cash debited)");
+
+    const close = computeFuturesOrderCosts({ side: "SELL", quantity: 130, price: 24200 });
+    assertClose(close.stt, FUTURES_STT_SELL_RATE * (130 * 24200), "Close STT = 0.05% of turnover, SELL leg only (Budget 2026-27 hike from 0.02% — verified 2026-07-25)");
+    assertClose(close.stampDuty, 0, "No stamp duty on the SELL leg");
+    assertClose(close.dpCharge, 0, "Futures never attract a DP charge — cash-settled, never enters demat");
+    assertClose(close.totalCosts, 1668.247004, "Close totalCosts (hand-calculated)");
+    assertClose(close.netAmount, 3144331.752996, "Close netAmount = gross - totalCosts (cash credited)");
+
+    const roundTripCost = open.totalCosts + close.totalCosts;
+    assertClose(roundTripCost, 1825.301884, "Futures LONG round-trip total cost");
+  }
+
+  // ── 23. Phase 4 — Futures costs: manual open/close (SHORT round trip) ──
+  console.log("\n23. Futures manual round trip — SHORT 30 units (1 lot x 30) BANKNIFTY, entry ₹50,000, cover ₹49,200");
+  {
+    const open = computeFuturesOrderCosts({ side: "SELL", quantity: 30, price: 50000 });
+    assertClose(open.grossAmount, 1500000, "Short-open grossAmount = ₹15,00,000");
+    assertClose(open.stt, FUTURES_STT_SELL_RATE * 1500000, "Short-open (SELL) STT applies — opening via SELL is still a sell-side turnover event");
+    assertClose(open.totalCosts, 807.761, "Short-open totalCosts (hand-calculated)");
+    assertClose(open.netAmount, 1499192.239, "Short-open credits cash (SELL proceeds net of costs)");
+
+    const cover = computeFuturesOrderCosts({ side: "BUY", quantity: 30, price: 49200 });
+    assertClose(cover.stt, 0, "Cover (BUY) STT is 0");
+    assertClose(cover.stampDuty, FUTURES_STAMP_DUTY_RATE * 1476000, "Cover stamp duty applies (BUY side)");
+    assertClose(cover.totalCosts, 86.734424, "Cover totalCosts (hand-calculated)");
+    assertClose(cover.netAmount, 1476086.734424, "Cover debits cash to buy back the shorted contract");
+
+    const netCashEffect = open.netAmount - cover.netAmount;
+    assertClose(netCashEffect, 1499192.239 - 1476086.734424, "Net cash effect of the short round trip = proceeds minus buy-back cost, matching the two netAmounts computed above");
+  }
+
+  // ── 24. Phase 4 — THE TRAP: margin-call forced close vs. expiry cash-settlement, identical notional ──
+  console.log("\n24. Futures leg-type dispatch trap — margin-call close (full cost) vs. expiry settlement (₹0 brokerage), same ₹31,20,000 notional");
+  {
+    // Margin-call forced square-off is a real RMS-placed market order — same
+    // cost shape as a manual close (computeFuturesOrderCosts called WITHOUT
+    // isExpirySettlement), per the Phase 4 brief's leg-type-3 spec.
+    const marginCallClose = computeFuturesOrderCosts({ side: "SELL", quantity: 130, price: 24000 });
+    assertClose(marginCallClose.brokerage, 20, "Margin-call forced close brokerage = full ₹20 — a real order was placed by the RMS, not an automatic settlement");
+
+    // Expiry cash-settlement: automatic, exchange-computed, brokerage forced to ₹0.
+    const expirySettlement = computeFuturesOrderCosts({
+      side: "SELL",
+      quantity: 130,
+      price: 0, // ignored — isExpirySettlement routes pricing through settlementPrice instead
+      isExpirySettlement: true,
+      settlementPrice: 24000
+    });
+    assertClose(expirySettlement.brokerage, 0, "Expiry cash-settlement brokerage = ₹0 — no broker order was ever placed for an automatic exchange settlement");
+    assertClose(expirySettlement.stt, FUTURES_STT_SELL_RATE * (130 * 24000), "Expiry settlement STT applies sell-side rate to settlement-value turnover — no premium/intrinsic split exists for futures the way options need one");
+    assertTrue(
+      marginCallClose.brokerage !== expirySettlement.brokerage,
+      "THE TRAP: at identical quantity/price, a margin-call forced close (₹20 brokerage) must differ from an expiry cash-settlement (₹0 brokerage) — a daily-MTM cron that accidentally routes its margin-call leg through the isExpirySettlement:true path would silently undercharge every forced square-off"
+    );
+    assertClose(
+      marginCallClose.totalCosts - expirySettlement.totalCosts,
+      23.6,
+      "At identical notional, the margin-call close costs ₹23.60 more than the expiry settlement: the ₹20 brokerage line isExpirySettlement zeroes out, plus the 18% GST cascading off that same ₹20 (GST_RATE * 20 = ₹3.60) — the same compounding P3's stock-option-vs-index-settlement trap (test 20) already demonstrated in a different leg-type pair"
+    );
+  }
+
+  // ── 25. Phase 4 — the all-zero daily-MTM cost object, by construction not coincidence ──
+  console.log("\n25. Daily-MTM leg cost object is all-zero BY CONSTRUCTION, never computed via computeFuturesOrderCosts");
+  {
+    const mtmCosts = zeroDailyMtmCosts();
+    assertClose(mtmCosts.grossAmount, 0, "MTM leg grossAmount = 0 (quantity is always 0 for this leg type)");
+    assertClose(mtmCosts.brokerage, 0, "MTM leg brokerage = 0");
+    assertClose(mtmCosts.stt, 0, "MTM leg STT = 0");
+    assertClose(mtmCosts.exchangeCharge, 0, "MTM leg exchange charge = 0");
+    assertClose(mtmCosts.sebiFee, 0, "MTM leg SEBI fee = 0");
+    assertClose(mtmCosts.stampDuty, 0, "MTM leg stamp duty = 0");
+    assertClose(mtmCosts.gst, 0, "MTM leg GST = 0");
+    assertClose(mtmCosts.dpCharge, 0, "MTM leg DP charge = 0");
+    assertClose(mtmCosts.totalCosts, 0, "MTM leg totalCosts = 0");
+
+    // Contrast: calling computeFuturesOrderCosts with a synthetic zero-price
+    // order coincidentally ALSO yields zero brokerage (min(₹20, 0.03%*0)=₹0)
+    // — but for the WRONG reason (zero turnover, not "no order was placed").
+    // zeroDailyMtmCosts() is a deliberate leg-type property, not this
+    // arithmetic coincidence — proving both paths currently agree numerically
+    // is exactly why the module doc insists on the hardcoded function instead
+    // of relying on the coincidence holding forever.
+    const syntheticZeroPriceOrder = computeFuturesOrderCosts({ side: "SELL", quantity: 0, price: 100 });
+    assertClose(syntheticZeroPriceOrder.totalCosts, 0, "A synthetic zero-QUANTITY manual order also totals ₹0 — the coincidence the module doc warns against relying on");
+  }
+
+  // ── 26. Phase 4 — Margin engine ──
+  console.log("\n26. computeFuturesMarginRequired — flat 15% of notional, symmetric long/short");
+  {
+    assertClose(INDEX_FUTURES_MARGIN_RATE, 0.15, "Founder-locked flat rate = 15%");
+    assertClose(computeFuturesMarginRequired(3120000), 468000, "Margin on a ₹31,20,000 long notional = 15% = ₹4,68,000");
+    assertClose(computeFuturesMarginRequired(-3120000), 468000, "Margin is direction-symmetric — a SHORT position's negative notional yields the identical margin requirement via Math.abs, not a signed (and wrong) result");
+    assertClose(computeFuturesMarginRequired(0), 0, "Flat/closed position requires zero margin");
+  }
+
+  // ── 27. Phase 4 — Contract identity ──
+  console.log("\n27. Futures contract symbol/label formatters");
+  {
+    const expiry = new Date(Date.UTC(2026, 7, 28)); // 28-Aug-2026
+    assertEqual(formatFuturesContractSymbol("NIFTY", expiry), "NIFTYFUT28AUG2026", "Canonical symbol format");
+    assertEqual(formatFuturesContractLabel("NIFTY", expiry), "NIFTY FUT, 28-Aug-26", "Human-readable label format");
+  }
+
+  // ── 28. Phase 4 — deriveFuturesPositions: LONG lifecycle with daily MTM, telescoping realized P&L ──
+  console.log("\n28. deriveFuturesPositions — LONG NIFTY, open -> 2 days of MTM -> manual close, realized P&L telescopes to (exit-entry)*qty");
+  {
+    const entry = futuresOrder({
+      symbol: "NIFTYFUT28AUG2026",
+      side: "BUY",
+      quantity: 130,
+      fillPrice: 24000,
+      underlyingSymbol: "NIFTY",
+      expiryDate: new Date(Date.UTC(2026, 7, 28)),
+      lotSize: 65,
+      instrumentKind: "INDEX_FUTURE",
+      createdAt: istInstant(2026, 8, 3, 9, 30)
+    });
+    const day1Mtm = mtmLeg({
+      symbol: "NIFTYFUT28AUG2026",
+      underlyingSymbol: "NIFTY",
+      expiryDate: new Date(Date.UTC(2026, 7, 28)),
+      lotSize: 65,
+      instrumentKind: "INDEX_FUTURE",
+      createdAt: istInstant(2026, 8, 3, 18, 0),
+      precedingSignedQuantity: 130,
+      precedingReferencePrice: 24000,
+      settlementPrice: 24100
+    });
+    const day2Mtm = mtmLeg({
+      symbol: "NIFTYFUT28AUG2026",
+      underlyingSymbol: "NIFTY",
+      expiryDate: new Date(Date.UTC(2026, 7, 28)),
+      lotSize: 65,
+      instrumentKind: "INDEX_FUTURE",
+      createdAt: istInstant(2026, 8, 4, 18, 0),
+      precedingSignedQuantity: 130,
+      precedingReferencePrice: 24100,
+      settlementPrice: 23950
+    });
+    const close = futuresOrder({
+      symbol: "NIFTYFUT28AUG2026",
+      side: "SELL",
+      quantity: 130,
+      fillPrice: 24200,
+      underlyingSymbol: "NIFTY",
+      expiryDate: new Date(Date.UTC(2026, 7, 28)),
+      lotSize: 65,
+      instrumentKind: "INDEX_FUTURE",
+      createdAt: istInstant(2026, 8, 5, 11, 0)
+    });
+
+    assertClose(day1Mtm.netAmount, 13000, "Day 1 MTM: (24100-24000)*130 = +₹13,000 credit (price rose, long position marks up)");
+    assertClose(day2Mtm.netAmount, -19500, "Day 2 MTM: (23950-24100)*130 = -₹19,500 debit (price fell)");
+    assertClose(day1Mtm.totalCosts, 0, "MTM legs carry zero costs");
+    assertClose(day2Mtm.totalCosts, 0, "MTM legs carry zero costs");
+
+    const orders = [entry, day1Mtm, day2Mtm, close];
+    // deriveFuturesPositions (open-only) correctly returns nothing once this
+    // position is fully closed — deriveAllFuturesPositions is the lifetime-
+    // rollup view that still surfaces a closed contract's realized P&L/costs,
+    // same "closed positions still count" posture as deriveAllOptionPositions
+    // (test 16/17 above).
+    assertEqual(deriveFuturesPositions(orders).length, 0, "deriveFuturesPositions (open-only) correctly excludes this now-fully-closed contract");
+    const [position] = deriveAllFuturesPositions(orders);
+    assertEqual(orders.some((o) => o.instrumentKind !== "INDEX_FUTURE"), false, "sanity: every fixture order in this scenario is INDEX_FUTURE");
+    assertTrue(!!position, "Exactly one futures contract position derived");
+    assertClose(position.quantity, 0, "Position fully closed after the final SELL");
+    assertTrue(!position.isOpen, "isOpen is false once fully closed");
+    assertClose(
+      position.realizedGrossPnl,
+      (24200 - 24000) * 130,
+      "Realized P&L telescopes: sum of every MTM delta (+13,000 -19,500) plus the close leg's own delta (against day2's referencePrice, 23950) exactly equals (exit - entry) * qty = 200*130 = 26,000"
+    );
+    assertClose(
+      position.totalCosts,
+      entry.totalCosts + close.totalCosts,
+      "Position totalCosts = entry + close totalCosts only — both MTM legs contributed ₹0"
+    );
+    assertClose(position.lotSize as number, 65, "lotSize snapshotted from the fixture orders");
+
+    const cashOrders = orders;
+    const startingCapital = 5000000;
+    const cash = deriveCash(startingCapital, cashOrders);
+    const expectedCash = startingCapital - entry.netAmount + day1Mtm.netAmount + day2Mtm.netAmount + close.netAmount;
+    assertClose(
+      cash,
+      expectedCash,
+      "deriveCash correctly includes both zero-quantity MTM legs via the isDailyMtm carve-out — entry debits, each MTM leg applies its signed netAmount directly (not gated on side), close credits"
+    );
+  }
+
+  // ── 29. Phase 4 — deriveFuturesPositions: SHORT lifecycle, telescoping realized P&L ──
+  console.log("\n29. deriveFuturesPositions — SHORT BANKNIFTY, open -> 1 day of MTM -> cover, realized P&L telescopes for a short too");
+  {
+    const entry = futuresOrder({
+      symbol: "BANKNIFTYFUT25AUG2026",
+      side: "SELL",
+      quantity: 30,
+      fillPrice: 50000,
+      underlyingSymbol: "BANKNIFTY",
+      expiryDate: new Date(Date.UTC(2026, 7, 25)),
+      lotSize: 30,
+      instrumentKind: "INDEX_FUTURE",
+      createdAt: istInstant(2026, 8, 3, 9, 30)
+    });
+    const mtm = mtmLeg({
+      symbol: "BANKNIFTYFUT25AUG2026",
+      underlyingSymbol: "BANKNIFTY",
+      expiryDate: new Date(Date.UTC(2026, 7, 25)),
+      lotSize: 30,
+      instrumentKind: "INDEX_FUTURE",
+      createdAt: istInstant(2026, 8, 3, 18, 0),
+      precedingSignedQuantity: -30,
+      precedingReferencePrice: 50000,
+      settlementPrice: 49500
+    });
+    const cover = futuresOrder({
+      symbol: "BANKNIFTYFUT25AUG2026",
+      side: "BUY",
+      quantity: 30,
+      fillPrice: 49200,
+      underlyingSymbol: "BANKNIFTY",
+      expiryDate: new Date(Date.UTC(2026, 7, 25)),
+      lotSize: 30,
+      instrumentKind: "INDEX_FUTURE",
+      createdAt: istInstant(2026, 8, 4, 11, 0)
+    });
+
+    assertClose(mtm.netAmount, 15000, "MTM: (49500-50000)*(-30) = +₹15,000 credit — a short profits when price falls, sign falls out of the formula automatically");
+
+    const [position] = deriveAllFuturesPositions([entry, mtm, cover]);
+    assertClose(position.quantity, 0, "Position fully covered");
+    assertEqual(position.side, "FLAT", "side reads FLAT once fully closed");
+    assertClose(
+      position.realizedGrossPnl,
+      (49200 - 50000) * -30,
+      "Realized P&L telescopes for a SHORT too: (exit-entry)*signedQty = (49200-50000)*(-30) = 24,000 — matches MTM delta (+15,000) plus the cover leg's own delta against the marked referencePrice (49500), (49200-49500)*(-1 direction)*30 = +9,000"
+    );
+  }
+
+  // ── 30. Phase 4 — openExpiringFuturesPositions ──
+  console.log("\n30. openExpiringFuturesPositions — day-scoped detection for the (Sprint 2) expiry-settlement cron");
+  {
+    const today = istInstant(2026, 8, 28, 9, 0);
+    const expiringToday = futuresOrder({
+      symbol: "NIFTYFUT28AUG2026",
+      side: "BUY",
+      quantity: 65,
+      fillPrice: 24000,
+      underlyingSymbol: "NIFTY",
+      expiryDate: new Date(Date.UTC(2026, 7, 28)),
+      lotSize: 65,
+      instrumentKind: "INDEX_FUTURE",
+      createdAt: istInstant(2026, 8, 1, 9, 30)
+    });
+    const notExpiringToday = futuresOrder({
+      symbol: "NIFTYFUT25SEP2026",
+      side: "BUY",
+      quantity: 65,
+      fillPrice: 24100,
+      underlyingSymbol: "NIFTY",
+      expiryDate: new Date(Date.UTC(2026, 8, 25)),
+      lotSize: 65,
+      instrumentKind: "INDEX_FUTURE",
+      createdAt: istInstant(2026, 8, 1, 9, 31)
+    });
+
+    const expiringPositions = openExpiringFuturesPositions([expiringToday, notExpiringToday], today);
+    assertEqual(expiringPositions.length, 1, "Exactly one position expires today");
+    assertEqual(expiringPositions[0].underlyingSymbol, "NIFTY", "The expiring position is the 28-Aug contract");
+    assertClose(expiringPositions[0].quantity, 65, "Expiring position quantity carried through");
+  }
+
+  // ── 31. Phase 4 — EC2-verified F&O bhavcopy FinInstrmTp code, pinned ──
+  console.log("\n31. foBhavcopy.ts's INDEX_FUTURES_INSTRUMENT_TYPE pinned to the EC2-verified real code");
+  {
+    // This is the exact constant a first pass got wrong (FUTIDX, matching
+    // NSE's UDiFF documentation prose but not the real file, which uses the
+    // newer ISO code) — pinned here so a future edit to foBhavcopy.ts can't
+    // silently regress it back to a documentation-plausible-but-wrong value
+    // without this assertion catching it.
+    assertEqual(INDEX_FUTURES_INSTRUMENT_TYPE, "IDF", "Index-futures FinInstrmTp code, EC2-verified 2026-07-25 against the real 24-Jul-2026 bhavcopy (distinct values: STO=33020, STF=625, IDO=5140, IDF=15)");
   }
 
   console.log(`\n${passCount} passed, ${failCount} failed.`);

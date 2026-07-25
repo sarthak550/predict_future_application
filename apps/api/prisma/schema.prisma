@@ -1877,11 +1877,25 @@ model PaperOrder {
   /// in UI copy ("auto-closed at session close" vs. "settled at expiry").
   squareOffReason  PaperSquareOffReason?
 
+  // ─── Phase 4 (Index Futures) — additive column, false for every prior row ──
+
+  /// True only for a cash-only daily mark-to-market leg (Phase 4 index
+  /// futures) — quantity and grossAmount are 0, netAmount carries the signed
+  /// variation-margin cash flow (side is always stored as "SELL" for this leg
+  /// type by convention, so deriveCash's existing side-based cash math applies
+  /// netAmount directly without a new branch — see futuresCosts.ts and
+  /// replay.ts's deriveFuturesPositions), and no cost fields are ever
+  /// populated (see futuresCosts.ts's leg-type dispatch, path 4). False for
+  /// every other row, including EQUITY/OPTION legs which don't have this
+  /// concept.
+  isDailyMtm       Boolean               @default(false)
+
   @@index([accountId, symbol])
   @@index([accountId, createdAt])
   @@index([linkedOpinionId])
   @@index([productType, createdAt])
   @@index([accountId, instrumentKind, expiryDate])
+  @@index([accountId, instrumentKind, isDailyMtm])
 }
 
 enum PaperTradingAccountStatus {
@@ -1895,15 +1909,21 @@ enum PaperProductType {
 }
 
 /// Phase 2 (Index Options) added INDEX_OPTION; Phase 3 (Stock Options) added
-/// STOCK_OPTION. Discriminates PaperOrder's asset-class shapes — see the Phase 3
-/// brief for why stock options are a DISTINCT value from INDEX_OPTION despite
-/// sharing every cost-stack formula: settlement mechanism differs (forced
-/// square-off vs. cash-settlement-at-intrinsic), which is exactly what this
-/// enum exists to let downstream code (crons, UI badges) branch on.
+/// STOCK_OPTION; Phase 4 (Index Futures) added INDEX_FUTURE. Discriminates
+/// PaperOrder's asset-class shapes — see the Phase 3 brief for why stock
+/// options are a DISTINCT value from INDEX_OPTION despite sharing every
+/// cost-stack formula: settlement mechanism differs (forced square-off vs.
+/// cash-settlement-at-intrinsic), which is exactly what this enum exists to
+/// let downstream code (crons, UI badges) branch on. INDEX_FUTURE rows are
+/// margin-backed (see futuresMargin.ts) and daily mark-to-market (see the
+/// isDailyMtm column below) — a fundamentally different lifecycle from every
+/// prepaid-premium option row, hence a distinct enum value rather than
+/// reusing INDEX_OPTION.
 enum PaperInstrumentKind {
   EQUITY
   INDEX_OPTION
   STOCK_OPTION
+  INDEX_FUTURE
 }
 
 /// Phase 2 (Index Options). CE (call) or PE (put) — long-only, no writing.
@@ -1922,10 +1942,20 @@ enum PaperOptionType {
 /// market orders (see optionsCosts.ts's computeOptionOrderCosts call site in
 /// stockOptionSquareOff.ts) — copy that said "settled at expiry" for a stock
 /// option would misrepresent physical settlement as cash settlement.
+/// Phase 4 (Index Futures) adds two more: FUTURES_EXPIRY_SETTLEMENT (the
+/// index-futures cash-settlement cron, brokerage ₹0 like OPTION_EXPIRY — see
+/// futuresCosts.ts path 2) and FUTURES_MARGIN_CALL (the whole-account forced
+/// square-off when a day's MTM leaves an account's margin headroom negative —
+/// FULL brokerage + STT, same "real RMS-placed order" cost treatment as
+/// STOCK_OPTION_EXPIRY_SQUAREOFF, NOT the zero-brokerage settlement path — see
+/// futuresCosts.ts path 3's doc comment for why this is the easiest leg-type
+/// mis-copy in the whole futures flow).
 enum PaperSquareOffReason {
   INTRADAY_SESSION_CLOSE
   OPTION_EXPIRY
   STOCK_OPTION_EXPIRY_SQUAREOFF
+  FUTURES_EXPIRY_SETTLEMENT
+  FUTURES_MARGIN_CALL
 }
 
 /// Trading Terminal UI Overhaul (Sprint A, T1) — premium-history capture. Market

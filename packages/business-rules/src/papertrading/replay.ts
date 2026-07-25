@@ -20,8 +20,8 @@
 
 export type ReplayOrderSide = "BUY" | "SELL";
 export type ReplayProductType = "DELIVERY" | "INTRADAY";
-/** Phase 2 added INDEX_OPTION; Phase 3 added STOCK_OPTION — see optionContractKey/groupByOptionContract below, which were never NIFTY/BANKNIFTY-specific and needed no change beyond this type + the deriveAllOptionPositions filter widening. */
-export type ReplayInstrumentKind = "EQUITY" | "INDEX_OPTION" | "STOCK_OPTION";
+/** Phase 2 added INDEX_OPTION; Phase 3 added STOCK_OPTION — see optionContractKey/groupByOptionContract below, which were never NIFTY/BANKNIFTY-specific and needed no change beyond this type + the deriveAllOptionPositions filter widening. Phase 4 added INDEX_FUTURE — see deriveFuturesPositions below, a NEW dedicated replay function (not a widening of the option path) because futures have a fundamentally different daily-mark-to-market lifecycle. */
+export type ReplayInstrumentKind = "EQUITY" | "INDEX_OPTION" | "STOCK_OPTION" | "INDEX_FUTURE";
 export type ReplayOptionType = "CE" | "PE";
 
 /**
@@ -58,6 +58,14 @@ export interface PaperEngineOrder {
   expiryDate?: Date | null;
   /** Snapshotted at fill time — see the schema doc on PaperOrder.lotSize for why this is never a live-recomputed value. */
   lotSize?: number | null;
+  /**
+   * Phase 4: true only for a cash-only daily mark-to-market leg (see the
+   * schema doc on PaperOrder.isDailyMtm). Defaults to false/undefined for
+   * every prior-phase row. deriveCash carves this leg type out of its normal
+   * side-based cash math (see below) — netAmount is trusted as the already-
+   * signed cash flow directly, regardless of the row's stored `side`.
+   */
+  isDailyMtm?: boolean;
 }
 
 export interface PaperHoldingLot {
@@ -294,10 +302,25 @@ export function openIntradayPositions(orders: PaperEngineOrder[], sessionDate: D
  * Account cash balance = startingCapital, adjusted by every order's netAmount
  * (BUY subtracts, SELL adds). Every PaperOrder row is always-executed (no
  * PENDING/CANCELLED filtering needed, unlike Portfolios' deriveCash).
+ *
+ * Phase 4 carve-out (verified empirically, per the Phase 4 brief's "verify
+ * before relying on it" instruction): a daily mark-to-market leg
+ * (`isDailyMtm: true`) is not a BUY or a SELL — it's a pure cash movement
+ * with quantity: 0 and no real trade direction — so it is carved out of the
+ * side-based math above and its `netAmount` (the already-signed
+ * variation-margin cash flow: positive = credit, negative = debit — see
+ * replay.ts's deriveFuturesPositions, which is the sole producer of this
+ * value) is added directly. This is the NARROWEST carve-out that keeps every
+ * pre-Phase-4 order's cash math byte-identical: the branch only ever fires
+ * for a row type that did not exist before this phase.
  */
 export function deriveCash(startingCapital: number, orders: PaperEngineOrder[]): number {
   let cash = startingCapital;
   for (const order of orders) {
+    if (order.isDailyMtm) {
+      cash += order.netAmount;
+      continue;
+    }
     cash += order.side === "SELL" ? order.netAmount : -order.netAmount;
   }
   return cash;
@@ -439,4 +462,203 @@ export function deriveOptionPositions(orders: PaperEngineOrder[]): OptionContrac
 export function openExpiringPositions(orders: PaperEngineOrder[], today: Date): OptionContractPosition[] {
   const targetDay = istCalendarDateNumber(today);
   return deriveOptionPositions(orders).filter((p) => istCalendarDateNumber(p.expiryDate) === targetDay);
+}
+
+// ─── Phase 4: Index Futures ──────────────────────────────────────────────────
+//
+// A genuinely different replay shape from the option path above (hence a
+// dedicated function, not a widening of replayPosition/applyFill): a futures
+// position's cost basis is NOT a static weighted-average that only moves on a
+// trade — it is reset every session by a daily mark-to-market leg to that
+// day's real bhavcopy settlement price. This is what makes futures futures
+// rather than a leveraged equity position with extra steps (see the Phase 4
+// brief). Both LONG (positive signed quantity) and SHORT (negative signed
+// quantity) are supported — reuses the exact side: BUY | SELL-to-open pattern
+// P1's intraday equity short already established (Math.sign-based direction),
+// same as every other short-capable model in this file.
+
+export interface FuturesContractPosition {
+  underlyingSymbol: string;
+  expiryDate: Date;
+  /** Signed total contract quantity — positive for a long position, negative for an open short. 0 when flat/closed. */
+  quantity: number;
+  /** The most recently snapshotted lotSize among this contract's orders (same tie-break convention as OptionContractPosition.lotSize). */
+  lotSize: number | null;
+  /** abs(quantity) / lotSize, rounded — 0 when lotSize is unknown. */
+  lots: number;
+  side: "LONG" | "SHORT" | "FLAT";
+  /**
+   * The CURRENT reference price for margin/MTM purposes: the entry fill
+   * price until the first daily-MTM leg posts for this contract, then the
+   * most recently posted MTM leg's stored settlement price. This — not the
+   * original entry price — is what the next day's MTM delta and the current
+   * margin-required calculation must both use (see futuresMargin.ts's
+   * computeFuturesMarginRequired, called against quantity * referencePrice).
+   * 0 when the position has never been opened or is fully closed.
+   */
+  referencePrice: number;
+  /**
+   * Telescoping sum of every daily-MTM leg's mark-to-market delta plus the
+   * final close/settlement leg's own delta (both computed against
+   * referencePrice AT THE TIME of that leg, not the original entry price) —
+   * by construction this always equals (exit price − entry price) * quantity
+   * for the position's full life, asserted as a cross-check in the verify
+   * script. Distinct from any individual leg's `netAmount` (the actual cash
+   * flow, which additionally nets out costs on close/settlement/margin-call
+   * legs — costs are deliberately NOT part of this P&L figure, mirroring
+   * every other *GrossPnl field in this file).
+   */
+  realizedGrossPnl: number;
+  /** Sum of every order's totalCosts in this contract's history — a daily-MTM leg always contributes 0 here (see futuresCosts.ts's zeroDailyMtmCosts). */
+  totalCosts: number;
+  isOpen: boolean;
+}
+
+function futuresContractKey(o: PaperEngineOrder): string {
+  const expiryKey = o.expiryDate ? o.expiryDate.toISOString().slice(0, 10) : "unknown";
+  return `${o.underlyingSymbol ?? "unknown"}::${expiryKey}`;
+}
+
+function groupByFuturesContract(orders: PaperEngineOrder[]): Map<string, PaperEngineOrder[]> {
+  const groups = new Map<string, PaperEngineOrder[]>();
+  for (const order of orders) {
+    const key = futuresContractKey(order);
+    const list = groups.get(key);
+    if (list) list.push(order);
+    else groups.set(key, [order]);
+  }
+  return groups;
+}
+
+/**
+ * Replays one futures contract's chronological order set (a mix of real
+ * trade legs — open/add/close/flip/margin-call-close — and daily-MTM legs)
+ * into quantity, current reference price, and telescoping realized P&L.
+ *
+ * Trade-leg math mirrors applyFill's weighted-average-on-extend /
+ * realize-on-reduce shape (adding to an existing position at a new price
+ * updates referencePrice by weighted average; reducing/closing realizes P&L
+ * against the CURRENT referencePrice, which may already reflect a prior
+ * day's MTM mark, not the original entry price — this is what makes the
+ * telescoping-sum property hold). A daily-MTM leg never changes quantity —
+ * it marks referencePrice to the leg's own fillPrice (the settlement price)
+ * and realizes the resulting delta via the existing unrealizedGrossPnl sign
+ * algebra, which is correct for both long and short without branching.
+ */
+function replayFuturesContract(contractOrders: PaperEngineOrder[]): {
+  quantity: number;
+  referencePrice: number;
+  realizedGrossPnl: number;
+  totalCosts: number;
+  lotSize: number | null;
+} {
+  let quantity = 0;
+  let referencePrice = 0;
+  let realizedGrossPnl = 0;
+  let totalCosts = 0;
+  let lotSize: number | null = null;
+
+  for (const o of contractOrders) {
+    totalCosts += o.totalCosts;
+    lotSize = o.lotSize ?? lotSize;
+
+    if (o.isDailyMtm) {
+      // Pure mark: quantity unchanged. (ltp - avgCost) * signedQuantity is
+      // exactly unrealizedGrossPnl's formula, reused here as the REALIZED
+      // delta this leg crystallizes (a futures MTM leg realizes what an
+      // option/equity position would otherwise carry as unrealized).
+      realizedGrossPnl += unrealizedGrossPnl(quantity, referencePrice, o.fillPrice);
+      referencePrice = o.fillPrice;
+      continue;
+    }
+
+    const delta = o.side === "BUY" ? o.quantity : -o.quantity;
+    const extendingOrOpening = quantity === 0 || Math.sign(quantity) === Math.sign(delta);
+
+    if (extendingOrOpening) {
+      const newQuantity = quantity + delta;
+      referencePrice =
+        quantity === 0
+          ? o.fillPrice
+          : newQuantity !== 0
+            ? (referencePrice * quantity + o.fillPrice * delta) / newQuantity
+            : referencePrice;
+      quantity = newQuantity;
+      continue;
+    }
+
+    // Reducing (or flipping past flat) an existing position — a real close
+    // leg (manual close, margin-call force-close, or expiry settlement).
+    const directionSign = Math.sign(quantity); // +1 long, -1 short (never 0 here)
+    const closingQuantity = Math.min(o.quantity, Math.abs(quantity));
+    realizedGrossPnl += closingQuantity * (o.fillPrice - referencePrice) * directionSign;
+
+    const remainingQuantity = quantity - directionSign * closingQuantity;
+    const flipQuantity = o.quantity - closingQuantity;
+
+    if (flipQuantity > 0) {
+      // Existing position fully closed by this leg, with quantity left over
+      // that opens a brand-new position in the OPPOSITE direction — same
+      // "flip" case applyFill handles for equities/options.
+      quantity = flipQuantity * Math.sign(delta);
+      referencePrice = o.fillPrice;
+    } else {
+      quantity = remainingQuantity;
+      if (quantity === 0) referencePrice = 0;
+    }
+  }
+
+  return { quantity, referencePrice, realizedGrossPnl, totalCosts, lotSize };
+}
+
+/**
+ * Every INDEX_FUTURE contract (underlyingSymbol, expiryDate) EVER traded on
+ * this account, including fully-closed/settled ones (quantity 0) — same
+ * "closed positions still count" lifetime-rollup posture as
+ * deriveAllDeliveryPositions/deriveAllOptionPositions. Most callers want the
+ * currently-open subset instead — see deriveOpenFuturesPositions below.
+ */
+export function deriveAllFuturesPositions(orders: PaperEngineOrder[]): FuturesContractPosition[] {
+  const futuresOrders = orders.filter((o) => o.instrumentKind === "INDEX_FUTURE");
+  const results: FuturesContractPosition[] = [];
+  for (const [, contractOrders] of groupByFuturesContract(futuresOrders)) {
+    const first = contractOrders[0];
+    const { quantity, referencePrice, realizedGrossPnl, totalCosts, lotSize } = replayFuturesContract(contractOrders);
+    results.push({
+      underlyingSymbol: first.underlyingSymbol as string,
+      expiryDate: first.expiryDate as Date,
+      quantity,
+      lotSize,
+      lots: lotSize ? Math.round(Math.abs(quantity) / lotSize) : 0,
+      side: quantity > 0 ? "LONG" : quantity < 0 ? "SHORT" : "FLAT",
+      referencePrice,
+      realizedGrossPnl,
+      totalCosts,
+      isOpen: quantity !== 0
+    });
+  }
+  return results;
+}
+
+/** INDEX_FUTURE contracts CURRENTLY held (quantity !== 0) — both long and short. */
+export function deriveOpenFuturesPositions(orders: PaperEngineOrder[]): FuturesContractPosition[] {
+  return deriveAllFuturesPositions(orders).filter((p) => p.quantity !== 0);
+}
+
+/**
+ * Kept as `deriveFuturesPositions` too — the Phase 4 brief's own naming for
+ * "every open futures position" (mirrors deriveOptionPositions' naming for
+ * the option path). Alias, not a duplicate implementation.
+ */
+export const deriveFuturesPositions = deriveOpenFuturesPositions;
+
+/**
+ * Every OPEN INDEX_FUTURE position whose expiryDate falls on the IST
+ * calendar day `today` falls on — mirrors openExpiringPositions' option-path
+ * shape exactly, for the futures expiry-settlement cron (T9, not built this
+ * sprint) to find same-day expiries.
+ */
+export function openExpiringFuturesPositions(orders: PaperEngineOrder[], today: Date): FuturesContractPosition[] {
+  const targetDay = istCalendarDateNumber(today);
+  return deriveOpenFuturesPositions(orders).filter((p) => istCalendarDateNumber(p.expiryDate) === targetDay);
 }
