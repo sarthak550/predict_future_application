@@ -24,7 +24,8 @@ export function TerminalShell({
   /** Omitted for the equity terminal (chart + ticket, two-pane) — present for the options terminal (chart + ladder + ticket, three-pane). */
   ladder?: ReactNode;
   ticket: ReactNode;
-  positions: ReactNode;
+  /** Optional — the equity dashboard omits it (its full positions tables with Sell actions sit right below the shell; a chips strip there was pure duplication). */
+  positions?: ReactNode;
 }) {
   return (
     <div className="flex flex-col gap-4">

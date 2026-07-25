@@ -31,9 +31,10 @@ import { OptionChainBrowser, type OptionChainSnapshot, type SelectedContract } f
 import { useVisiblePolling } from "@/components/paper-trading/use-visible-polling";
 import type { PlacedOptionOrderPayload } from "@/components/paper-trading/option-trade-panel";
 import { PaperTradingDisclaimerFooter } from "@/components/paper-trading/paper-trading-disclaimer-footer";
+import { InstrumentContextCard } from "@/components/paper-trading/instrument-context-card";
 import { DockedOrderTicket } from "@/components/paper-trading/terminal/docked-order-ticket";
 import { PositionsStrip, type PositionChip } from "@/components/paper-trading/terminal/positions-strip";
-import { TerminalHeader, type TerminalSpotQuote } from "@/components/paper-trading/terminal/terminal-header";
+import { TerminalHeader } from "@/components/paper-trading/terminal/terminal-header";
 import { TerminalShell } from "@/components/paper-trading/terminal/terminal-shell";
 import { useEodSeries } from "@/components/paper-trading/terminal/use-eod-series";
 import { Button } from "@/components/ui/button";
@@ -60,6 +61,7 @@ interface OptionPositionSummary {
 
 interface AccountSummary {
   cash: number;
+  totalValue: number;
   todayNetPnl: number;
   lifetimeNetPnl: number;
   deliveryHoldings: EquityPositionSummary[];
@@ -122,7 +124,6 @@ function OptionsPageClientInner() {
   const [lastOrder, setLastOrder] = useState<PlacedOptionOrderPayload | null>(null);
 
   const [chartUnderlying, setChartUnderlying] = useState<string | null>(deepLinkUnderlying);
-  const [chartQuote, setChartQuote] = useState<TerminalSpotQuote | null>(null);
 
   const loadAccount = useCallback(async () => {
     try {
@@ -135,6 +136,7 @@ function OptionsPageClientInner() {
       const a = data.account;
       setAccount({
         cash: a?.cash ?? 0,
+        totalValue: a?.totalValue ?? a?.cash ?? 0,
         todayNetPnl: a?.todayNetPnl ?? 0,
         lifetimeNetPnl: a?.lifetimeNetPnl ?? 0,
         deliveryHoldings: (a?.deliveryHoldings ?? []).map((h: { symbol: string; quantity: number; netPnl: number | null }) => ({
@@ -296,21 +298,20 @@ function OptionsPageClientInner() {
 
   const isIndexChart = chartUnderlying != null && isIndexUnderlying(chartUnderlying);
 
-  const positionChips: PositionChip[] = [
-    ...account.deliveryHoldings.map((h): PositionChip => ({ kind: "equity", symbol: h.symbol, productType: h.productType, quantity: h.quantity, netPnl: h.netPnl })),
-    ...account.openIntradayPositions.map((h): PositionChip => ({ kind: "equity", symbol: h.symbol, productType: h.productType, quantity: h.quantity, netPnl: h.netPnl })),
-    ...account.optionPositions.map(
-      (o): PositionChip => ({
-        kind: "option",
-        underlyingSymbol: o.underlyingSymbol,
-        optionType: o.optionType,
-        strikePrice: o.strikePrice,
-        expiryDate: o.expiryDate,
-        lots: o.lots,
-        netPnl: o.netPnl
-      })
-    )
-  ];
+  // OPTION positions only — stock chips on the options screen were noise
+  // (founder feedback 2026-07-25); stock positions live on the dashboard's
+  // full tables.
+  const positionChips: PositionChip[] = account.optionPositions.map(
+    (o): PositionChip => ({
+      kind: "option",
+      underlyingSymbol: o.underlyingSymbol,
+      optionType: o.optionType,
+      strikePrice: o.strikePrice,
+      expiryDate: o.expiryDate,
+      lots: o.lots,
+      netPnl: o.netPnl
+    })
+  );
 
   return (
     <div className="space-y-6">
@@ -340,14 +341,18 @@ function OptionsPageClientInner() {
       <TerminalShell
         header={
           <TerminalHeader
-            title={selectedContract ? `${selectedContract.underlying} ${selectedContract.strikePrice} ${selectedContract.optionType}` : chartUnderlying ?? ""}
-            spot={chartQuote}
             cash={account.cash}
+            portfolioValue={account.totalValue}
             todayPnl={account.todayNetPnl}
             totalPnl={account.lifetimeNetPnl}
           />
         }
-        chart={<OptionsUnderlyingChart underlying={chartUnderlying} isIndex={isIndexChart} onQuoteChange={setChartQuote} />}
+        chart={
+          <div>
+            <OptionsUnderlyingChart underlying={chartUnderlying} isIndex={isIndexChart} />
+            <InstrumentContextCard symbol={chartUnderlying} />
+          </div>
+        }
         ladder={
           <OptionChainBrowser
             onSelectContract={handleLadderAction}
@@ -395,12 +400,10 @@ const EMPTY_SERIES: PricePoint[] = [];
 
 function OptionsUnderlyingChart({
   underlying,
-  isIndex,
-  onQuoteChange
+  isIndex
 }: {
   underlying: string | null;
   isIndex: boolean;
-  onQuoteChange: (quote: TerminalSpotQuote | null) => void;
 }) {
   const stockEodSeries = useEodSeries(!isIndex ? underlying : null);
   const indexIntradaySource = useMemo(
@@ -420,10 +423,9 @@ function OptionsUnderlyingChart({
         series={EMPTY_SERIES}
         defaultTimeframe="1D"
         intradaySource={indexIntradaySource}
-        onQuoteChange={onQuoteChange}
       />
     );
   }
 
-  return <PriceChart key={underlying} symbol={underlying} series={stockEodSeries} onQuoteChange={onQuoteChange} />;
+  return <PriceChart key={underlying} symbol={underlying} series={stockEodSeries} />;
 }

@@ -13,9 +13,9 @@
  * TerminalShell: sticky header (spot + day/total P&L + cash), the focused
  * symbol's PriceChart, and a DockedOrderTicket delegating to the EXISTING,
  * UNMODIFIED NewTradeForm (equity needed no new submit logic — "chart +
- * simple buy/sell ticket, no ladder" per the brief). PositionsStrip sits
- * below it. Everything from "Delivery holdings" down is unchanged from
- * pre-overhaul — same tables, same data, same behavior.
+ * simple buy/sell ticket, no ladder" per the brief). Everything from
+ * "Delivery holdings" down keeps the full tables (with Sell actions) — the
+ * chips strip was removed 2026-07-25 as pure duplication of those tables.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -26,13 +26,13 @@ import { formatNseExpiryDate } from "@predict-future/business-rules/papertrading
 import { PriceChart } from "@/components/finance/price-chart";
 import { PaperTradingSymbolSearchInput, type PaperSymbolOption } from "@/components/paper-trading/symbol-search-input";
 import { type PlacedOrderPayload } from "@/components/paper-trading/new-trade-form";
+import { InstrumentContextCard } from "@/components/paper-trading/instrument-context-card";
 import { OrderConfirmation } from "@/components/paper-trading/order-confirmation";
 import { OrderHistoryTable, type OrderHistoryEntry } from "@/components/paper-trading/order-history-table";
 import { PaperTradingDisclaimerFooter } from "@/components/paper-trading/paper-trading-disclaimer-footer";
 import { useVisiblePolling } from "@/components/paper-trading/use-visible-polling";
 import { DockedOrderTicket } from "@/components/paper-trading/terminal/docked-order-ticket";
-import { PositionsStrip, type PositionChip } from "@/components/paper-trading/terminal/positions-strip";
-import { TerminalHeader, type TerminalSpotQuote } from "@/components/paper-trading/terminal/terminal-header";
+import { TerminalHeader } from "@/components/paper-trading/terminal/terminal-header";
 import { TerminalShell } from "@/components/paper-trading/terminal/terminal-shell";
 import { useEodSeries } from "@/components/paper-trading/terminal/use-eod-series";
 import { Badge } from "@/components/ui/badge";
@@ -116,7 +116,6 @@ export function PaperTradingDashboard() {
   const [error, setError] = useState("");
   const [lastOrder, setLastOrder] = useState<PlacedOrderPayload | null>(null);
   const [resetting, setResetting] = useState(false);
-  const [chartQuote, setChartQuote] = useState<TerminalSpotQuote | null>(null);
 
   const loadAccount = useCallback(async () => {
     try {
@@ -262,26 +261,6 @@ export function PaperTradingDashboard() {
   const initialProductType = searchParams.get("productType") === "INTRADAY" ? "INTRADAY" : "DELIVERY";
   const linkedOpinionId = searchParams.get("linkedOpinionId");
 
-  const positionChips: PositionChip[] = [
-    ...account.deliveryHoldings.map(
-      (h): PositionChip => ({ kind: "equity", symbol: h.symbol, productType: "DELIVERY", quantity: h.quantity, netPnl: h.netPnl })
-    ),
-    ...account.openIntradayPositions.map(
-      (h): PositionChip => ({ kind: "equity", symbol: h.symbol, productType: "INTRADAY", quantity: h.quantity, netPnl: h.netPnl })
-    ),
-    ...account.optionPositions.map(
-      (o): PositionChip => ({
-        kind: "option",
-        underlyingSymbol: o.underlyingSymbol,
-        optionType: o.optionType,
-        strikePrice: o.strikePrice,
-        expiryDate: o.expiryDate,
-        lots: o.lots,
-        netPnl: o.netPnl
-      })
-    )
-  ];
-
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -319,9 +298,8 @@ export function PaperTradingDashboard() {
       <TerminalShell
         header={
           <TerminalHeader
-            title={focusedSymbol ?? ""}
-            spot={chartQuote}
             cash={account.cash}
+            portfolioValue={account.totalValue}
             todayPnl={account.todayNetPnl}
             totalPnl={account.lifetimeNetPnl}
           />
@@ -329,7 +307,8 @@ export function PaperTradingDashboard() {
         chart={
           focusedSymbol ? (
             <div>
-              <PriceChart key={focusedSymbol} symbol={focusedSymbol} series={eodSeries} onQuoteChange={setChartQuote} />
+              <PriceChart key={focusedSymbol} symbol={focusedSymbol} series={eodSeries} />
+              <InstrumentContextCard symbol={focusedSymbol} />
               <div className="mt-3 max-w-xs">
                 <PaperTradingSymbolSearchInput
                   value=""
@@ -364,7 +343,6 @@ export function PaperTradingDashboard() {
             }}
           />
         }
-        positions={<PositionsStrip positions={positionChips} />}
       />
 
       {lastOrder && <OrderConfirmation order={lastOrder} onDismiss={() => setLastOrder(null)} />}
