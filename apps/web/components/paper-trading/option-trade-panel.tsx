@@ -29,6 +29,7 @@ import { isNseWeekdayMarketHours } from "@predict-future/business-rules/papertra
 import { CostBreakdownTable } from "@/components/paper-trading/cost-breakdown-table";
 import { Button } from "@/components/ui/button";
 import type { SelectedContract } from "@/components/paper-trading/option-chain-browser";
+import { submitOptionOrder } from "@/lib/paperTrading/optionOrdersClient";
 
 export interface PlacedOptionOrderPayload {
   id: string;
@@ -107,28 +108,20 @@ export function OptionTradePanel({
     setFormError("");
     setSubmitting(true);
     try {
-      const res = await fetch("/api/paper-trading/options/orders", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          underlyingSymbol: contract.underlying,
-          optionType: contract.optionType,
-          strikePrice: contract.strikePrice,
-          expiryDate: contract.expiry,
-          side,
-          lots,
-          ...(linkedOpinionId ? { linkedOpinionId } : {})
-        })
+      const result = await submitOptionOrder({
+        underlyingSymbol: contract.underlying,
+        optionType: contract.optionType,
+        strikePrice: contract.strikePrice,
+        expiryDate: contract.expiry,
+        side,
+        lots,
+        linkedOpinionId
       });
-      if (!res.ok) {
-        const payload = await res.json().catch(() => ({}));
-        setFormError(payload.error ?? "Couldn't place that order.");
+      if (!result.ok) {
+        setFormError(result.error);
         return;
       }
-      const data = await res.json();
-      onOrderPlaced(data.order);
-    } catch {
-      setFormError("Couldn't place that order — check your connection and try again.");
+      onOrderPlaced(result.order);
     } finally {
       setSubmitting(false);
     }

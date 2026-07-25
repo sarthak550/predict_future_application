@@ -57,7 +57,8 @@ function todayIstDateAsUtcMidnight(now: Date = new Date()): Date {
   return new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate()));
 }
 
-const YAHOO_INDEX_TICKER: Record<OptionUnderlying, string> = { NIFTY: "^NSEI", BANKNIFTY: "^NSEBANK" };
+/** Exported for reuse by lib/marketMoves/indexIntraday.ts (Trading Terminal UI brief, T2) — the one canonical index-ticker map, never duplicated. */
+export const YAHOO_INDEX_TICKER: Record<OptionUnderlying, string> = { NIFTY: "^NSEI", BANKNIFTY: "^NSEBANK" };
 const YAHOO_CHART_BASE = "https://query1.finance.yahoo.com/v8/finance/chart";
 const YAHOO_TIMEOUT_MS = 8000;
 

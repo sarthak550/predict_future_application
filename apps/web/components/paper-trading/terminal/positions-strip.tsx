@@ -1,0 +1,100 @@
+"use client";
+
+/**
+ * Trading Terminal UI Overhaul (Sprint A, T4 chrome / T8 wiring) — bottom-
+ * pinned horizontal strip: one chip per open position, equity and option
+ * mixed in one continuous bar (per the brief: "a mixed equity+option account
+ * should show one continuous bar, not two separate ones per page").
+ *
+ * Tap → Sell, reusing the EXACT deep-link contracts already read elsewhere:
+ *   - Option: `?underlying=&expiry=&strike=&optionType=&side=SELL` — the same
+ *     shape options-page-client.tsx's OptionPositionsTable already builds
+ *     (shipped 2026-07-25), unchanged here.
+ *   - Equity: `?symbol=&side=SELL&productType=` — GENERALIZED here for the
+ *     first time into an actual UI link. paper-trading-dashboard.tsx already
+ *     READS these params (via useSearchParams, pre-dating this brief) but no
+ *     surface previously WROTE this link for an equity holding — this strip
+ *     is that surface.
+ *
+ * Pure presentation — no data fetching. Receives already-derived equity +
+ * option position rows from the account payload both terminal pages already
+ * poll every 60s (use-visible-polling.ts, paused on hidden tab).
+ */
+import Link from "next/link";
+
+import { formatNseExpiryDate } from "@predict-future/business-rules/papertrading/optionContract";
+
+function formatSignedRupees(value: number): string {
+  const sign = value > 0 ? "+" : value < 0 ? "-" : "";
+  return `${sign}₹${Math.abs(value).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
+}
+
+export interface EquityPositionChip {
+  kind: "equity";
+  symbol: string;
+  productType: "DELIVERY" | "INTRADAY";
+  quantity: number;
+  netPnl: number | null;
+}
+
+export interface OptionPositionChip {
+  kind: "option";
+  underlyingSymbol: string;
+  optionType: "CE" | "PE";
+  strikePrice: number;
+  expiryDate: string; // ISO
+  lots: number;
+  netPnl: number | null;
+}
+
+export type PositionChip = EquityPositionChip | OptionPositionChip;
+
+export function PositionsStrip({ positions }: { positions: PositionChip[] }) {
+  if (positions.length === 0) {
+    return (
+      <div className="rounded-[24px] border border-dashed border-ink-200 bg-white/60 px-5 py-3 text-center text-xs text-ink-400">
+        No open positions yet — trades you place will show up here for a quick sell.
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex gap-2 overflow-x-auto rounded-[24px] border border-ink-100 bg-white p-2">
+      {positions.map((p) => (
+        <PositionChipCard key={chipKey(p)} chip={p} />
+      ))}
+    </div>
+  );
+}
+
+function chipKey(chip: PositionChip): string {
+  return chip.kind === "equity"
+    ? `equity-${chip.symbol}-${chip.productType}`
+    : `option-${chip.underlyingSymbol}-${chip.strikePrice}-${chip.optionType}-${chip.expiryDate}`;
+}
+
+function PositionChipCard({ chip }: { chip: PositionChip }) {
+  const tone = chip.netPnl == null ? "text-ink-400" : chip.netPnl >= 0 ? "text-emerald-600" : "text-rose-600";
+  const href =
+    chip.kind === "equity"
+      ? `/paper-trading?symbol=${encodeURIComponent(chip.symbol)}&side=SELL&productType=${chip.productType}`
+      : `/paper-trading/options?underlying=${encodeURIComponent(chip.underlyingSymbol)}&expiry=${encodeURIComponent(
+          formatNseExpiryDate(new Date(chip.expiryDate))
+        )}&strike=${chip.strikePrice}&optionType=${chip.optionType}&side=SELL`;
+
+  return (
+    <Link
+      href={href}
+      className="flex shrink-0 flex-col gap-0.5 rounded-2xl border border-ink-100 bg-ink-50/60 px-3 py-2 text-left transition hover:border-rose-200 hover:bg-rose-50"
+    >
+      <span className="whitespace-nowrap text-xs font-semibold text-ink-900">
+        {chip.kind === "equity" ? chip.symbol : `${chip.underlyingSymbol} ${chip.strikePrice} ${chip.optionType}`}
+      </span>
+      <span className="whitespace-nowrap text-[10px] text-ink-400">
+        {chip.kind === "equity" ? `${chip.productType} · ${chip.quantity} sh` : `${chip.lots} lot(s)`}
+      </span>
+      <span className={`whitespace-nowrap text-xs font-medium ${tone}`}>{chip.netPnl != null ? formatSignedRupees(chip.netPnl) : "—"}</span>
+      <span className="whitespace-nowrap text-[10px] font-semibold uppercase tracking-wide text-rose-500">Sell</span>
+    </Link>
+  );
+}

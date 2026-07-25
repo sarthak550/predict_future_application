@@ -1927,3 +1927,33 @@ enum PaperSquareOffReason {
   OPTION_EXPIRY
   STOCK_OPTION_EXPIRY_SQUAREOFF
 }
+
+/// Trading Terminal UI Overhaul (Sprint A, T1) — premium-history capture. Market
+/// data, NOT account data: one shared table across every account, same posture
+/// as StockEodQuote (no FK to PaperOrder/PaperTradingAccount). Populated every 5
+/// minutes during NSE market hours by the paper-trading-premium-capture cron for
+/// the union of (a) every (underlyingSymbol, expiryDate) with an open option
+/// position across any account and (b) every (underlyingSymbol, expiryDate)
+/// requested through the chain endpoint in roughly the last 15 minutes, ATM ± 5
+/// strikes each. Pruned after 45 days by a separate nightly cron
+/// (paper-trading-premium-snapshot-prune). See the Trading Terminal UI brief's
+/// "Data layer" section for the full spec — this table exists so premium
+/// history can start accruing well before the T10 chart UI that will read it.
+model OptionPremiumSnapshot {
+  id               String              @id @default(cuid())
+  capturedAt       DateTime            @default(now())
+  underlyingSymbol String
+  /// Reuses the existing PaperInstrumentKind enum's option values only
+  /// (INDEX_OPTION | STOCK_OPTION) — never EQUITY, no new enum needed.
+  instrumentKind   PaperInstrumentKind
+  expiryDate       DateTime
+  strikePrice      Float
+  optionType       PaperOptionType
+  lastPrice        Float?
+  bidPrice         Float?
+  askPrice         Float?
+  underlyingValue  Float
+
+  @@index([underlyingSymbol, expiryDate, strikePrice, optionType, capturedAt])
+  @@index([capturedAt])
+}

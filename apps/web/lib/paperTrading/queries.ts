@@ -15,6 +15,7 @@ import {
   openIntradayPositions,
   replayPosition,
   unrealizedGrossPnl,
+  type DayGroupedPosition,
   type OptionContractPosition,
   type PaperEngineOrder,
   type SymbolPosition
@@ -122,6 +123,13 @@ export interface PaperAccountDetail {
   lifetimeRealizedGrossPnl: number;
   lifetimeUnrealizedGrossPnl: number;
   lifetimeNetPnl: number;
+  /**
+   * Trading Terminal UI Overhaul (Sprint A, T4) — the P&L impact of every
+   * order placed today (IST calendar day), read-side only, additive. See
+   * `computeTodayNetPnl` below for the exact derivation and why this is
+   * "today's TRADING P&L" rather than a full mark-to-market "day P&L".
+   */
+  todayNetPnl: number;
   totalValue: number;
   resetEligible: boolean;
   daysUntilReset: number;
@@ -146,6 +154,96 @@ function toPositionRow(position: SymbolPosition, ltp: { price: number; tickAt: D
 /** Chain-lookup key for a group of option positions that share one underlying+expiry — one live chain fetch covers every strike in the group. */
 function optionChainKey(underlyingSymbol: string, expiryDate: Date): string {
   return `${underlyingSymbol}::${expiryDate.toISOString()}`;
+}
+
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+
+/** Today's IST calendar day's start, expressed as the equivalent UTC instant — the cutoff for "placed today" below. */
+function istDayStartAsUtcInstant(now: Date = new Date()): Date {
+  const ist = new Date(now.getTime() + IST_OFFSET_MS);
+  const istMidnightUtcMs = Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate());
+  return new Date(istMidnightUtcMs - IST_OFFSET_MS);
+}
+
+/**
+ * "Today's trading P&L" — the P&L impact of every order placed today,
+ * isolated by diffing two replays of the SAME order log against the SAME
+ * live prices: one over every order, one with today's orders excluded. Both
+ * marks use the prices already fetched for the main computation (ltpBySymbol
+ * / quoteFor) — no extra I/O.
+ *
+ * Correct WITHOUT needing any price for a position that was fully closed
+ * today: its realizedGrossPnl/totalCosts are pure order-log arithmetic (no
+ * live price involved at all), so its full today-contribution is captured by
+ * the realized+costs delta term alone. A live price is only needed for the
+ * unrealized-delta term, and that's only ever computed for positions that are
+ * STILL open right now — which are, by construction, exactly the positions
+ * `ltpBySymbol`/`quoteFor` already have a price for.
+ *
+ * Deliberately NOT a full mark-to-market "day P&L" (which would need a
+ * start-of-day position snapshot this engine has never captured — see
+ * terminal-header.tsx's doc comment for the honest framing).
+ */
+function computeTodayNetPnl(
+  engineOrders: PaperEngineOrder[],
+  allDeliveryPositions: SymbolPosition[],
+  allIntradayDaily: DayGroupedPosition[],
+  allOptionPositions: OptionContractPosition[],
+  ltpBySymbol: Map<string, { price: number; tickAt: Date } | null>,
+  quoteFor: (p: OptionContractPosition) => { lastPrice: number | null } | null
+): number {
+  const todayStartUtc = istDayStartAsUtcInstant();
+  const ordersExcludingToday = engineOrders.filter((o) => o.createdAt < todayStartUtc);
+
+  const deliveryExclToday = deriveAllDeliveryPositions(ordersExcludingToday);
+  const intradayExclToday = deriveIntradayDailyPositions(ordersExcludingToday);
+  const optionExclToday = deriveAllOptionPositions(ordersExcludingToday);
+
+  let todayNetPnl = 0;
+
+  function accumulate<T extends { realizedGrossPnl: number; totalCosts: number; quantity: number; avgCost: number }>(
+    current: T[],
+    excluded: T[],
+    keyFor: (g: T) => string,
+    priceFor: (g: T) => number | null
+  ) {
+    const exclByKey = new Map(excluded.map((g) => [keyFor(g), g]));
+    for (const g of current) {
+      const excl = exclByKey.get(keyFor(g));
+      const realizedDelta = g.realizedGrossPnl - (excl?.realizedGrossPnl ?? 0);
+      const costsDelta = g.totalCosts - (excl?.totalCosts ?? 0);
+      todayNetPnl += realizedDelta - costsDelta;
+      if (g.quantity !== 0) {
+        const price = priceFor(g);
+        if (price != null) {
+          const currentUnrealized = unrealizedGrossPnl(g.quantity, g.avgCost, price);
+          const exclUnrealized = excl && excl.quantity !== 0 ? unrealizedGrossPnl(excl.quantity, excl.avgCost, price) : 0;
+          todayNetPnl += currentUnrealized - exclUnrealized;
+        }
+      }
+    }
+  }
+
+  accumulate(
+    allDeliveryPositions,
+    deliveryExclToday,
+    (g) => g.symbol,
+    (g) => ltpBySymbol.get(g.symbol)?.price ?? null
+  );
+  accumulate(
+    allIntradayDaily,
+    intradayExclToday,
+    (g) => `${g.symbol}::${g.dayKey}`,
+    (g) => ltpBySymbol.get(g.symbol)?.price ?? null
+  );
+  accumulate(
+    allOptionPositions,
+    optionExclToday,
+    (g) => optionChainKey(g.underlyingSymbol, g.expiryDate) + `::${g.strikePrice}::${g.optionType}`,
+    (g) => quoteFor(g)?.lastPrice ?? null
+  );
+
+  return todayNetPnl;
 }
 
 function toOptionPositionRow(
@@ -274,6 +372,8 @@ export async function getAccountDetail(userId: string): Promise<PaperAccountDeta
   }
   const lifetimeNetPnl = lifetimeRealizedGrossPnl + lifetimeUnrealizedGrossPnl - lifetimeCostsPaid;
 
+  const todayNetPnl = computeTodayNetPnl(engineOrders, allDeliveryPositions, allIntradayDaily, allOptionPositions, ltpBySymbol, quoteFor);
+
   const holdingsValue = deliveryHoldingRows.reduce((sum, h) => sum + h.quantity * (h.latestLtp ?? h.avgCost), 0);
   const optionsValue = optionPositionRows.reduce((sum, o) => sum + o.quantity * (o.latestPremium ?? o.avgCost), 0);
   const totalValue = cash + holdingsValue + optionsValue;
@@ -302,6 +402,7 @@ export async function getAccountDetail(userId: string): Promise<PaperAccountDeta
     lifetimeRealizedGrossPnl,
     lifetimeUnrealizedGrossPnl,
     lifetimeNetPnl,
+    todayNetPnl,
     totalValue,
     resetEligible: resetEligibility.eligible,
     daysUntilReset: resetEligibility.daysRemaining,

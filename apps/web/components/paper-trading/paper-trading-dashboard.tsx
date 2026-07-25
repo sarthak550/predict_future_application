@@ -8,24 +8,42 @@
  * Reads ?symbol=&side=&productType=&linkedOpinionId= from the URL to pre-fill the
  * New Trade form — this is how "Paper trade this call" (T7) hands off into this
  * page without any prop-drilling across the navigation boundary.
+ *
+ * Trading Terminal UI Overhaul (Sprint A, T5) — the top section is now a
+ * TerminalShell: sticky header (spot + day/total P&L + cash), the focused
+ * symbol's PriceChart, and a DockedOrderTicket delegating to the EXISTING,
+ * UNMODIFIED NewTradeForm (equity needed no new submit logic — "chart +
+ * simple buy/sell ticket, no ladder" per the brief). PositionsStrip sits
+ * below it. Everything from "Delivery holdings" down is unchanged from
+ * pre-overhaul — same tables, same data, same behavior.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 
 import { formatNseExpiryDate } from "@predict-future/business-rules/papertrading/optionContract";
 
-import { NewTradeForm, type PlacedOrderPayload } from "@/components/paper-trading/new-trade-form";
+import { PriceChart } from "@/components/finance/price-chart";
+import { PaperTradingSymbolSearchInput, type PaperSymbolOption } from "@/components/paper-trading/symbol-search-input";
+import { type PlacedOrderPayload } from "@/components/paper-trading/new-trade-form";
 import { OrderConfirmation } from "@/components/paper-trading/order-confirmation";
 import { OrderHistoryTable, type OrderHistoryEntry } from "@/components/paper-trading/order-history-table";
 import { PaperTradingDisclaimerFooter } from "@/components/paper-trading/paper-trading-disclaimer-footer";
 import { useVisiblePolling } from "@/components/paper-trading/use-visible-polling";
+import { DockedOrderTicket } from "@/components/paper-trading/terminal/docked-order-ticket";
+import { PositionsStrip, type PositionChip } from "@/components/paper-trading/terminal/positions-strip";
+import { TerminalHeader, type TerminalSpotQuote } from "@/components/paper-trading/terminal/terminal-header";
+import { TerminalShell } from "@/components/paper-trading/terminal/terminal-shell";
+import { useEodSeries } from "@/components/paper-trading/terminal/use-eod-series";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@/components/ui/table";
 
 type LoadState = "loading" | "signed-out" | "ready";
+
+/** Device-wide "last focused symbol" — restores the terminal's chart/ticket focus across visits when no deep-link and no holding is available. */
+const LAST_FOCUSED_SYMBOL_KEY = "pf.papertrading.lastFocusedSymbol";
 
 interface PositionRow {
   symbol: string;
@@ -68,6 +86,8 @@ interface AccountDetail {
   lifetimeRealizedGrossPnl: number;
   lifetimeUnrealizedGrossPnl: number;
   lifetimeNetPnl: number;
+  /** Trading Terminal UI Overhaul (Sprint A, T4) — see queries.ts's computeTodayNetPnl for the exact derivation. */
+  todayNetPnl: number;
   totalValue: number;
   resetEligible: boolean;
   daysUntilReset: number;
@@ -96,6 +116,7 @@ export function PaperTradingDashboard() {
   const [error, setError] = useState("");
   const [lastOrder, setLastOrder] = useState<PlacedOrderPayload | null>(null);
   const [resetting, setResetting] = useState(false);
+  const [chartQuote, setChartQuote] = useState<TerminalSpotQuote | null>(null);
 
   const loadAccount = useCallback(async () => {
     try {
@@ -158,6 +179,41 @@ export function PaperTradingDashboard() {
     }
   }
 
+  // ── Focused symbol (T5): deep-link > largest holding by value > last
+  // focused (localStorage) > null (search prompt). ──────────────────────────
+  const deepLinkSymbol = searchParams.get("symbol");
+  const [manualFocus, setManualFocus] = useState<string | null>(null);
+  const [restoredLastFocus, setRestoredLastFocus] = useState<string | null | undefined>(undefined); // undefined = not yet read from storage
+
+  useEffect(() => {
+    try {
+      setRestoredLastFocus(window.localStorage.getItem(LAST_FOCUSED_SYMBOL_KEY));
+    } catch {
+      setRestoredLastFocus(null);
+    }
+  }, []);
+
+  const largestHoldingSymbol = useMemo(() => {
+    if (!account || account.deliveryHoldings.length === 0) return null;
+    const byValue = [...account.deliveryHoldings].sort(
+      (a, b) => Math.abs(b.quantity * (b.latestLtp ?? b.avgCost)) - Math.abs(a.quantity * (a.latestLtp ?? a.avgCost))
+    );
+    return byValue[0]?.symbol ?? null;
+  }, [account]);
+
+  const focusedSymbol = deepLinkSymbol ?? manualFocus ?? largestHoldingSymbol ?? restoredLastFocus ?? null;
+
+  const setFocusedSymbol = useCallback((symbol: string) => {
+    setManualFocus(symbol);
+    try {
+      window.localStorage.setItem(LAST_FOCUSED_SYMBOL_KEY, symbol);
+    } catch {
+      // Preference just won't persist.
+    }
+  }, []);
+
+  const eodSeries = useEodSeries(focusedSymbol);
+
   if (state === "loading") {
     return (
       <Card>
@@ -201,10 +257,30 @@ export function PaperTradingDashboard() {
     if (orderDayIst === todayIst) hasSoldDeliveryTodayBySymbol[order.symbol] = true;
   }
 
-  const initialSymbol = searchParams.get("symbol");
+  const initialSymbol = deepLinkSymbol;
   const initialSide = searchParams.get("side") === "SELL" ? "SELL" : "BUY";
   const initialProductType = searchParams.get("productType") === "INTRADAY" ? "INTRADAY" : "DELIVERY";
   const linkedOpinionId = searchParams.get("linkedOpinionId");
+
+  const positionChips: PositionChip[] = [
+    ...account.deliveryHoldings.map(
+      (h): PositionChip => ({ kind: "equity", symbol: h.symbol, productType: "DELIVERY", quantity: h.quantity, netPnl: h.netPnl })
+    ),
+    ...account.openIntradayPositions.map(
+      (h): PositionChip => ({ kind: "equity", symbol: h.symbol, productType: "INTRADAY", quantity: h.quantity, netPnl: h.netPnl })
+    ),
+    ...account.optionPositions.map(
+      (o): PositionChip => ({
+        kind: "option",
+        underlyingSymbol: o.underlyingSymbol,
+        optionType: o.optionType,
+        strikePrice: o.strikePrice,
+        expiryDate: o.expiryDate,
+        lots: o.lots,
+        netPnl: o.netPnl
+      })
+    )
+  ];
 
   return (
     <div className="space-y-6">
@@ -240,52 +316,58 @@ export function PaperTradingDashboard() {
 
       {error && <p className="text-sm text-rose-600">{error}</p>}
 
-      <Card className="overflow-hidden border-0 bg-ink-900 text-white">
-        <CardContent className="grid gap-4 p-6 sm:grid-cols-4">
-          <Stat label="Cash" value={formatRupees(account.cash)} dark />
-          <Stat label="Total value" value={formatRupees(account.totalValue)} dark />
-          <Stat
-            label="Lifetime net P&L"
-            value={formatSignedRupees(account.lifetimeNetPnl)}
-            tone={pnlTone(account.lifetimeNetPnl)}
-            dark
+      <TerminalShell
+        header={
+          <TerminalHeader
+            title={focusedSymbol ?? ""}
+            spot={chartQuote}
+            cash={account.cash}
+            todayPnl={account.todayNetPnl}
+            totalPnl={account.lifetimeNetPnl}
           />
-          <Stat
-            label="Lifetime costs paid"
-            value={formatRupees(account.lifetimeCostsPaid)}
-            dark
-            hint="This is what real trading would have cost you."
-          />
-        </CardContent>
-      </Card>
-
-      {lastOrder && <OrderConfirmation order={lastOrder} onDismiss={() => setLastOrder(null)} />}
-
-      <Card>
-        <CardHeader>
-          <CardTitle>New trade</CardTitle>
-          <CardDescription>
-            Fills immediately at the latest delayed price. DELIVERY sells require an existing holding — no
-            delivery short-selling. INTRADAY positions must be squared off the same day (auto-closed near session
-            close if you don&apos;t close them yourself).
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <NewTradeForm
+        }
+        chart={
+          focusedSymbol ? (
+            <div>
+              <PriceChart key={focusedSymbol} symbol={focusedSymbol} series={eodSeries} onQuoteChange={setChartQuote} />
+              <div className="mt-3 max-w-xs">
+                <PaperTradingSymbolSearchInput
+                  value=""
+                  onSelect={(opt: PaperSymbolOption) => setFocusedSymbol(opt.symbol)}
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <p className="text-sm text-ink-500">Search a symbol to start trading.</p>
+              <div className="max-w-xs">
+                <PaperTradingSymbolSearchInput value="" onSelect={(opt: PaperSymbolOption) => setFocusedSymbol(opt.symbol)} />
+              </div>
+            </div>
+          )
+        }
+        ticket={
+          <DockedOrderTicket
+            key={`${initialSymbol ?? focusedSymbol ?? ""}-${initialSide}-${initialProductType}`}
+            kind="equity"
             cash={account.cash}
             heldDeliveryQtyBySymbol={heldDeliveryQtyBySymbol}
             hasSoldDeliveryTodayBySymbol={hasSoldDeliveryTodayBySymbol}
-            initialSymbol={initialSymbol}
+            initialSymbol={initialSymbol ?? focusedSymbol}
             initialSide={initialSide}
             initialProductType={initialProductType}
             linkedOpinionId={linkedOpinionId}
             onOrderPlaced={(order) => {
               setLastOrder(order);
+              setFocusedSymbol(order.symbol);
               loadAccount();
             }}
           />
-        </CardContent>
-      </Card>
+        }
+        positions={<PositionsStrip positions={positionChips} />}
+      />
+
+      {lastOrder && <OrderConfirmation order={lastOrder} onDismiss={() => setLastOrder(null)} />}
 
       <Card>
         <CardHeader>
@@ -459,34 +541,6 @@ function OptionPositionsTable({ rows }: { rows: OptionPositionRow[] }) {
           })}
         </TableBody>
       </Table>
-    </div>
-  );
-}
-
-function Stat({
-  label,
-  value,
-  tone,
-  dark,
-  hint
-}: {
-  label: string;
-  value: string;
-  tone?: "up" | "down";
-  dark?: boolean;
-  hint?: string;
-}) {
-  return (
-    <div className={dark ? "rounded-[24px] bg-white/10 p-4" : undefined}>
-      <p className={dark ? "text-sm text-white/60" : "text-xs text-ink-400"}>{label}</p>
-      <p
-        className={`mt-0.5 text-lg font-semibold ${
-          tone === "up" ? "text-emerald-400" : tone === "down" ? "text-rose-400" : dark ? "text-white" : "text-ink-900"
-        }`}
-      >
-        {value}
-      </p>
-      {hint && <p className="mt-1 text-xs text-white/50">{hint}</p>}
     </div>
   );
 }

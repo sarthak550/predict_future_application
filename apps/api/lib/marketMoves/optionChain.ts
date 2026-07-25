@@ -355,6 +355,40 @@ function parseNseChainTimestamp(raw: string | null | undefined): Date | null {
 const chainCache = new Map<string, { at: number; data: OptionChainSnapshot | null }>();
 
 /**
+ * Trading Terminal UI Overhaul (Sprint A, T3) — "recently viewed" tracking for
+ * the premium-capture cron's candidate set. A SEPARATE map from chainCache
+ * (not a field bolted onto its entries): a contract stays "recently viewed"
+ * for RECENTLY_VIEWED_WINDOW_MS regardless of the 60s chainCache TTL, and
+ * recording a request must never be skipped just because chainCache already
+ * had a fresh entry (a cache HIT is still a real view). Process-local, lost on
+ * restart, single-instance-only — the same accepted limitation as
+ * chainCache's own 60s TTL, not a new risk class.
+ */
+const recentlyViewedCache = new Map<string, { underlying: OptionUnderlying; expiry: string; lastRequestedAt: number }>();
+
+/** Records that `underlying`'s `expiry` chain was just requested — called on EVERY fetchOptionChain call (cache hit or miss), so the capture cron's "viewed in roughly the last 15 minutes" signal reflects real traffic, not just cache misses. */
+function recordChainRequest(underlying: OptionUnderlying, expiry: string): void {
+  recentlyViewedCache.set(`${underlying}::${expiry}`, { underlying, expiry, lastRequestedAt: Date.now() });
+}
+
+/**
+ * Every (underlying, expiry) pair whose chain was requested within the last
+ * `windowMs` (default 15 minutes) — one half of the premium-capture cron's
+ * candidate set (the other half is "has an open position", scanned directly
+ * from PaperOrder). Stale entries are read-time filtered, not proactively
+ * evicted — this map is small (bounded by the number of distinct contracts
+ * actually browsed) and never needs its own eviction policy.
+ */
+export function getRecentlyViewedContracts(windowMs = 15 * 60_000): Array<{ underlying: OptionUnderlying; expiry: string }> {
+  const cutoff = Date.now() - windowMs;
+  const result: Array<{ underlying: OptionUnderlying; expiry: string }> = [];
+  for (const entry of recentlyViewedCache.values()) {
+    if (entry.lastRequestedAt >= cutoff) result.push({ underlying: entry.underlying, expiry: entry.expiry });
+  }
+  return result;
+}
+
+/**
  * Fetches the full strike ladder for `underlying`'s `expiry` contract, plus the
  * live underlying spot value and the snapshotted lot size for that specific
  * contract month. Never throws — returns null on any upstream failure or an
@@ -363,6 +397,8 @@ const chainCache = new Map<string, { at: number; data: OptionChainSnapshot | nul
  * in-module for CHAIN_CACHE_TTL_MS (60s) per (underlying, expiry) pair.
  */
 export async function fetchOptionChain(underlying: string, expiry: string): Promise<OptionChainSnapshot | null> {
+  recordChainRequest(underlying, expiry);
+
   const cacheKey = `${underlying}::${expiry}`;
   const cached = chainCache.get(cacheKey);
   if (cached && Date.now() - cached.at < CHAIN_CACHE_TTL_MS) return cached.data;

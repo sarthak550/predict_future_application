@@ -7,9 +7,12 @@
  * combobox in Stock mode), an expiry picker (populated from the live expiry
  * list — never assumes weekly vs. monthly cadence), and a strike ladder (CE
  * premium | strike | PE premium) with the ATM strike visually highlighted
- * against the live underlyingValue. Tapping a CE/PE cell calls
- * onSelectContract, which the page composes with OptionTradePanel (T8) to
- * open the trade panel pre-filled with that exact contract.
+ * against the live underlyingValue. Each strike's CE/PE cell is a premium
+ * value + a compact [B]/[S] chip pair (Trading Terminal UI Overhaul, Sprint A
+ * T6 — replaces the original single clickable premium cell); tapping a chip
+ * calls onSelectContract(contract, side), which options-page-client.tsx uses
+ * to pre-fill the terminal's DOCKED order ticket (or, if Express mode is
+ * armed, to fire an instant fill — see that file for the Express wiring).
  *
  * Index mode is pixel-identical to pre-Phase-3 behavior — the NIFTY/BANKNIFTY
  * toggle, strike ladder, ATM highlighting, 30s live-polling UX, and
@@ -90,9 +93,16 @@ export function OptionChainBrowser({
   onChainData,
   initialUnderlying,
   initialOptionType,
-  initialExpiry
+  initialExpiry,
+  getHeldLots
 }: {
-  onSelectContract: (contract: SelectedContract) => void;
+  /**
+   * Trading Terminal UI Overhaul (Sprint A, T6) — WIDENED to also report which
+   * chip (B or S) was tapped, so the docked ticket can pre-fill the correct
+   * side. Every existing caller updated in lockstep (options-page-client.tsx
+   * is the only one).
+   */
+  onSelectContract: (contract: SelectedContract, side: "BUY" | "SELL") => void;
   /** Fires on EVERY successful chain load, initial and polled — lets the page keep a selected contract's premium live. */
   onChainData?: (chain: OptionChainSnapshot) => void;
   /** Phase 3 deep-link pre-fill (from ?underlying=): a non-index symbol opens the browser directly in Stock mode with this underlying selected. NIFTY/BANKNIFTY (or omitted) keeps Index mode, unchanged from pre-Phase-3 behavior. */
@@ -101,6 +111,14 @@ export function OptionChainBrowser({
   initialOptionType?: "CE" | "PE" | null;
   /** Sell deep-link pre-fill (from ?expiry=): selects this expiry (when the live list contains it) instead of the nearest one. */
   initialExpiry?: string | null;
+  /**
+   * Trading Terminal UI Overhaul (Sprint A, T6) — how many lots of a given
+   * contract the account currently holds, so the [S] chip can be rendered
+   * disabled (long-only guard, now a disabled STATE instead of an absent
+   * button) rather than simply omitted. Omitted prop: every [S] chip renders
+   * disabled (same as "holds nothing"), never an absent-button crash.
+   */
+  getHeldLots?: (underlying: string, strikePrice: number, optionType: "CE" | "PE", expiry: string) => number;
 }) {
   const deepLinkIsStock = Boolean(initialUnderlying) && !isIndexUnderlying(initialUnderlying as string);
   const [mode, setMode] = useState<ChainMode>(deepLinkIsStock ? "stock" : "index");
@@ -304,17 +322,20 @@ export function OptionChainBrowser({
     });
   }, [chain]);
 
-  function handleCellClick(strikePrice: number, optionType: "CE" | "PE", quote: OptionQuote | null) {
+  function handleChipTap(strikePrice: number, optionType: "CE" | "PE", quote: OptionQuote | null, side: "BUY" | "SELL") {
     if (!chain || !chain.lotSize || quote?.lastPrice == null || quote.lastPrice <= 0) return;
-    onSelectContract({
-      underlying,
-      expiry,
-      strikePrice,
-      optionType,
-      premium: quote.lastPrice,
-      lotSize: chain.lotSize,
-      underlyingValue: chain.underlyingValue
-    });
+    onSelectContract(
+      {
+        underlying,
+        expiry,
+        strikePrice,
+        optionType,
+        premium: quote.lastPrice,
+        lotSize: chain.lotSize,
+        underlyingValue: chain.underlyingValue
+      },
+      side
+    );
   }
 
   const stockMatches = useMemo(() => {
@@ -484,12 +505,16 @@ export function OptionChainBrowser({
             <tbody>
               {visibleStrikes.map((row) => {
                 const isAtm = row.strikePrice === atmStrikePrice;
+                const ceHeldLots = getHeldLots?.(underlying, row.strikePrice, "CE", expiry) ?? 0;
+                const peHeldLots = getHeldLots?.(underlying, row.strikePrice, "PE", expiry) ?? 0;
                 return (
                   <tr key={row.strikePrice} className={isAtm ? "bg-signal-sky/10" : undefined}>
                     <td className="px-1 py-1 text-right">
                       <StrikeCell
                         quote={row.CE}
-                        onClick={() => handleCellClick(row.strikePrice, "CE", row.CE)}
+                        heldLots={ceHeldLots}
+                        onBuy={() => handleChipTap(row.strikePrice, "CE", row.CE, "BUY")}
+                        onSell={() => handleChipTap(row.strikePrice, "CE", row.CE, "SELL")}
                         align="right"
                         flash={flashes.get(`${row.strikePrice}-CE`)}
                       />
@@ -501,7 +526,9 @@ export function OptionChainBrowser({
                     <td className="px-1 py-1 text-left">
                       <StrikeCell
                         quote={row.PE}
-                        onClick={() => handleCellClick(row.strikePrice, "PE", row.PE)}
+                        heldLots={peHeldLots}
+                        onBuy={() => handleChipTap(row.strikePrice, "PE", row.PE, "BUY")}
+                        onSell={() => handleChipTap(row.strikePrice, "PE", row.PE, "SELL")}
                         align="left"
                         flash={flashes.get(`${row.strikePrice}-PE`)}
                       />
@@ -532,31 +559,58 @@ export function OptionChainBrowser({
   );
 }
 
+/**
+ * Trading Terminal UI Overhaul (Sprint A, T6) — premium value + a compact
+ * [B]/[S] chip pair, replacing the old single clickable premium cell.
+ * [S] renders disabled/grayed unless the account holds this exact contract
+ * (unchanged long-only guard, now a disabled STATE instead of an absent
+ * button) — the server-side rejection in optionOrders.ts is still the source
+ * of truth, this is UX guidance only.
+ */
 function StrikeCell({
   quote,
-  onClick,
+  heldLots,
+  onBuy,
+  onSell,
   align,
   flash
 }: {
   quote: OptionQuote | null;
-  onClick: () => void;
+  heldLots: number;
+  onBuy: () => void;
+  onSell: () => void;
   align: "left" | "right";
   flash?: FlashDirection;
 }) {
-  if (!quote || quote.lastPrice == null || quote.lastPrice <= 0) {
-    return <span className={`block px-2 py-2 text-ink-300 ${align === "right" ? "text-right" : "text-left"}`}>—</span>;
-  }
-  const flashClass =
-    flash === "up" ? "bg-emerald-100 text-emerald-800" : flash === "down" ? "bg-rose-100 text-rose-800" : "text-ink-900";
+  const hasQuote = quote != null && quote.lastPrice != null && quote.lastPrice > 0;
+  const flashClass = flash === "up" ? "text-emerald-700" : flash === "down" ? "text-rose-700" : "text-ink-900";
+  const alignClass = align === "right" ? "items-end" : "items-start";
+
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`block w-full rounded-xl px-2 py-2 font-medium transition-colors duration-700 hover:bg-signal-sky/20 ${flashClass} ${
-        align === "right" ? "text-right" : "text-left"
-      }`}
-    >
-      ₹{quote.lastPrice.toLocaleString("en-IN")}
-    </button>
+    <div className={`flex flex-col gap-1 px-1 py-1 ${alignClass}`}>
+      <span className={`text-xs font-medium transition-colors duration-700 ${hasQuote ? flashClass : "text-ink-300"}`}>
+        {hasQuote ? `₹${quote!.lastPrice!.toLocaleString("en-IN")}` : "—"}
+      </span>
+      <div className="flex gap-1">
+        <button
+          type="button"
+          disabled={!hasQuote}
+          onClick={onBuy}
+          className="rounded-lg bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"
+          title="Buy"
+        >
+          B
+        </button>
+        <button
+          type="button"
+          disabled={!hasQuote || heldLots === 0}
+          onClick={onSell}
+          className="rounded-lg bg-rose-50 px-2 py-0.5 text-[11px] font-semibold text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-40"
+          title={heldLots > 0 ? `Sell (holding ${heldLots} lot(s))` : "Sell — you don't hold this contract"}
+        >
+          S
+        </button>
+      </div>
+    </div>
   );
 }

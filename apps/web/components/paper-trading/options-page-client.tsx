@@ -2,37 +2,59 @@
 
 /**
  * Paper Trading Phase 2 (index options) + Phase 3 (stock options) —
- * /paper-trading/options page composition (T7 + T8). Same session-aware
- * client-side pattern as PaperTradingDashboard (T5/T6/T9, Phase 1) —
- * signed-in personal utility page, never indexed.
+ * /paper-trading/options page composition.
  *
- * Composes OptionChainBrowser (the strike ladder) with OptionTradePanel (the
- * trade form) — selecting a CE/PE cell in the chain opens the trade panel
- * pre-filled with that exact contract. `heldLots` for the SELL long-only UX
- * hint comes from the account's own option positions (already computed
- * server-side by lib/paperTrading/queries.ts's getAccountDetail).
+ * Trading Terminal UI Overhaul (Sprint A, T6/T7) — rebuilt onto the shared
+ * terminal shell: sticky header (spot + day/total P&L + cash + Express
+ * controls), the underlying's spot chart LEFT, the restyled option chain
+ * (inline [B]/[S] chips) CENTER, a DOCKED order ticket RIGHT that never
+ * disappears off-screen, and a shared PositionsStrip (equity + option mixed)
+ * pinned bottom. Express mode (options terminal only, per the brief's scope
+ * decision) lets an armed [B]/[S] tap fill INSTANTLY at the selected lots
+ * preset, bypassing the ticket's Confirm click entirely — every other tap
+ * (Express off, or Express on but disarmed) still pre-fills the ticket for an
+ * explicit Confirm, exactly as before.
  *
- * Phase 3 (T7): reads `?underlying=&optionType=` (from PaperTradeCta's "Trade
- * options on this call" secondary link, or any other future deep-link source)
- * and passes it through to OptionChainBrowser, which opens directly in Stock
- * mode with that underlying pre-selected and that option-type column
- * highlighted. Mirrors the main dashboard page's existing CTA-deep-link
- * pattern (?symbol=&side=&productType=&linkedOpinionId=) rather than
- * inventing a new one. `linkedOpinionId` from the same deep-link is threaded
- * through to the trade panel's order submission (T8).
+ * `?underlying=&optionType=&linkedOpinionId=` (PaperTradeCta's "Trade options
+ * on this call") and `?underlying=&expiry=&strike=&optionType=&side=SELL`
+ * (the positions-table Sell action) are both still read via useSearchParams()
+ * and threaded into OptionChainBrowser exactly as before — the chain
+ * browser's own deep-link auto-select logic is UNCHANGED (only its row
+ * rendering changed, per the brief's explicit "no changes to
+ * OptionChainBrowser's data-fetching/polling/flash logic" constraint).
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 
+import { formatNseExpiryDate } from "@predict-future/business-rules/papertrading/optionContract";
+
+import { PriceChart } from "@/components/finance/price-chart";
 import { OptionChainBrowser, type OptionChainSnapshot, type SelectedContract } from "@/components/paper-trading/option-chain-browser";
 import { useVisiblePolling } from "@/components/paper-trading/use-visible-polling";
-import { OptionTradePanel, type PlacedOptionOrderPayload } from "@/components/paper-trading/option-trade-panel";
+import type { PlacedOptionOrderPayload } from "@/components/paper-trading/option-trade-panel";
 import { PaperTradingDisclaimerFooter } from "@/components/paper-trading/paper-trading-disclaimer-footer";
+import { DockedOrderTicket } from "@/components/paper-trading/terminal/docked-order-ticket";
+import { ExpressAcknowledgeModal, ExpressControls } from "@/components/paper-trading/terminal/express-controls";
+import { ExpressFillToast } from "@/components/paper-trading/terminal/express-fill-toast";
+import { PositionsStrip, type PositionChip } from "@/components/paper-trading/terminal/positions-strip";
+import { TerminalHeader, type TerminalSpotQuote } from "@/components/paper-trading/terminal/terminal-header";
+import { TerminalShell } from "@/components/paper-trading/terminal/terminal-shell";
+import { useEodSeries } from "@/components/paper-trading/terminal/use-eod-series";
+import { useExpressMode, type ExpressModeState } from "@/components/paper-trading/terminal/use-express-mode";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { getLastLotsForContract, rememberLotsForContract } from "@/lib/paperTrading/lastLotsMemory";
+import { submitOptionOrder } from "@/lib/paperTrading/optionOrdersClient";
 
 type LoadState = "loading" | "signed-out" | "ready";
+
+interface EquityPositionSummary {
+  symbol: string;
+  productType: "DELIVERY" | "INTRADAY";
+  quantity: number;
+  netPnl: number | null;
+}
 
 interface OptionPositionSummary {
   underlyingSymbol: string;
@@ -40,31 +62,103 @@ interface OptionPositionSummary {
   strikePrice: number;
   expiryDate: string;
   lots: number;
+  netPnl: number | null;
+}
+
+interface AccountSummary {
+  cash: number;
+  todayNetPnl: number;
+  lifetimeNetPnl: number;
+  deliveryHoldings: EquityPositionSummary[];
+  openIntradayPositions: EquityPositionSummary[];
+  optionPositions: OptionPositionSummary[];
 }
 
 function formatRupees(value: number): string {
   return `₹${value.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 }
 
+/** ISO expiryDate string (from the JSON API response) -> NSE "DD-MMM-YYYY" format, to compare against SelectedContract.expiry (which is already in NSE format from the chain browser). */
+function formatExpiryFromIso(iso: string): string {
+  return formatNseExpiryDate(new Date(iso));
+}
+
+function isIndexUnderlying(symbol: string): boolean {
+  return symbol === "NIFTY" || symbol === "BANKNIFTY";
+}
+
+/**
+ * Trading Terminal UI Overhaul (Sprint A, T6) — keys the INNER composition on
+ * the query string, so a NEW deep-link (e.g. the positions-strip's Sell tap
+ * while ALREADY on this page) gets a fresh mount instead of being silently
+ * swallowed by `OptionsPageClientInner`'s own one-shot `autoSelectedRef`,
+ * which is only ever evaluated once per component instance. A full inner
+ * remount is a deliberate, low-risk trade-off for a low-frequency,
+ * deliberate user action (this is a signed-in personal utility page, not a
+ * hot path) — same reasoning documented inline on `autoSelectedRef` below.
+ *
+ * QA FIX (2026-07-25, blocking bug on the first Sprint A QA pass): Express's
+ * `armed` state MUST NOT live inside the remounted inner component — a
+ * remount would silently re-derive `armed` from the persisted `enabled`
+ * preference on every deep-link navigation, including one that happens
+ * shortly after an auto-disarm (idle timeout or tab-hidden) fired with the
+ * SAME persisted `enabled=true` still on disk. That re-arms Express with
+ * zero explicit re-tap, directly violating "re-arming after any disarm
+ * requires an explicit tap, never automatic." `useExpressMode()` is called
+ * HERE instead — in the stable OUTER wrapper, which never remounts on a
+ * searchParams change — so `armed` (and every other piece of Express's
+ * session state) survives a deep-link-triggered inner remount exactly like
+ * it would survive any other in-page re-render. The ONLY thing that still
+ * resets Express state is a genuine fresh mount of this whole page (a real
+ * navigation TO /paper-trading/options, e.g. a hard reload or a link from
+ * elsewhere in the app) — which is exactly the "mounts with the tab visible"
+ * moment the brief's auto-re-arm rule is describing.
+ *
+ * Chosen behavior for the two QA-specified cases:
+ *   1. Armed → idle-disarms (or tab-hidden-disarms) → Sell-chip navigation
+ *      (remount) → Express stays DISARMED, requires an explicit re-tap.
+ *      (`armed` React state here is untouched by the child remount — it was
+ *      already `false` from the disarm, and nothing re-derives it.)
+ *   2. Armed → Sell-chip navigation immediately (no disarm event happened)
+ *      → Express STAYS ARMED across the remount. This is deliberate: the
+ *      remount is an implementation detail of the deep-link fix, not a real
+ *      "leaving and returning to the terminal" — the guardrail cares about
+ *      idle/hidden risk, not about internal re-render mechanics, and
+ *      forcing a re-tap on every ordinary in-page navigation would be
+ *      friction the spec never asked for.
+ */
 export function OptionsPageClient() {
+  const searchParams = useSearchParams();
+  const express = useExpressMode();
+  return <OptionsPageClientInner key={searchParams.toString()} express={express} />;
+}
+
+function OptionsPageClientInner({ express }: { express: ExpressModeState }) {
   const searchParams = useSearchParams();
   const deepLinkUnderlying = searchParams.get("underlying");
   const deepLinkOptionTypeRaw = searchParams.get("optionType");
   const deepLinkOptionType = deepLinkOptionTypeRaw === "CE" || deepLinkOptionTypeRaw === "PE" ? deepLinkOptionTypeRaw : null;
   const deepLinkOpinionId = searchParams.get("linkedOpinionId");
-  // Positions-table "Sell" deep-link: fully specifies a held contract so the
-  // trade panel opens pre-selected on the SELL side without hunting the ladder.
   const deepLinkExpiry = searchParams.get("expiry");
   const deepLinkStrikeRaw = searchParams.get("strike");
   const deepLinkStrike = deepLinkStrikeRaw != null && deepLinkStrikeRaw !== "" ? Number(deepLinkStrikeRaw) : null;
   const deepLinkSide = searchParams.get("side") === "SELL" ? ("SELL" as const) : null;
 
   const [state, setState] = useState<LoadState>("loading");
-  const [cash, setCash] = useState(0);
-  const [optionPositions, setOptionPositions] = useState<OptionPositionSummary[]>([]);
+  const [account, setAccount] = useState<AccountSummary | null>(null);
   const [error, setError] = useState("");
+
   const [selectedContract, setSelectedContract] = useState<SelectedContract | null>(null);
+  const [presetSide, setPresetSide] = useState<"BUY" | "SELL">(deepLinkSide ?? "BUY");
+  const [presetLots, setPresetLots] = useState(1);
+  const [selectionNonce, setSelectionNonce] = useState(0);
+
   const [lastOrder, setLastOrder] = useState<PlacedOptionOrderPayload | null>(null);
+  const [expressToastOrder, setExpressToastOrder] = useState<PlacedOptionOrderPayload | null>(null);
+  const [showAcknowledgeModal, setShowAcknowledgeModal] = useState(false);
+
+  const [chartUnderlying, setChartUnderlying] = useState<string | null>(deepLinkUnderlying);
+  const [chartQuote, setChartQuote] = useState<TerminalSpotQuote | null>(null);
 
   const loadAccount = useCallback(async () => {
     try {
@@ -74,8 +168,25 @@ export function OptionsPageClient() {
         return;
       }
       const data = await res.json();
-      setCash(data.account?.cash ?? 0);
-      setOptionPositions(data.account?.optionPositions ?? []);
+      const a = data.account;
+      setAccount({
+        cash: a?.cash ?? 0,
+        todayNetPnl: a?.todayNetPnl ?? 0,
+        lifetimeNetPnl: a?.lifetimeNetPnl ?? 0,
+        deliveryHoldings: (a?.deliveryHoldings ?? []).map((h: { symbol: string; quantity: number; netPnl: number | null }) => ({
+          symbol: h.symbol,
+          productType: "DELIVERY" as const,
+          quantity: h.quantity,
+          netPnl: h.netPnl
+        })),
+        openIntradayPositions: (a?.openIntradayPositions ?? []).map((h: { symbol: string; quantity: number; netPnl: number | null }) => ({
+          symbol: h.symbol,
+          productType: "INTRADAY" as const,
+          quantity: h.quantity,
+          netPnl: h.netPnl
+        })),
+        optionPositions: a?.optionPositions ?? []
+      });
     } catch {
       setError("Couldn't load your Paper Trading account — check your connection.");
     }
@@ -85,16 +196,20 @@ export function OptionsPageClient() {
   // refresh — paused while the tab is hidden.
   useVisiblePolling(() => void loadAccount(), 60_000, state === "ready");
 
-  // One-shot guard: the Sell deep-link auto-opens its contract on the FIRST
-  // matching chain snapshot only — after that the user owns the selection.
+  // One-shot guard: the Sell/opinion deep-link auto-opens its contract on the
+  // FIRST matching chain snapshot only — after that the user owns the
+  // selection. (page.tsx keys this whole component on the query string, so a
+  // NEW deep-link tap while already on this page gets a fresh instance of
+  // this ref rather than being silently swallowed by a stale "already used"
+  // guard.)
   const autoSelectedRef = useRef(false);
+  const latestChainRef = useRef<OptionChainSnapshot | null>(null);
 
-  // Every chain load (initial + 30s polls) flows through here: if the user has
-  // a contract selected, keep its premium (and the spot) live so the trade
-  // panel's cost estimate tracks what the fill will actually use. Also fulfils
-  // the positions-table Sell deep-link by auto-selecting the specified contract.
   const handleChainData = useCallback(
     (chain: OptionChainSnapshot) => {
+      latestChainRef.current = chain;
+      setChartUnderlying((prev) => (prev === chain.underlying ? prev : chain.underlying));
+
       if (
         !autoSelectedRef.current &&
         deepLinkUnderlying &&
@@ -119,6 +234,9 @@ export function OptionsPageClient() {
             lotSize: chain.lotSize,
             underlyingValue: chain.underlyingValue
           });
+          setPresetSide(deepLinkSide ?? "BUY");
+          setPresetLots(1);
+          setSelectionNonce((n) => n + 1);
           return;
         }
       }
@@ -131,7 +249,7 @@ export function OptionsPageClient() {
         return { ...selected, premium: livePremium, underlyingValue: chain.underlyingValue };
       });
     },
-    [deepLinkUnderlying, deepLinkExpiry, deepLinkStrike, deepLinkOptionType]
+    [deepLinkUnderlying, deepLinkExpiry, deepLinkStrike, deepLinkOptionType, deepLinkSide]
   );
 
   useEffect(() => {
@@ -152,6 +270,93 @@ export function OptionsPageClient() {
       cancelled = true;
     };
   }, [loadAccount]);
+
+  const getHeldLots = useCallback(
+    (underlying: string, strikePrice: number, optionType: "CE" | "PE", expiry: string): number => {
+      if (!account) return 0;
+      return (
+        account.optionPositions.find(
+          (p) =>
+            p.underlyingSymbol === underlying &&
+            p.strikePrice === strikePrice &&
+            p.optionType === optionType &&
+            formatExpiryFromIso(p.expiryDate) === expiry
+        )?.lots ?? 0
+      );
+    },
+    [account]
+  );
+
+  function openTicketForLadderTap(contract: SelectedContract, side: "BUY" | "SELL") {
+    const held = side === "SELL" ? getHeldLots(contract.underlying, contract.strikePrice, contract.optionType, contract.expiry) : 0;
+    if (side === "SELL" && held <= 0) return; // defensive — the chip should already be disabled
+    const remembered = getLastLotsForContract(contract.underlying, contract.strikePrice, contract.optionType, contract.expiry) ?? 1;
+    const lots = side === "SELL" ? Math.max(1, Math.min(remembered, held)) : Math.max(1, remembered);
+    setSelectedContract(contract);
+    setPresetSide(side);
+    setPresetLots(lots);
+    setSelectionNonce((n) => n + 1);
+  }
+
+  async function fireExpressOrder(contract: SelectedContract, side: "BUY" | "SELL") {
+    const held = side === "SELL" ? getHeldLots(contract.underlying, contract.strikePrice, contract.optionType, contract.expiry) : Infinity;
+    const lots = side === "SELL" ? Math.min(express.lotsPreset, held) : express.lotsPreset;
+    if (side === "SELL" && lots <= 0) return; // defensive — the chip should already be disabled
+
+    const result = await submitOptionOrder({
+      underlyingSymbol: contract.underlying,
+      optionType: contract.optionType,
+      strikePrice: contract.strikePrice,
+      expiryDate: contract.expiry,
+      side,
+      lots,
+      linkedOpinionId: deepLinkOpinionId
+    });
+    express.noteActivity();
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    rememberLotsForContract(contract.underlying, contract.strikePrice, contract.optionType, contract.expiry, lots);
+    setExpressToastOrder(result.order);
+    void loadAccount();
+  }
+
+  function handleLadderAction(contract: SelectedContract, side: "BUY" | "SELL") {
+    if (express.armed) {
+      void fireExpressOrder(contract, side);
+    } else {
+      openTicketForLadderTap(contract, side);
+    }
+  }
+
+  function handleReverse(order: PlacedOptionOrderPayload) {
+    const oppositeSide: "BUY" | "SELL" = order.side === "BUY" ? "SELL" : "BUY";
+    const expiryNse = formatNseExpiryDate(new Date(order.expiryDate));
+    const chain = latestChainRef.current;
+    const livePremium =
+      chain && chain.underlying === order.underlyingSymbol && chain.expiry === expiryNse
+        ? (chain.strikes.find((s) => s.strikePrice === order.strikePrice)?.[order.optionType]?.lastPrice ?? order.fillPrice)
+        : order.fillPrice;
+    const underlyingValue = chain && chain.underlying === order.underlyingSymbol ? chain.underlyingValue : order.fillPrice;
+
+    setSelectedContract({
+      underlying: order.underlyingSymbol,
+      expiry: expiryNse,
+      strikePrice: order.strikePrice,
+      optionType: order.optionType,
+      premium: livePremium,
+      lotSize: order.lotSize,
+      underlyingValue
+    });
+    // Reverse ALWAYS pre-fills for an explicit Confirm — never an instant
+    // Express fire, even while Express is armed (per the brief: "a reversal
+    // always requires the explicit Confirm click, never fires instantly").
+    setPresetSide(oppositeSide);
+    setPresetLots(order.lots);
+    setSelectionNonce((n) => n + 1);
+    setExpressToastOrder(null);
+  }
 
   if (state === "loading") {
     return (
@@ -177,15 +382,29 @@ export function OptionsPageClient() {
     );
   }
 
+  if (!account) return null;
+
   const heldLotsForSelected = selectedContract
-    ? (optionPositions.find(
-        (p) =>
-          p.underlyingSymbol === selectedContract.underlying &&
-          p.strikePrice === selectedContract.strikePrice &&
-          p.optionType === selectedContract.optionType &&
-          formatExpiryFromIso(p.expiryDate) === selectedContract.expiry
-      )?.lots ?? 0)
+    ? getHeldLots(selectedContract.underlying, selectedContract.strikePrice, selectedContract.optionType, selectedContract.expiry)
     : 0;
+
+  const isIndexChart = chartUnderlying != null && isIndexUnderlying(chartUnderlying);
+
+  const positionChips: PositionChip[] = [
+    ...account.deliveryHoldings.map((h): PositionChip => ({ kind: "equity", symbol: h.symbol, productType: h.productType, quantity: h.quantity, netPnl: h.netPnl })),
+    ...account.openIntradayPositions.map((h): PositionChip => ({ kind: "equity", symbol: h.symbol, productType: h.productType, quantity: h.quantity, netPnl: h.netPnl })),
+    ...account.optionPositions.map(
+      (o): PositionChip => ({
+        kind: "option",
+        underlyingSymbol: o.underlyingSymbol,
+        optionType: o.optionType,
+        strikePrice: o.strikePrice,
+        expiryDate: o.expiryDate,
+        lots: o.lots,
+        netPnl: o.netPnl
+      })
+    )
+  ];
 
   return (
     <div className="space-y-6">
@@ -212,39 +431,74 @@ export function OptionsPageClient() {
         </div>
       )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Option chain</CardTitle>
-          <CardDescription>
-            NIFTY/BANKNIFTY index options or F&amp;O-eligible single-stock options — buy CE or PE only. Tap a
-            premium to open the trade panel. Cash available:{" "}
-            <span className="font-medium text-ink-900">{formatRupees(cash)}</span>.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
+      <TerminalShell
+        header={
+          <TerminalHeader
+            title={selectedContract ? `${selectedContract.underlying} ${selectedContract.strikePrice} ${selectedContract.optionType}` : chartUnderlying ?? ""}
+            spot={chartQuote}
+            cash={account.cash}
+            todayPnl={account.todayNetPnl}
+            totalPnl={account.lifetimeNetPnl}
+            expressControls={
+              <ExpressControls
+                express={express}
+                onToggleTap={() => {
+                  const result = express.handleToggleTap();
+                  if (result === "needs-acknowledgement") setShowAcknowledgeModal(true);
+                }}
+              />
+            }
+            navSlot={
+              <Link href="/paper-trading">
+                <Button variant="secondary" size="sm">
+                  Equity
+                </Button>
+              </Link>
+            }
+          />
+        }
+        chart={<OptionsUnderlyingChart underlying={chartUnderlying} isIndex={isIndexChart} onQuoteChange={setChartQuote} />}
+        ladder={
           <OptionChainBrowser
-            onSelectContract={setSelectedContract}
+            onSelectContract={handleLadderAction}
             onChainData={handleChainData}
             initialUnderlying={deepLinkUnderlying}
             initialOptionType={deepLinkOptionType}
             initialExpiry={deepLinkExpiry}
+            getHeldLots={getHeldLots}
           />
-        </CardContent>
-      </Card>
+        }
+        ticket={
+          <DockedOrderTicket
+            kind="option"
+            contract={selectedContract}
+            cash={account.cash}
+            heldLots={heldLotsForSelected}
+            linkedOpinionId={deepLinkOpinionId}
+            selectionNonce={selectionNonce}
+            presetSide={presetSide}
+            presetLots={presetLots}
+            onOrderPlaced={(order) => {
+              setLastOrder(order);
+              express.noteActivity();
+              void loadAccount();
+            }}
+          />
+        }
+        positions={<PositionsStrip positions={positionChips} />}
+      />
 
-      {selectedContract && (
-        <OptionTradePanel
-          contract={selectedContract}
-          cash={cash}
-          heldLots={heldLotsForSelected}
-          linkedOpinionId={deepLinkOpinionId}
-          initialSide={deepLinkSide ?? undefined}
-          onOrderPlaced={(order) => {
-            setLastOrder(order);
-            setSelectedContract(null);
-            loadAccount();
+      {expressToastOrder && (
+        <ExpressFillToast order={expressToastOrder} onReverse={() => handleReverse(expressToastOrder)} onDismiss={() => setExpressToastOrder(null)} />
+      )}
+
+      {showAcknowledgeModal && (
+        <ExpressAcknowledgeModal
+          onConfirm={() => {
+            express.confirmAcknowledgementAndEnable();
+            setShowAcknowledgeModal(false);
           }}
-          onClose={() => setSelectedContract(null)}
+          onCancel={() => setShowAcknowledgeModal(false)}
         />
       )}
 
@@ -253,11 +507,41 @@ export function OptionsPageClient() {
   );
 }
 
-/** ISO expiryDate string (from the JSON API response) -> NSE "DD-MMM-YYYY" format, to compare against SelectedContract.expiry (which is already in NSE format from the chain browser). */
-function formatExpiryFromIso(iso: string): string {
-  const d = new Date(iso);
-  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  const dd = String(d.getUTCDate()).padStart(2, "0");
-  const mon = months[d.getUTCMonth()];
-  return `${dd}-${mon}-${d.getUTCFullYear()}`;
+/**
+ * Underlying spot chart pane. Index underlying (NIFTY/BANKNIFTY): the NEW
+ * index-intraday path (T2) via PriceChart's `intradaySource` prop, defaulted
+ * to the 1D timeframe (no EOD series exists for an index in this app — see
+ * PriceChart's own doc comment on `defaultTimeframe`). Stock underlying: the
+ * EXISTING equity PriceChart, unmodified default 1D path, plus a fetched EOD
+ * series for the other timeframes.
+ */
+function OptionsUnderlyingChart({
+  underlying,
+  isIndex,
+  onQuoteChange
+}: {
+  underlying: string | null;
+  isIndex: boolean;
+  onQuoteChange: (quote: TerminalSpotQuote | null) => void;
+}) {
+  const stockEodSeries = useEodSeries(!isIndex ? underlying : null);
+
+  if (!underlying) {
+    return <p className="text-sm text-ink-400">Select an underlying in the chain below to see its chart.</p>;
+  }
+
+  if (isIndex) {
+    return (
+      <PriceChart
+        key={underlying}
+        symbol={underlying}
+        series={[]}
+        defaultTimeframe="1D"
+        intradaySource={{ url: `/api/instruments/index/${underlying}/intraday` }}
+        onQuoteChange={onQuoteChange}
+      />
+    );
+  }
+
+  return <PriceChart key={underlying} symbol={underlying} series={stockEodSeries} onQuoteChange={onQuoteChange} />;
 }

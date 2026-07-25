@@ -77,18 +77,63 @@ function isTimeframeKey(v: string | null): v is TimeframeKey {
   return TIMEFRAMES.some((t) => t.key === v);
 }
 
-export function PriceChart({ series, symbol }: { series: PricePoint[]; symbol: string }) {
-  const [timeframe, setTimeframe] = useState<TimeframeKey>("3M");
+export function PriceChart({
+  series,
+  symbol,
+  intradaySource,
+  defaultTimeframe,
+  onQuoteChange,
+}: {
+  series: PricePoint[];
+  symbol: string;
+  /**
+   * Trading Terminal UI Overhaul (Sprint A, T2) — additive, optional. Points
+   * the 1D fetch at a different upstream instead of the default
+   * `/api/instruments/${symbol}/intraday` (e.g.
+   * `/api/instruments/index/NIFTY/intraday` for the options terminal's index
+   * underlying chart). Omitted: zero behavior change for every existing
+   * caller. The pointed-at endpoint MUST return the same
+   * `{prevClose, points, sessionLabel}` shape as the default equity proxy.
+   */
+  intradaySource?: { url: string };
+  /**
+   * Trading Terminal UI Overhaul (Sprint A, T6) — additive, optional. Overrides
+   * the initial timeframe (still overridable by the user's own
+   * localStorage-remembered pick on subsequent visits, same as today). Used by
+   * the options terminal's index underlying chart, which has no EOD `series`
+   * to show on any timeframe but 1D. Omitted: default stays "3M", zero
+   * behavior change for every existing caller.
+   */
+  defaultTimeframe?: TimeframeKey;
+  /**
+   * Trading Terminal UI Overhaul (Sprint A, T4) — additive, optional. Fires
+   * whenever the chart's own last-price/prevClose/change figures change, so
+   * terminal-header.tsx can source its spot + day-change stat from this one
+   * chart fetch instead of a second network call. Omitted: zero behavior
+   * change for every existing caller.
+   */
+  onQuoteChange?: (quote: { price: number; prevClose: number | null; changeAbs: number; changePct: number } | null) => void;
+}) {
+  const [timeframe, setTimeframe] = useState<TimeframeKey>(defaultTimeframe ?? "3M");
 
   // Restore the last-picked timeframe AFTER hydration (reading localStorage
-  // during render would mismatch the server-rendered "3M" default).
+  // during render would mismatch the server-rendered default) — the caller's
+  // defaultTimeframe only governs the FIRST render; a returning user's own
+  // stored pick still wins, unchanged from pre-existing behavior. Skipped
+  // entirely when `series` is empty (e.g. the options terminal's index
+  // underlying chart, which has no EOD data on ANY timeframe but 1D) — a
+  // device-wide "3M" preference restored onto a chart with zero EOD points
+  // would just show "not enough price history" forever instead of the one
+  // timeframe that actually has data.
   useEffect(() => {
+    if (series.length === 0) return;
     try {
       const stored = window.localStorage.getItem(TIMEFRAME_STORAGE_KEY);
       if (isTimeframeKey(stored)) setTimeframe(stored);
     } catch {
       // Private mode / storage disabled — keep the default.
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const pickTimeframe = (key: TimeframeKey) => {
@@ -118,7 +163,7 @@ export function PriceChart({ series, symbol }: { series: PricePoint[]; symbol: s
 
     setIntraday({ status: "loading" });
 
-    fetch(`/api/instruments/${encodeURIComponent(symbol)}/intraday`)
+    fetch(intradaySource?.url ?? `/api/instruments/${encodeURIComponent(symbol)}/intraday`)
       .then(async (res) => {
         if (!res.ok) throw new Error(`intraday fetch ${res.status}`);
         const body = await res.json();
@@ -144,7 +189,7 @@ export function PriceChart({ series, symbol }: { series: PricePoint[]; symbol: s
       .catch(() => {
         setIntraday({ status: "error" });
       });
-  }, [timeframe, symbol]);
+  }, [timeframe, symbol, intradaySource?.url]);
 
   const points = useMemo<ChartPoint[]>(() => {
     if (timeframe === "1D") {
@@ -155,6 +200,29 @@ export function PriceChart({ series, symbol }: { series: PricePoint[]; symbol: s
     const windowed = tf.sessions === Infinity ? series : series.slice(-tf.sessions);
     return windowed.map((p, i) => ({ xValue: i, y: p.close, label: p.date }));
   }, [series, timeframe, intraday]);
+
+  // Reports the chart's own last-price/prevClose/change figures out to the
+  // caller (terminal-header.tsx) — computed unconditionally (before any early
+  // `return` below) so this stays a plain hook call, not a conditionally-run
+  // one. `onQuoteChange` is read via a ref, not a dependency, so a fresh
+  // callback identity on the caller's own re-render never re-fires this
+  // effect — same self-cancellation-avoidance pattern as this file's own 1D
+  // fetch effect above.
+  const computedQuote = useMemo(() => {
+    if (points.length < 2) return null;
+    const first = points[0];
+    const last = points[points.length - 1];
+    const referenceClose =
+      timeframe === "1D" && intraday.status === "ready" && intraday.prevClose != null ? intraday.prevClose : first.y;
+    const changeAbs = last.y - referenceClose;
+    const changePct = referenceClose > 0 ? (changeAbs / referenceClose) * 100 : 0;
+    return { price: last.y, prevClose: timeframe === "1D" && intraday.status === "ready" ? intraday.prevClose : null, changeAbs, changePct };
+  }, [points, timeframe, intraday]);
+  const onQuoteChangeRef = useRef(onQuoteChange);
+  onQuoteChangeRef.current = onQuoteChange;
+  useEffect(() => {
+    onQuoteChangeRef.current?.(computedQuote);
+  }, [computedQuote]);
 
   const geometry = useMemo(() => {
     if (points.length < 2) return null;
