@@ -68,9 +68,16 @@ export interface SelectedContract {
   underlyingValue: number;
 }
 
-type ChainMode = "index" | "stock";
-
 const INDEX_UNDERLYINGS = INDEX_OPTION_UNDERLYINGS;
+
+/** Display names for the unified underlying search (searching "bank" or "midcap" should find the index). */
+const INDEX_DISPLAY_NAMES: Record<string, string> = {
+  NIFTY: "Nifty 50",
+  BANKNIFTY: "Nifty Bank",
+  FINNIFTY: "Nifty Financial Services",
+  MIDCPNIFTY: "Nifty Midcap Select",
+  NIFTYNXT50: "Nifty Next 50",
+};
 const STRIKES_AROUND_ATM = 10; // shown each side of the ATM strike — a full chain can run 100+ strikes deep, most of them illiquid tails no retail user is trading
 
 // Auto-refresh cadence. The upstream chain is cached ~60s server-side, so 30s
@@ -121,16 +128,15 @@ export function OptionChainBrowser({
    */
   getHeldLots?: (underlying: string, strikePrice: number, optionType: "CE" | "PE", expiry: string) => number;
 }) {
-  const deepLinkIsStock = Boolean(initialUnderlying) && !isIndexUnderlying(initialUnderlying as string);
-  const [mode, setMode] = useState<ChainMode>(deepLinkIsStock ? "stock" : "index");
+  const deepLinkIsValid = Boolean(initialUnderlying);
   // Empty string means "no underlying selected yet" — only reachable in Stock
   // mode before the user picks a stock from the combobox; every fetch effect
   // below no-ops on an empty underlying rather than accidentally requesting a
   // stale/wrong symbol's chain.
   const [underlying, setUnderlying] = useState<string>(
-    initialUnderlying && (deepLinkIsStock || isIndexUnderlying(initialUnderlying)) ? initialUnderlying : "NIFTY"
+    deepLinkIsValid ? (initialUnderlying as string) : "NIFTY"
   );
-  const [stockQuery, setStockQuery] = useState(deepLinkIsStock ? (initialUnderlying as string) : "");
+  const [stockQuery, setStockQuery] = useState(deepLinkIsValid ? (initialUnderlying as string) : "NIFTY");
   const [stockComboboxOpen, setStockComboboxOpen] = useState(false);
   const [fnoUniverse, setFnoUniverse] = useState<FnoUniverseEntry[]>([]);
   const highlightOptionType = initialOptionType ?? null;
@@ -150,7 +156,7 @@ export function OptionChainBrowser({
   // fnoUniverseClient.ts), needed for the searchable combobox.
   useEffect(() => {
     let cancelled = false;
-    if (mode === "stock" && fnoUniverse.length === 0) {
+    if (fnoUniverse.length === 0) {
       fetchFnoUniverseClient().then((list) => {
         if (!cancelled) setFnoUniverse(list);
       });
@@ -158,7 +164,7 @@ export function OptionChainBrowser({
     return () => {
       cancelled = true;
     };
-  }, [mode, fnoUniverse.length]);
+  }, [fnoUniverse.length]);
 
   // Deep-link pre-fills, frozen at mount (refs, not deps — they must not
   // re-trigger the expiries effect on later renders).
@@ -339,12 +345,21 @@ export function OptionChainBrowser({
     );
   }
 
-  const stockMatches = useMemo(() => {
-    if (mode !== "stock") return [];
+  // ONE unified searchable list over every tradable underlying — the 5 F&O
+  // indices (full names, pinned first) + the ~210-stock universe (founder
+  // 2026-07-26: index selection should work "similar to how we have in
+  // Stocks"). The old Index/Stock mode toggle is gone; what you pick decides.
+  const underlyingMatches = useMemo(() => {
+    const indexEntries: FnoUniverseEntry[] = INDEX_UNDERLYINGS.map((sym) => ({
+      symbol: sym,
+      companyName: INDEX_DISPLAY_NAMES[sym] ?? sym,
+    }));
     const q = stockQuery.trim().toUpperCase();
-    if (q.length === 0) return fnoUniverse.slice(0, 30);
-    return fnoUniverse.filter((e) => e.symbol.includes(q) || e.companyName.toUpperCase().includes(q)).slice(0, 30);
-  }, [mode, stockQuery, fnoUniverse]);
+    if (q.length === 0) return [...indexEntries, ...fnoUniverse.slice(0, 25)];
+    const idxHits = indexEntries.filter((e) => e.symbol.includes(q) || e.companyName.toUpperCase().includes(q));
+    const stockHits = fnoUniverse.filter((e) => e.symbol.includes(q) || e.companyName.toUpperCase().includes(q));
+    return [...idxHits, ...stockHits].slice(0, 30);
+  }, [stockQuery, fnoUniverse]);
 
   function selectStock(entry: FnoUniverseEntry) {
     setUnderlying(entry.symbol);
@@ -355,89 +370,71 @@ export function OptionChainBrowser({
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
-        <div className="inline-flex rounded-2xl border border-ink-200 bg-white p-1">
-          {(["index", "stock"] as ChainMode[]).map((m) => (
+        {/* One-tap chips for the 5 index chains (the most-traded contracts) —
+            the search box below covers these AND every F&O stock uniformly. */}
+        <div className="inline-flex flex-wrap rounded-2xl border border-ink-200 bg-white p-1">
+          {INDEX_UNDERLYINGS.map((u) => (
             <button
-              key={m}
+              key={u}
               type="button"
               onClick={() => {
-                setMode(m);
-                if (m === "index") {
-                  setUnderlying("NIFTY");
-                } else if (!isIndexUnderlying(underlying)) {
-                  // Already had a stock selected (e.g. toggled back and forth) — keep it.
-                } else {
-                  // Coming from Index mode with no stock chosen yet — don't
-                  // fetch a stale NIFTY/BANKNIFTY chain under the Stock label.
-                  setUnderlying("");
-                  setStockQuery("");
-                }
+                setUnderlying(u);
+                setStockQuery(u);
+                setStockComboboxOpen(false);
               }}
-              className={`rounded-xl px-4 py-2 text-sm font-medium capitalize transition ${
-                mode === m ? "bg-ink-900 text-white" : "text-ink-600 hover:text-ink-900"
+              className={`rounded-xl px-3 py-2 text-sm font-medium transition ${
+                underlying === u ? "bg-ink-900 text-white" : "text-ink-600 hover:text-ink-900"
               }`}
             >
-              {m}
+              {u}
             </button>
           ))}
         </div>
 
-        {mode === "index" ? (
-          <div className="inline-flex rounded-2xl border border-ink-200 bg-white p-1">
-            {INDEX_UNDERLYINGS.map((u) => (
-              <button
-                key={u}
-                type="button"
-                onClick={() => setUnderlying(u)}
-                className={`rounded-xl px-4 py-2 text-sm font-medium transition ${
-                  underlying === u ? "bg-ink-900 text-white" : "text-ink-600 hover:text-ink-900"
-                }`}
-              >
-                {u}
-              </button>
-            ))}
-          </div>
-        ) : (
-          <div className="relative w-full max-w-xs">
-            <input
-              value={stockQuery}
-              onChange={(e) => {
-                setStockQuery(e.target.value);
-                setStockComboboxOpen(true);
-              }}
-              onFocus={() => setStockComboboxOpen(true)}
-              placeholder="Search F&O stock…"
-              autoComplete="off"
-              className="h-10 w-full rounded-2xl border border-ink-200 bg-white px-3 text-sm text-ink-900 outline-none focus:border-ink-400"
-            />
-            {stockComboboxOpen && (
-              <div className="absolute z-10 mt-1 max-h-64 w-full overflow-y-auto rounded-2xl border border-ink-200 bg-white shadow-lg">
-                {fnoUniverse.length === 0 ? (
-                  <p className="px-4 py-3 text-sm text-ink-400">Loading F&O universe…</p>
-                ) : stockMatches.length === 0 ? (
-                  <p className="px-4 py-3 text-sm text-ink-400">No matches.</p>
-                ) : (
-                  stockMatches.map((entry) => (
-                    <button
-                      key={entry.symbol}
-                      type="button"
-                      className={`flex w-full items-center justify-between px-4 py-2.5 text-left text-sm hover:bg-ink-50 ${
-                        entry.symbol === underlying ? "bg-signal-sky/10" : ""
-                      }`}
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => selectStock(entry)}
-                    >
-                      <span className="min-w-0 truncate">
-                        <span className="font-medium text-ink-900">{entry.symbol}</span>{" "}
-                        <span className="text-ink-400">{entry.companyName}</span>
+        <div className="relative w-full max-w-xs">
+          <input
+            value={stockQuery}
+            onChange={(e) => {
+              setStockQuery(e.target.value);
+              setStockComboboxOpen(true);
+            }}
+            onFocus={() => setStockComboboxOpen(true)}
+            placeholder="Search index or F&O stock…"
+            autoComplete="off"
+            className="h-10 w-full rounded-2xl border border-ink-200 bg-white px-3 text-sm text-ink-900 outline-none focus:border-ink-400"
+          />
+          {stockComboboxOpen && (
+            <div className="absolute z-10 mt-1 max-h-64 w-full overflow-y-auto rounded-2xl border border-ink-200 bg-white shadow-lg">
+              {underlyingMatches.length === 0 ? (
+                <p className="px-4 py-3 text-sm text-ink-400">
+                  {fnoUniverse.length === 0 ? "Loading F&O universe…" : "No matches."}
+                </p>
+              ) : (
+                underlyingMatches.map((entry) => (
+                  <button
+                    key={entry.symbol}
+                    type="button"
+                    className={`flex w-full items-center justify-between px-4 py-2.5 text-left text-sm hover:bg-ink-50 ${
+                      entry.symbol === underlying ? "bg-signal-sky/10" : ""
+                    }`}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => selectStock(entry)}
+                  >
+                    <span className="min-w-0 truncate">
+                      <span className="font-medium text-ink-900">{entry.symbol}</span>{" "}
+                      <span className="text-ink-400">{entry.companyName}</span>
+                    </span>
+                    {isIndexUnderlying(entry.symbol) && (
+                      <span className="ml-2 shrink-0 rounded-md bg-ink-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-ink-400">
+                        Index
                       </span>
-                    </button>
-                  ))
-                )}
-              </div>
-            )}
-          </div>
-        )}
+                    )}
+                  </button>
+                ))
+              )}
+            </div>
+          )}
+        </div>
 
         <Select
           value={expiry}
@@ -467,7 +464,7 @@ export function OptionChainBrowser({
         )}
       </div>
 
-      {mode === "stock" && !underlying && (
+      {!underlying && (
         <p className="text-sm text-ink-400">Search and select an F&amp;O stock above to see its option chain.</p>
       )}
       {expiriesError && <p className="text-sm text-rose-600">{expiriesError}</p>}
