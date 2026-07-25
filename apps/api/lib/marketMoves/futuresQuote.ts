@@ -245,9 +245,15 @@ async function fetchPcpDerivedQuote(underlying: IndexOptionUnderlying): Promise<
  * every other marketMoves fetcher in this codebase uses). Cached in-module
  * for 60s per underlying, same TTL convention as optionChain.ts's chainCache.
  */
+/** Failures cache for only 5s — a single cold-boot/transient NSE hiccup must not read as a full minute of "unavailable" (bit us in prod verification 2026-07-26: first-request race negative-cached and every retry inside 60s saw the null). */
+const FAILURE_CACHE_TTL_MS = 5 * 1000;
+
 export async function fetchIndexFuturesQuote(underlying: IndexOptionUnderlying): Promise<IndexFuturesQuote | null> {
   const cached = liveQuoteCache.get(underlying);
-  if (cached && Date.now() - cached.at < LIVE_QUOTE_CACHE_TTL_MS) return cached.data;
+  if (cached) {
+    const ttl = cached.data === null ? FAILURE_CACHE_TTL_MS : LIVE_QUOTE_CACHE_TTL_MS;
+    if (Date.now() - cached.at < ttl) return cached.data;
+  }
 
   let result: IndexFuturesQuote | null = null;
   try {
