@@ -21,7 +21,10 @@ const NAV_LINKS = [
 export function PublicHeader() {
   return (
     <header className="border-b border-ink-100 bg-white/70 backdrop-blur">
-      <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-4 px-4 py-4 sm:px-6">
+      {/* Full-width nav (logo left, links right) — content pages keep their own
+          narrower max-w containers below; pinning the nav to max-w-5xl made it
+          float oddly in the middle over the full-width terminal pages. */}
+      <div className="mx-auto flex max-w-[1800px] flex-wrap items-center justify-between gap-4 px-4 py-4 sm:px-6">
         <Link href="/" className="flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-ink-900 text-sm font-semibold text-white">
             PF

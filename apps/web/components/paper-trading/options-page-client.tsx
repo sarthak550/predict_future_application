@@ -20,13 +20,13 @@
  * rendering changed, per the brief's explicit "no changes to
  * OptionChainBrowser's data-fetching/polling/flash logic" constraint).
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 
 import { formatNseExpiryDate } from "@predict-future/business-rules/papertrading/optionContract";
 
-import { PriceChart } from "@/components/finance/price-chart";
+import { PriceChart, type PricePoint } from "@/components/finance/price-chart";
 import { OptionChainBrowser, type OptionChainSnapshot, type SelectedContract } from "@/components/paper-trading/option-chain-browser";
 import { useVisiblePolling } from "@/components/paper-trading/use-visible-polling";
 import type { PlacedOptionOrderPayload } from "@/components/paper-trading/option-trade-panel";
@@ -345,13 +345,6 @@ function OptionsPageClientInner() {
             cash={account.cash}
             todayPnl={account.todayNetPnl}
             totalPnl={account.lifetimeNetPnl}
-            navSlot={
-              <Link href="/paper-trading">
-                <Button variant="secondary" size="sm">
-                  Equity
-                </Button>
-              </Link>
-            }
           />
         }
         chart={<OptionsUnderlyingChart underlying={chartUnderlying} isIndex={isIndexChart} onQuoteChange={setChartQuote} />}
@@ -397,6 +390,9 @@ function OptionsPageClientInner() {
  * EXISTING equity PriceChart, unmodified default 1D path, plus a fetched EOD
  * series for the other timeframes.
  */
+/** Stable empty series for the index chart — an inline `[]` would be a fresh identity every render, which (before PriceChart's primitive-keyed quote effect) was the exact fuel for a render-loop tab freeze. Belt and braces: keep props referentially stable anyway. */
+const EMPTY_SERIES: PricePoint[] = [];
+
 function OptionsUnderlyingChart({
   underlying,
   isIndex,
@@ -407,6 +403,10 @@ function OptionsUnderlyingChart({
   onQuoteChange: (quote: TerminalSpotQuote | null) => void;
 }) {
   const stockEodSeries = useEodSeries(!isIndex ? underlying : null);
+  const indexIntradaySource = useMemo(
+    () => (underlying ? { url: `/api/instruments/index/${underlying}/intraday` } : undefined),
+    [underlying]
+  );
 
   if (!underlying) {
     return <p className="text-sm text-ink-400">Select an underlying in the chain below to see its chart.</p>;
@@ -417,9 +417,9 @@ function OptionsUnderlyingChart({
       <PriceChart
         key={underlying}
         symbol={underlying}
-        series={[]}
+        series={EMPTY_SERIES}
         defaultTimeframe="1D"
-        intradaySource={{ url: `/api/instruments/index/${underlying}/intraday` }}
+        intradaySource={indexIntradaySource}
         onQuoteChange={onQuoteChange}
       />
     );

@@ -220,9 +220,16 @@ export function PriceChart({
   }, [points, timeframe, intraday]);
   const onQuoteChangeRef = useRef(onQuoteChange);
   onQuoteChangeRef.current = onQuoteChange;
+  // Keyed on the quote's PRIMITIVE fields, never the memo object's identity:
+  // an identity dep re-fires whenever any upstream memo recomputes — which a
+  // caller can trigger every render with an inline `series={[]}` — and since
+  // this effect's report causes that caller to re-render, an identity dep
+  // turns one unstable prop into an infinite render loop (a frozen tab, found
+  // the hard way on the options terminal's index chart).
   useEffect(() => {
     onQuoteChangeRef.current?.(computedQuote);
-  }, [computedQuote]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [computedQuote?.price, computedQuote?.prevClose, computedQuote?.changeAbs, computedQuote?.changePct]);
 
   const geometry = useMemo(() => {
     if (points.length < 2) return null;
