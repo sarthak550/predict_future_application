@@ -26,6 +26,7 @@
  * (verified 200 application/pdf).
  */
 
+import { resolveNseSymbolByCompanyName } from "./nseSymbolResolver";
 import { classifyMarketMoveEventType } from "./classify";
 import type { FetchedMarketMoveEvent } from "./types";
 
@@ -144,10 +145,17 @@ export async function fetchBseAnnouncements(): Promise<FetchedMarketMoveEvent[]>
         ? `${BSE_ATTACHMENT_BASE}/${row.ATTACHMENTNAME.trim()}`
         : row.NSURL?.trim() || null;
 
+      // Dual-listed companies resolve to their NSE symbol by exact normalized
+      // company-name match against the equity master — so the filing (and
+      // every news article the news universe derives from it) links to a real
+      // /instruments page instead of carrying a dead BSE:<code> badge. BSE-only
+      // listings keep the code (still a valid, specific ticker).
+      const nseSymbol = await resolveNseSymbolByCompanyName(companyName);
+
       out.push({
         source: "BSE",
         sourceId: newsId,
-        tickerSymbol: `BSE:${scripCode}`,
+        tickerSymbol: nseSymbol ?? `BSE:${scripCode}`,
         tickerType: "STOCK", // this feed (strType=C, equity segment) never carries index-level rows
         companyName,
         eventType: classifyMarketMoveEventType(row.CATEGORYNAME, row.SUBCATNAME, headline),
