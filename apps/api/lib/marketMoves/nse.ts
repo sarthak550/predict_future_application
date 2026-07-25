@@ -46,6 +46,56 @@ const API_HEADERS_BASE = {
   "Sec-Fetch-Site": "same-origin",
 };
 
+/**
+ * TRANSPORT NOTE (2026-07-26, prod incident): www.nseindia.com's Akamai began
+ * 403-ing Node's native fetch/undici TLS fingerprint from servers — verified
+ * on EC2 that a stock node:20 container gets 403-no-cookie on the homepage
+ * while curl from the SAME host/IP gets 200+cookies; Chrome-cipher spoofing
+ * via node:https did NOT help (the fingerprinting is deeper than cipher
+ * order). All www.nseindia.com requests therefore go through a curl
+ * SUBPROCESS below (curl ships in the runner image — see apps/api/Dockerfile).
+ * nsearchives.nseindia.com is NOT affected (plain fetch still fine there —
+ * bhavcopy/equity-master/fo_mktlots keep their existing transport).
+ */
+import { execFile } from "node:child_process";
+
+interface CurlResponse {
+  status: number;
+  setCookies: string[];
+  body: string;
+}
+
+function curlRequest(url: string, headers: Record<string, string>, timeoutSecs = 25): Promise<CurlResponse | null> {
+  return new Promise((resolve) => {
+    const args = ["-s", "-D", "-", "--compressed", "--max-time", String(timeoutSecs)];
+    for (const [k, v] of Object.entries(headers)) args.push("-H", `${k}: ${v}`);
+    args.push(url);
+    execFile("curl", args, { maxBuffer: 64 * 1024 * 1024 }, (err, stdout) => {
+      if (err || !stdout) {
+        resolve(null);
+        return;
+      }
+      // -D - interleaves one header block per hop before the body; walk any
+      // leading HTTP/ blocks (1xx etc.), keeping the LAST status + every
+      // Set-Cookie seen.
+      let rest = stdout;
+      let status = 0;
+      const setCookies: string[] = [];
+      while (/^HTTP\//.test(rest)) {
+        const sep = rest.indexOf("\r\n\r\n");
+        if (sep < 0) break;
+        const lines = rest.slice(0, sep).split("\r\n");
+        status = Number(lines[0]?.split(/\s+/)[1] ?? 0);
+        for (const line of lines) {
+          if (/^set-cookie:/i.test(line)) setCookies.push(line.slice(line.indexOf(":") + 1).trim());
+        }
+        rest = rest.slice(sep + 4);
+      }
+      resolve({ status, setCookies, body: rest });
+    });
+  });
+}
+
 /** Extracts a `name=value; name2=value2` Cookie header from a Set-Cookie response. */
 function cookieHeaderFrom(res: Response): string {
   // Node 18.14+/undici exposes getSetCookie(); fall back to the single-header
@@ -71,11 +121,20 @@ function cookieHeaderFrom(res: Response): string {
  */
 export async function primeNseSession(warmUpPath: string): Promise<string | null> {
   try {
-    const res = await fetch(`${NSE_ORIGIN}${warmUpPath}`, { headers: HTML_HEADERS });
+    // curl transport — see TRANSPORT NOTE above (Node's TLS fingerprint is
+    // 403-blocked by NSE's Akamai since 2026-07-26; curl's passes).
+    const res = await curlRequest(`${NSE_ORIGIN}${warmUpPath}`, HTML_HEADERS);
+    if (!res) {
+      console.warn(`[marketMoves/nse] warm-up ${warmUpPath} curl transport failed`);
+      return null;
+    }
     // Do NOT bail on a non-200 warm-up: NSE's Akamai serves a 403 challenge to
     // the HTML page but STILL sets the session cookie the /api/* routes need.
     // Capture the cookie regardless of status. (Verified from EC2 2026-07-10.)
-    const cookie = cookieHeaderFrom(res);
+    const cookie = res.setCookies
+      .map((c) => c.split(";")[0])
+      .filter(Boolean)
+      .join("; ");
     if (!cookie) {
       console.warn(`[marketMoves/nse] warm-up ${warmUpPath} set no cookie (status ${res.status})`);
       return null;
@@ -100,20 +159,20 @@ export async function nseApiGet(apiPath: string, cookie: string, refererPath: st
     // once served stale NSE responses over a persistent connection (the strip
     // froze a full session behind). Freshness must be guaranteed per-fetch.
     const bust = `${apiPath.includes("?") ? "&" : "?"}_=${Date.now()}`;
-    const res = await fetch(`${NSE_ORIGIN}${apiPath}${bust}`, {
-      cache: "no-store",
-      headers: {
-        ...API_HEADERS_BASE,
-        Cookie: cookie,
-        Referer: `${NSE_ORIGIN}${refererPath}`,
-        Origin: NSE_ORIGIN,
-      },
+    // curl transport — see TRANSPORT NOTE above. A fresh subprocess per call
+    // also inherently satisfies the no-stale-persistent-connection rule the
+    // old `cache: "no-store"` guarded against.
+    const res = await curlRequest(`${NSE_ORIGIN}${apiPath}${bust}`, {
+      ...API_HEADERS_BASE,
+      Cookie: cookie,
+      Referer: `${NSE_ORIGIN}${refererPath}`,
+      Origin: NSE_ORIGIN,
     });
-    if (!res.ok) {
-      console.warn(`[marketMoves/nse] API ${apiPath} returned ${res.status} (likely Akamai block)`);
+    if (!res || res.status < 200 || res.status >= 300) {
+      console.warn(`[marketMoves/nse] API ${apiPath} returned ${res?.status ?? "no-response"} (likely Akamai block)`);
       return null;
     }
-    return await res.json();
+    return JSON.parse(res.body);
   } catch (err) {
     console.warn(`[marketMoves/nse] API ${apiPath} network/parse error: ${err instanceof Error ? err.message : err}`);
     return null;

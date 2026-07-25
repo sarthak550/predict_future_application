@@ -57,7 +57,7 @@ RUN npm run build --workspace @predict-future/api
 # ── runner: minimal always-on image ────────────────────────────────────────────
 FROM node:20-bookworm-slim AS runner
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates curl \
   && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
