@@ -24,7 +24,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 
-import { formatNseExpiryDate } from "@predict-future/business-rules/papertrading/optionContract";
+import { formatNseExpiryDate, isIndexOptionUnderlying } from "@predict-future/business-rules/papertrading/optionContract";
 
 import { PriceChart, type PricePoint } from "@/components/finance/price-chart";
 import { OptionChainBrowser, type OptionChainSnapshot, type SelectedContract } from "@/components/paper-trading/option-chain-browser";
@@ -79,7 +79,7 @@ function formatExpiryFromIso(iso: string): string {
 }
 
 function isIndexUnderlying(symbol: string): boolean {
-  return symbol === "NIFTY" || symbol === "BANKNIFTY";
+  return isIndexOptionUnderlying(symbol);
 }
 
 /**

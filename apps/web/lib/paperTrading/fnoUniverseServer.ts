@@ -16,7 +16,8 @@ const DEFAULT_API_INTERNAL_URL = "http://127.0.0.1:3001";
 const UPSTREAM_TIMEOUT_MS = 8000;
 
 /** The only two underlyings Phase 2's index-options chain supports. Every other tradable underlying is a Phase 3 stock, validated against the live F&O universe below. */
-const INDEX_UNDERLYINGS = new Set(["NIFTY", "BANKNIFTY"]);
+import { INDEX_OPTION_UNDERLYINGS } from "@predict-future/business-rules/papertrading/optionContract";
+const INDEX_UNDERLYINGS = new Set<string>(INDEX_OPTION_UNDERLYINGS);
 
 export function isIndexUnderlyingServer(symbol: string): boolean {
   return INDEX_UNDERLYINGS.has(symbol);

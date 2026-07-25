@@ -21,7 +21,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { computeOptionOrderCosts } from "@predict-future/business-rules/papertrading/optionsCosts";
-import { formatOptionContractLabel } from "@predict-future/business-rules/papertrading/optionContract";
+import { formatOptionContractLabel, isIndexOptionUnderlying } from "@predict-future/business-rules/papertrading/optionContract";
 import { isNseWeekdayMarketHours } from "@predict-future/business-rules/papertrading/marketHours";
 
 import { CostBreakdownTable } from "@/components/paper-trading/cost-breakdown-table";
@@ -169,7 +169,7 @@ function OptionTicketBody({
   const contractLabel = contractDate
     ? formatOptionContractLabel(contract.underlying, contract.strikePrice, contract.optionType, contractDate)
     : `${contract.underlying} ${contract.strikePrice} ${contract.optionType}, ${contract.expiry}`;
-  const isStockOption = contract.underlying !== "NIFTY" && contract.underlying !== "BANKNIFTY";
+  const isStockOption = !isIndexOptionUnderlying(contract.underlying);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();

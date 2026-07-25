@@ -4,10 +4,10 @@ import { fetchIndexIntradaySeries, type IndexUnderlying } from "@/lib/marketMove
 
 export const dynamic = "force-dynamic";
 
-const VALID_SYMBOLS = new Set<IndexUnderlying>(["NIFTY", "BANKNIFTY"]);
+import { isIndexOptionUnderlying } from "@predict-future/business-rules/papertrading/optionContract";
 
 function isIndexUnderlying(value: string): value is IndexUnderlying {
-  return VALID_SYMBOLS.has(value as IndexUnderlying);
+  return isIndexOptionUnderlying(value);
 }
 
 /**

@@ -57,8 +57,9 @@ function todayIstDateAsUtcMidnight(now: Date = new Date()): Date {
   return new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate()));
 }
 
-/** Exported for reuse by lib/marketMoves/indexIntraday.ts (Trading Terminal UI brief, T2) — the one canonical index-ticker map, never duplicated. */
-export const YAHOO_INDEX_TICKER: Record<OptionUnderlying, string> = { NIFTY: "^NSEI", BANKNIFTY: "^NSEBANK" };
+/** Re-exported for lib/marketMoves/indexIntraday.ts — canonical map now lives in the shared business-rules registry (all 5 F&O indices, Yahoo tickers verified against NSE spot to the paisa 2026-07-25). */
+export { YAHOO_INDEX_SPOT_TICKER as YAHOO_INDEX_TICKER } from "@predict-future/business-rules/papertrading/optionContract";
+import { YAHOO_INDEX_SPOT_TICKER, isIndexOptionUnderlying } from "@predict-future/business-rules/papertrading/optionContract";
 const YAHOO_CHART_BASE = "https://query1.finance.yahoo.com/v8/finance/chart";
 const YAHOO_TIMEOUT_MS = 8000;
 
@@ -71,7 +72,8 @@ const YAHOO_TIMEOUT_MS = 8000;
  * failure, never throws.
  */
 async function fetchIndexSpotFallback(underlying: OptionUnderlying): Promise<number | null> {
-  const ticker = YAHOO_INDEX_TICKER[underlying];
+  const ticker = isIndexOptionUnderlying(underlying) ? YAHOO_INDEX_SPOT_TICKER[underlying] : undefined;
+  if (!ticker) return null;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), YAHOO_TIMEOUT_MS);
   try {

@@ -24,7 +24,8 @@ const YAHOO_CHART_BASE = "https://query1.finance.yahoo.com/v8/finance/chart";
 const YAHOO_TIMEOUT_MS = 8000;
 const CACHE_TTL_MS = 60 * 1000; // same in-module TTL convention as the equity fetcher's cache
 
-export type IndexUnderlying = "NIFTY" | "BANKNIFTY";
+import { type IndexOptionUnderlying } from "@predict-future/business-rules/papertrading/optionContract";
+export type IndexUnderlying = IndexOptionUnderlying;
 
 export type IndexIntradayPoint = { t: number; price: number };
 

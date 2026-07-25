@@ -70,10 +70,9 @@ import { fetchEquityNames } from "./nse";
 export type OptionUnderlying = string;
 export type OptionType = "CE" | "PE";
 
-/** The only two underlyings Phase 2's index-options chain supports — `type=Indices` on the chain endpoint, cash-settled-at-intrinsic on expiry. Every other tradable underlying (the Phase 3 stock universe) is `type=Equity` and forced-square-off on expiry. */
-export function isIndexUnderlying(symbol: string): boolean {
-  return symbol === "NIFTY" || symbol === "BANKNIFTY";
-}
+/** Index underlyings — `type=Indices` on the chain endpoint, cash-settled-at-intrinsic on expiry. Every other tradable underlying (the stock universe) is `type=Equity` and forced-square-off on expiry. All 5 F&O indices since 2026-07-25 (chains verified live from EC2: FINNIFTY 135 / MIDCPNIFTY 154 / NIFTYNXT50 199 strike rows) — sourced from the shared registry, never a local list. */
+export { isIndexOptionUnderlying as isIndexUnderlying } from "@predict-future/business-rules/papertrading/optionContract";
+import { isIndexOptionUnderlying as isIndexUnderlying } from "@predict-future/business-rules/papertrading/optionContract";
 
 /**
  * Recognized index-derivative SYMBOL values in fo_mktlots.csv that must NEVER

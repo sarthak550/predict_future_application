@@ -43,8 +43,9 @@ export function TerminalHeader({
 }) {
   return (
     <div className="sticky top-0 z-20 -mx-1 rounded-[24px] border border-ink-100 bg-white/90 px-5 py-3 shadow-sm backdrop-blur">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-baseline gap-x-8 gap-y-1">
+      <div className="flex flex-wrap items-center gap-3">
+        {/* Full-width 4-up grid — the stats own the whole strip instead of huddling left. */}
+        <div className="grid min-w-0 flex-1 grid-cols-2 gap-3 sm:grid-cols-4">
           <HeaderStat label="Cash available" value={formatRupees(cash)} />
           <HeaderStat label="Portfolio value" value={formatRupees(portfolioValue)} />
           <HeaderStat
@@ -59,9 +60,7 @@ export function TerminalHeader({
           />
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
-          {navSlot}
-        </div>
+        {navSlot && <div className="flex flex-wrap items-center gap-3">{navSlot}</div>}
       </div>
     </div>
   );

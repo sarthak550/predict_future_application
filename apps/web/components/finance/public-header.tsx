@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { GlobalSymbolSearch } from "@/components/finance/global-symbol-search";
 import { SessionChip } from "@/components/finance/session-chip";
 
 /**
@@ -10,11 +11,12 @@ import { SessionChip } from "@/components/finance/session-chip";
  * components/layout/app-shell.tsx) — so this header needs to work standalone
  * for a signed-out visitor arriving from Google or a shared WhatsApp link.
  */
+// Portfolios hidden 2026-07-25 (founder: launch later, not required now) —
+// the feature's code/crons stay live behind a redirect, only discovery is off.
 const NAV_LINKS = [
   { href: "/analysts", label: "Analysts" },
   { href: "/opinions", label: "Opinions" },
   { href: "/pulse", label: "Market Pulse" },
-  { href: "/portfolios", label: "Portfolios" },
   { href: "/paper-trading", label: "Paper Trading" },
 ];
 
@@ -34,6 +36,10 @@ export function PublicHeader() {
             <p className="text-xs text-ink-400">Analyst Scorecard</p>
           </div>
         </Link>
+
+        <div className="min-w-0 flex-1 px-2 sm:px-6">
+          <GlobalSymbolSearch />
+        </div>
 
         <nav className="flex flex-wrap items-center gap-x-5 gap-y-2">
           {NAV_LINKS.map((link) => (

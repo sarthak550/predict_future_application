@@ -27,6 +27,8 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { INDEX_OPTION_UNDERLYINGS, isIndexOptionUnderlying } from "@predict-future/business-rules/papertrading/optionContract";
+
 import { Select } from "@/components/ui/select";
 
 import { useVisiblePolling } from "./use-visible-polling";
@@ -68,7 +70,7 @@ export interface SelectedContract {
 
 type ChainMode = "index" | "stock";
 
-const INDEX_UNDERLYINGS: Array<"NIFTY" | "BANKNIFTY"> = ["NIFTY", "BANKNIFTY"];
+const INDEX_UNDERLYINGS = INDEX_OPTION_UNDERLYINGS;
 const STRIKES_AROUND_ATM = 10; // shown each side of the ATM strike — a full chain can run 100+ strikes deep, most of them illiquid tails no retail user is trading
 
 // Auto-refresh cadence. The upstream chain is cached ~60s server-side, so 30s
@@ -83,8 +85,8 @@ function formatRupees(value: number): string {
   return `₹${value.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 }
 
-function isIndexUnderlying(symbol: string): symbol is "NIFTY" | "BANKNIFTY" {
-  return symbol === "NIFTY" || symbol === "BANKNIFTY";
+function isIndexUnderlying(symbol: string): boolean {
+  return isIndexOptionUnderlying(symbol);
 }
 
 export function OptionChainBrowser({

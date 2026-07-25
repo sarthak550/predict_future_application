@@ -23,7 +23,7 @@
 import { useEffect, useState } from "react";
 
 import { computeOptionOrderCosts } from "@predict-future/business-rules/papertrading/optionsCosts";
-import { formatOptionContractLabel } from "@predict-future/business-rules/papertrading/optionContract";
+import { formatOptionContractLabel, isIndexOptionUnderlying } from "@predict-future/business-rules/papertrading/optionContract";
 import { isNseWeekdayMarketHours } from "@predict-future/business-rules/papertrading/marketHours";
 
 import { CostBreakdownTable } from "@/components/paper-trading/cost-breakdown-table";
@@ -127,7 +127,7 @@ export function OptionTradePanel({
     }
   }
 
-  const isStockOption = contract.underlying !== "NIFTY" && contract.underlying !== "BANKNIFTY";
+  const isStockOption = !isIndexOptionUnderlying(contract.underlying);
 
   return (
     <div className="space-y-4 rounded-[24px] border border-ink-100 bg-white p-5">

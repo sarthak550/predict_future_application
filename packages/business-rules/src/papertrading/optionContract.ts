@@ -81,3 +81,34 @@ export function daysToExpiry(expiryDate: Date, now: Date = new Date()): number {
   const expiryDateOnly = Date.UTC(expiryDate.getUTCFullYear(), expiryDate.getUTCMonth(), expiryDate.getUTCDate());
   return Math.round((expiryDateOnly - nowDateOnly) / MS_PER_DAY);
 }
+
+/**
+ * The F&O-traded index underlyings — the ONLY symbols that trade as
+ * cash-settled INDEX_OPTIONs (everything else in the F&O universe is a
+ * physically-settled STOCK_OPTION). Single source of truth for every
+ * consumer: chain fetch type=Indices selection, order instrumentKind
+ * classification, settlement spot lookup, chain-browser toggle, UI copy.
+ *
+ * Yahoo spot tickers verified live 2026-07-25 against NSE's own
+ * records.underlyingValue TO THE PAISA (traps: Yahoo's ^NSMIDCP is Nifty
+ * NEXT 50 — not midcap — and ^CNXFIN is NOT FINNIFTY):
+ *   NIFTY 23,767.45 = ^NSEI · BANKNIFTY = ^NSEBANK ·
+ *   FINNIFTY 25,909.90 = NIFTY_FIN_SERVICE.NS ·
+ *   MIDCPNIFTY 14,436.05 = NIFTY_MID_SELECT.NS · NIFTYNXT50 71,766 = ^NSMIDCP
+ */
+export const INDEX_OPTION_UNDERLYINGS = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "NIFTYNXT50"] as const;
+
+export type IndexOptionUnderlying = (typeof INDEX_OPTION_UNDERLYINGS)[number];
+
+export function isIndexOptionUnderlying(symbol: string): symbol is IndexOptionUnderlying {
+  return (INDEX_OPTION_UNDERLYINGS as readonly string[]).includes(symbol);
+}
+
+/** Yahoo chart-API ticker for each index's spot — used by settlement fallback and the 1D index chart. */
+export const YAHOO_INDEX_SPOT_TICKER: Record<IndexOptionUnderlying, string> = {
+  NIFTY: "^NSEI",
+  BANKNIFTY: "^NSEBANK",
+  FINNIFTY: "NIFTY_FIN_SERVICE.NS",
+  MIDCPNIFTY: "NIFTY_MID_SELECT.NS",
+  NIFTYNXT50: "^NSMIDCP"
+};
