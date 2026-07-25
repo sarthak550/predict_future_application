@@ -80,6 +80,7 @@ export function DockedOrderTicket(props: DockedOrderTicketProps) {
           heldDeliveryQtyBySymbol={props.heldDeliveryQtyBySymbol}
           hasSoldDeliveryTodayBySymbol={props.hasSoldDeliveryTodayBySymbol}
           initialSymbol={props.initialSymbol}
+          fixedSymbol={props.initialSymbol}
           initialSide={props.initialSide}
           initialProductType={props.initialProductType}
           linkedOpinionId={props.linkedOpinionId}

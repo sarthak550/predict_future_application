@@ -49,6 +49,7 @@ export function NewTradeForm({
   heldDeliveryQtyBySymbol,
   hasSoldDeliveryTodayBySymbol,
   initialSymbol = null,
+  fixedSymbol = null,
   initialSide = "BUY",
   initialProductType = "DELIVERY",
   linkedOpinionId = null,
@@ -59,15 +60,30 @@ export function NewTradeForm({
   heldDeliveryQtyBySymbol: Record<string, number>;
   hasSoldDeliveryTodayBySymbol: Record<string, boolean>;
   initialSymbol?: string | null;
+  /**
+   * Terminal mode: the symbol is owned by the terminal's own focus/search
+   * (header search, chart, deep-links) — render a static symbol chip instead
+   * of the embedded search input, which is redundant there and collapses to an
+   * unusable sliver in the narrow docked-ticket column.
+   */
+  fixedSymbol?: string | null;
   initialSide?: "BUY" | "SELL";
   initialProductType?: "DELIVERY" | "INTRADAY";
   linkedOpinionId?: string | null;
   onOrderPlaced: (order: PlacedOrderPayload) => void;
 }) {
   const [selectedSymbol, setSelectedSymbol] = useState<PaperSymbolOption | null>(
-    initialSymbol ? { symbol: initialSymbol, companyName: "", close: 0 } : null
+    fixedSymbol ?? initialSymbol ? { symbol: (fixedSymbol ?? initialSymbol) as string, companyName: "", close: 0 } : null
   );
-  const [symbolInputValue, setSymbolInputValue] = useState(initialSymbol ?? "");
+  const [symbolInputValue, setSymbolInputValue] = useState(fixedSymbol ?? initialSymbol ?? "");
+
+  // Terminal focus can change without a remount — keep the fixed symbol synced.
+  useEffect(() => {
+    if (fixedSymbol) {
+      setSelectedSymbol({ symbol: fixedSymbol, companyName: "", close: 0 });
+      setSymbolInputValue(fixedSymbol);
+    }
+  }, [fixedSymbol]);
   const [side, setSide] = useState<"BUY" | "SELL">(initialSide);
   const [productType, setProductType] = useState<"DELIVERY" | "INTRADAY">(initialProductType);
   const [quantity, setQuantity] = useState("");
@@ -172,15 +188,23 @@ export function NewTradeForm({
 
   return (
     <form className="space-y-4" onSubmit={handleSubmit}>
-      <div className="grid gap-3 sm:grid-cols-[1fr_auto_auto_auto]">
-        <PaperTradingSymbolSearchInput
-          value={symbolInputValue}
-          onSelect={(opt) => {
-            setSelectedSymbol(opt);
-            setSymbolInputValue(opt.symbol);
-          }}
-          disabled={submitting}
-        />
+      {fixedSymbol && (
+        <div className="flex items-center gap-2">
+          <span className="rounded-xl bg-ink-900 px-3 py-1.5 text-sm font-semibold text-white">{fixedSymbol}</span>
+          <span className="text-xs text-ink-400">Change via the symbol search above</span>
+        </div>
+      )}
+      <div className={`grid gap-3 ${fixedSymbol ? "grid-cols-[auto_auto_1fr]" : "sm:grid-cols-[1fr_auto_auto_auto]"}`}>
+        {!fixedSymbol && (
+          <PaperTradingSymbolSearchInput
+            value={symbolInputValue}
+            onSelect={(opt) => {
+              setSelectedSymbol(opt);
+              setSymbolInputValue(opt.symbol);
+            }}
+            disabled={submitting}
+          />
+        )}
         <Select value={side} onChange={(e) => setSide(e.target.value as "BUY" | "SELL")} disabled={submitting}>
           <option value="BUY">Buy</option>
           <option value="SELL">Sell</option>
