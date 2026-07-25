@@ -24,6 +24,8 @@ import { formatNumericValue } from "@/lib/utils";
 
 export type QuoteHeaderProps = {
   symbol: string;
+  /** Override the live-overlay fetch path — index pages point this at /api/instruments/index/[symbol]/intraday (the default equity path would request a nonexistent NIFTY.NS). */
+  intradayEndpoint?: string;
   companyName: string;
   quote: {
     close: number;
@@ -74,7 +76,7 @@ function formatIstTime(epochMs: number): string {
   }).format(new Date(epochMs));
 }
 
-export function QuoteHeader({ symbol, companyName, quote }: QuoteHeaderProps) {
+export function QuoteHeader({ symbol, companyName, quote, intradayEndpoint }: QuoteHeaderProps) {
   const [live, setLive] = useState<LiveQuote | null>(null);
   const fetchedFor = useRef<string | null>(null);
 
@@ -82,7 +84,7 @@ export function QuoteHeader({ symbol, companyName, quote }: QuoteHeaderProps) {
     if (fetchedFor.current === symbol) return;
     fetchedFor.current = symbol;
 
-    fetch(`/api/instruments/${encodeURIComponent(symbol)}/intraday`)
+    fetch(intradayEndpoint ?? `/api/instruments/${encodeURIComponent(symbol)}/intraday`)
       .then(async (res) => {
         if (!res.ok) throw new Error(`intraday fetch ${res.status}`);
         return (await res.json()) as {

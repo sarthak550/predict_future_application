@@ -22,7 +22,7 @@ const NAV_LINKS = [
 
 export function PublicHeader() {
   return (
-    <header className="border-b border-ink-100 bg-white/70 backdrop-blur">
+    <header className="relative z-40 border-b border-ink-100 bg-white/70 backdrop-blur">
       {/* Full-width nav (logo left, links right) — content pages keep their own
           narrower max-w containers below; pinning the nav to max-w-5xl made it
           float oddly in the middle over the full-width terminal pages. */}

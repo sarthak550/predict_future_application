@@ -8,6 +8,8 @@ import { PriceChart } from "@/components/finance/price-chart";
 import { PulseTabs } from "@/components/finance/pulse-tabs";
 import { QuoteHeader } from "@/components/finance/quote-header";
 import { Card, CardContent } from "@/components/ui/card";
+import { isIndexOptionUnderlying } from "@predict-future/business-rules/papertrading/optionContract";
+
 import { fetchInstrumentDetail } from "@/lib/finance/instrument";
 import { formatIstSessionDate, formatRelativeTime } from "@/lib/utils";
 
@@ -64,6 +66,12 @@ export default async function InstrumentDetailPage({
     notFound();
   }
 
+  // Index pages have no bhavcopy series — the chart runs on the live 1D index
+  // pipe instead, and the header's live overlay must hit the index endpoint
+  // (the default equity path would request a nonexistent "NIFTY.NS").
+  const isIndex = isIndexOptionUnderlying(instrument.symbol);
+  const indexIntradayUrl = `/api/instruments/index/${encodeURIComponent(instrument.symbol)}/intraday`;
+
   const jsonLd = {
     "@context": "https://schema.org",
     "@type": "Organization",
@@ -79,6 +87,7 @@ export default async function InstrumentDetailPage({
       <QuoteHeader
         symbol={instrument.symbol}
         companyName={instrument.companyName}
+        intradayEndpoint={isIndex ? indexIntradayUrl : undefined}
         quote={
           instrument.quote
             ? {
@@ -105,6 +114,8 @@ export default async function InstrumentDetailPage({
               date: formatIstSessionDate(pt.sessionDate),
               close: pt.close,
             }))}
+            intradaySource={isIndex ? { url: indexIntradayUrl } : undefined}
+            defaultTimeframe={isIndex ? "1D" : undefined}
           />
         </CardContent>
       </Card>

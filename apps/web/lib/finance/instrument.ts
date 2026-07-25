@@ -1,4 +1,5 @@
 import { nseSymbolMatchesInstrumentTicker, refineStockNews } from "@predict-future/business-rules";
+import { isIndexOptionUnderlying } from "@predict-future/business-rules/papertrading/optionContract";
 import type { OpinionDirection, OpinionResolutionStatus } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
@@ -101,9 +102,23 @@ export interface InstrumentDetail {
  * content but no quote yet (bhavcopy not seeded) still resolves — callers
  * render a "price data pending" state rather than notFound() in that case.
  */
+/** Index instrument pages: display names + the instrumentTicker index opinions are actually stored under (verified in prod: Nifty 50 calls carry "^NSEI", Bank Nifty "^NSEBANK" — never "NIFTY.<suffix>"). */
+const INDEX_DISPLAY_NAME: Record<string, string> = {
+  NIFTY: "Nifty 50",
+  BANKNIFTY: "Nifty Bank",
+  FINNIFTY: "Nifty Financial Services",
+  MIDCPNIFTY: "Nifty Midcap Select",
+  NIFTYNXT50: "Nifty Next 50",
+};
+const INDEX_OPINION_TICKER: Record<string, string> = {
+  NIFTY: "^NSEI",
+  BANKNIFTY: "^NSEBANK",
+};
+
 export async function fetchInstrumentDetail(rawSymbol: string): Promise<InstrumentDetail | null> {
   const symbol = rawSymbol.trim().toUpperCase();
   if (!symbol) return null;
+  const isIndex = isIndexOptionUnderlying(symbol);
 
   const opinionSince = new Date(Date.now() - OPINION_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
 
@@ -155,7 +170,9 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     prisma.expertOpinion.findMany({
       where: {
         suppressedAt: null,
-        instrumentTicker: { startsWith: `${symbol}.`, mode: "insensitive" },
+        instrumentTicker: INDEX_OPINION_TICKER[symbol]
+          ? { equals: INDEX_OPINION_TICKER[symbol] }
+          : { startsWith: `${symbol}.`, mode: "insensitive" },
         publishedAt: { gte: opinionSince },
       },
       orderBy: { publishedAt: "desc" },
@@ -183,10 +200,13 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
 
   const news = refineStockNews(newsRows, { limit: NEWS_LIMIT });
 
+  // A known F&O index ALWAYS resolves (its page renders a live 1D chart even
+  // with zero stored content) — the null gate only applies to unknown symbols.
   const hasAnyContent = latestQuote != null || news.length > 0 || filings.length > 0 || matchedOpinions.length > 0;
-  if (!hasAnyContent) return null;
+  if (!hasAnyContent && !isIndex) return null;
 
-  const companyName = latestQuote?.companyName ?? filings[0]?.companyName ?? newsRows[0]?.companyName ?? symbol;
+  const companyName =
+    INDEX_DISPLAY_NAME[symbol] ?? latestQuote?.companyName ?? filings[0]?.companyName ?? newsRows[0]?.companyName ?? symbol;
 
   const sentimentCounts = matchedOpinions.reduce(
     (acc, o) => {
