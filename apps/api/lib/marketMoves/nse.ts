@@ -119,13 +119,22 @@ function cookieHeaderFrom(res: Response): string {
  * Exported so other NSE fetchers (e.g. intraday.ts) can reuse the same
  * handshake instead of reimplementing the Akamai cookie dance.
  */
+/**
+ * The HOMEPAGE "/" is hard-403'd (no cookies) even for curl since 2026-07-26 —
+ * but SECTION pages still 200 with full cookies (nsit + _abck). Any caller
+ * still warming up via "/" gets silently remapped to a verified-good section
+ * page rather than failing.
+ */
+const HOMEPAGE_WARMUP_SUBSTITUTE = "/market-data/live-market-indices";
+
 export async function primeNseSession(warmUpPath: string): Promise<string | null> {
+  const effectivePath = warmUpPath === "/" ? HOMEPAGE_WARMUP_SUBSTITUTE : warmUpPath;
   try {
     // curl transport — see TRANSPORT NOTE above (Node's TLS fingerprint is
     // 403-blocked by NSE's Akamai since 2026-07-26; curl's passes).
-    const res = await curlRequest(`${NSE_ORIGIN}${warmUpPath}`, HTML_HEADERS);
+    const res = await curlRequest(`${NSE_ORIGIN}${effectivePath}`, HTML_HEADERS);
     if (!res) {
-      console.warn(`[marketMoves/nse] warm-up ${warmUpPath} curl transport failed`);
+      console.warn(`[marketMoves/nse] warm-up ${effectivePath} curl transport failed`);
       return null;
     }
     // Do NOT bail on a non-200 warm-up: NSE's Akamai serves a 403 challenge to
@@ -136,12 +145,12 @@ export async function primeNseSession(warmUpPath: string): Promise<string | null
       .filter(Boolean)
       .join("; ");
     if (!cookie) {
-      console.warn(`[marketMoves/nse] warm-up ${warmUpPath} set no cookie (status ${res.status})`);
+      console.warn(`[marketMoves/nse] warm-up ${effectivePath} set no cookie (status ${res.status})`);
       return null;
     }
     return cookie;
   } catch (err) {
-    console.warn(`[marketMoves/nse] warm-up ${warmUpPath} network error: ${err instanceof Error ? err.message : err}`);
+    console.warn(`[marketMoves/nse] warm-up ${effectivePath} network error: ${err instanceof Error ? err.message : err}`);
     return null;
   }
 }
