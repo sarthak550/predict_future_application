@@ -91,7 +91,9 @@ function PositionChipCard({ chip }: { chip: PositionChip }) {
         {chip.kind === "equity" ? chip.symbol : `${chip.underlyingSymbol} ${chip.strikePrice} ${chip.optionType}`}
       </span>
       <span className="whitespace-nowrap text-[10px] text-ink-400">
-        {chip.kind === "equity" ? `${chip.productType} · ${chip.quantity} sh` : `${chip.lots} lot(s)`}
+        {chip.kind === "equity"
+          ? `Stock · ${chip.productType.toLowerCase()} · ${chip.quantity} shares`
+          : `Option · ${chip.lots} lot(s)`}
       </span>
       <span className={`whitespace-nowrap text-xs font-medium ${tone}`}>{chip.netPnl != null ? formatSignedRupees(chip.netPnl) : "—"}</span>
       <span className="whitespace-nowrap text-[10px] font-semibold uppercase tracking-wide text-rose-500">Sell</span>

@@ -34,7 +34,11 @@ export function ExpressControls({ express, onToggleTap }: { express: ExpressMode
 }
 
 function ExpressToggleButton({ express, onToggleTap }: { express: ExpressModeState; onToggleTap: () => void }) {
-  const label = !express.enabled ? "Express: Off" : express.armed ? "Express: Armed" : "Express: Paused — tap to resume";
+  const label = !express.enabled
+    ? "⚡ 1-tap orders: Off"
+    : express.armed
+      ? "⚡ 1-tap orders: On"
+      : "⚡ 1-tap orders: Paused — tap to resume";
   const tone = !express.enabled
     ? "border-ink-200 bg-white text-ink-600 hover:border-ink-300"
     : express.armed
@@ -42,7 +46,12 @@ function ExpressToggleButton({ express, onToggleTap }: { express: ExpressModeSta
       : "border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100";
 
   return (
-    <button type="button" onClick={onToggleTap} className={`rounded-2xl border px-3 py-2 text-xs font-semibold transition ${tone}`}>
+    <button
+      type="button"
+      onClick={onToggleTap}
+      title="When on, tapping B or S next to a strike fills instantly at your preset lots — no confirm step. Pauses itself when you switch tabs or go idle."
+      className={`rounded-2xl border px-3 py-2 text-xs font-semibold transition ${tone}`}
+    >
       {label}
     </button>
   );

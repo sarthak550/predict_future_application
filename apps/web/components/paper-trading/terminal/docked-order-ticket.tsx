@@ -74,7 +74,7 @@ export type DockedOrderTicketProps = EquityTicketProps | OptionTicketProps;
 export function DockedOrderTicket(props: DockedOrderTicketProps) {
   if (props.kind === "equity") {
     return (
-      <DockedTicketChrome subtitle="Equity — Delivery or Intraday">
+      <DockedTicketChrome subtitle="Stocks — buy shares for delivery, or trade intraday">
         <NewTradeForm
           cash={props.cash}
           heldDeliveryQtyBySymbol={props.heldDeliveryQtyBySymbol}
