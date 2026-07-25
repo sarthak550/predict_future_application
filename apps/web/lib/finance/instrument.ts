@@ -1,7 +1,9 @@
 import { nseSymbolMatchesInstrumentTicker, refineStockNews } from "@predict-future/business-rules";
+import { computeReturnsStrip, type ReturnsStrip } from "@predict-future/business-rules/marketPulse/returns";
 import { isIndexOptionUnderlying } from "@predict-future/business-rules/papertrading/optionContract";
 import type { OpinionDirection, OpinionResolutionStatus } from "@prisma/client";
 
+import { EMPTY_INSTRUMENT_ENRICHMENT, getOrFetchInstrumentEnrichment, type InstrumentEnrichmentData } from "@/lib/finance/enrichment";
 import { prisma } from "@/lib/prisma";
 
 // Enough sessions for a 1Y timeframe on the interactive chart (~250 trading
@@ -83,6 +85,10 @@ export interface InstrumentDetail {
   filings: InstrumentFilingRow[];
   opinions: InstrumentOpinionRow[];
   sentiment: InstrumentSentiment;
+  /** Instrument Page v2 (T3) — 1W/1M/3M/6M/1Y/FY-to-date returns computed over `spark`. All-null for indices (no StockEodQuote series). */
+  performance: ReturnsStrip;
+  /** Instrument Page v2 (T4) — cached Yahoo fundamentals/dividends, read-through with a background refresh trigger. All-null for indices (not fetched — see fetchInstrumentDetail). */
+  enrichment: InstrumentEnrichmentData;
 }
 
 /**
@@ -218,6 +224,15 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     { bullish: 0, bearish: 0, neutral: 0 }
   );
 
+  // Instrument Page v2 (T3) — pure, zero extra query/network call over the
+  // spark series already fetched above.
+  const performance = computeReturnsStrip(sparkRows, latestQuote?.sessionDate);
+
+  // Instrument Page v2 (T4) — indices have no financial statements/dividend
+  // history and no StockEodQuote series to enrich; skip the Yahoo/DB round
+  // trip entirely rather than fetching fundamentals for "^NSEI.NS".
+  const enrichment = isIndex ? EMPTY_INSTRUMENT_ENRICHMENT : await getOrFetchInstrumentEnrichment(symbol, companyName);
+
   return {
     symbol,
     companyName,
@@ -244,5 +259,7 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
       totalCount: matchedOpinions.length,
       lookbackDays: OPINION_LOOKBACK_DAYS,
     },
+    performance,
+    enrichment,
   };
 }

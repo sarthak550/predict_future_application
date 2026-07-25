@@ -8,6 +8,7 @@ export * from "./markets/probability";
 export * from "./markets/ranking";
 export * from "./marketPulse/instrumentMatch";
 export * from "./marketPulse/newsQuality";
+export * from "./marketPulse/returns";
 export * from "./marketPulse/topHeadline";
 export * from "./news/category-map";
 export * from "./news/types";

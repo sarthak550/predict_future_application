@@ -12,6 +12,7 @@
     "./markets/numeric": "./src/markets/numeric.ts",
     "./markets/ranking": "./src/markets/ranking.ts",
     "./marketPulse/newsQuality": "./src/marketPulse/newsQuality.ts",
+    "./marketPulse/returns": "./src/marketPulse/returns.ts",
     "./marketPulse/topHeadline": "./src/marketPulse/topHeadline.ts",
     "./marketPulse/instrumentMatch": "./src/marketPulse/instrumentMatch.ts",
     "./hosts/trust": "./src/hosts/trust.ts",

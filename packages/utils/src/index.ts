@@ -78,6 +78,44 @@ export function freshnessColor(date: Date | string): string {
   return "#b91c1c";
 }
 
+/**
+ * Instrument Page v2 — Indian crore/lakh-compact currency display for raw
+ * INR figures (Yahoo fundamentals-timeseries `reportedValue.raw` values are
+ * plain rupees, NOT pre-scaled to lakhs/crores — see apps/web/lib/finance/
+ * fundamentals.ts's doc comment for the RELIANCE sanity check that
+ * confirmed this). Thresholds match Indian financial-media convention:
+ *   - |value| >= 1,00,00,00,00,000 (1e12, i.e. >= 1 lakh crore) -> "X.XX L Cr"
+ *     (this is the "₹10.57 lakh crore" style headline figure Indian business
+ *     press uses for large-cap revenue/market-cap numbers, rather than a
+ *     visually noisy "₹10,57,190 Cr").
+ *   - |value| >= 1,00,00,000 (1e7, i.e. >= 1 crore) -> "X.XX Cr"
+ *   - |value| >= 1,00,000 (1e5, i.e. >= 1 lakh) -> "X.XX L"
+ *   - else -> plain "en-IN" grouped rupees (for per-share figures like EPS
+ *     and dividend amount, which are single/double-digit rupees and would
+ *     be nonsensical in lakh/crore terms).
+ * Does NOT include the ₹ sign — callers prefix it, matching quote-header.tsx's
+ * existing convention of composing the symbol at the call site.
+ */
+export function formatCompactINR(value: number, options?: { precision?: number }): string {
+  const precision = options?.precision ?? 2;
+  const abs = Math.abs(value);
+  const sign = value < 0 ? "-" : "";
+
+  const grouped = (scaled: number) =>
+    scaled.toLocaleString("en-IN", { minimumFractionDigits: precision, maximumFractionDigits: precision });
+
+  if (abs >= 1e12) {
+    return `${sign}${grouped(abs / 1e12)} L Cr`;
+  }
+  if (abs >= 1e7) {
+    return `${sign}${grouped(abs / 1e7)} Cr`;
+  }
+  if (abs >= 1e5) {
+    return `${sign}${grouped(abs / 1e5)} L`;
+  }
+  return `${sign}${abs.toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: precision })}`;
+}
+
 export function safeJsonParse<T>(value: string, fallback: T) {
   try {
     return JSON.parse(value) as T;

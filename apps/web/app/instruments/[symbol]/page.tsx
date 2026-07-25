@@ -3,7 +3,9 @@ import { notFound } from "next/navigation";
 
 import { AnalystDisclaimerFooter } from "@/components/finance/disclaimer-footer";
 import { ExpandableCallsTable } from "@/components/finance/expandable-calls-table";
+import { FundamentalsPanel } from "@/components/finance/fundamentals-panel";
 import { InstrumentSentimentGauge } from "@/components/finance/instrument-sentiment-gauge";
+import { PerformanceStrip } from "@/components/finance/performance-strip";
 import { PriceChart } from "@/components/finance/price-chart";
 import { PulseTabs } from "@/components/finance/pulse-tabs";
 import { QuoteHeader } from "@/components/finance/quote-header";
@@ -153,6 +155,22 @@ export default async function InstrumentDetailPage({
           </Card>
         )}
       </section>
+
+      {/* Instrument Page v2 — commodity context ("is this analyst's thesis
+          backed by real earnings growth?"), deliberately placed AFTER
+          Analyst opinions (the moat) and BEFORE PulseTabs — non-negotiable
+          ordering per the CTO assignment brief's thesis-alignment section. */}
+      <PerformanceStrip performance={instrument.performance} />
+      <FundamentalsPanel
+        annualRevenue={instrument.enrichment.annualRevenue}
+        annualNetIncome={instrument.enrichment.annualNetIncome}
+        annualDilutedEps={instrument.enrichment.annualDilutedEps}
+        quarterlyRevenue={instrument.enrichment.quarterlyRevenue}
+        quarterlyNetIncome={instrument.enrichment.quarterlyNetIncome}
+        quarterlyDilutedEps={instrument.enrichment.quarterlyDilutedEps}
+        dividends={instrument.enrichment.dividends}
+        fetchedAt={instrument.enrichment.fundamentalsFetchedAt}
+      />
 
       <PulseTabs
         news={instrument.news.map((item) => ({

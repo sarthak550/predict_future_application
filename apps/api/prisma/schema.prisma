@@ -1987,3 +1987,57 @@ model OptionPremiumSnapshot {
   @@index([underlyingSymbol, expiryDate, strikePrice, optionType, capturedAt])
   @@index([capturedAt])
 }
+
+/// Instrument Page v2 — singleton-per-symbol cache for Yahoo-sourced
+/// fundamentals + dividend history, and the rate-limit guard for on-demand
+/// Google News refresh on the long-tail (non-Market-Pulse-universe) symbols.
+/// Two independent TTL clocks live on one row because they gate two
+/// unrelated background jobs at different cadences (fundamentals ~quarterly,
+/// news ~intraday) — see apps/web/lib/finance/enrichment.ts for the
+/// read-through/stale-while-revalidate logic that owns both.
+///
+/// Request-driven, NOT cron-driven (unlike MarketMoveNews/StockEodQuote):
+/// pre-warming fundamentals for the full ~2,000-stock NSE universe would
+/// fetch data almost nobody views. A row is created lazily on first visit
+/// to /instruments/[symbol] and refreshed only while that symbol keeps
+/// getting traffic.
+///
+/// JSON (not column-per-metric) for the fundamentals series deliberately:
+/// Yahoo's `type` keys that actually return data vary by stock (see
+/// apps/web/lib/finance/fundamentals.ts's doc comment for the empirical
+/// spot-check across large/mid/small-cap NSE names) — a rigid schema would
+/// need a migration every time real-world coverage shifts.
+model InstrumentEnrichment {
+  id          String  @id @default(cuid())
+  symbol      String  @unique
+  companyName String?
+
+  /// Each series: [{ periodEnd: ISO date string ("YYYY-MM-DD"), value: number (raw INR) }],
+  /// oldest first. Null until the first successful fetch; a series absent
+  /// from Yahoo's response for this symbol is omitted from the JSON array
+  /// entirely (never a zero-valued placeholder — see fundamentals.ts).
+  annualRevenue       Json?
+  annualNetIncome     Json?
+  annualDilutedEps    Json?
+  quarterlyRevenue    Json?
+  quarterlyNetIncome  Json?
+  quarterlyDilutedEps Json?
+
+  /// [{ date: ISO date string, amount: number (raw INR per share) }], oldest first.
+  dividends Json?
+
+  /// Last successful-or-attempted fundamentals fetch. Null = never fetched.
+  /// A background refresh triggers when this is null or older than the
+  /// 7-day TTL (Decision 1) — checked, not enforced, by enrichment.ts.
+  fundamentalsFetchedAt DateTime?
+
+  /// Last time the on-demand news refresh ran for this symbol, hit or miss
+  /// (set optimistically BEFORE the fetch, as a cheap check-and-set race
+  /// guard — see enrichment.ts). Independent of fundamentalsFetchedAt: gates
+  /// the 6-hour Google News refresh cadence, writes land in the existing
+  /// MarketMoveNews table, not here.
+  newsLastCheckedAt DateTime?
+
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+}
