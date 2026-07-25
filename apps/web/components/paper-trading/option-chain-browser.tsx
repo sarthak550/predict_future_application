@@ -129,8 +129,12 @@ export function OptionChainBrowser({
   getHeldLots?: (underlying: string, strikePrice: number, optionType: "CE" | "PE", expiry: string) => number;
 }) {
   const deepLinkIsValid = Boolean(initialUnderlying);
-  // Empty string means "no underlying selected yet" — only reachable in Stock
-  // mode before the user picks a stock from the combobox; every fetch effect
+  const deepLinkIsStock = deepLinkIsValid && !isIndexUnderlying(initialUnderlying as string);
+  // Founder-corrected design 2026-07-26: KEEP the Index/Stocks toggle; each
+  // mode gets a SEARCH box below it (Index mode searches the 5 F&O indices by
+  // name — no chip row).
+  const [mode, setMode] = useState<"index" | "stock">(deepLinkIsStock ? "stock" : "index");
+  // Empty string means "no underlying selected yet" — every fetch effect
   // below no-ops on an empty underlying rather than accidentally requesting a
   // stale/wrong symbol's chain.
   const [underlying, setUnderlying] = useState<string>(
@@ -345,21 +349,19 @@ export function OptionChainBrowser({
     );
   }
 
-  // ONE unified searchable list over every tradable underlying — the 5 F&O
-  // indices (full names, pinned first) + the ~210-stock universe (founder
-  // 2026-07-26: index selection should work "similar to how we have in
-  // Stocks"). The old Index/Stock mode toggle is gone; what you pick decides.
+  // Mode-scoped searchable list: Index mode searches the 5 F&O indices by
+  // symbol or full name ("bank" → Nifty Bank); Stock mode searches the
+  // ~210-stock universe — same interaction pattern in both modes (founder
+  // spec: toggle on top, search below).
   const underlyingMatches = useMemo(() => {
-    const indexEntries: FnoUniverseEntry[] = INDEX_UNDERLYINGS.map((sym) => ({
-      symbol: sym,
-      companyName: INDEX_DISPLAY_NAMES[sym] ?? sym,
-    }));
+    const source: FnoUniverseEntry[] =
+      mode === "index"
+        ? INDEX_UNDERLYINGS.map((sym) => ({ symbol: sym, companyName: INDEX_DISPLAY_NAMES[sym] ?? sym }))
+        : fnoUniverse;
     const q = stockQuery.trim().toUpperCase();
-    if (q.length === 0) return [...indexEntries, ...fnoUniverse.slice(0, 25)];
-    const idxHits = indexEntries.filter((e) => e.symbol.includes(q) || e.companyName.toUpperCase().includes(q));
-    const stockHits = fnoUniverse.filter((e) => e.symbol.includes(q) || e.companyName.toUpperCase().includes(q));
-    return [...idxHits, ...stockHits].slice(0, 30);
-  }, [stockQuery, fnoUniverse]);
+    if (q.length === 0) return source.slice(0, 30);
+    return source.filter((e) => e.symbol.includes(q) || e.companyName.toUpperCase().includes(q)).slice(0, 30);
+  }, [mode, stockQuery, fnoUniverse]);
 
   function selectStock(entry: FnoUniverseEntry) {
     setUnderlying(entry.symbol);
@@ -370,23 +372,31 @@ export function OptionChainBrowser({
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
-        {/* One-tap chips for the 5 index chains (the most-traded contracts) —
-            the search box below covers these AND every F&O stock uniformly. */}
-        <div className="inline-flex flex-wrap rounded-2xl border border-ink-200 bg-white p-1">
-          {INDEX_UNDERLYINGS.map((u) => (
+        <div className="inline-flex rounded-2xl border border-ink-200 bg-white p-1">
+          {(["index", "stock"] as const).map((m) => (
             <button
-              key={u}
+              key={m}
               type="button"
               onClick={() => {
-                setUnderlying(u);
-                setStockQuery(u);
+                if (m === mode) return;
+                setMode(m);
                 setStockComboboxOpen(false);
+                if (m === "index") {
+                  // Entering Index mode: default to NIFTY (always valid).
+                  setUnderlying("NIFTY");
+                  setStockQuery("NIFTY");
+                } else if (isIndexUnderlying(underlying)) {
+                  // Entering Stock mode with an index selected — clear so we
+                  // never fetch an index chain under the Stocks label.
+                  setUnderlying("");
+                  setStockQuery("");
+                }
               }}
-              className={`rounded-xl px-3 py-2 text-sm font-medium transition ${
-                underlying === u ? "bg-ink-900 text-white" : "text-ink-600 hover:text-ink-900"
+              className={`rounded-xl px-4 py-2 text-sm font-medium transition ${
+                mode === m ? "bg-ink-900 text-white" : "text-ink-600 hover:text-ink-900"
               }`}
             >
-              {u}
+              {m === "index" ? "Indices" : "Stocks"}
             </button>
           ))}
         </div>
@@ -399,7 +409,7 @@ export function OptionChainBrowser({
               setStockComboboxOpen(true);
             }}
             onFocus={() => setStockComboboxOpen(true)}
-            placeholder="Search index or F&O stock…"
+            placeholder={mode === "index" ? "Search index…" : "Search F&O stock…"}
             autoComplete="off"
             className="h-10 w-full rounded-2xl border border-ink-200 bg-white px-3 text-sm text-ink-900 outline-none focus:border-ink-400"
           />
