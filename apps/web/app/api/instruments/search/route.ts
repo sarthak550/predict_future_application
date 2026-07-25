@@ -96,10 +96,17 @@ export async function GET(request: Request) {
     .sort((a, b) => a.name.localeCompare(b.name))
     .slice(0, MAX_ALL_INDEX_MATCHES);
 
+  // Index matches get RESERVED slots (up to 3) — without this, a sectoral
+  // query like "metal" fills all 8 slots with fuzzy stock tickers and NIFTY
+  // METAL never surfaces at all (found live 2026-07-25).
+  const reservedForIndices = Math.min(allIndexMatches.length, 3);
+  const fixedCount = (exactStock ? 1 : 0) + tradableIndexMatches.length;
+  const stockBudget = Math.max(0, MAX_RESULTS - fixedCount - reservedForIndices);
+
   const ordered: SearchResultItem[] = [
     ...(exactStock ? [{ href: `/instruments/${exactStock.symbol}`, label: exactStock.symbol, sublabel: exactStock.companyName }] : []),
     ...tradableIndexMatches.map((e) => ({ href: `/instruments/${e.symbol}`, label: e.symbol, sublabel: e.companyName })),
-    ...fuzzyStockMatches.map((r) => ({ href: `/instruments/${r.symbol}`, label: r.symbol, sublabel: r.companyName })),
+    ...fuzzyStockMatches.slice(0, stockBudget).map((r) => ({ href: `/instruments/${r.symbol}`, label: r.symbol, sublabel: r.companyName })),
     ...allIndexMatches.map((idx) => ({ href: `/indices/${idx.slug}`, label: idx.name, sublabel: "Index" })),
   ];
 
