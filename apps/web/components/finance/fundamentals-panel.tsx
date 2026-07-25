@@ -76,6 +76,7 @@ const CHART_PAD = { top: 12, right: 8, bottom: 26, left: 8 };
 const REVENUE_COLOR = "#2563eb"; // house blue
 const NET_INCOME_COLOR = "#10b981"; // emerald
 const EPS_COLOR = "#0ea5e9"; // sky
+const DIVIDEND_COLOR = "#f59e0b"; // amber — dividends visually distinct from the earnings series
 
 interface PeriodGroup {
   label: string;
@@ -100,99 +101,181 @@ function alignByPeriod(
   return [...byPeriod.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, g]) => g);
 }
 
+/**
+ * Interactive readout convention (founder 2026-07-26: "how can someone know
+ * what value they are representing"): every chart shows a readout line ABOVE
+ * it — the hovered/tapped period's exact values, defaulting to the latest
+ * period — plus faint max/mid gridlines with compact labels so the scale
+ * reads statically too. Hover highlights the active period's bars; pointer
+ * events work for both mouse and touch (tap a group).
+ */
 function FinancialsBars({ groups }: { groups: PeriodGroup[] }) {
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const values = groups.flatMap((g) => [g.revenue, g.netIncome]).filter((v): v is number => v != null);
   if (values.length === 0) return null;
   const maxV = Math.max(...values, 0);
   const minV = Math.min(...values, 0);
   const span = maxV - minV || 1;
 
-  const innerW = CHART_W - CHART_PAD.left - CHART_PAD.right;
+  const AXIS_W = 56;
+  const innerW = CHART_W - CHART_PAD.left - CHART_PAD.right - AXIS_W;
   const innerH = CHART_H - CHART_PAD.top - CHART_PAD.bottom;
   const groupW = innerW / groups.length;
   const barW = Math.min(28, groupW / 3);
   const y = (v: number) => CHART_PAD.top + ((maxV - v) / span) * innerH;
   const zeroY = y(0);
 
+  const active = groups[hoverIdx ?? groups.length - 1];
+
   return (
-    <svg viewBox={`0 0 ${CHART_W} ${CHART_H}`} className="w-full" role="img" aria-label="Revenue and net income by period">
-      <line x1={CHART_PAD.left} x2={CHART_W - CHART_PAD.right} y1={zeroY} y2={zeroY} stroke="#e2e8f0" strokeWidth="1" />
-      {groups.map((g, i) => {
-        const cx = CHART_PAD.left + groupW * i + groupW / 2;
-        return (
-          <g key={g.label}>
-            {g.revenue != null && (
-              <rect
-                x={cx - barW - 2}
-                width={barW}
-                y={Math.min(y(g.revenue), zeroY)}
-                height={Math.max(2, Math.abs(y(g.revenue) - zeroY))}
-                rx={3}
-                fill={REVENUE_COLOR}
-              >
-                <title>{`${g.label} revenue: ${formatCompactINR(g.revenue)}`}</title>
-              </rect>
-            )}
-            {g.netIncome != null && (
-              <rect
-                x={cx + 2}
-                width={barW}
-                y={Math.min(y(g.netIncome), zeroY)}
-                height={Math.max(2, Math.abs(y(g.netIncome) - zeroY))}
-                rx={3}
-                fill={NET_INCOME_COLOR}
-              >
-                <title>{`${g.label} net income: ${formatCompactINR(g.netIncome)}`}</title>
-              </rect>
-            )}
-            <text x={cx} y={CHART_H - 8} textAnchor="middle" fontSize="11" fill="#94a3b8">
-              {g.label}
+    <div>
+      <p className="mb-1 text-xs text-ink-600">
+        <span className="font-semibold text-ink-900">{active.label}</span>
+        {active.revenue != null && (
+          <>
+            {" · "}Revenue <span className="font-semibold" style={{ color: REVENUE_COLOR }}>{formatCompactINR(active.revenue)}</span>
+          </>
+        )}
+        {active.netIncome != null && (
+          <>
+            {" · "}Net income{" "}
+            <span className="font-semibold" style={{ color: NET_INCOME_COLOR }}>{formatCompactINR(active.netIncome)}</span>
+          </>
+        )}
+      </p>
+      <svg
+        viewBox={`0 0 ${CHART_W} ${CHART_H}`}
+        className="w-full touch-none"
+        role="img"
+        aria-label="Revenue and net income by period"
+        onPointerLeave={() => setHoverIdx(null)}
+      >
+        {[maxV, (maxV + Math.min(minV, 0)) / 2].map((gv) => (
+          <g key={gv}>
+            <line x1={CHART_PAD.left} x2={CHART_W - CHART_PAD.right - AXIS_W} y1={y(gv)} y2={y(gv)} stroke="#f1f5f9" strokeWidth="1" />
+            <text x={CHART_W - CHART_PAD.right - AXIS_W + 6} y={y(gv) + 3} fontSize="10" fill="#94a3b8">
+              {formatCompactINR(gv)}
             </text>
           </g>
-        );
-      })}
-    </svg>
+        ))}
+        <line x1={CHART_PAD.left} x2={CHART_W - CHART_PAD.right - AXIS_W} y1={zeroY} y2={zeroY} stroke="#e2e8f0" strokeWidth="1" />
+        {groups.map((g, i) => {
+          const cx = CHART_PAD.left + groupW * i + groupW / 2;
+          const dim = hoverIdx !== null && hoverIdx !== i;
+          return (
+            <g key={g.label} opacity={dim ? 0.35 : 1} onPointerEnter={() => setHoverIdx(i)} onPointerDown={() => setHoverIdx(i)}>
+              {/* full-height invisible hit area so hover/tap works between thin bars */}
+              <rect x={CHART_PAD.left + groupW * i} y={0} width={groupW} height={CHART_H} fill="transparent" />
+              {g.revenue != null && (
+                <rect
+                  x={cx - barW - 2}
+                  width={barW}
+                  y={Math.min(y(g.revenue), zeroY)}
+                  height={Math.max(2, Math.abs(y(g.revenue) - zeroY))}
+                  rx={3}
+                  fill={REVENUE_COLOR}
+                />
+              )}
+              {g.netIncome != null && (
+                <rect
+                  x={cx + 2}
+                  width={barW}
+                  y={Math.min(y(g.netIncome), zeroY)}
+                  height={Math.max(2, Math.abs(y(g.netIncome) - zeroY))}
+                  rx={3}
+                  fill={NET_INCOME_COLOR}
+                />
+              )}
+              <text x={cx} y={CHART_H - 8} textAnchor="middle" fontSize="11" fill={dim ? "#cbd5e1" : "#94a3b8"}>
+                {g.label}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
   );
 }
 
-function EpsBars({ points, mode }: { points: FundamentalsPoint[]; mode: "annual" | "quarterly" }) {
-  if (points.length === 0) return null;
-  const values = points.map((p) => p.value);
+/** Shared small interactive bar chart — EPS and dividends both use it (one readout line, hover/tap highlight, latest-by-default). */
+function SmallBars({
+  items,
+  color,
+  ariaLabel,
+  readoutPrefix,
+  formatValue,
+}: {
+  items: { label: string; value: number }[];
+  color: string;
+  ariaLabel: string;
+  readoutPrefix: string;
+  formatValue: (v: number) => string;
+}) {
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  if (items.length === 0) return null;
+  const values = items.map((p) => p.value);
   const maxV = Math.max(...values, 0);
   const minV = Math.min(...values, 0);
   const span = maxV - minV || 1;
   const H = 110;
   const pad = { top: 8, bottom: 24 };
   const innerH = H - pad.top - pad.bottom;
-  const groupW = CHART_W / points.length;
+  const groupW = CHART_W / items.length;
   const barW = Math.min(24, groupW / 2.5);
   const y = (v: number) => pad.top + ((maxV - v) / span) * innerH;
   const zeroY = y(0);
 
+  const active = items[hoverIdx ?? items.length - 1];
+
   return (
-    <svg viewBox={`0 0 ${CHART_W} ${H}`} className="w-full" role="img" aria-label="Diluted EPS by period">
-      <line x1={0} x2={CHART_W} y1={zeroY} y2={zeroY} stroke="#e2e8f0" strokeWidth="1" />
-      {points.map((p, i) => {
-        const cx = groupW * i + groupW / 2;
-        return (
-          <g key={p.periodEnd}>
-            <rect
-              x={cx - barW / 2}
-              width={barW}
-              y={Math.min(y(p.value), zeroY)}
-              height={Math.max(2, Math.abs(y(p.value) - zeroY))}
-              rx={3}
-              fill={EPS_COLOR}
-            >
-              <title>{`${compactPeriodLabel(p.periodEnd, mode)} EPS: ₹${p.value.toFixed(2)}`}</title>
-            </rect>
-            <text x={cx} y={H - 6} textAnchor="middle" fontSize="11" fill="#94a3b8">
-              {compactPeriodLabel(p.periodEnd, mode)}
-            </text>
-          </g>
-        );
-      })}
-    </svg>
+    <div>
+      <p className="mb-1 text-xs text-ink-600">
+        <span className="font-semibold text-ink-900">{active.label}</span>
+        {" · "}
+        {readoutPrefix} <span className="font-semibold" style={{ color }}>{formatValue(active.value)}</span>
+      </p>
+      <svg
+        viewBox={`0 0 ${CHART_W} ${H}`}
+        className="w-full touch-none"
+        role="img"
+        aria-label={ariaLabel}
+        onPointerLeave={() => setHoverIdx(null)}
+      >
+        <line x1={0} x2={CHART_W} y1={zeroY} y2={zeroY} stroke="#e2e8f0" strokeWidth="1" />
+        {items.map((p, i) => {
+          const cx = groupW * i + groupW / 2;
+          const dim = hoverIdx !== null && hoverIdx !== i;
+          return (
+            <g key={`${p.label}-${i}`} opacity={dim ? 0.35 : 1} onPointerEnter={() => setHoverIdx(i)} onPointerDown={() => setHoverIdx(i)}>
+              <rect x={groupW * i} y={0} width={groupW} height={H} fill="transparent" />
+              <rect
+                x={cx - barW / 2}
+                width={barW}
+                y={Math.min(y(p.value), zeroY)}
+                height={Math.max(2, Math.abs(y(p.value) - zeroY))}
+                rx={3}
+                fill={color}
+              />
+              <text x={cx} y={H - 6} textAnchor="middle" fontSize="11" fill={dim ? "#cbd5e1" : "#94a3b8"}>
+                {p.label}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+function EpsBars({ points, mode }: { points: FundamentalsPoint[]; mode: "annual" | "quarterly" }) {
+  return (
+    <SmallBars
+      items={points.map((p) => ({ label: compactPeriodLabel(p.periodEnd, mode), value: p.value }))}
+      color={EPS_COLOR}
+      ariaLabel="Diluted EPS by period"
+      readoutPrefix="EPS"
+      formatValue={(v) => `₹${v.toFixed(2)}`}
+    />
   );
 }
 
@@ -312,17 +395,17 @@ export function FundamentalsPanel({
 
         {hasDividends && dividends && (
           <div>
-            <p className="mb-2 text-xs font-semibold text-ink-500">Dividends (per share)</p>
-            <div className="flex flex-wrap gap-2">
-              {[...dividends]
-                .sort((a, b) => b.date.localeCompare(a.date))
-                .slice(0, 8)
-                .map((d) => (
-                  <span key={d.date} className="rounded-xl bg-ink-50 px-2.5 py-1 text-xs text-ink-600">
-                    {formatPeriodLabel(d.date)} · ₹{d.amount.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
-                  </span>
-                ))}
-            </div>
+            <p className="mb-1 text-xs font-semibold text-ink-500">Dividends (₹ per share)</p>
+            <SmallBars
+              items={[...dividends]
+                .sort((a, b) => a.date.localeCompare(b.date))
+                .slice(-10)
+                .map((d) => ({ label: formatPeriodLabel(d.date), value: d.amount }))}
+              color={DIVIDEND_COLOR}
+              ariaLabel="Dividend per share by payout"
+              readoutPrefix="Dividend"
+              formatValue={(v) => `₹${v.toLocaleString("en-IN", { maximumFractionDigits: 2 })} per share`}
+            />
           </div>
         )}
       </CardContent>
