@@ -22,12 +22,15 @@ import { isTradableOptionUnderlyingServer } from "@/lib/paperTrading/fnoUniverse
  *    page) + all other NSE-published indices (→ /indices/[slug]).
  *  - "option": for any F&O-eligible match (stock or index), a direct link
  *    into its option chain on the options terminal.
- *  - "bond" / "future": no data yet (bonds: we only ingest the EQ series;
- *    futures: launching with Phase 4) — the client shows an honest empty
- *    state for these chips; this route returns none.
+ *  - "future": Phase 4 (Sprint 2) — the 5 index futures (same registry as
+ *    "option"'s tradable indices), a direct link into the futures terminal.
+ *    Stock futures are cut this phase (see the Phase 4 brief) so this
+ *    category is index-only, unlike "option" which also covers stocks.
+ *  - "bond": no data yet (we only ingest the EQ series) — the client shows
+ *    an honest empty state for this chip; this route returns none.
  */
 
-type SearchCategory = "index" | "stock" | "fund" | "option";
+type SearchCategory = "index" | "stock" | "fund" | "option" | "future";
 
 type SearchResultItem = {
   href: string;
@@ -147,6 +150,13 @@ async function buildDefaults(): Promise<NextResponse> {
     category: "option" as const,
   }));
 
+  const futureResults: SearchResultItem[] = TRADABLE_INDEX_ENTRIES.map((e) => ({
+    href: `/paper-trading/futures?underlying=${encodeURIComponent(e.symbol)}`,
+    label: `${e.symbol} futures`,
+    sublabel: "Paper Trading",
+    category: "future" as const,
+  }));
+
   const allView: SearchResultItem[] = [
     ...indexResults.slice(0, 2),
     ...stockResults.slice(0, 4),
@@ -157,7 +167,7 @@ async function buildDefaults(): Promise<NextResponse> {
 
   const response = NextResponse.json({
     results: allView,
-    byCategory: { index: indexResults, stock: stockResults, fund: fundResults, option: optionResults, bond: [], future: [] },
+    byCategory: { index: indexResults, stock: stockResults, fund: fundResults, option: optionResults, bond: [], future: futureResults },
   });
   response.headers.set("Cache-Control", "public, max-age=120");
   return response;
@@ -251,6 +261,14 @@ export async function GET(request: Request) {
       category: "option" as const,
     }));
 
+  // ── Futures: index-only (stock futures cut this phase) ────────────────────
+  const futureResults: SearchResultItem[] = tradableIndexMatches.slice(0, MAX_PER_CATEGORY).map((e) => ({
+    href: `/paper-trading/futures?underlying=${encodeURIComponent(e.symbol)}`,
+    label: `${e.symbol} futures`,
+    sublabel: "Paper Trading",
+    category: "future" as const,
+  }));
+
   // "All" view: indices and options get reserved presence so fuzzy stock
   // volume can't starve them (the NIFTY METAL lesson).
   const allView: SearchResultItem[] = [
@@ -259,6 +277,7 @@ export async function GET(request: Request) {
     ...stockResults.slice(1),
     ...fundResults.slice(0, 2),
     ...optionResults.slice(0, 2),
+    ...futureResults.slice(0, 1),
   ].slice(0, MAX_ALL_VIEW);
 
   const response = NextResponse.json({
@@ -270,7 +289,7 @@ export async function GET(request: Request) {
       fund: fundResults,
       option: optionResults,
       bond: [],
-      future: [],
+      future: futureResults,
     },
   });
   response.headers.set("Cache-Control", "public, max-age=300");

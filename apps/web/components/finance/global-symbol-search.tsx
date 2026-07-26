@@ -9,9 +9,11 @@
  *
  * The server (/api/instruments/search) returns a pre-ranked "All" view plus
  * per-category buckets with ready `href`s — no route logic client-side.
- * Bonds and Futures have no live data yet (bonds: only the EQ series is
- * ingested; futures: launching with Phase 4) — their tabs show an honest
- * empty state instead of being hidden.
+ * Bonds have no live data yet (only the EQ series is ingested) — that tab
+ * shows an honest empty state instead of being hidden. Futures (Phase 4,
+ * Sprint 2) now returns the 5 index futures, linking into the futures
+ * terminal — EMPTY_CATEGORY_COPY.future only ever shows if that fetch itself
+ * fails, not as a permanent "coming soon" state anymore.
  */
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -20,7 +22,8 @@ interface SearchResult {
   href: string;
   label: string;
   sublabel: string | null;
-  category: "index" | "stock" | "fund" | "option";
+  /** Phase 4 (Sprint 2) widened to include "future" — the server now returns real futures results (was previously always empty, see EMPTY_CATEGORY_COPY). */
+  category: "index" | "stock" | "fund" | "option" | "future";
 }
 
 interface SearchPayload {
@@ -45,11 +48,12 @@ const CATEGORY_BADGE: Record<SearchResult["category"], string> = {
   stock: "Stock",
   fund: "Fund",
   option: "Options",
+  future: "Futures",
 };
 
 const EMPTY_CATEGORY_COPY: Partial<Record<CategoryKey, string>> = {
   bond: "Bonds aren't tracked yet.",
-  future: "Futures are coming to Paper Trading soon.",
+  future: "Futures aren't available right now — try again shortly.",
 };
 
 const DEBOUNCE_MS = 250;

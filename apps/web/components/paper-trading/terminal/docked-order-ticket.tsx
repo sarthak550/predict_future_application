@@ -21,16 +21,24 @@
 import { useEffect, useRef, useState } from "react";
 
 import { computeOptionOrderCosts } from "@predict-future/business-rules/papertrading/optionsCosts";
-import { formatOptionContractLabel, isIndexOptionUnderlying } from "@predict-future/business-rules/papertrading/optionContract";
+import { formatOptionContractLabel, isIndexOptionUnderlying, parseNseExpiryDate } from "@predict-future/business-rules/papertrading/optionContract";
+import { computeFuturesOrderCosts } from "@predict-future/business-rules/papertrading/futuresCosts";
+import { computeFuturesMarginRequired, INDEX_FUTURES_MARGIN_RATE } from "@predict-future/business-rules/papertrading/futuresMargin";
+import { formatFuturesContractLabel, formatFuturesContractSymbol } from "@predict-future/business-rules/papertrading/futuresContract";
 import { isNseWeekdayMarketHours } from "@predict-future/business-rules/papertrading/marketHours";
 
 import { CostBreakdownTable } from "@/components/paper-trading/cost-breakdown-table";
 import type { PlacedOptionOrderPayload } from "@/components/paper-trading/option-trade-panel";
 import { NewTradeForm, type PlacedOrderPayload } from "@/components/paper-trading/new-trade-form";
 import type { SelectedContract } from "@/components/paper-trading/option-chain-browser";
+import type { SelectedFuturesContract } from "@/components/paper-trading/futures-contract-table";
 import { Button } from "@/components/ui/button";
 import { submitOptionOrder } from "@/lib/paperTrading/optionOrdersClient";
+import { submitFuturesOrder, type PlacedFuturesOrderPayload } from "@/lib/paperTrading/futuresOrdersClient";
 import { rememberLotsForContract } from "@/lib/paperTrading/lastLotsMemory";
+
+const FUTURES_MARGIN_DISCLAIMER =
+  "Margin shown is an approximate, conservative simulator estimate — real SPAN margin changes daily and may be lower. Never size a real trade off this number.";
 
 function DockedTicketChrome({ subtitle, children }: { subtitle?: string; children: React.ReactNode }) {
   return (
@@ -69,7 +77,19 @@ interface OptionTicketProps {
   onOrderPlaced: (order: PlacedOptionOrderPayload) => void;
 }
 
-export type DockedOrderTicketProps = EquityTicketProps | OptionTicketProps;
+interface FuturesTicketProps {
+  kind: "future";
+  contract: SelectedFuturesContract | null;
+  cash: number;
+  /** The account's held lots/direction for this EXACT contract (underlying+expiry), if any — null when flat. */
+  heldPosition: { lots: number; side: "LONG" | "SHORT" } | null;
+  selectionNonce: number;
+  presetSide: "BUY" | "SELL";
+  presetLots: number;
+  onOrderPlaced: (order: PlacedFuturesOrderPayload) => void;
+}
+
+export type DockedOrderTicketProps = EquityTicketProps | OptionTicketProps | FuturesTicketProps;
 
 export function DockedOrderTicket(props: DockedOrderTicketProps) {
   if (props.kind === "equity") {
@@ -84,6 +104,22 @@ export function DockedOrderTicket(props: DockedOrderTicketProps) {
           initialSide={props.initialSide}
           initialProductType={props.initialProductType}
           linkedOpinionId={props.linkedOpinionId}
+          onOrderPlaced={props.onOrderPlaced}
+        />
+      </DockedTicketChrome>
+    );
+  }
+
+  if (props.kind === "future") {
+    return (
+      <DockedTicketChrome subtitle={props.contract ? undefined : "Tap B or S in the contract table to begin"}>
+        <FuturesTicketBody
+          contract={props.contract}
+          cash={props.cash}
+          heldPosition={props.heldPosition}
+          selectionNonce={props.selectionNonce}
+          presetSide={props.presetSide}
+          presetLots={props.presetLots}
           onOrderPlaced={props.onOrderPlaced}
         />
       </DockedTicketChrome>
@@ -283,6 +319,238 @@ function OptionTicketBody({
         {formError && <p className="text-xs text-rose-600">{formError}</p>}
 
         <Button type="submit" variant={side === "BUY" ? "primary" : "danger"} disabled={submitting || insufficientCash || exceedsHolding}>
+          {submitting ? "Placing order…" : `Confirm ${side.toLowerCase()} order`}
+        </Button>
+      </form>
+    </div>
+  );
+}
+
+const IMPLIED_FUTURES_LEVERAGE = 1 / INDEX_FUTURES_MARGIN_RATE;
+
+function FuturesTicketBody({
+  contract,
+  cash,
+  heldPosition,
+  selectionNonce,
+  presetSide,
+  presetLots,
+  onOrderPlaced
+}: {
+  contract: SelectedFuturesContract | null;
+  cash: number;
+  heldPosition: { lots: number; side: "LONG" | "SHORT" } | null;
+  selectionNonce: number;
+  presetSide: "BUY" | "SELL";
+  presetLots: number;
+  onOrderPlaced: (order: PlacedFuturesOrderPayload) => void;
+}) {
+  const [side, setSide] = useState<"BUY" | "SELL">(presetSide);
+  const [lots, setLots] = useState(presetLots);
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState("");
+  const [marketClosed, setMarketClosed] = useState(false);
+  useEffect(() => {
+    setMarketClosed(!isNseWeekdayMarketHours());
+  }, []);
+
+  const lastSyncedNonce = useRef(-1);
+  useEffect(() => {
+    if (selectionNonce === lastSyncedNonce.current) return;
+    lastSyncedNonce.current = selectionNonce;
+    setSide(presetSide);
+    setLots(presetLots);
+    setFormError("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectionNonce]);
+
+  if (!contract) {
+    return (
+      <p className="text-sm text-ink-400">
+        Tap <span className="font-medium text-ink-600">B</span> or <span className="font-medium text-ink-600">S</span> next to any
+        contract month in the table to pre-fill an order here.
+      </p>
+    );
+  }
+
+  // Is this order (in the direction currently selected) closing/reducing the
+  // held position at this exact contract, or opening/adding to one? Mirrors
+  // futuresOrders.ts's (T7) server-side isOpeningOrAdding derivation exactly —
+  // this client-side estimate is UX-only, the server route is the sole
+  // authority on margin/holding validation.
+  const isClosing = heldPosition != null && ((heldPosition.side === "LONG" && side === "SELL") || (heldPosition.side === "SHORT" && side === "BUY"));
+  const exceedsHolding = isClosing && lots > (heldPosition?.lots ?? 0);
+
+  const quantity = lots * contract.lotSize;
+  const costs = computeFuturesOrderCosts({ side, quantity, price: contract.price });
+  const notional = quantity * contract.price;
+  const marginRequired = computeFuturesMarginRequired(notional);
+
+  // Soft client-side pre-check ONLY — cash here doesn't know about OTHER open
+  // positions' margin usage (the docked ticket isn't handed the full account
+  // read). The server route (futuresOrders.ts) is the authoritative,
+  // aggregate-margin check; this just avoids an obviously-doomed submit.
+  const likelyInsufficientMargin = !isClosing && cash < marginRequired + costs.totalCosts;
+
+  const expiryDate = parseNseExpiryDate(contract.expiry);
+  const contractLabel = expiryDate
+    ? formatFuturesContractLabel(contract.underlying, expiryDate)
+    : `${contract.underlying} FUT, ${contract.expiry}`;
+  const contractSymbol = expiryDate ? formatFuturesContractSymbol(contract.underlying, expiryDate) : contract.underlying;
+
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    if (submitting || exceedsHolding || !contract) return;
+    setFormError("");
+    setSubmitting(true);
+    try {
+      const result = await submitFuturesOrder({
+        underlyingSymbol: contract.underlying,
+        expiryDate: contract.expiry,
+        side,
+        lots
+      });
+      if (!result.ok) {
+        setFormError(result.error);
+        return;
+      }
+      onOrderPlaced(result.order);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <p className="text-lg font-semibold text-ink-900">{contractLabel}</p>
+        <p className="mt-0.5 text-xs text-ink-500">
+          {contract.source === "LIVE" ? "Live price" : "Derived price"} ₹{contract.price.toLocaleString("en-IN")}
+          {contract.source === "PCP_DERIVED" && (
+            <span className="ml-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-amber-800">
+              derived from option prices
+            </span>
+          )}{" "}
+          · Lot size {contract.lotSize} · {contractSymbol}
+        </p>
+        {heldPosition && (
+          <p className="mt-2 text-xs text-ink-500">
+            You hold {heldPosition.lots} lot(s) {heldPosition.side} of this contract.
+          </p>
+        )}
+      </div>
+
+      <form className="space-y-4" onSubmit={handleSubmit}>
+        <div className="inline-flex rounded-2xl border border-ink-200 bg-white p-1">
+          <button
+            type="button"
+            onClick={() => setSide("BUY")}
+            className={`rounded-xl px-4 py-2 text-sm font-medium transition ${
+              side === "BUY" ? "bg-emerald-600 text-white" : "text-ink-600 hover:text-ink-900"
+            }`}
+          >
+            Buy
+          </button>
+          <button
+            type="button"
+            onClick={() => setSide("SELL")}
+            className={`rounded-xl px-4 py-2 text-sm font-medium transition ${
+              side === "SELL" ? "bg-rose-600 text-white" : "text-ink-600 hover:text-ink-900"
+            }`}
+          >
+            Sell
+          </button>
+        </div>
+        <p className="text-xs text-ink-400">
+          {isClosing
+            ? `Closes some or all of your held ${heldPosition?.side.toLowerCase()} position.`
+            : "Both directions open a new (or add to an existing) position — long and short are both offered on index futures."}
+        </p>
+
+        <div className="flex items-center gap-3">
+          <span className="text-sm text-ink-600">Lots</span>
+          <div className="inline-flex items-center rounded-2xl border border-ink-200">
+            <button
+              type="button"
+              onClick={() => setLots((v) => Math.max(1, v - 1))}
+              disabled={submitting}
+              className="h-11 w-11 text-lg text-ink-600 hover:text-ink-900 disabled:opacity-40"
+            >
+              −
+            </button>
+            <span className="w-14 text-center text-sm font-medium text-ink-900">{lots}</span>
+            <button
+              type="button"
+              onClick={() => setLots((v) => v + 1)}
+              disabled={submitting}
+              className="h-11 w-11 text-lg text-ink-600 hover:text-ink-900 disabled:opacity-40"
+            >
+              +
+            </button>
+          </div>
+          <span className="text-xs text-ink-400">= {quantity.toLocaleString("en-IN")} units</span>
+        </div>
+
+        <div className="rounded-2xl border border-ink-100 bg-ink-50/50 p-4 text-sm">
+          <div className="flex items-center justify-between text-ink-700">
+            <span>Notional value</span>
+            <span className="font-medium">₹{notional.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</span>
+          </div>
+          <div className="mt-1.5 flex items-center justify-between text-ink-700">
+            <span>Margin required (15%, conservative)</span>
+            <span className="font-medium">₹{marginRequired.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</span>
+          </div>
+          <div className="mt-1.5 flex items-center justify-between text-ink-700">
+            <span>Implied leverage</span>
+            <span className="font-medium">{IMPLIED_FUTURES_LEVERAGE.toFixed(1)}x</span>
+          </div>
+          <div className="mt-2 space-y-1 border-t border-ink-100 pt-2 text-ink-600">
+            <div className="flex items-center justify-between">
+              <span>Brokerage</span>
+              <span>₹{costs.brokerage.toFixed(2)}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span>STT</span>
+              <span>₹{costs.stt.toFixed(2)}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span>Exchange + SEBI + stamp + GST</span>
+              <span>₹{(costs.exchangeCharge + costs.sebiFee + costs.stampDuty + costs.gst).toFixed(2)}</span>
+            </div>
+          </div>
+          <div className="mt-2 flex items-center justify-between border-t border-ink-200 pt-2 font-medium text-ink-900">
+            <span>Total costs</span>
+            <span>₹{costs.totalCosts.toFixed(2)}</span>
+          </div>
+          {!isClosing && (
+            <div className="mt-2 flex items-center justify-between border-t border-ink-200 pt-2 text-base font-semibold text-ink-900">
+              <span>Margin + costs needed</span>
+              <span>₹{(marginRequired + costs.totalCosts).toLocaleString("en-IN", { maximumFractionDigits: 2 })}</span>
+            </div>
+          )}
+        </div>
+
+        <p className="rounded-xl bg-ink-50 px-3 py-2 text-[11px] leading-4 text-ink-500">{FUTURES_MARGIN_DISCLAIMER}</p>
+
+        {likelyInsufficientMargin && (
+          <p className="text-xs text-rose-600">
+            This looks like more margin than your available cash (₹{cash.toLocaleString("en-IN")}) covers — the order may be rejected;
+            final check happens on submit.
+          </p>
+        )}
+        {exceedsHolding && (
+          <p className="text-xs text-rose-600">
+            You hold {heldPosition?.lots ?? 0} lot(s) — can&apos;t close {lots} in one order.
+          </p>
+        )}
+        {marketClosed && (
+          <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            Market closed — orders fill only during NSE hours, 09:15–15:30 IST Mon–Fri.
+          </p>
+        )}
+        {formError && <p className="text-xs text-rose-600">{formError}</p>}
+
+        <Button type="submit" variant={side === "BUY" ? "primary" : "danger"} disabled={submitting || exceedsHolding}>
           {submitting ? "Placing order…" : `Confirm ${side.toLowerCase()} order`}
         </Button>
       </form>

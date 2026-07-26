@@ -76,12 +76,33 @@ interface OptionPositionRow {
   instrumentKind: "INDEX_OPTION" | "STOCK_OPTION";
 }
 
+/** Phase 4 (Sprint 2, T10) — mirrors lib/paperTrading/queries.ts's FuturesPositionRow, JSON-serialized (Date -> ISO string). */
+interface FuturesPositionRow {
+  underlyingSymbol: string;
+  expiryDate: string;
+  side: "LONG" | "SHORT";
+  lotSize: number | null;
+  lots: number;
+  quantity: number;
+  referencePrice: number;
+  latestPrice: number | null;
+  quoteSource: "LIVE" | "PCP_DERIVED" | null;
+  marginRequired: number | null;
+  impliedLeverage: number;
+  todayMtmPnl: number | null;
+  realizedGrossPnl: number;
+  totalCosts: number;
+  daysToExpiry: number;
+}
+
 interface AccountDetail {
   account: { id: string; generation: number; startingCapital: number; createdAt: string; status: "ACTIVE" | "ARCHIVED" };
   cash: number;
   deliveryHoldings: PositionRow[];
   openIntradayPositions: PositionRow[];
   optionPositions: OptionPositionRow[];
+  futuresPositions: FuturesPositionRow[];
+  totalFuturesMarginRequired: number;
   lifetimeCostsPaid: number;
   lifetimeRealizedGrossPnl: number;
   lifetimeUnrealizedGrossPnl: number;
@@ -158,15 +179,28 @@ export function PaperTradingDashboard() {
     };
   }, [loadAccount]);
 
+  // Reset is where users set their own capital (founder 2026-07-26):
+  // prompt() keeps this dependency-free — default ₹1Cr, bounds enforced
+  // server-side too (₹1L–₹1000Cr).
   async function handleReset() {
     if (!account || resetting) return;
-    const confirmed = window.confirm(
-      "Reset your Paper Trading account? This archives your current account (its order history stays viewable) and starts a fresh one with the same starting capital."
+    const raw = window.prompt(
+      "Reset your Paper Trading account?\n\nThis archives the current account (order history stays viewable) and starts fresh.\n\nStarting capital in rupees (₹1,00,000 – ₹1,000 crore):",
+      "10000000"
     );
-    if (!confirmed) return;
+    if (raw === null) return; // cancelled
+    const startingCapital = Number(raw.replace(/[,\s]/g, ""));
+    if (!Number.isInteger(startingCapital) || startingCapital <= 0) {
+      setError("Starting capital must be a whole rupee amount.");
+      return;
+    }
     setResetting(true);
     try {
-      const res = await fetch("/api/paper-trading/account/reset", { method: "POST" });
+      const res = await fetch("/api/paper-trading/account/reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ startingCapital }),
+      });
       if (!res.ok) {
         const payload = await res.json().catch(() => ({}));
         setError(payload.error ?? "Couldn't reset your account.");
@@ -276,6 +310,11 @@ export function PaperTradingDashboard() {
               Options
             </Button>
           </Link>
+          <Link href="/paper-trading/futures">
+            <Button variant="secondary" size="sm">
+              Futures
+            </Button>
+          </Link>
           <Link href="/paper-trading/calls-traded">
             <Button variant="secondary" size="sm">
               Calls I&apos;ve traded
@@ -383,6 +422,24 @@ export function PaperTradingDashboard() {
           </CardHeader>
           <CardContent>
             <OptionPositionsTable rows={account.optionPositions} />
+          </CardContent>
+        </Card>
+      )}
+
+      {account.futuresPositions.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Futures positions</CardTitle>
+            <CardDescription>
+              Index futures — marked to market daily against the real NSE settlement price; margin required is a
+              conservative simulator estimate, not a live SPAN calculation.{" "}
+              <Link href="/paper-trading/futures" className="underline">
+                Trade futures
+              </Link>
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <FuturesPositionsTable rows={account.futuresPositions} totalMarginRequired={account.totalFuturesMarginRequired} cash={account.cash} />
           </CardContent>
         </Card>
       )}
@@ -519,6 +576,94 @@ function OptionPositionsTable({ rows }: { rows: OptionPositionRow[] }) {
           })}
         </TableBody>
       </Table>
+    </div>
+  );
+}
+
+/** Phase 4 (Sprint 2, T10) — open index-futures positions: contract, side, lots, margin/leverage, today's MTM (live estimate, NOT unrealized-since-entry — see the queries.ts doc on todayMtmPnl), lifetime realized, and a days-to-expiry chip. */
+function FuturesPositionsTable({
+  rows,
+  totalMarginRequired,
+  cash
+}: {
+  rows: FuturesPositionRow[];
+  totalMarginRequired: number;
+  cash: number;
+}) {
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-ink-500">
+        Total margin in use: <span className="font-medium text-ink-900">{formatRupees(totalMarginRequired)}</span> of{" "}
+        {formatRupees(cash)} cash — margin shown is an approximate, conservative simulator estimate; real SPAN margin
+        changes daily and may be lower. Never size a real trade off this number.
+      </p>
+      <div className="overflow-x-auto">
+        <Table>
+          <TableHead>
+            <TableRow>
+              <TableHeaderCell>Contract</TableHeaderCell>
+              <TableHeaderCell>Side</TableHeaderCell>
+              <TableHeaderCell>Lots</TableHeaderCell>
+              <TableHeaderCell>Reference price</TableHeaderCell>
+              <TableHeaderCell>Live price</TableHeaderCell>
+              <TableHeaderCell>Margin / leverage</TableHeaderCell>
+              <TableHeaderCell>Today&apos;s MTM (live est.)</TableHeaderCell>
+              <TableHeaderCell>Lifetime realized</TableHeaderCell>
+              <TableHeaderCell>Expiry</TableHeaderCell>
+              <TableHeaderCell>
+                <span className="sr-only">Actions</span>
+              </TableHeaderCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {rows.map((row) => {
+              const key = `${row.underlyingSymbol}-${row.expiryDate}`;
+              const expiringSoon = row.daysToExpiry <= 2;
+              return (
+                <TableRow key={key}>
+                  <TableCell className="font-medium text-ink-900">
+                    {row.underlyingSymbol} FUT
+                    {row.quoteSource === "PCP_DERIVED" && (
+                      <Badge variant="warning" className="ml-1.5">
+                        derived from option prices
+                      </Badge>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={row.side === "LONG" ? "success" : "danger"}>{row.side}</Badge>
+                  </TableCell>
+                  <TableCell>{row.lots}</TableCell>
+                  <TableCell>{formatRupees(row.referencePrice)}</TableCell>
+                  <TableCell>{row.latestPrice != null ? formatRupees(row.latestPrice) : "— (price unavailable)"}</TableCell>
+                  <TableCell>
+                    {row.marginRequired != null ? `${formatRupees(row.marginRequired)} (${row.impliedLeverage.toFixed(1)}x)` : "—"}
+                  </TableCell>
+                  <TableCell className={row.todayMtmPnl != null ? (row.todayMtmPnl >= 0 ? "text-emerald-600" : "text-rose-600") : undefined}>
+                    {row.todayMtmPnl != null ? formatSignedRupees(row.todayMtmPnl) : "—"}
+                  </TableCell>
+                  <TableCell className={row.realizedGrossPnl >= 0 ? "text-emerald-600" : "text-rose-600"}>
+                    {formatSignedRupees(row.realizedGrossPnl)}
+                  </TableCell>
+                  <TableCell>
+                    <span className={expiringSoon ? "font-medium text-amber-700" : "text-ink-500"}>
+                      {row.daysToExpiry === 0 ? "Today" : `${row.daysToExpiry}d`}
+                    </span>{" "}
+                    <span className="text-ink-400">({formatExpiryLabel(row.expiryDate)})</span>
+                  </TableCell>
+                  <TableCell>
+                    <Link
+                      href={`/paper-trading/futures?underlying=${encodeURIComponent(row.underlyingSymbol)}&expiry=${encodeURIComponent(formatNseExpiryDate(new Date(row.expiryDate)))}&side=${row.side === "LONG" ? "SELL" : "BUY"}`}
+                      className="rounded-lg border border-rose-200 px-3 py-1 text-xs font-semibold text-rose-600 hover:bg-rose-50"
+                    >
+                      Close
+                    </Link>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </div>
     </div>
   );
 }

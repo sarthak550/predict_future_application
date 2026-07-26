@@ -28,7 +28,7 @@
  * confirmed to use two different vocabularies, do not assume they match).
  */
 
-import { fetchOptionChain, fetchOptionChainExpiries } from "./optionChain";
+import { fetchOptionChain, fetchOptionChainExpiries, resolveLotSize } from "./optionChain";
 import { nseApiGet, primeNseSession } from "./nse";
 import {
   INDEX_OPTION_UNDERLYINGS,
@@ -47,6 +47,15 @@ export interface IndexFuturesContractQuote {
   price: number;
   openInterest: number | null;
   changePercent: number | null;
+  /**
+   * Sprint 2 (T7) addition — resolved per-contract via optionChain.ts's
+   * resolveLotSize (the same fo_mktlots.csv source options already use, in
+   * case a lot size ever differs between two months of the same underlying
+   * during a SEBI rebalancing phase-in — see resolveLotSize's own doc). Null
+   * only if the underlying has no lot-size data at all (upstream fetch
+   * failure), which order placement must treat as "not tradable right now".
+   */
+  lotSize: number | null;
 }
 
 export interface IndexFuturesQuote {
@@ -58,6 +67,8 @@ export interface IndexFuturesQuote {
   source: FuturesQuoteSource;
   openInterest: number | null;
   changePercent: number | null;
+  /** Near-month contract's lot size — see IndexFuturesContractQuote.lotSize. */
+  lotSize: number | null;
   /** Every contract month returned by the live endpoint (near/next/far), when source is LIVE. Empty for a PCP_DERIVED quote (PCP only estimates the near-month price). */
   allContracts: IndexFuturesContractQuote[];
 }
@@ -130,10 +141,10 @@ function expirySortKey(expiry: string): number {
   return Date.UTC(Number(yyyy), monthIndex, Number(dd));
 }
 
-function parseRawFuturesRows(raw: RawFuturesResponse | null): IndexFuturesContractQuote[] {
+function parseRawFuturesRows(raw: RawFuturesResponse | null): Omit<IndexFuturesContractQuote, "lotSize">[] {
   if (!raw) return [];
   const rows = Array.isArray(raw) ? raw : Array.isArray(raw.data) ? raw.data : [];
-  const parsed: IndexFuturesContractQuote[] = [];
+  const parsed: Omit<IndexFuturesContractQuote, "lotSize">[] = [];
   for (const row of rows) {
     const expiry = row.expiryDate?.trim();
     // closePrice fallback covers a pre-market/no-trade tick where lastPrice
@@ -163,8 +174,14 @@ async function fetchLiveIndexFuturesQuote(underlying: IndexOptionUnderlying): Pr
     LIVE_QUOTE_REFERER
   )) as RawFuturesResponse | null;
 
-  const contracts = parseRawFuturesRows(raw);
-  if (contracts.length === 0) return null;
+  const rawContracts = parseRawFuturesRows(raw);
+  if (rawContracts.length === 0) return null;
+
+  // Sprint 2 (T7): resolve each contract's own lot size from fo_mktlots.csv
+  // (in-module cached — see optionChain.ts's fetchMktLotsTable — so this adds
+  // no extra network round trip beyond the first call in a given TTL window).
+  const lotSizes = await Promise.all(rawContracts.map((c) => resolveLotSize(underlying, c.expiry)));
+  const contracts: IndexFuturesContractQuote[] = rawContracts.map((c, i) => ({ ...c, lotSize: lotSizes[i] }));
 
   const nearMonth = contracts[0];
   return {
@@ -175,6 +192,7 @@ async function fetchLiveIndexFuturesQuote(underlying: IndexOptionUnderlying): Pr
     source: "LIVE",
     openInterest: nearMonth.openInterest,
     changePercent: nearMonth.changePercent,
+    lotSize: nearMonth.lotSize,
     allContracts: contracts
   };
 }
@@ -224,6 +242,8 @@ async function fetchPcpDerivedQuote(underlying: IndexOptionUnderlying): Promise<
   if (impliedFutures.length === 0) return null;
   const price = impliedFutures.reduce((sum, v) => sum + v, 0) / impliedFutures.length;
 
+  const lotSize = await resolveLotSize(underlying, nearestExpiry);
+
   return {
     underlying,
     price,
@@ -232,6 +252,7 @@ async function fetchPcpDerivedQuote(underlying: IndexOptionUnderlying): Promise<
     source: "PCP_DERIVED",
     openInterest: null,
     changePercent: null,
+    lotSize,
     allContracts: []
   };
 }

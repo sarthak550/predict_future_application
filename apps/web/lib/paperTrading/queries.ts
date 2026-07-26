@@ -8,6 +8,7 @@
 
 import {
   deriveAllDeliveryPositions,
+  deriveAllFuturesPositions,
   deriveAllOptionPositions,
   deriveCash,
   deriveIntradayDailyPositions,
@@ -16,15 +17,18 @@ import {
   replayPosition,
   unrealizedGrossPnl,
   type DayGroupedPosition,
+  type FuturesContractPosition,
   type OptionContractPosition,
   type PaperEngineOrder,
   type SymbolPosition
 } from "@predict-future/business-rules/papertrading/replay";
 import { daysToExpiry, formatNseExpiryDate } from "@predict-future/business-rules/papertrading/optionContract";
+import { computeFuturesMarginRequired, INDEX_FUTURES_MARGIN_RATE } from "@predict-future/business-rules/papertrading/futuresMargin";
 
 import { getOrCreateActiveAccount, getResetEligibility, type PaperAccountRow } from "@/lib/paperTrading/account";
 import { fetchDelayedLtp } from "@/lib/paperTrading/ltp";
 import { fetchOptionChainSnapshot, findOptionQuote } from "@/lib/paperTrading/optionQuote";
+import { fetchFuturesQuoteServer, findFuturesContractQuote, type FuturesQuoteSource } from "@/lib/paperTrading/futuresQuote";
 import { prisma } from "@/lib/prisma";
 
 const ENGINE_ORDER_SELECT = {
@@ -41,8 +45,12 @@ const ENGINE_ORDER_SELECT = {
   optionType: true,
   strikePrice: true,
   expiryDate: true,
-  lotSize: true
+  lotSize: true,
+  /** Phase 4 (T7/T8) — REQUIRED for deriveCash to correctly carve out a daily-MTM leg's cash effect (see replay.ts's doc comment). Without this, an isDailyMtm row would read as `undefined` (falsy) here and be mis-treated as a normal side-based trade, corrupting cash for any account holding a futures position. Additive-only: every pre-Phase-4 row still has isDailyMtm default false, so this selection change is a no-op for every existing account's math. */
+  isDailyMtm: true
 } as const;
+
+const IMPLIED_FUTURES_LEVERAGE = 1 / INDEX_FUTURES_MARGIN_RATE;
 
 const RECENT_ORDERS_LIMIT = 200;
 
@@ -82,7 +90,7 @@ export interface OrderHistoryRow {
   isSquareOff: boolean;
   autoSquaredOff: boolean;
   createdAt: Date;
-  /** Phase 2 added INDEX_OPTION, Phase 3 added STOCK_OPTION, Phase 4 added INDEX_FUTURE (engine-only this sprint — no futures order-placement/UI route writes this row shape yet, but Prisma's PaperInstrumentKind enum now includes it, so this literal union must too or every raw-row read of an existing order fails to typecheck). */
+  /** Phase 2 added INDEX_OPTION, Phase 3 added STOCK_OPTION, Phase 4 (Sprint 2) added INDEX_FUTURE order writes for real. */
   instrumentKind: "EQUITY" | "INDEX_OPTION" | "STOCK_OPTION" | "INDEX_FUTURE";
   underlyingSymbol: string | null;
   optionType: "CE" | "PE" | null;
@@ -90,6 +98,8 @@ export interface OrderHistoryRow {
   expiryDate: Date | null;
   lotSize: number | null;
   lots: number | null;
+  /** Phase 4 (Sprint 2) — true only for a cash-only daily mark-to-market leg. False for every other row. */
+  isDailyMtm: boolean;
   /** Phase 4 added FUTURES_EXPIRY_SETTLEMENT and FUTURES_MARGIN_CALL — same "enum widened, literal union must follow" reasoning as instrumentKind above. */
   squareOffReason:
     | "INTRADAY_SESSION_CLOSE"
@@ -120,12 +130,52 @@ export interface OptionPositionRow {
   instrumentKind: "INDEX_OPTION" | "STOCK_OPTION";
 }
 
+/**
+ * Phase 4 (T10) — one open INDEX_FUTURE contract position, priced against a
+ * live/PCP futures quote fetched fresh for this read (never a stored/cached
+ * price — margin and P&L must always reflect the CURRENT price, per the
+ * margin engine's own "recomputed on demand" design).
+ */
+export interface FuturesPositionRow {
+  underlyingSymbol: string;
+  expiryDate: Date;
+  side: "LONG" | "SHORT";
+  lotSize: number | null;
+  lots: number;
+  /** Signed — positive long, negative short. */
+  quantity: number;
+  /** The position's current cost basis: entry price until the first daily-MTM leg posts, then that leg's settlement price. */
+  referencePrice: number;
+  latestPrice: number | null;
+  quoteSource: FuturesQuoteSource | null;
+  /** Null when no live/PCP price is available right now (margin can't be honestly recomputed without a current price). */
+  marginRequired: number | null;
+  impliedLeverage: number;
+  /**
+   * "Today's MTM (live estimate)" — (latestPrice - referencePrice) * quantity.
+   * NOT unrealized-since-entry (referencePrice already reflects yesterday's
+   * settlement mark, if any) — this is what tonight's daily-MTM cron leg
+   * would realize if it ran right now. Must be rendered with that exact
+   * framing per the Phase 4 brief ("a day P&L figure... labeled as such so a
+   * user doesn't misread 'today's P&L' as 'P&L since I opened this'").
+   */
+  todayMtmPnl: number | null;
+  /** Lifetime realized P&L (telescoping sum of every daily-MTM leg + the eventual close/settlement leg) — see FuturesContractPosition's doc. */
+  realizedGrossPnl: number;
+  totalCosts: number;
+  daysToExpiry: number;
+}
+
 export interface PaperAccountDetail {
   account: { id: string; generation: number; startingCapital: number; createdAt: Date; status: "ACTIVE" | "ARCHIVED" };
   cash: number;
   deliveryHoldings: PositionRow[];
   openIntradayPositions: PositionRow[];
   optionPositions: OptionPositionRow[];
+  /** Phase 4 (T10). */
+  futuresPositions: FuturesPositionRow[];
+  /** Sum of every open futures position's marginRequired (nulls excluded) — the same figure the order-placement route's headroom check uses per-position, aggregated for display. */
+  totalFuturesMarginRequired: number;
   lifetimeCostsPaid: number;
   lifetimeRealizedGrossPnl: number;
   lifetimeUnrealizedGrossPnl: number;
@@ -283,6 +333,35 @@ function toOptionPositionRow(
   };
 }
 
+/** Chain-lookup key for one futures contract — same (underlying, expiry) grouping replay.ts's deriveAllFuturesPositions already uses. */
+function toFuturesPositionRow(
+  position: FuturesContractPosition,
+  quoteByUnderlying: Map<string, Awaited<ReturnType<typeof fetchFuturesQuoteServer>>>
+): FuturesPositionRow {
+  const quote = quoteByUnderlying.get(position.underlyingSymbol) ?? null;
+  const contract = quote ? findFuturesContractQuote(quote, formatNseExpiryDate(position.expiryDate)) : null;
+  const latestPrice = contract?.price ?? null;
+  const marginRequired = latestPrice != null ? computeFuturesMarginRequired(Math.abs(position.quantity) * latestPrice) : null;
+  const todayMtmPnl = latestPrice != null ? (latestPrice - position.referencePrice) * position.quantity : null;
+  return {
+    underlyingSymbol: position.underlyingSymbol,
+    expiryDate: position.expiryDate,
+    side: position.quantity > 0 ? "LONG" : "SHORT",
+    lotSize: position.lotSize,
+    lots: position.lots,
+    quantity: position.quantity,
+    referencePrice: position.referencePrice,
+    latestPrice,
+    quoteSource: quote?.source ?? null,
+    marginRequired,
+    impliedLeverage: IMPLIED_FUTURES_LEVERAGE,
+    todayMtmPnl,
+    realizedGrossPnl: position.realizedGrossPnl,
+    totalCosts: position.totalCosts,
+    daysToExpiry: daysToExpiry(position.expiryDate)
+  };
+}
+
 /**
  * Full account read: lazily creates the ACTIVE account if this is the caller's
  * first visit, then builds cash/holdings/lifetime rollups by replaying the order
@@ -345,6 +424,17 @@ export async function getAccountDetail(userId: string): Promise<PaperAccountDeta
 
   const optionPositionRows = currentOptionPositions.map((p) => toOptionPositionRow(p, quoteFor(p)));
 
+  // ── Phase 4 (T10): open futures positions, priced fresh ─────────────────
+  const allFuturesPositions = deriveAllFuturesPositions(engineOrders);
+  const currentFuturesPositions = allFuturesPositions.filter((p) => p.quantity !== 0);
+  const neededFuturesUnderlyings = [...new Set(currentFuturesPositions.map((p) => p.underlyingSymbol))];
+  const futuresQuoteEntries = await Promise.all(
+    neededFuturesUnderlyings.map(async (u) => [u, await fetchFuturesQuoteServer(u)] as const)
+  );
+  const futuresQuoteByUnderlying = new Map(futuresQuoteEntries);
+  const futuresPositionRows: FuturesPositionRow[] = currentFuturesPositions.map((p) => toFuturesPositionRow(p, futuresQuoteByUnderlying));
+  const totalFuturesMarginRequired = futuresPositionRows.reduce((sum, p) => sum + (p.marginRequired ?? 0), 0);
+
   // Lifetime rollup: every DELIVERY symbol + every (symbol, day) INTRADAY group +
   // every option contract ever traded, closed positions included — realized P&L
   // and totalCosts are always known for a closed group; unrealized only applies
@@ -377,13 +467,37 @@ export async function getAccountDetail(userId: string): Promise<PaperAccountDeta
       if (quote?.lastPrice != null) lifetimeUnrealizedGrossPnl += unrealizedGrossPnl(p.quantity, p.avgCost, quote.lastPrice);
     }
   }
+  // Phase 4 (T10): futures — realizedGrossPnl here is already the telescoping
+  // sum of every daily-MTM leg's crystallized delta (see FuturesContractPosition's
+  // doc), so it correctly folds every PRIOR day's mark into "realized" already;
+  // only today's still-unmarked move (todayMtmPnl, already computed per-row
+  // above) is "unrealized" in this rollup's sense.
+  for (const p of allFuturesPositions) {
+    lifetimeCostsPaid += p.totalCosts;
+    lifetimeRealizedGrossPnl += p.realizedGrossPnl;
+  }
+  for (const row of futuresPositionRows) {
+    if (row.todayMtmPnl != null) lifetimeUnrealizedGrossPnl += row.todayMtmPnl;
+  }
   const lifetimeNetPnl = lifetimeRealizedGrossPnl + lifetimeUnrealizedGrossPnl - lifetimeCostsPaid;
 
+  // Deliberately NOT folding futures into computeTodayNetPnl this sprint —
+  // that function's "orders placed today" diff-replay shape doesn't have a
+  // clean analogue for a position whose cost basis resets daily regardless
+  // of whether an order was placed today (see futuresPositionRows.todayMtmPnl
+  // for the correct per-position "today" figure instead, rendered directly
+  // on the futures terminal/positions strip). Flagged as a Sprint 2 scope
+  // decision, not an oversight — see the CTO report.
   const todayNetPnl = computeTodayNetPnl(engineOrders, allDeliveryPositions, allIntradayDaily, allOptionPositions, ltpBySymbol, quoteFor);
 
   const holdingsValue = deliveryHoldingRows.reduce((sum, h) => sum + h.quantity * (h.latestLtp ?? h.avgCost), 0);
   const optionsValue = optionPositionRows.reduce((sum, o) => sum + o.quantity * (o.latestPremium ?? o.avgCost), 0);
-  const totalValue = cash + holdingsValue + optionsValue;
+  // Futures never carry a "held value" the way equity/options do (margin is
+  // never debited from cash — see futuresOrders.ts's module doc) — only the
+  // still-unmarked today's-MTM delta contributes to total account value on
+  // top of cash.
+  const futuresUnmarkedValue = futuresPositionRows.reduce((sum, row) => sum + (row.todayMtmPnl ?? 0), 0);
+  const totalValue = cash + holdingsValue + optionsValue + futuresUnmarkedValue;
 
   const resetEligibility = getResetEligibility(account);
 
@@ -405,6 +519,8 @@ export async function getAccountDetail(userId: string): Promise<PaperAccountDeta
     deliveryHoldings: deliveryHoldingRows,
     openIntradayPositions: openIntradayRows,
     optionPositions: optionPositionRows,
+    futuresPositions: futuresPositionRows,
+    totalFuturesMarginRequired,
     lifetimeCostsPaid,
     lifetimeRealizedGrossPnl,
     lifetimeUnrealizedGrossPnl,
@@ -442,7 +558,8 @@ export async function getAccountDetail(userId: string): Promise<PaperAccountDeta
       expiryDate: o.expiryDate,
       lotSize: o.lotSize,
       lots: o.lots,
-      squareOffReason: o.squareOffReason
+      squareOffReason: o.squareOffReason,
+      isDailyMtm: o.isDailyMtm
     }))
   };
 }

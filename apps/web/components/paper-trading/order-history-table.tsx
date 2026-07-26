@@ -9,6 +9,7 @@ import { Fragment, useState } from "react";
 import { ChevronDown } from "lucide-react";
 
 import { formatOptionContractLabel } from "@predict-future/business-rules/papertrading/optionContract";
+import { formatFuturesContractLabel } from "@predict-future/business-rules/papertrading/futuresContract";
 
 import { CostBreakdownTable } from "@/components/paper-trading/cost-breakdown-table";
 import { Badge } from "@/components/ui/badge";
@@ -18,7 +19,7 @@ export interface OrderHistoryEntry {
   id: string;
   symbol: string;
   side: "BUY" | "SELL";
-  /** Null for an option row (Phase 2/3). */
+  /** Null for an option/futures row. */
   productType: "DELIVERY" | "INTRADAY" | null;
   quantity: number;
   fillPrice: number;
@@ -35,21 +36,32 @@ export interface OrderHistoryEntry {
   isSquareOff: boolean;
   autoSquaredOff: boolean;
   createdAt: string;
-  /** Phase 2 added INDEX_OPTION, Phase 3 added STOCK_OPTION — discriminates the equity vs. option row shape below, and which settlement mechanism an option row uses. */
-  instrumentKind: "EQUITY" | "INDEX_OPTION" | "STOCK_OPTION";
+  /** Phase 2 added INDEX_OPTION, Phase 3 added STOCK_OPTION, Phase 4 added INDEX_FUTURE — discriminates the equity/option/futures row shape below, and which settlement mechanism a row uses. */
+  instrumentKind: "EQUITY" | "INDEX_OPTION" | "STOCK_OPTION" | "INDEX_FUTURE";
   underlyingSymbol: string | null;
   optionType: "CE" | "PE" | null;
   strikePrice: number | null;
   expiryDate: string | null;
   lots: number | null;
-  squareOffReason: "INTRADAY_SESSION_CLOSE" | "OPTION_EXPIRY" | "STOCK_OPTION_EXPIRY_SQUAREOFF" | null;
+  squareOffReason:
+    | "INTRADAY_SESSION_CLOSE"
+    | "OPTION_EXPIRY"
+    | "STOCK_OPTION_EXPIRY_SQUAREOFF"
+    | "FUTURES_EXPIRY_SETTLEMENT"
+    | "FUTURES_MARGIN_CALL"
+    | null;
+  /** Phase 4 — true only for a cash-only daily mark-to-market leg (quantity 0, all costs 0, netAmount is the signed variation-margin cash flow). */
+  isDailyMtm?: boolean;
 }
 
-/** Human label for one row: the contract label for an option leg (index OR stock), the plain symbol for an equity leg. */
+/** Human label for one row: the contract label for an option leg (index OR stock), the futures contract label, or the plain symbol for an equity leg. */
 function orderLabel(order: OrderHistoryEntry): string {
   const isOption = order.instrumentKind === "INDEX_OPTION" || order.instrumentKind === "STOCK_OPTION";
   if (isOption && order.underlyingSymbol && order.strikePrice != null && order.optionType && order.expiryDate) {
     return formatOptionContractLabel(order.underlyingSymbol, order.strikePrice, order.optionType, new Date(order.expiryDate));
+  }
+  if (order.instrumentKind === "INDEX_FUTURE" && order.underlyingSymbol && order.expiryDate) {
+    return formatFuturesContractLabel(order.underlyingSymbol, new Date(order.expiryDate));
   }
   return order.symbol;
 }
@@ -81,6 +93,8 @@ export function OrderHistoryTable({ orders }: { orders: OrderHistoryEntry[] }) {
             const isIndexOption = order.instrumentKind === "INDEX_OPTION";
             const isStockOption = order.instrumentKind === "STOCK_OPTION";
             const isOption = isIndexOption || isStockOption;
+            const isFuture = order.instrumentKind === "INDEX_FUTURE";
+            const isMtmLeg = isFuture && order.isDailyMtm === true;
             const isWorthlessExpiry = isIndexOption && order.squareOffReason === "OPTION_EXPIRY" && order.fillPrice === 0;
             return (
               <Fragment key={order.id}>
@@ -91,14 +105,26 @@ export function OrderHistoryTable({ orders }: { orders: OrderHistoryEntry[] }) {
                         className={`h-3.5 w-3.5 shrink-0 text-ink-400 transition-transform ${isOpen ? "rotate-180" : ""}`}
                       />
                       {orderLabel(order)}
-                      {isOption && order.lots != null && <span className="text-ink-400">({order.lots} lot{order.lots === 1 ? "" : "s"})</span>}
+                      {(isOption || isFuture) && order.lots != null && (
+                        <span className="text-ink-400">({order.lots} lot{order.lots === 1 ? "" : "s"})</span>
+                      )}
                     </span>
                   </TableCell>
                   <TableCell>
-                    <Badge variant={order.side === "BUY" ? "success" : "danger"}>{order.side}</Badge>
+                    {isMtmLeg ? (
+                      <Badge variant="default">MTM</Badge>
+                    ) : (
+                      <Badge variant={order.side === "BUY" ? "success" : "danger"}>{order.side}</Badge>
+                    )}
                   </TableCell>
                   <TableCell className="text-ink-600">
-                    {isIndexOption ? "INDEX OPTION" : isStockOption ? "STOCK OPTION" : order.productType}
+                    {isIndexOption
+                      ? "INDEX OPTION"
+                      : isStockOption
+                        ? "STOCK OPTION"
+                        : isFuture
+                          ? "INDEX FUTURE"
+                          : order.productType}
                     {order.autoSquaredOff && order.squareOffReason === "INTRADAY_SESSION_CLOSE" && (
                       <Badge variant="warning" className="ml-1.5">
                         AUTO SQUARE-OFF
@@ -114,10 +140,21 @@ export function OrderHistoryTable({ orders }: { orders: OrderHistoryEntry[] }) {
                         CLOSED BEFORE EXPIRY — NOT SETTLED
                       </Badge>
                     )}
+                    {order.autoSquaredOff && order.squareOffReason === "FUTURES_EXPIRY_SETTLEMENT" && (
+                      <Badge variant="warning" className="ml-1.5">
+                        CASH-SETTLED AT EXPIRY
+                      </Badge>
+                    )}
+                    {order.autoSquaredOff && order.squareOffReason === "FUTURES_MARGIN_CALL" && (
+                      <Badge variant="danger" className="ml-1.5">
+                        MARGIN CALL — FORCE CLOSED
+                      </Badge>
+                    )}
                   </TableCell>
-                  <TableCell>{order.quantity}</TableCell>
+                  <TableCell>{isMtmLeg ? "—" : order.quantity}</TableCell>
                   <TableCell>₹{order.fillPrice.toLocaleString("en-IN")}</TableCell>
-                  <TableCell className="font-medium text-ink-900">
+                  <TableCell className={`font-medium ${isMtmLeg ? (order.netAmount >= 0 ? "text-emerald-600" : "text-rose-600") : "text-ink-900"}`}>
+                    {isMtmLeg && order.netAmount >= 0 ? "+" : ""}
                     ₹{order.netAmount.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
                   </TableCell>
                   <TableCell className="text-ink-500">{new Date(order.createdAt).toLocaleString("en-IN")}</TableCell>
@@ -125,21 +162,28 @@ export function OrderHistoryTable({ orders }: { orders: OrderHistoryEntry[] }) {
                 {isOpen && (
                   <TableRow className="bg-ink-50/50">
                     <TableCell colSpan={7} className="px-6 py-4">
-                      <CostBreakdownTable
-                        breakdown={{
-                          grossAmount: order.grossAmount,
-                          brokerage: order.brokerage,
-                          stt: order.sttAmount,
-                          exchangeCharge: order.exchangeCharge,
-                          sebiFee: order.sebiFee,
-                          stampDuty: order.stampDuty,
-                          gst: order.gstAmount,
-                          dpCharge: order.dpCharge,
-                          totalCosts: order.totalCosts,
-                          netAmount: order.netAmount
-                        }}
-                        side={order.side}
-                      />
+                      {isMtmLeg ? (
+                        <p className="text-xs text-ink-500">
+                          Daily mark-to-market — a pure cash adjustment against today&apos;s NSE settlement price, marked at ₹
+                          {order.fillPrice.toLocaleString("en-IN")}. No brokerage, STT, or other trading costs apply to this leg.
+                        </p>
+                      ) : (
+                        <CostBreakdownTable
+                          breakdown={{
+                            grossAmount: order.grossAmount,
+                            brokerage: order.brokerage,
+                            stt: order.sttAmount,
+                            exchangeCharge: order.exchangeCharge,
+                            sebiFee: order.sebiFee,
+                            stampDuty: order.stampDuty,
+                            gst: order.gstAmount,
+                            dpCharge: order.dpCharge,
+                            totalCosts: order.totalCosts,
+                            netAmount: order.netAmount
+                          }}
+                          side={order.side}
+                        />
+                      )}
                     </TableCell>
                   </TableRow>
                 )}

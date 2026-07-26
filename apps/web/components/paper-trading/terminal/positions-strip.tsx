@@ -23,6 +23,7 @@
 import Link from "next/link";
 
 import { formatNseExpiryDate } from "@predict-future/business-rules/papertrading/optionContract";
+import { formatFuturesContractLabel } from "@predict-future/business-rules/papertrading/futuresContract";
 
 function formatSignedRupees(value: number): string {
   const sign = value > 0 ? "+" : value < 0 ? "-" : "";
@@ -47,7 +48,17 @@ export interface OptionPositionChip {
   netPnl: number | null;
 }
 
-export type PositionChip = EquityPositionChip | OptionPositionChip;
+/** Phase 4 (Sprint 2, T10) — one open INDEX_FUTURE position chip. `pnl` here is TODAY's live-estimated MTM movement (see queries.ts's FuturesPositionRow.todayMtmPnl doc) — NOT unrealized-since-entry, and rendered labeled as such below so it's never misread as the option/equity chips' "P&L since I opened this" framing. */
+export interface FuturesPositionChip {
+  kind: "future";
+  underlyingSymbol: string;
+  expiryDate: string; // ISO
+  side: "LONG" | "SHORT";
+  lots: number;
+  todayMtmPnl: number | null;
+}
+
+export type PositionChip = EquityPositionChip | OptionPositionChip | FuturesPositionChip;
 
 export function PositionsStrip({ positions }: { positions: PositionChip[] }) {
   if (positions.length === 0) {
@@ -68,35 +79,53 @@ export function PositionsStrip({ positions }: { positions: PositionChip[] }) {
 }
 
 function chipKey(chip: PositionChip): string {
-  return chip.kind === "equity"
-    ? `equity-${chip.symbol}-${chip.productType}`
-    : `option-${chip.underlyingSymbol}-${chip.strikePrice}-${chip.optionType}-${chip.expiryDate}`;
+  if (chip.kind === "equity") return `equity-${chip.symbol}-${chip.productType}`;
+  if (chip.kind === "future") return `future-${chip.underlyingSymbol}-${chip.expiryDate}`;
+  return `option-${chip.underlyingSymbol}-${chip.strikePrice}-${chip.optionType}-${chip.expiryDate}`;
 }
 
 function PositionChipCard({ chip }: { chip: PositionChip }) {
-  const tone = chip.netPnl == null ? "text-ink-400" : chip.netPnl >= 0 ? "text-emerald-600" : "text-rose-600";
+  const pnl = chip.kind === "future" ? chip.todayMtmPnl : chip.netPnl;
+  const tone = pnl == null ? "text-ink-400" : pnl >= 0 ? "text-emerald-600" : "text-rose-600";
   const href =
     chip.kind === "equity"
       ? `/paper-trading?symbol=${encodeURIComponent(chip.symbol)}&side=SELL&productType=${chip.productType}`
-      : `/paper-trading/options?underlying=${encodeURIComponent(chip.underlyingSymbol)}&expiry=${encodeURIComponent(
-          formatNseExpiryDate(new Date(chip.expiryDate))
-        )}&strike=${chip.strikePrice}&optionType=${chip.optionType}&side=SELL`;
+      : chip.kind === "future"
+        ? `/paper-trading/futures?underlying=${encodeURIComponent(chip.underlyingSymbol)}&expiry=${encodeURIComponent(
+            formatNseExpiryDate(new Date(chip.expiryDate))
+          )}&side=${chip.side === "LONG" ? "SELL" : "BUY"}`
+        : `/paper-trading/options?underlying=${encodeURIComponent(chip.underlyingSymbol)}&expiry=${encodeURIComponent(
+            formatNseExpiryDate(new Date(chip.expiryDate))
+          )}&strike=${chip.strikePrice}&optionType=${chip.optionType}&side=SELL`;
+
+  const label =
+    chip.kind === "equity"
+      ? chip.symbol
+      : chip.kind === "future"
+        ? formatFuturesContractLabel(chip.underlyingSymbol, new Date(chip.expiryDate))
+        : `${chip.underlyingSymbol} ${chip.strikePrice} ${chip.optionType}`;
+
+  const sublabel =
+    chip.kind === "equity"
+      ? `Stock · ${chip.productType.toLowerCase()} · ${chip.quantity} shares`
+      : chip.kind === "future"
+        ? `Future · ${chip.side.toLowerCase()} · ${chip.lots} lot(s)`
+        : `Option · ${chip.lots} lot(s)`;
 
   return (
     <Link
       href={href}
       className="flex shrink-0 flex-col gap-0.5 rounded-2xl border border-ink-100 bg-ink-50/60 px-3 py-2 text-left transition hover:border-rose-200 hover:bg-rose-50"
     >
-      <span className="whitespace-nowrap text-xs font-semibold text-ink-900">
-        {chip.kind === "equity" ? chip.symbol : `${chip.underlyingSymbol} ${chip.strikePrice} ${chip.optionType}`}
+      <span className="whitespace-nowrap text-xs font-semibold text-ink-900">{label}</span>
+      <span className="whitespace-nowrap text-[10px] text-ink-400">{sublabel}</span>
+      <span className={`whitespace-nowrap text-xs font-medium ${tone}`}>
+        {pnl != null ? formatSignedRupees(pnl) : "—"}
+        {chip.kind === "future" && <span className="ml-1 text-[9px] font-normal text-ink-400">today&apos;s MTM</span>}
       </span>
-      <span className="whitespace-nowrap text-[10px] text-ink-400">
-        {chip.kind === "equity"
-          ? `Stock · ${chip.productType.toLowerCase()} · ${chip.quantity} shares`
-          : `Option · ${chip.lots} lot(s)`}
+      <span className="whitespace-nowrap text-[10px] font-semibold uppercase tracking-wide text-rose-500">
+        {chip.kind === "future" ? "Close" : "Sell"}
       </span>
-      <span className={`whitespace-nowrap text-xs font-medium ${tone}`}>{chip.netPnl != null ? formatSignedRupees(chip.netPnl) : "—"}</span>
-      <span className="whitespace-nowrap text-[10px] font-semibold uppercase tracking-wide text-rose-500">Sell</span>
     </Link>
   );
 }

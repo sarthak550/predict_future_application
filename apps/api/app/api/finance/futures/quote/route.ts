@@ -43,6 +43,9 @@ export async function GET(request: Request) {
     source: quote.source,
     openInterest: quote.openInterest,
     changePercent: quote.changePercent,
+    // Sprint 2 (T7): per-contract lot size, resolved from fo_mktlots.csv —
+    // order placement/margin math needs this; see futuresQuote.ts.
+    lotSize: quote.lotSize,
     allContracts: quote.allContracts
   });
   response.headers.set("Cache-Control", "public, max-age=60");

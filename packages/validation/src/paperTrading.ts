@@ -69,3 +69,27 @@ export const placePaperOptionOrderSchema = z.object({
    */
   linkedOpinionId: z.string().trim().min(1).optional()
 });
+
+// ─── Paper Trading Phase 4 (Index Futures) ────────────────────────────────────
+
+/** Sanity ceiling on lots per order — same judgment-call posture as PAPER_TRADING_MAX_OPTION_LOTS. */
+export const PAPER_TRADING_MAX_FUTURES_LOTS = 10_000;
+
+/**
+ * Index-only this phase (stock futures cut — see the Phase 4 brief's verdict
+ * section) — unlike options' underlyingSymbol (a free-form string re-validated
+ * async against the live F&O stock universe), futures underlyings are a fixed,
+ * synchronous 5-value closed set, so a real z.enum is correct here rather than
+ * a placeholder free-form string.
+ */
+export const placePaperFuturesOrderSchema = z.object({
+  underlyingSymbol: z.enum(["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "NIFTYNXT50"]),
+  /** NSE's own "DD-MMM-YYYY" expiry string, exactly as returned by GET /api/paper-trading/futures/quote's allContracts — re-validated server-side against a live quote, never trusted as-is for pricing. */
+  expiryDate: z.string().trim().min(1, "Expiry date is required."),
+  side: z.enum(["BUY", "SELL"]),
+  lots: z
+    .number()
+    .int("Lots must be a whole number.")
+    .min(1, "Lots must be at least 1.")
+    .max(PAPER_TRADING_MAX_FUTURES_LOTS, "Too many lots.")
+});
