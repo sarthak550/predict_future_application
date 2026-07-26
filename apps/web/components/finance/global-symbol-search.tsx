@@ -9,11 +9,13 @@
  *
  * The server (/api/instruments/search) returns a pre-ranked "All" view plus
  * per-category buckets with ready `href`s — no route logic client-side.
- * Bonds have no live data yet (only the EQ series is ingested) — that tab
- * shows an honest empty state instead of being hidden. Futures (Phase 4,
- * Sprint 2) now returns the 5 index futures, linking into the futures
- * terminal — EMPTY_CATEGORY_COPY.future only ever shows if that fetch itself
- * fails, not as a permanent "coming soon" state anymore.
+ * Futures (Phase 4, Sprint 2) now returns the 5 index futures, linking into
+ * the futures terminal — EMPTY_CATEGORY_COPY.future only ever shows if that
+ * fetch itself fails, not as a permanent "coming soon" state anymore. Bonds
+ * (informational layer) now returns real GS/GB results linking to
+ * /bonds/[symbol]; the tab also carries a "View all bonds →" link to the
+ * /bonds directory page (search-only discoverability — there is deliberately
+ * no top-level nav item for bonds, see the Bonds informational-layer brief).
  */
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -22,8 +24,14 @@ interface SearchResult {
   href: string;
   label: string;
   sublabel: string | null;
-  /** Phase 4 (Sprint 2) widened to include "future" — the server now returns real futures results (was previously always empty, see EMPTY_CATEGORY_COPY). */
-  category: "index" | "stock" | "fund" | "option" | "future";
+  /**
+   * Phase 4 (Sprint 2) widened to include "future" — the server now returns
+   * real futures results (was previously always empty, see
+   * EMPTY_CATEGORY_COPY). Bonds informational layer widened to include
+   * "bond" — the server now returns real GS/GB results (was previously
+   * always empty).
+   */
+  category: "index" | "stock" | "fund" | "option" | "future" | "bond";
 }
 
 interface SearchPayload {
@@ -49,10 +57,11 @@ const CATEGORY_BADGE: Record<SearchResult["category"], string> = {
   fund: "Fund",
   option: "Options",
   future: "Futures",
+  bond: "Bond",
 };
 
 const EMPTY_CATEGORY_COPY: Partial<Record<CategoryKey, string>> = {
-  bond: "Bonds aren't tracked yet.",
+  bond: "No bonds match yet — try a symbol like \"1018GS2026\" or a name like \"GOI\" / \"gold bond\".",
   future: "Futures aren't available right now — try again shortly.",
 };
 
@@ -181,6 +190,21 @@ export function GlobalSymbolSearch() {
                 </button>
               ))}
             </div>
+
+            {activeCategory === "bond" && (
+              <div className="flex items-center justify-between border-b border-ink-100 px-5 py-2">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-400">
+                  Government Securities &amp; Sovereign Gold Bonds
+                </span>
+                <button
+                  type="button"
+                  onClick={() => go("/bonds")}
+                  className="text-xs font-semibold text-signal-sky hover:underline"
+                >
+                  View all bonds →
+                </button>
+              </div>
+            )}
 
             <div className="min-h-[120px] flex-1 overflow-y-auto">
               {loading && visibleResults.length === 0 ? (

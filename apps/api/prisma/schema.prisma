@@ -1628,6 +1628,41 @@ model StockEodQuote {
   @@index([symbol, sessionDate(sort: Desc)])
 }
 
+enum BondSeries {
+  GS // Government Securities (GOI bonds)
+  GB // Sovereign Gold Bonds
+}
+
+/// Bonds — informational layer only, NOT paper-tradable (accrued-interest/
+/// settlement math is a future phase). Sourced from the SAME sec_bhavdata_full
+/// bhavcopy CSV as StockEodQuote (see apps/api/lib/marketMoves/bhavcopy.ts),
+/// filtered to SERIES IN ('GS','GB') instead of 'EQ'. Deliberately a SEPARATE
+/// table from StockEodQuote — zero contamination of the equity universe that
+/// Movers/Search/enrichment-warm-cron/future-Portfolios-valuation all key off
+/// StockEodQuote.symbol for. See the Bonds informational-layer brief's "Locked
+/// design decision" section for the full reasoning.
+model BondEodQuote {
+  id            String     @id @default(cuid())
+  sessionDate   DateTime
+  /// Raw NSE symbol, e.g. "1018GS2026" or a GB tranche code. Canonical key.
+  symbol        String
+  series        BondSeries
+  /// Parsed human-readable name, e.g. "10.18% GOI 2026" or "Sovereign Gold Bond
+  /// Aug 2028". Falls back to the raw symbol when parsing doesn't match a known
+  /// pattern — see bondName.ts. Recomputed on every ingest (not just first
+  /// write) so a parser improvement retroactively relabels historical rows.
+  displayName   String
+  prevClose     Float
+  close         Float
+  changePercent Float
+  volume        Float
+  createdAt     DateTime   @default(now())
+
+  @@unique([sessionDate, symbol])
+  @@index([symbol, sessionDate(sort: Desc)])
+  @@index([series, sessionDate(sort: Desc)])
+}
+
 // ─── Portfolios (P3.1) ──────────────────────────────────────────────────────────
 //
 // Virtual, cash-constrained, long-only paper-trading portfolios priced off
@@ -1783,18 +1818,30 @@ model PaperTradingAccount {
   archivedAt      DateTime?
   user            User                      @relation("PaperTradingAccountOwner", fields: [userId], references: [id], onDelete: Cascade)
   orders          PaperOrder[]
+  /// Limit Orders (Sprint, 2026-07-26) — every pending/filled/cancelled/expired
+  /// limit order this account has ever placed. See model PaperPendingOrder.
+  pendingOrders   PaperPendingOrder[]
 
   @@index([userId, status])
 }
 
 /// A single executed BUY/SELL leg against a PaperTradingAccount. Immutable once
 /// written (filled synchronously at the delayed intraday LTP available at request
-/// time — no PENDING state, no settlement cron). One row per executed leg; every
-/// individual cost line is stored (not just totalCosts) because the itemized
-/// breakdown is the product's core promise. See
+/// time for a MARKET order, or at the limit price when a PaperPendingOrder
+/// crosses for a LIMIT order — see model PaperPendingOrder). One row per
+/// executed leg; every individual cost line is stored (not just totalCosts)
+/// because the itemized breakdown is the product's core promise. See
 /// packages/business-rules/src/papertrading/costs.ts for the exact rate constants
 /// and packages/business-rules/src/papertrading/replay.ts for how a log of these
 /// rows becomes holdings/cash/P&L.
+///
+/// Limit Orders (Sprint, 2026-07-26): a row produced by a filled limit order is
+/// INDISTINGUISHABLE in shape from a market-order row — same fields, same cost
+/// engine, same write path — except it carries a non-null `pendingOrder` back-
+/// relation (the PaperPendingOrder row that produced it, via that row's
+/// `filledOrderId`). This table's own PENDING rows are NEVER replayed — see
+/// PaperPendingOrder's doc for why a pending order is a separate table rather
+/// than a status column here.
 model PaperOrder {
   id              String              @id @default(cuid())
   accountId       String
@@ -1892,12 +1939,135 @@ model PaperOrder {
   /// concept.
   isDailyMtm       Boolean               @default(false)
 
+  // ─── Limit Orders (Sprint, 2026-07-26) — nullable back-relation only ───────
+
+  /// Set only when this fill was produced by a PaperPendingOrder crossing its
+  /// limit (the inverse side of PaperPendingOrder.filledOrderId). Null for
+  /// every market-order fill and for every pre-Sprint row. UI-badge use only
+  /// ("filled from a limit order") — never consulted by replay.ts, which
+  /// treats every PaperOrder row identically regardless of origin.
+  pendingOrder     PaperPendingOrder?
+
   @@index([accountId, symbol])
   @@index([accountId, createdAt])
   @@index([linkedOpinionId])
   @@index([productType, createdAt])
   @@index([accountId, instrumentKind, expiryDate])
   @@index([accountId, instrumentKind, isDailyMtm])
+}
+
+/// Limit Orders (Sprint, 2026-07-26) — lifecycle of a PaperPendingOrder row.
+enum PendingOrderStatus {
+  PENDING
+  FILLED
+  CANCELLED
+  EXPIRED
+}
+
+/// Limit Orders (Sprint, 2026-07-26) — order time-in-force. Only DAY exists
+/// today (auto-expires at session close, matching real Indian discount
+/// brokers' retail default); the enum carries room for a future GTC value
+/// without a migration, but no GTC UI/logic exists yet — see
+/// PaperPendingOrder's doc for why DAY-only was locked for this sprint.
+enum PendingOrderValidity {
+  DAY
+}
+
+/// Limit Orders (Sprint, 2026-07-26) — a resting BUY/SELL order that fills at
+/// a user-specified limitPrice once the delayed market quote crosses it,
+/// rather than immediately at the current market price (see PaperOrder,
+/// Phase 1's original immediate-fill model). Deliberately a SEPARATE table
+/// from PaperOrder, not a `status` column on it: PaperOrder rows are replayed
+/// as fills by every function in packages/business-rules/src/papertrading/
+/// replay.ts (deriveCash, deriveDeliveryHoldings, deriveOptionPositions, …) to
+/// produce cash/holdings/P&L — a pending order is NOT a fill (no fillPrice, no
+/// costs, no cash effect) and must never be replayable, so keeping it in a
+/// distinct table makes "only fills are ever replayed" a structural guarantee
+/// rather than a discipline every replay call site would otherwise have to
+/// enforce defensively forever. Mirrors the Portfolio/PortfolioTransaction
+/// PENDING pattern already in this codebase (see PortfolioTransaction above)
+/// — not a new concept, reused one domain over.
+///
+/// Fill mechanics (apps/api's paper-trading-limit-fill cron, every ~1-2 min
+/// during NSE market hours): BUY fills when the latest delayed quote <=
+/// limitPrice; SELL fills when it's >= limitPrice. **Fill price is always the
+/// limitPrice itself**, never a "better" crossing price — our delayed quotes
+/// (Yahoo ~1-2min equities, NSE chain snapshots ~60s options) can only prove
+/// the limit was touchable sometime in the polling window, never the exact
+/// tick-level clearing price, so filling at anything other than the limit
+/// would be a fabricated price-improvement advantage. All-or-nothing — no
+/// partial fills (delayed snapshot data has no real book-depth visibility to
+/// honestly simulate a partial). When a fill happens, the engine writes a
+/// normal PaperOrder row through the EXACT SAME cost-engine call
+/// (computeOrderCosts / computeOptionOrderCosts) a market order at that price
+/// would use, with fillPrice = limitPrice — this row itself never becomes a
+/// fill, it just transitions PENDING -> FILLED and points at the PaperOrder
+/// row it produced via filledOrderId.
+///
+/// Cash/quantity are BLOCKED AT PLACEMENT, not checked only at fill — see
+/// blockedAmount below. This is what makes derivePendingBlockedCash /
+/// derivePendingBlockedQuantity (packages/business-rules/src/papertrading/
+/// pendingOrders.ts) load-bearing in EVERY order-placement path in this app
+/// (market AND limit, equity AND options) — a market order placed after a
+/// pending limit order must see the same blocked funds/quantity the limit
+/// order itself is holding, or the two orders could jointly overspend past
+/// what the account actually has.
+///
+/// Scope this sprint: EQUITY (DELIVERY + INTRADAY), INDEX_OPTION, STOCK_OPTION
+/// only. INDEX_FUTURE is explicitly rejected at placement — futures order
+/// PLACEMENT itself (market orders) only shipped in Phase 4 Sprint 2, and a
+/// limit-order lifecycle needs a market-order lifecycle to sit on top of; this
+/// schema is shaped generically enough (instrumentKind + full contract
+/// columns) that adding futures limit orders later reuses this exact table.
+model PaperPendingOrder {
+  id             String                @id @default(cuid())
+  accountId      String
+  instrumentKind PaperInstrumentKind   @default(EQUITY)
+  /// Bare NSE symbol (EQUITY) or the synthetic option-contract symbol
+  /// (INDEX_OPTION/STOCK_OPTION) — same convention as PaperOrder.symbol. This
+  /// single field is what lets derivePendingBlockedQuantity match a pending
+  /// SELL against the right symbol/contract for BOTH asset classes uniformly.
+  symbol         String
+  side           TxSide
+  /// EQUITY only — null for INDEX_OPTION/STOCK_OPTION, mirrors PaperOrder.
+  productType    PaperProductType?
+  /// Total unit quantity = lots * lotSize for an option row (canonical unit
+  /// count, same convention as PaperOrder.quantity — never lots alone).
+  quantity       Int
+  limitPrice     Float
+  status         PendingOrderStatus    @default(PENDING)
+  validity       PendingOrderValidity  @default(DAY)
+  /// The full cost-engine output computed AT PLACEMENT TIME using limitPrice
+  /// as the hypothetical fill price — this IS the blocked cash amount shown
+  /// to the user for a BUY. Because fill price is deterministically the limit
+  /// price, this value exactly equals the eventual fill's netAmount — no
+  /// reconciliation needed. Null for a SELL (DELIVERY equity or options),
+  /// which blocks QUANTITY instead of cash — see the doc above.
+  blockedAmount  Float?
+  linkedOpinionId String?
+  // ─── option contract fields, mirrors PaperOrder — null for EQUITY rows ───
+  underlyingSymbol String?
+  optionType       PaperOptionType?
+  strikePrice      Float?
+  expiryDate       DateTime?
+  /// Lot size snapshotted at PLACEMENT time (before any fill) — same
+  /// "snapshot once, never re-derive" discipline as PaperOrder.lotSize.
+  lotSize          Int?
+  lots             Int?
+  createdAt      DateTime              @default(now())
+  /// Set by the fill-check cron the instant this row transitions PENDING ->
+  /// FILLED — points at the PaperOrder row the fill wrote.
+  filledOrderId  String?               @unique
+  filledAt       DateTime?
+  cancelledAt    DateTime?
+  expiredAt      DateTime?
+  account        PaperTradingAccount   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  filledOrder    PaperOrder?           @relation(fields: [filledOrderId], references: [id])
+
+  @@index([accountId, status])
+  @@index([status, instrumentKind])
+  @@index([symbol, status])
+  @@index([status, validity])
 }
 
 enum PaperTradingAccountStatus {

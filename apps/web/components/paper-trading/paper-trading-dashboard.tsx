@@ -30,6 +30,8 @@ import { InstrumentContextCard } from "@/components/paper-trading/instrument-con
 import { OrderConfirmation } from "@/components/paper-trading/order-confirmation";
 import { OrderHistoryTable, type OrderHistoryEntry } from "@/components/paper-trading/order-history-table";
 import { PaperTradingDisclaimerFooter } from "@/components/paper-trading/paper-trading-disclaimer-footer";
+import { PendingOrdersPanel } from "@/components/paper-trading/pending-orders-panel";
+import type { PendingOrderPayload } from "@/lib/paperTrading/pendingOrdersClient";
 import { useVisiblePolling } from "@/components/paper-trading/use-visible-polling";
 import { DockedOrderTicket } from "@/components/paper-trading/terminal/docked-order-ticket";
 import { TerminalHeader } from "@/components/paper-trading/terminal/terminal-header";
@@ -98,6 +100,10 @@ interface FuturesPositionRow {
 interface AccountDetail {
   account: { id: string; generation: number; startingCapital: number; createdAt: string; status: "ACTIVE" | "ARCHIVED" };
   cash: number;
+  /** Limit Orders (Sprint, 2026-07-26). */
+  pendingBlockedCash: number;
+  availableCash: number;
+  pendingOrders: PendingOrderPayload[];
   deliveryHoldings: PositionRow[];
   openIntradayPositions: PositionRow[];
   optionPositions: OptionPositionRow[];
@@ -136,6 +142,7 @@ export function PaperTradingDashboard() {
   const [account, setAccount] = useState<AccountDetail | null>(null);
   const [error, setError] = useState("");
   const [lastOrder, setLastOrder] = useState<PlacedOrderPayload | null>(null);
+  const [pendingOrderNotice, setPendingOrderNotice] = useState<string | null>(null);
   const [resetting, setResetting] = useState(false);
 
   const loadAccount = useCallback(async () => {
@@ -368,7 +375,7 @@ export function PaperTradingDashboard() {
           <DockedOrderTicket
             key={`${initialSymbol ?? focusedSymbol ?? ""}-${initialSide}-${initialProductType}`}
             kind="equity"
-            cash={account.cash}
+            cash={account.availableCash}
             heldDeliveryQtyBySymbol={heldDeliveryQtyBySymbol}
             hasSoldDeliveryTodayBySymbol={hasSoldDeliveryTodayBySymbol}
             initialSymbol={initialSymbol ?? focusedSymbol}
@@ -380,11 +387,25 @@ export function PaperTradingDashboard() {
               setFocusedSymbol(order.symbol);
               loadAccount();
             }}
+            onPendingOrderPlaced={() => {
+              setPendingOrderNotice("Limit order queued — it fills automatically once the market reaches your price.");
+              loadAccount();
+            }}
           />
         }
       />
 
       {lastOrder && <OrderConfirmation order={lastOrder} onDismiss={() => setLastOrder(null)} />}
+      {pendingOrderNotice && (
+        <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800">
+          {pendingOrderNotice}{" "}
+          <button type="button" className="underline" onClick={() => setPendingOrderNotice(null)}>
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      <PendingOrdersPanel orders={account.pendingOrders} onCancelled={loadAccount} />
 
       <Card>
         <CardHeader>

@@ -28,6 +28,13 @@
  *         also the intended future portfolio-valuation source, so it's
  *         written unconditionally on every EOD pass regardless of whether
  *         the session happened to produce any movers).
+ *       - every GS/GB (government security / sovereign gold bond) row →
+ *         `BondEodQuote` (Bonds informational layer — a fully separate table
+ *         from `StockEodQuote`, see apps/api/lib/marketMoves/bhavcopy.ts's
+ *         module doc comment; powers /bonds and /bonds/[symbol] on the web
+ *         app). True upsert (not createMany/skipDuplicates like quotes) —
+ *         `displayName` is recomputed every run so a parser improvement
+ *         retroactively relabels historical rows.
  *     This pass runs when either:
  *       (a) the request is `?source=eod` explicitly, or
  *       (b) the request lands outside market hours (i.e. the case where the
@@ -71,7 +78,7 @@
 
 import { NextResponse } from "next/server";
 
-import { fetchBhavcopySession, type FetchedEodQuote } from "@/lib/marketMoves/bhavcopy";
+import { fetchBhavcopySession, type FetchedBondQuote, type FetchedEodQuote } from "@/lib/marketMoves/bhavcopy";
 import { fetchNseMovers, type FetchedMoversByUniverse } from "@/lib/marketMoves/nse";
 import type { FetchedMarketMover } from "@/lib/marketMoves/types";
 import { isNseWeekdayMarketHours, getIstSessionDate } from "@/lib/marketMoves/marketHours";
@@ -270,6 +277,62 @@ async function upsertQuotes(
   return { upserted, failed };
 }
 
+/** Concurrency cap for the per-row BondEodQuote upsert loop — GS+GB together are only ~90 rows/day, so a modest batch keeps connection usage bounded without needing raw-SQL batch upserts. */
+const BOND_UPSERT_BATCH_SIZE = 25;
+
+/**
+ * Idempotent upsert into BondEodQuote, keyed on (sessionDate, symbol).
+ * UNLIKE `upsertQuotes`'s createMany/skipDuplicates (StockEodQuote rows are
+ * immutable once written), this is a true upsert: `displayName` is
+ * recomputed from the current `parseBondDisplayName` on every ingest run —
+ * per the Bonds informational-layer brief, a parser improvement should
+ * retroactively relabel historical rows, not just apply to future ones. GS+GB
+ * together are ~90 rows/day, so per-row upserts (batched for bounded
+ * concurrency) are simple and cheap enough; no need for StockEodQuote's
+ * batched-createMany treatment of ~2,000 rows.
+ */
+async function upsertBonds(bonds: FetchedBondQuote[], sessionDate: Date): Promise<{ upserted: number; failed: number }> {
+  let upserted = 0;
+  let failed = 0;
+  for (let i = 0; i < bonds.length; i += BOND_UPSERT_BATCH_SIZE) {
+    const batch = bonds.slice(i, i + BOND_UPSERT_BATCH_SIZE);
+    const results = await Promise.allSettled(
+      batch.map((b) =>
+        prisma.bondEodQuote.upsert({
+          where: { sessionDate_symbol: { sessionDate, symbol: b.symbol } },
+          create: {
+            sessionDate,
+            symbol: b.symbol,
+            series: b.series,
+            displayName: b.displayName,
+            prevClose: b.prevClose,
+            close: b.close,
+            changePercent: b.changePercent,
+            volume: Math.round(b.volume),
+          },
+          update: {
+            series: b.series,
+            displayName: b.displayName,
+            prevClose: b.prevClose,
+            close: b.close,
+            changePercent: b.changePercent,
+            volume: Math.round(b.volume),
+          },
+        })
+      )
+    );
+    for (const result of results) {
+      if (result.status === "fulfilled") {
+        upserted++;
+      } else {
+        failed++;
+        console.error(`[cron/market-moves-movers] BondEodQuote upsert failed:`, result.reason);
+      }
+    }
+  }
+  return { upserted, failed };
+}
+
 /** Runs the EOD full-market pass (NSE's uncapped bhavcopy) for BOTH universes. Returns null if the file isn't published yet. */
 async function runEodPass(sessionDate: Date): Promise<ReturnType<typeof NextResponse.json> | null> {
   const session = await fetchBhavcopySession(sessionDate).catch((err: unknown) => {
@@ -278,7 +341,7 @@ async function runEodPass(sessionDate: Date): Promise<ReturnType<typeof NextResp
   });
 
   if (!session) return null; // not published yet / no session that day — let the caller decide the response
-  const { allMovers, popularMovers, quotes } = session;
+  const { allMovers, popularMovers, quotes, bonds } = session;
 
   // Write the full quote universe unconditionally — it doesn't depend on
   // there being any movers this session, and is the instrument-detail /
@@ -286,11 +349,16 @@ async function runEodPass(sessionDate: Date): Promise<ReturnType<typeof NextResp
   const quotesResult = await upsertQuotes(quotes, sessionDate);
   const quotesJson = { fetched: quotes.length, ...quotesResult };
 
+  // Bonds informational layer (GS/GB) — same session, zero second fetch.
+  // Written into the fully separate BondEodQuote table, never StockEodQuote.
+  const bondsResult = await upsertBonds(bonds, sessionDate);
+  const bondsJson = { fetched: bonds.length, ...bondsResult };
+
   const all = await upsertUniverse(allMovers, sessionDate, TOP_N_PER_DIRECTION_EOD, "ALL");
   const popular = await upsertUniverse(popularMovers, sessionDate, TOP_N_PER_DIRECTION_EOD, "POPULAR");
 
-  await notifyWebRevalidate(["/pulse", "/", ["/instruments/[symbol]", "page"]]);
-  return NextResponse.json({ ok: true, source: "eod", all, popular, quotes: quotesJson });
+  await notifyWebRevalidate(["/pulse", "/", ["/instruments/[symbol]", "page"], "/bonds", ["/bonds/[symbol]", "page"]]);
+  return NextResponse.json({ ok: true, source: "eod", all, popular, quotes: quotesJson, bonds: bondsJson });
 }
 
 async function run(request: Request) {

@@ -25,6 +25,13 @@
  * exactly for the same session (RELAXO +19.99% / GRINDWELL -12.41% on
  * 17 Jul 2026).
  *
+ * Bonds informational layer: the same file also carries GS (Government
+ * Securities) and GB (Sovereign Gold Bond) series rows, which `shapeMovers`/
+ * `shapeQuotes` skip (EQ-only) but `shapeBonds` below captures into a
+ * separate `BondEodQuote` table — see bondName.ts for the symbol→display-name
+ * parser and the Bonds informational-layer brief for why bonds are
+ * deliberately NOT mixed into `StockEodQuote`.
+ *
  * The file is published by NSE some time after the close (evening IST) —
  * requesting the current IST session's date before it's published, or on a
  * weekend/holiday with no session at all, returns 404. `fetchBhavcopyMovers`
@@ -41,6 +48,7 @@
  * NIFTYNEXT50 merge in nse.ts.
  */
 
+import { parseBondDisplayName } from "./bondName";
 import { fetchEquityNames } from "./nse";
 import type { FetchedMarketMover } from "./types";
 
@@ -401,12 +409,79 @@ export async function fetchBhavcopyQuotes(sessionDate: Date): Promise<FetchedEod
   return shapeQuotes(rows, nameBySymbol);
 }
 
+/** One GS/GB bond EOD quote row, keyed by (sessionDate, symbol) — see the BondEodQuote model. */
+export type FetchedBondQuote = {
+  symbol: string;
+  series: "GS" | "GB";
+  displayName: string;
+  prevClose: number;
+  close: number;
+  changePercent: number;
+  volume: number;
+};
+
+/**
+ * Shapes validated bhavcopy rows into the Bonds informational layer: every
+ * GS (Government Security) and GB (Sovereign Gold Bond) row, unfiltered by
+ * liquidity. No MIN_QUOTE_LIQUIDITY_QTY floor — GS/GB daily volumes are
+ * naturally much lower than equities (45+44 rows total, most low-turnover);
+ * a liquidity floor tuned for equities would silently drop most bond rows.
+ * `changePercent` still guards `prevClose <= 0` the same way `shapeQuotes`
+ * does. A GB symbol whose display name falls back to the raw symbol is
+ * logged (not silently dropped) — see bondName.ts's doc comment on the
+ * UNVERIFIED GB pattern.
+ */
+function shapeBonds(rows: BhavcopyRow[]): FetchedBondQuote[] {
+  const bonds: FetchedBondQuote[] = [];
+  for (const row of rows) {
+    if (row.series !== "GS" && row.series !== "GB") continue;
+    const series = row.series as "GS" | "GB";
+
+    const changePercent = row.prevClose > 0 ? ((row.closePrice - row.prevClose) / row.prevClose) * 100 : 0;
+    const displayName = parseBondDisplayName(row.symbol, series);
+    if (series === "GB" && displayName === row.symbol) {
+      console.log(`[marketMoves/bhavcopy] GB symbol "${row.symbol}" did not match the SGB tranche pattern — falling back to raw symbol`);
+    }
+
+    bonds.push({
+      symbol: row.symbol,
+      series,
+      displayName,
+      prevClose: row.prevClose,
+      close: row.closePrice,
+      changePercent,
+      volume: row.ttlTrdQnty,
+    });
+  }
+  return bonds;
+}
+
+/**
+ * Fetches NSE's full-market EOD bhavcopy for the given IST session date and
+ * returns every GS/GB row (see `shapeBonds`). Reuses the exact same fetch +
+ * DATE1-validated parse as `fetchBhavcopyMovers`/`fetchBhavcopyQuotes`
+ * (`fetchBhavcopyRows`) — zero new HTTP fetch. Standalone convenience
+ * wrapper; the cron route should prefer `fetchBhavcopySession` when it needs
+ * this alongside the movers/quotes shapes for the same session, so it only
+ * fetches the (multi-MB) CSV once.
+ *
+ * Returns `null` (never throws) under the same conditions as
+ * `fetchBhavcopyMovers` — not yet published, no session that date, or any
+ * network/parse failure.
+ */
+export async function fetchBhavcopyBonds(sessionDate: Date): Promise<FetchedBondQuote[] | null> {
+  const rows = await fetchBhavcopyRows(sessionDate);
+  if (!rows) return null;
+  return shapeBonds(rows);
+}
+
 /**
  * Fetches NSE's full-market EOD bhavcopy ONCE for the given IST session date
  * and derives the top-100/direction movers shape for BOTH universes (all-market
- * and NIFTY 100 "Popular") AND the full liquid quote-universe shape, all from the
- * same parsed rows — the pairing the EOD cron pass needs (movers feed
- * `MarketMoverSnapshot` x2 universes, quotes feed `StockEodQuote`) without
+ * and NIFTY 100 "Popular") AND the full liquid quote-universe shape AND the
+ * GS/GB bonds informational-layer shape, all from the same parsed rows — the
+ * pairing the EOD cron pass needs (movers feed `MarketMoverSnapshot` x2
+ * universes, quotes feed `StockEodQuote`, bonds feed `BondEodQuote`) without
  * doubling the network fetch of the multi-MB CSV. Returns `null` (never throws)
  * under the same "not available yet" conditions as
  * `fetchBhavcopyMovers`/`fetchBhavcopyQuotes`.
@@ -415,6 +490,7 @@ export async function fetchBhavcopySession(sessionDate: Date): Promise<{
   allMovers: FetchedMarketMover[];
   popularMovers: FetchedMarketMover[];
   quotes: FetchedEodQuote[];
+  bonds: FetchedBondQuote[];
 } | null> {
   const rows = await fetchBhavcopyRows(sessionDate);
   if (!rows) return null;
@@ -423,5 +499,6 @@ export async function fetchBhavcopySession(sessionDate: Date): Promise<{
     allMovers: shapeMovers(rows, nameBySymbol, null),
     popularMovers: shapeMovers(rows, nameBySymbol, nifty100Symbols),
     quotes: shapeQuotes(rows, nameBySymbol),
+    bonds: shapeBonds(rows),
   };
 }

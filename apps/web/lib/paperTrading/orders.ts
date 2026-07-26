@@ -16,11 +16,13 @@ import {
   isFirstDeliverySellOfScripToday,
   type PaperEngineOrder
 } from "@predict-future/business-rules/papertrading/replay";
+import { derivePendingBlockedCash, derivePendingBlockedQuantity } from "@predict-future/business-rules/papertrading/pendingOrders";
 import { isNseWeekdayMarketHours } from "@predict-future/business-rules/papertrading/marketHours";
 import type { TxSide, PaperProductType } from "@prisma/client";
 
 import { getOrCreateActiveAccount } from "@/lib/paperTrading/account";
 import { fetchDelayedLtp } from "@/lib/paperTrading/ltp";
+import { fetchActivePendingOrders } from "@/lib/paperTrading/pendingOrders";
 import { prisma } from "@/lib/prisma";
 
 const ENGINE_ORDER_SELECT = {
@@ -111,13 +113,24 @@ export async function placeOrder(userId: string, input: PlaceOrderInput): Promis
   });
   const existingOrders = existingOrderRows as PaperEngineOrder[];
 
+  // Limit Orders (Sprint, 2026-07-26) — T3 regression requirement: a resting
+  // pending limit order's block must be respected by THIS market-order path
+  // too, or the two could jointly overspend/oversell past what the account
+  // actually has. See packages/business-rules/src/papertrading/pendingOrders.ts.
+  const existingPending = await fetchActivePendingOrders(account.id);
+
   if (input.productType === "DELIVERY" && input.side === "SELL") {
     const heldQty = deriveDeliveryHoldings(existingOrders).find((h) => h.symbol === input.symbol)?.quantity ?? 0;
-    if (input.quantity > heldQty) {
+    const blockedQty = derivePendingBlockedQuantity(existingPending, input.symbol);
+    const availableQty = heldQty - blockedQty;
+    if (input.quantity > availableQty) {
       return {
         ok: false,
         status: 422,
-        reason: `Insufficient DELIVERY holdings: you hold ${heldQty} share(s) of ${input.symbol}, requested to sell ${input.quantity}. Delivery short-selling isn't allowed — for a bearish view, use an INTRADAY sell instead.`
+        reason:
+          blockedQty > 0
+            ? `Insufficient DELIVERY holdings: you hold ${heldQty} share(s) of ${input.symbol}, ${blockedQty} already reserved by pending limit sell orders, ${availableQty} available — requested to sell ${input.quantity}.`
+            : `Insufficient DELIVERY holdings: you hold ${heldQty} share(s) of ${input.symbol}, requested to sell ${input.quantity}. Delivery short-selling isn't allowed — for a bearish view, use an INTRADAY sell instead.`
       };
     }
   }
@@ -137,11 +150,16 @@ export async function placeOrder(userId: string, input: PlaceOrderInput): Promis
 
   if (input.side === "BUY") {
     const cash = deriveCash(account.startingCapital, existingOrders);
-    if (costs.netAmount > cash) {
+    const blockedCash = derivePendingBlockedCash(existingPending);
+    const availableCash = cash - blockedCash;
+    if (costs.netAmount > availableCash) {
       return {
         ok: false,
         status: 422,
-        reason: `Insufficient cash: this order needs ₹${costs.netAmount.toFixed(2)} including costs, but only ₹${cash.toFixed(2)} is available.`
+        reason:
+          blockedCash > 0
+            ? `Insufficient cash: this order needs ₹${costs.netAmount.toFixed(2)} including costs, but only ₹${availableCash.toFixed(2)} is available (₹${blockedCash.toFixed(2)} blocked by pending limit orders).`
+            : `Insufficient cash: this order needs ₹${costs.netAmount.toFixed(2)} including costs, but only ₹${cash.toFixed(2)} is available.`
       };
     }
   }

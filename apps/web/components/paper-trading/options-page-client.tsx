@@ -32,6 +32,7 @@ import { useVisiblePolling } from "@/components/paper-trading/use-visible-pollin
 import type { PlacedOptionOrderPayload } from "@/components/paper-trading/option-trade-panel";
 import { PaperTradingDisclaimerFooter } from "@/components/paper-trading/paper-trading-disclaimer-footer";
 import { InstrumentContextCard } from "@/components/paper-trading/instrument-context-card";
+import { PendingOrdersPanel } from "@/components/paper-trading/pending-orders-panel";
 import { DockedOrderTicket } from "@/components/paper-trading/terminal/docked-order-ticket";
 import { PositionsStrip, type PositionChip } from "@/components/paper-trading/terminal/positions-strip";
 import { TerminalHeader } from "@/components/paper-trading/terminal/terminal-header";
@@ -40,6 +41,7 @@ import { useEodSeries } from "@/components/paper-trading/terminal/use-eod-series
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getLastLotsForContract } from "@/lib/paperTrading/lastLotsMemory";
+import type { PendingOrderPayload } from "@/lib/paperTrading/pendingOrdersClient";
 
 type LoadState = "loading" | "signed-out" | "ready";
 
@@ -61,12 +63,15 @@ interface OptionPositionSummary {
 
 interface AccountSummary {
   cash: number;
+  /** Limit Orders (Sprint, 2026-07-26) — cash - pendingBlockedCash; use this for order-ticket cash props, never raw `cash`. */
+  availableCash: number;
   totalValue: number;
   todayNetPnl: number;
   lifetimeNetPnl: number;
   deliveryHoldings: EquityPositionSummary[];
   openIntradayPositions: EquityPositionSummary[];
   optionPositions: OptionPositionSummary[];
+  pendingOrders: PendingOrderPayload[];
 }
 
 function formatRupees(value: number): string {
@@ -122,6 +127,7 @@ function OptionsPageClientInner() {
   const [selectionNonce, setSelectionNonce] = useState(0);
 
   const [lastOrder, setLastOrder] = useState<PlacedOptionOrderPayload | null>(null);
+  const [pendingOrderNotice, setPendingOrderNotice] = useState<string | null>(null);
 
   const [chartUnderlying, setChartUnderlying] = useState<string | null>(deepLinkUnderlying);
 
@@ -136,6 +142,7 @@ function OptionsPageClientInner() {
       const a = data.account;
       setAccount({
         cash: a?.cash ?? 0,
+        availableCash: a?.availableCash ?? a?.cash ?? 0,
         totalValue: a?.totalValue ?? a?.cash ?? 0,
         todayNetPnl: a?.todayNetPnl ?? 0,
         lifetimeNetPnl: a?.lifetimeNetPnl ?? 0,
@@ -151,7 +158,8 @@ function OptionsPageClientInner() {
           quantity: h.quantity,
           netPnl: h.netPnl
         })),
-        optionPositions: a?.optionPositions ?? []
+        optionPositions: a?.optionPositions ?? [],
+        pendingOrders: a?.pendingOrders ?? []
       });
     } catch {
       setError("Couldn't load your Paper Trading account — check your connection.");
@@ -367,7 +375,7 @@ function OptionsPageClientInner() {
           <DockedOrderTicket
             kind="option"
             contract={selectedContract}
-            cash={account.cash}
+            cash={account.availableCash}
             heldLots={heldLotsForSelected}
             linkedOpinionId={deepLinkOpinionId}
             selectionNonce={selectionNonce}
@@ -377,10 +385,25 @@ function OptionsPageClientInner() {
               setLastOrder(order);
               void loadAccount();
             }}
+            onPendingOrderPlaced={() => {
+              setPendingOrderNotice("Limit order queued — it fills automatically once the market reaches your price.");
+              void loadAccount();
+            }}
           />
         }
         positions={<PositionsStrip positions={positionChips} />}
       />
+
+      {pendingOrderNotice && (
+        <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800">
+          {pendingOrderNotice}{" "}
+          <button type="button" className="underline" onClick={() => setPendingOrderNotice(null)}>
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      <PendingOrdersPanel orders={account.pendingOrders} onCancelled={() => void loadAccount()} />
 
       <PaperTradingDisclaimerFooter />
     </div>

@@ -9,6 +9,14 @@
  * /api/instruments/[symbol]/intraday proxy. There is no separate "preview" API
  * route: the estimate and the fill are provably the same computation, not two
  * hand-synced copies.
+ *
+ * Limit Orders (Sprint, 2026-07-26) — added a Market/Limit order-type toggle.
+ * Market mode is BYTE-IDENTICAL to pre-Sprint behavior (same POST
+ * /api/paper-trading/orders request shape) — this is the T6 regression bar.
+ * Limit mode reveals a limit-price input (with a live "X% above/below LTP"
+ * hint reusing the SAME live LTP this form already fetches for the cost
+ * preview) and posts to POST /api/paper-trading/pending-orders instead,
+ * never to the market-order route.
  */
 import { useEffect, useState } from "react";
 
@@ -19,6 +27,7 @@ import { PaperTradingSymbolSearchInput, type PaperSymbolOption } from "@/compone
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { submitPendingOrder, type PendingOrderPayload } from "@/lib/paperTrading/pendingOrdersClient";
 
 export interface PlacedOrderPayload {
   id: string;
@@ -53,9 +62,10 @@ export function NewTradeForm({
   initialSide = "BUY",
   initialProductType = "DELIVERY",
   linkedOpinionId = null,
-  onOrderPlaced
+  onOrderPlaced,
+  onPendingOrderPlaced
 }: {
-  /** Available cash right now, for the client-side insufficient-cash warning (server re-validates independently). */
+  /** Available cash right now, for the client-side insufficient-cash warning (server re-validates independently). Callers should pass `availableCash` (cash minus pending-order blocks), not raw account cash — see queries.ts's PaperAccountDetail.availableCash. */
   cash: number;
   heldDeliveryQtyBySymbol: Record<string, number>;
   hasSoldDeliveryTodayBySymbol: Record<string, boolean>;
@@ -70,7 +80,10 @@ export function NewTradeForm({
   initialSide?: "BUY" | "SELL";
   initialProductType?: "DELIVERY" | "INTRADAY";
   linkedOpinionId?: string | null;
+  /** Market-mode fill confirmation — unchanged Phase 1 contract. */
   onOrderPlaced: (order: PlacedOrderPayload) => void;
+  /** Limit Orders (Sprint, 2026-07-26) — fired when a LIMIT order is successfully QUEUED (never fills synchronously — see PendingOrderPayload). Optional so a caller that hasn't adopted the pending-orders section yet still compiles; omitting it simply means the Limit toggle is unavailable (see the guard below). */
+  onPendingOrderPlaced?: (order: PendingOrderPayload) => void;
 }) {
   const [selectedSymbol, setSelectedSymbol] = useState<PaperSymbolOption | null>(
     fixedSymbol ?? initialSymbol ? { symbol: (fixedSymbol ?? initialSymbol) as string, companyName: "", close: 0 } : null
@@ -92,6 +105,10 @@ export function NewTradeForm({
   const [ltpError, setLtpError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState("");
+  // Limit Orders (Sprint, 2026-07-26) — Market/Limit toggle. Market mode's
+  // request shape/route is untouched from Phase 1 (the T6 regression bar).
+  const [orderType, setOrderType] = useState<"MARKET" | "LIMIT">("MARKET");
+  const [limitPrice, setLimitPrice] = useState("");
 
   const symbol = selectedSymbol?.symbol ?? "";
   const isBearishShort = side === "SELL" && productType === "INTRADAY" && linkedOpinionId !== null;
@@ -135,14 +152,21 @@ export function NewTradeForm({
 
   const qtyNumber = Number(quantity);
   const validQuantity = Number.isInteger(qtyNumber) && qtyNumber > 0;
+  const limitPriceNumber = Number(limitPrice);
+  const validLimitPrice = limitPrice.trim() !== "" && Number.isFinite(limitPriceNumber) && limitPriceNumber > 0;
+  // The price the cost/blocked-amount estimate is computed against: the live
+  // LTP in Market mode, the user's own limit price in Limit mode (a limit
+  // order fills AT the limit price — see pendingOrders.ts's doc — so this is
+  // the honest preview, not an approximation).
+  const estimatePrice = orderType === "MARKET" ? ltp : validLimitPrice ? limitPriceNumber : null;
 
   const estimate =
-    validQuantity && ltp !== null
+    validQuantity && estimatePrice !== null
       ? computeOrderCosts({
           side,
           productType,
           quantity: qtyNumber,
-          price: ltp,
+          price: estimatePrice,
           isFirstDeliverySellOfScripToday:
             productType === "DELIVERY" && side === "SELL" ? !hasSoldDeliveryTodayBySymbol[symbol] : undefined
         })
@@ -152,12 +176,40 @@ export function NewTradeForm({
   const insufficientHoldings = productType === "DELIVERY" && side === "SELL" && validQuantity && qtyNumber > heldQty;
   const insufficientCash = side === "BUY" && estimate !== null && estimate.netAmount > cash;
 
+  // Live "X% above/below LTP" hint for the limit-price input, per T6's
+  // acceptance criteria — reuses the SAME live ltp already fetched above.
+  const limitDistancePct =
+    orderType === "LIMIT" && validLimitPrice && ltp !== null && ltp > 0 ? ((limitPriceNumber - ltp) / ltp) * 100 : null;
+
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     if (!symbol || !validQuantity || submitting) return;
+    if (orderType === "LIMIT" && !validLimitPrice) return;
     setFormError("");
     setSubmitting(true);
     try {
+      if (orderType === "LIMIT") {
+        const result = await submitPendingOrder({
+          orderKind: "EQUITY",
+          symbol,
+          side,
+          productType,
+          quantity: qtyNumber,
+          limitPrice: limitPriceNumber,
+          linkedOpinionId
+        });
+        if (!result.ok) {
+          setFormError(result.error);
+          return;
+        }
+        onPendingOrderPlaced?.(result.order);
+        setSelectedSymbol(null);
+        setSymbolInputValue("");
+        setQuantity("");
+        setLimitPrice("");
+        return;
+      }
+
       const res = await fetch("/api/paper-trading/orders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -229,6 +281,59 @@ export function NewTradeForm({
         />
       </div>
 
+      {onPendingOrderPlaced && (
+        <div className="flex items-center gap-3">
+          <div className="inline-flex rounded-2xl border border-ink-200 bg-white p-1">
+            <button
+              type="button"
+              onClick={() => setOrderType("MARKET")}
+              className={`rounded-xl px-3 py-1.5 text-xs font-medium transition ${
+                orderType === "MARKET" ? "bg-ink-900 text-white" : "text-ink-600 hover:text-ink-900"
+              }`}
+            >
+              Market
+            </button>
+            <button
+              type="button"
+              onClick={() => setOrderType("LIMIT")}
+              className={`rounded-xl px-3 py-1.5 text-xs font-medium transition ${
+                orderType === "LIMIT" ? "bg-ink-900 text-white" : "text-ink-600 hover:text-ink-900"
+              }`}
+            >
+              Limit
+            </button>
+          </div>
+          {orderType === "LIMIT" && (
+            <div className="flex items-center gap-2">
+              <Input
+                type="number"
+                min={0}
+                step="0.05"
+                value={limitPrice}
+                onChange={(e) => setLimitPrice(e.target.value)}
+                placeholder="Limit price"
+                className="w-32"
+                disabled={submitting}
+              />
+              {limitDistancePct !== null && (
+                <span className={`text-xs ${limitDistancePct >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                  {limitDistancePct >= 0 ? "+" : ""}
+                  {limitDistancePct.toFixed(2)}% vs LTP
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {orderType === "LIMIT" && (
+        <p className="text-xs leading-5 text-ink-500">
+          Fills only when the delayed market price reaches ₹{validLimitPrice ? limitPriceNumber.toLocaleString("en-IN") : "your limit"} — at
+          your limit price, never a better one, and never partially. Cash is reserved now; unfilled orders expire at
+          today&apos;s session close.
+        </p>
+      )}
+
       {isBearishShort && (
         <p className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800">
           This is a same-day INTRADAY short — you&apos;re selling shares you don&apos;t hold, betting the price falls, and
@@ -274,12 +379,18 @@ export function NewTradeForm({
           submitting ||
           !symbol ||
           !validQuantity ||
-          ltp === null ||
+          (orderType === "MARKET" ? ltp === null : !validLimitPrice) ||
           insufficientHoldings ||
           insufficientCash
         }
       >
-        {submitting ? "Placing order…" : `Place ${side.toLowerCase()} order`}
+        {submitting
+          ? orderType === "LIMIT"
+            ? "Placing limit order…"
+            : "Placing order…"
+          : orderType === "LIMIT"
+            ? `Place ${side.toLowerCase()} limit order`
+            : `Place ${side.toLowerCase()} order`}
       </Button>
     </form>
   );

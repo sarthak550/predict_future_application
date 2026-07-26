@@ -69,6 +69,13 @@ import {
   formatFuturesContractLabel,
   formatFuturesContractSymbol
 } from "@predict-future/business-rules/papertrading/futuresContract";
+import {
+  computePendingBlockAmount,
+  derivePendingBlockedCash,
+  derivePendingBlockedQuantity,
+  isLimitCrossed,
+  type PendingEngineOrder
+} from "@predict-future/business-rules/papertrading/pendingOrders";
 
 let passCount = 0;
 let failCount = 0;
@@ -1039,6 +1046,119 @@ async function main() {
     // silently regress it back to a documentation-plausible-but-wrong value
     // without this assertion catching it.
     assertEqual(INDEX_FUTURES_INSTRUMENT_TYPE, "IDF", "Index-futures FinInstrmTp code, EC2-verified 2026-07-25 against the real 24-Jul-2026 bhavcopy (distinct values: STO=33020, STF=625, IDO=5140, IDF=15)");
+  }
+
+  // ── 32. Limit Orders — isLimitCrossed truth table ──
+  console.log("\n32. isLimitCrossed — BUY fills at-or-below limit, SELL fills at-or-above limit");
+  {
+    assertTrue(isLimitCrossed("BUY", 100, 99), "BUY: quote below limit crosses");
+    assertTrue(isLimitCrossed("BUY", 100, 100), "BUY: quote exactly at limit crosses (inclusive)");
+    assertTrue(!isLimitCrossed("BUY", 100, 100.01), "BUY: quote above limit does NOT cross");
+    assertTrue(isLimitCrossed("SELL", 100, 101), "SELL: quote above limit crosses");
+    assertTrue(isLimitCrossed("SELL", 100, 100), "SELL: quote exactly at limit crosses (inclusive)");
+    assertTrue(!isLimitCrossed("SELL", 100, 99.99), "SELL: quote below limit does NOT cross");
+  }
+
+  // ── 33. Limit Orders — computePendingBlockAmount for a BUY exactly matches a market order's netAmount at the same price ──
+  console.log("\n33. computePendingBlockAmount(BUY) === computeOrderCosts/computeOptionOrderCosts netAmount at the same price");
+  {
+    const equityDeliveryBlock = computePendingBlockAmount({
+      instrumentKind: "EQUITY",
+      side: "BUY",
+      quantity: 100,
+      limitPrice: 1000,
+      productType: "DELIVERY"
+    });
+    const equityDeliveryMarketCost = computeOrderCosts({ side: "BUY", productType: "DELIVERY", quantity: 100, price: 1000 });
+    assertClose(equityDeliveryBlock ?? NaN, equityDeliveryMarketCost.netAmount, "EQUITY DELIVERY BUY block === market-order netAmount at the same price");
+
+    const equityIntradayBlock = computePendingBlockAmount({
+      instrumentKind: "EQUITY",
+      side: "BUY",
+      quantity: 100,
+      limitPrice: 1000,
+      productType: "INTRADAY"
+    });
+    const equityIntradayMarketCost = computeOrderCosts({ side: "BUY", productType: "INTRADAY", quantity: 100, price: 1000 });
+    assertClose(equityIntradayBlock ?? NaN, equityIntradayMarketCost.netAmount, "EQUITY INTRADAY BUY block === market-order netAmount at the same price");
+
+    const optionBlock = computePendingBlockAmount({
+      instrumentKind: "INDEX_OPTION",
+      side: "BUY",
+      quantity: 65,
+      limitPrice: 120
+    });
+    const optionMarketCost = computeOptionOrderCosts({ side: "BUY", quantity: 65, price: 120 });
+    assertClose(optionBlock ?? NaN, optionMarketCost.netAmount, "INDEX_OPTION BUY block === market-order netAmount at the same price");
+
+    const stockOptionBlock = computePendingBlockAmount({
+      instrumentKind: "STOCK_OPTION",
+      side: "BUY",
+      quantity: 500,
+      limitPrice: 45
+    });
+    const stockOptionMarketCost = computeOptionOrderCosts({ side: "BUY", quantity: 500, price: 45 });
+    assertClose(stockOptionBlock ?? NaN, stockOptionMarketCost.netAmount, "STOCK_OPTION BUY block === market-order netAmount at the same price");
+  }
+
+  // ── 34. Limit Orders — computePendingBlockAmount(SELL) is always null (quantity-blocked, not cash-blocked) ──
+  console.log("\n34. computePendingBlockAmount(SELL) === null for every instrument kind (SELL blocks quantity, not cash)");
+  {
+    assertEqual(
+      computePendingBlockAmount({ instrumentKind: "EQUITY", side: "SELL", quantity: 100, limitPrice: 1000, productType: "DELIVERY" }),
+      null,
+      "EQUITY DELIVERY SELL block amount is null"
+    );
+    assertEqual(
+      computePendingBlockAmount({ instrumentKind: "INDEX_OPTION", side: "SELL", quantity: 65, limitPrice: 120 }),
+      null,
+      "INDEX_OPTION SELL block amount is null"
+    );
+  }
+
+  // ── 35. Limit Orders — derivePendingBlockedCash sums only PENDING BUY rows ──
+  console.log("\n35. derivePendingBlockedCash — sums only PENDING BUY blockedAmount, ignores everything else");
+  {
+    const pendingRows: PendingEngineOrder[] = [
+      { instrumentKind: "EQUITY", symbol: "TCS", side: "BUY", productType: "DELIVERY", quantity: 10, status: "PENDING", blockedAmount: 30000 },
+      { instrumentKind: "EQUITY", symbol: "INFY", side: "BUY", productType: "DELIVERY", quantity: 5, status: "PENDING", blockedAmount: 9000 },
+      // Not counted: FILLED/CANCELLED/EXPIRED, even though they're BUY with a blockedAmount.
+      { instrumentKind: "EQUITY", symbol: "WIPRO", side: "BUY", productType: "DELIVERY", quantity: 20, status: "FILLED", blockedAmount: 12000 },
+      { instrumentKind: "EQUITY", symbol: "HDFCBANK", side: "BUY", productType: "DELIVERY", quantity: 8, status: "CANCELLED", blockedAmount: 15000 },
+      { instrumentKind: "EQUITY", symbol: "ITC", side: "BUY", productType: "DELIVERY", quantity: 50, status: "EXPIRED", blockedAmount: 22000 },
+      // Not counted: a PENDING SELL (null blockedAmount by construction, but also wrong side).
+      { instrumentKind: "EQUITY", symbol: "TCS", side: "SELL", productType: "DELIVERY", quantity: 5, status: "PENDING", blockedAmount: null }
+    ];
+    assertClose(derivePendingBlockedCash(pendingRows), 39000, "Only the two PENDING BUY rows (30000 + 9000) count");
+  }
+
+  // ── 36. Limit Orders — derivePendingBlockedQuantity prevents overselling ──
+  console.log("\n36. derivePendingBlockedQuantity — sums PENDING SELL quantity for a symbol, demonstrates the T3 oversell guard");
+  {
+    const pendingRows: PendingEngineOrder[] = [
+      { instrumentKind: "EQUITY", symbol: "TCS", side: "SELL", productType: "DELIVERY", quantity: 40, status: "PENDING", blockedAmount: null },
+      { instrumentKind: "EQUITY", symbol: "TCS", side: "SELL", productType: "DELIVERY", quantity: 10, status: "PENDING", blockedAmount: null },
+      // Not counted: a different symbol, and a non-PENDING TCS SELL.
+      { instrumentKind: "EQUITY", symbol: "INFY", side: "SELL", productType: "DELIVERY", quantity: 100, status: "PENDING", blockedAmount: null },
+      { instrumentKind: "EQUITY", symbol: "TCS", side: "SELL", productType: "DELIVERY", quantity: 15, status: "CANCELLED", blockedAmount: null }
+    ];
+    const blockedTcsQty = derivePendingBlockedQuantity(pendingRows, "TCS");
+    assertClose(blockedTcsQty, 50, "Two live PENDING TCS SELLs (40 + 10) reserve 50 shares");
+
+    // The T3 regression scenario: a user holds 60 TCS shares, has 50 already
+    // reserved by pending limit SELLs above — a market/limit SELL for 15 more
+    // must be rejected (60 - 50 = 10 available, 15 requested).
+    const heldQty = 60;
+    const availableToSell = heldQty - blockedTcsQty;
+    assertClose(availableToSell, 10, "Available-to-sell = held - blocked = 10");
+    assertTrue(15 > availableToSell, "A further SELL of 15 correctly exceeds the 10 still available — must be rejected");
+
+    // Same shape works identically for an options SELL, keyed on the
+    // synthetic contract symbol instead of a bare equity symbol.
+    const optionPendingRows: PendingEngineOrder[] = [
+      { instrumentKind: "INDEX_OPTION", symbol: "NIFTY24700CE28AUG26", side: "SELL", quantity: 65, status: "PENDING", blockedAmount: null }
+    ];
+    assertClose(derivePendingBlockedQuantity(optionPendingRows, "NIFTY24700CE28AUG26"), 65, "Options SELL blocking uses the same symbol-keyed function, no separate code path needed");
   }
 
   console.log(`\n${passCount} passed, ${failCount} failed.`);

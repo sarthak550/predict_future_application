@@ -31,12 +31,14 @@ import {
   deriveOptionPositions,
   type PaperEngineOrder
 } from "@predict-future/business-rules/papertrading/replay";
+import { derivePendingBlockedCash, derivePendingBlockedQuantity } from "@predict-future/business-rules/papertrading/pendingOrders";
 import { isNseWeekdayMarketHours } from "@predict-future/business-rules/papertrading/marketHours";
 import type { TxSide } from "@prisma/client";
 
 import { getOrCreateActiveAccount } from "@/lib/paperTrading/account";
 import { fetchOptionChainSnapshot, findOptionQuote } from "@/lib/paperTrading/optionQuote";
 import { isIndexUnderlyingServer, isTradableOptionUnderlyingServer } from "@/lib/paperTrading/fnoUniverseServer";
+import { fetchActivePendingOrders } from "@/lib/paperTrading/pendingOrders";
 import { prisma } from "@/lib/prisma";
 
 const ENGINE_ORDER_SELECT = {
@@ -174,6 +176,7 @@ export async function placeOptionOrder(userId: string, input: PlaceOptionOrderIn
 
   const lotSize = snapshot.lotSize;
   const quantity = input.lots * lotSize;
+  const symbol = formatOptionContractSymbol(input.underlyingSymbol, input.strikePrice, input.optionType, expiryDate);
 
   const account = await getOrCreateActiveAccount(userId);
 
@@ -183,6 +186,11 @@ export async function placeOptionOrder(userId: string, input: PlaceOptionOrderIn
     select: ENGINE_ORDER_SELECT
   });
   const existingOrders = existingOrderRows as unknown as PaperEngineOrder[];
+
+  // Limit Orders (Sprint, 2026-07-26) — T3 regression requirement: see
+  // orders.ts's identical comment. A pending limit order on this exact
+  // contract must be respected by this market-order path too.
+  const existingPending = await fetchActivePendingOrders(account.id);
 
   if (input.side === "SELL") {
     // Long-only enforcement: a SELL is only ever a closing leg against an
@@ -195,13 +203,17 @@ export async function placeOptionOrder(userId: string, input: PlaceOptionOrderIn
         p.expiryDate.getTime() === expiryDate.getTime()
     );
     const heldLots = matching?.lots ?? 0;
-    if (!matching || input.lots > heldLots) {
+    const blockedQuantity = derivePendingBlockedQuantity(existingPending, symbol);
+    const availableQuantity = (matching?.quantity ?? 0) - blockedQuantity;
+    if (!matching || quantity > availableQuantity) {
       return {
         ok: false,
         status: 422,
         reason:
           heldLots > 0
-            ? `You hold ${heldLots} lot(s) of this contract — can't sell ${input.lots}. Writing/selling options beyond an existing long isn't offered.`
+            ? blockedQuantity > 0
+              ? `You hold ${heldLots} lot(s) of this contract, ${(blockedQuantity / lotSize).toFixed(2)} already reserved by pending limit sell orders — can't sell ${input.lots}.`
+              : `You hold ${heldLots} lot(s) of this contract — can't sell ${input.lots}. Writing/selling options beyond an existing long isn't offered.`
             : `You don't hold this contract — writing/selling options isn't offered here. SELL can only close an existing long position.`
       };
     }
@@ -211,16 +223,20 @@ export async function placeOptionOrder(userId: string, input: PlaceOptionOrderIn
 
   if (input.side === "BUY") {
     const cash = deriveCash(account.startingCapital, existingOrders);
-    if (costs.netAmount > cash) {
+    const blockedCash = derivePendingBlockedCash(existingPending);
+    const availableCash = cash - blockedCash;
+    if (costs.netAmount > availableCash) {
       return {
         ok: false,
         status: 422,
-        reason: `Insufficient cash: this order needs ₹${costs.netAmount.toFixed(2)} including costs, but only ₹${cash.toFixed(2)} is available.`
+        reason:
+          blockedCash > 0
+            ? `Insufficient cash: this order needs ₹${costs.netAmount.toFixed(2)} including costs, but only ₹${availableCash.toFixed(2)} is available (₹${blockedCash.toFixed(2)} blocked by pending limit orders).`
+            : `Insufficient cash: this order needs ₹${costs.netAmount.toFixed(2)} including costs, but only ₹${cash.toFixed(2)} is available.`
       };
     }
   }
 
-  const symbol = formatOptionContractSymbol(input.underlyingSymbol, input.strikePrice, input.optionType, expiryDate);
   const fillTickAt = snapshot.asOf ?? new Date();
 
   const created = await prisma.paperOrder.create({

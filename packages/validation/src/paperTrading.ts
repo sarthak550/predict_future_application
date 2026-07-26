@@ -93,3 +93,61 @@ export const placePaperFuturesOrderSchema = z.object({
     .min(1, "Lots must be at least 1.")
     .max(PAPER_TRADING_MAX_FUTURES_LOTS, "Too many lots.")
 });
+
+// ─── Limit Orders (Sprint, 2026-07-26) ─────────────────────────────────────────
+
+/**
+ * A resting limit order's request body, discriminated on `orderKind` (NOT
+ * `instrumentKind` — the client only ever knows "equity ticket" vs "options
+ * ticket", exactly mirroring how placePaperOrderSchema/placePaperOptionOrderSchema
+ * are two separate schemas above; INDEX_OPTION vs STOCK_OPTION is derived
+ * server-side from underlyingSymbol, never client-supplied, same as the
+ * market-order path). Futures (`orderKind: "FUTURE"`) is intentionally NOT a
+ * branch of this union — placePendingOrder rejects it with a dedicated, clear
+ * error before this schema is even reached (see the route file), since
+ * futures order placement itself doesn't exist yet this sprint.
+ */
+export const placePendingEquityOrderSchema = z.object({
+  orderKind: z.literal("EQUITY"),
+  symbol: z
+    .string()
+    .trim()
+    .min(1, "Symbol is required.")
+    .max(32, "Symbol is too long.")
+    .transform((value) => value.toUpperCase()),
+  side: z.enum(["BUY", "SELL"]),
+  productType: z.enum(["DELIVERY", "INTRADAY"]),
+  quantity: z
+    .number()
+    .int("Quantity must be a whole number.")
+    .min(1, "Quantity must be at least 1.")
+    .max(PAPER_TRADING_MAX_QUANTITY, "Quantity is too large."),
+  limitPrice: z.number().positive("Limit price must be positive."),
+  linkedOpinionId: z.string().trim().min(1).optional()
+});
+
+export const placePendingOptionOrderSchema = z.object({
+  orderKind: z.literal("OPTION"),
+  underlyingSymbol: z
+    .string()
+    .trim()
+    .min(1, "underlyingSymbol is required.")
+    .max(32, "underlyingSymbol is too long.")
+    .transform((value) => value.toUpperCase()),
+  optionType: z.enum(["CE", "PE"]),
+  strikePrice: z.number().positive("Strike price must be positive."),
+  expiryDate: z.string().trim().min(1, "Expiry date is required."),
+  side: z.enum(["BUY", "SELL"]),
+  lots: z
+    .number()
+    .int("Lots must be a whole number.")
+    .min(1, "Lots must be at least 1.")
+    .max(PAPER_TRADING_MAX_OPTION_LOTS, "Too many lots."),
+  limitPrice: z.number().positive("Limit price must be positive."),
+  linkedOpinionId: z.string().trim().min(1).optional()
+});
+
+export const placePendingOrderSchema = z.discriminatedUnion("orderKind", [
+  placePendingEquityOrderSchema,
+  placePendingOptionOrderSchema
+]);

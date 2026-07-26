@@ -24,11 +24,13 @@ import {
 } from "@predict-future/business-rules/papertrading/replay";
 import { daysToExpiry, formatNseExpiryDate } from "@predict-future/business-rules/papertrading/optionContract";
 import { computeFuturesMarginRequired, INDEX_FUTURES_MARGIN_RATE } from "@predict-future/business-rules/papertrading/futuresMargin";
+import { derivePendingBlockedCash } from "@predict-future/business-rules/papertrading/pendingOrders";
 
 import { getOrCreateActiveAccount, getResetEligibility, type PaperAccountRow } from "@/lib/paperTrading/account";
 import { fetchDelayedLtp } from "@/lib/paperTrading/ltp";
 import { fetchOptionChainSnapshot, findOptionQuote } from "@/lib/paperTrading/optionQuote";
 import { fetchFuturesQuoteServer, findFuturesContractQuote, type FuturesQuoteSource } from "@/lib/paperTrading/futuresQuote";
+import { fetchActivePendingOrders, listPendingOrdersForAccount, type PlacedPendingOrder } from "@/lib/paperTrading/pendingOrders";
 import { prisma } from "@/lib/prisma";
 
 const ENGINE_ORDER_SELECT = {
@@ -169,6 +171,18 @@ export interface FuturesPositionRow {
 export interface PaperAccountDetail {
   account: { id: string; generation: number; startingCapital: number; createdAt: Date; status: "ACTIVE" | "ARCHIVED" };
   cash: number;
+  /**
+   * Limit Orders (Sprint, 2026-07-26) — cash currently reserved by this
+   * account's own PENDING limit BUY orders (see derivePendingBlockedCash).
+   * Surfaced separately from `cash` (never silently subtracted from it) so
+   * the UI can show BOTH "your actual cash balance" and "how much of it is
+   * spoken for" per the brief's "expose the blocked total visibly" mandate.
+   */
+  pendingBlockedCash: number;
+  /** cash - pendingBlockedCash — the figure every order ticket's client-side insufficient-cash hint should use (the server independently re-derives and re-validates this at placement, this is UX-only). */
+  availableCash: number;
+  /** Limit Orders (Sprint, 2026-07-26) — this account's currently-PENDING limit orders (equity + options), newest first. Backs the "Pending orders" UI section. */
+  pendingOrders: PlacedPendingOrder[];
   deliveryHoldings: PositionRow[];
   openIntradayPositions: PositionRow[];
   optionPositions: OptionPositionRow[];
@@ -386,6 +400,14 @@ export async function getAccountDetail(userId: string): Promise<PaperAccountDeta
 
   const cash = deriveCash(account.startingCapital, engineOrders);
 
+  // Limit Orders (Sprint, 2026-07-26) — every currently-PENDING order for
+  // this account, reused both to compute the blocked-cash total below and to
+  // return the full list for the "Pending orders" UI section.
+  const activePendingOrders = await fetchActivePendingOrders(account.id);
+  const pendingBlockedCash = derivePendingBlockedCash(activePendingOrders);
+  const availableCash = cash - pendingBlockedCash;
+  const pendingOrders = await listPendingOrdersForAccount(account.id);
+
   const allDeliveryPositions = deriveAllDeliveryPositions(engineOrders);
   const currentDeliveryHoldings = allDeliveryPositions.filter((p) => p.quantity !== 0);
 
@@ -516,6 +538,9 @@ export async function getAccountDetail(userId: string): Promise<PaperAccountDeta
       status: account.status
     },
     cash,
+    pendingBlockedCash,
+    availableCash,
+    pendingOrders,
     deliveryHoldings: deliveryHoldingRows,
     openIntradayPositions: openIntradayRows,
     optionPositions: optionPositionRows,

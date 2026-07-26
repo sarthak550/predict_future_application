@@ -26,11 +26,13 @@ import { isTradableOptionUnderlyingServer } from "@/lib/paperTrading/fnoUniverse
  *    "option"'s tradable indices), a direct link into the futures terminal.
  *    Stock futures are cut this phase (see the Phase 4 brief) so this
  *    category is index-only, unlike "option" which also covers stocks.
- *  - "bond": no data yet (we only ingest the EQ series) — the client shows
- *    an honest empty state for this chip; this route returns none.
+ *  - "bond": Bonds informational layer (GS Government Securities + GB
+ *    Sovereign Gold Bonds) — fuzzy match against BondEodQuote's latest
+ *    session by symbol/displayName, → /bonds/[symbol]. Informational only,
+ *    never a paper-trading link (unlike option/future above). NOT tradable.
  */
 
-type SearchCategory = "index" | "stock" | "fund" | "option" | "future";
+type SearchCategory = "index" | "stock" | "fund" | "option" | "future" | "bond";
 
 type SearchResultItem = {
   href: string;
@@ -72,13 +74,14 @@ function isFundRow(row: { symbol: string; companyName: string }): boolean {
  * index option chains.
  */
 async function buildDefaults(): Promise<NextResponse> {
-  const [allIndices, latestMoverSession, latestEodSession] = await Promise.all([
+  const [allIndices, latestMoverSession, latestEodSession, latestBondSession] = await Promise.all([
     fetchAllIndices(),
     prisma.marketMoverSnapshot.findFirst({ orderBy: { sessionDate: "desc" }, select: { sessionDate: true } }),
     prisma.stockEodQuote.findFirst({ orderBy: { sessionDate: "desc" }, select: { sessionDate: true } }),
+    prisma.bondEodQuote.findFirst({ orderBy: { sessionDate: "desc" }, select: { sessionDate: true } }),
   ]);
 
-  const [gainers, losers, topFunds] = await Promise.all([
+  const [gainers, losers, topFunds, topBonds] = await Promise.all([
     latestMoverSession
       ? prisma.marketMoverSnapshot.findMany({
           where: { sessionDate: latestMoverSession.sessionDate, universe: "POPULAR", direction: "GAINER" },
@@ -104,6 +107,15 @@ async function buildDefaults(): Promise<NextResponse> {
           orderBy: { volume: "desc" },
           take: MAX_PER_CATEGORY,
           select: { symbol: true, companyName: true },
+        })
+      : [],
+    // "Popular/most-traded" default per the Bonds brief T4 — by volume, same cap as every other category's defaults.
+    latestBondSession
+      ? prisma.bondEodQuote.findMany({
+          where: { sessionDate: latestBondSession.sessionDate },
+          orderBy: { volume: "desc" },
+          take: MAX_PER_CATEGORY,
+          select: { symbol: true, displayName: true, changePercent: true },
         })
       : [],
   ]);
@@ -157,6 +169,13 @@ async function buildDefaults(): Promise<NextResponse> {
     category: "future" as const,
   }));
 
+  const bondResults: SearchResultItem[] = topBonds.map((b) => ({
+    href: `/bonds/${b.symbol}`,
+    label: b.displayName,
+    sublabel: `${b.symbol} · ${pct(b.changePercent)}`,
+    category: "bond" as const,
+  }));
+
   const allView: SearchResultItem[] = [
     ...indexResults.slice(0, 2),
     ...stockResults.slice(0, 4),
@@ -167,7 +186,7 @@ async function buildDefaults(): Promise<NextResponse> {
 
   const response = NextResponse.json({
     results: allView,
-    byCategory: { index: indexResults, stock: stockResults, fund: fundResults, option: optionResults, bond: [], future: futureResults },
+    byCategory: { index: indexResults, stock: stockResults, fund: fundResults, option: optionResults, bond: bondResults, future: futureResults },
   });
   response.headers.set("Cache-Control", "public, max-age=120");
   return response;
@@ -181,7 +200,7 @@ export async function GET(request: Request) {
 
   const needle = q.toUpperCase();
 
-  const [exactStock, fuzzyRows, allIndices] = await Promise.all([
+  const [exactStock, fuzzyRows, allIndices, bondRows] = await Promise.all([
     prisma.stockEodQuote.findFirst({
       where: { symbol: { equals: needle, mode: "insensitive" } },
       orderBy: { sessionDate: "desc" },
@@ -205,6 +224,24 @@ export async function GET(request: Request) {
     })(),
     // 60s-cached at the apps/api layer (allIndices.ts).
     fetchAllIndices(),
+    // Bonds: fuzzy match against symbol OR the parsed displayName (so "GOI" /
+    // "gold bond"-style queries surface results, not just raw NSE symbols).
+    (async () => {
+      const latest = await prisma.bondEodQuote.findFirst({
+        orderBy: { sessionDate: "desc" },
+        select: { sessionDate: true },
+      });
+      if (!latest) return [];
+      return prisma.bondEodQuote.findMany({
+        where: {
+          sessionDate: latest.sessionDate,
+          OR: [{ symbol: { contains: q, mode: "insensitive" } }, { displayName: { contains: q, mode: "insensitive" } }],
+        },
+        orderBy: { symbol: "asc" },
+        take: MAX_PER_CATEGORY,
+        select: { symbol: true, displayName: true, changePercent: true },
+      });
+    })(),
   ]);
 
   // ── Indices ────────────────────────────────────────────────────────────────
@@ -269,8 +306,18 @@ export async function GET(request: Request) {
     category: "future" as const,
   }));
 
+  // ── Bonds: informational only, no F&O/paper-trading link ───────────────────
+  const bondResults: SearchResultItem[] = bondRows.slice(0, MAX_PER_CATEGORY).map((b) => ({
+    href: `/bonds/${b.symbol}`,
+    label: b.displayName,
+    sublabel: `${b.symbol} · ${b.changePercent >= 0 ? "+" : ""}${b.changePercent.toFixed(2)}% today`,
+    category: "bond" as const,
+  }));
+
   // "All" view: indices and options get reserved presence so fuzzy stock
-  // volume can't starve them (the NIFTY METAL lesson).
+  // volume can't starve them (the NIFTY METAL lesson). Bonds get one reserved
+  // slot so a genuine GOI/gold-bond match surfaces in the All view too,
+  // without displacing the existing stock/index/fund/option/future budget.
   const allView: SearchResultItem[] = [
     ...stockResults.slice(0, 1),
     ...indexResults.slice(0, 3),
@@ -278,6 +325,7 @@ export async function GET(request: Request) {
     ...fundResults.slice(0, 2),
     ...optionResults.slice(0, 2),
     ...futureResults.slice(0, 1),
+    ...bondResults.slice(0, 1),
   ].slice(0, MAX_ALL_VIEW);
 
   const response = NextResponse.json({
@@ -288,7 +336,7 @@ export async function GET(request: Request) {
       stock: stockResults,
       fund: fundResults,
       option: optionResults,
-      bond: [],
+      bond: bondResults,
       future: futureResults,
     },
   });
