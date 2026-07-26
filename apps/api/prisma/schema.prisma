@@ -1773,9 +1773,11 @@ model PaperTradingAccount {
   /// 1 on first creation, incremented by each reset. Distinguishes historical
   /// ARCHIVED accounts for the same user.
   generation      Int                       @default(1)
-  /// Fixed virtual starting capital in rupees. ₹1,00,000 = 100000 — deliberately
-  /// smaller than Portfolios' ₹10,00,000 ("retail trader", not "model portfolio").
-  startingCapital Int                       @default(100000)
+  /// Virtual starting capital in rupees. Default ₹1,00,00,000 (1 crore —
+  /// founder decision 2026-07-26: index-futures margin at 15% of real notional
+  /// made ₹1L unable to afford a single lot). User-configurable at reset
+  /// within ₹1L–₹1000Cr (Portfolios' bounds convention).
+  startingCapital Int                       @default(10000000)
   createdAt       DateTime                  @default(now())
   /// Set when a reset archives this account. Null while ACTIVE.
   archivedAt      DateTime?

@@ -9,8 +9,8 @@
 
 import { prisma } from "@/lib/prisma";
 
-/** ₹1,00,000 — see the schema doc on model PaperTradingAccount for why this differs from Portfolios' ₹10,00,000. */
-export const PAPER_TRADING_STARTING_CAPITAL = 100_000;
+/** ₹1 crore (founder decision 2026-07-26, Moneybhai convention): index-futures margin at 15% of ~₹15-20L notional made the old ₹1L default unable to afford a single lot — every futures order would reject. */
+export const PAPER_TRADING_STARTING_CAPITAL = 10_000_000;
 
 /** Reset cooldown, in days, since the current ACTIVE account's createdAt. */
 export const PAPER_TRADING_RESET_COOLDOWN_DAYS = 30;
@@ -59,7 +59,7 @@ export function getResetEligibility(account: Pick<PaperAccountRow, "createdAt">,
 
 export type ResetAccountResult =
   | { ok: true; account: PaperAccountRow }
-  | { ok: false; status: 409; reason: string };
+  | { ok: false; status: 400 | 409; reason: string };
 
 /**
  * Archives the current ACTIVE account and creates a new one at generation + 1,
@@ -69,7 +69,11 @@ export type ResetAccountResult =
  * history is never deleted — the archived account and its PaperOrder rows remain
  * queryable read-only forever.
  */
-export async function resetAccount(userId: string): Promise<ResetAccountResult> {
+/** Reset-time capital bounds — Portfolios' convention (₹1L floor keeps costs meaningful; ₹1000Cr ceiling because investors aren't capped, per the founder's original Portfolios ruling). */
+export const PAPER_TRADING_MIN_CAPITAL = 100_000;
+export const PAPER_TRADING_MAX_CAPITAL = 10_000_000_000;
+
+export async function resetAccount(userId: string, requestedCapital?: number): Promise<ResetAccountResult> {
   const active = await getOrCreateActiveAccount(userId);
   const eligibility = getResetEligibility(active);
   if (!eligibility.eligible) {
@@ -80,13 +84,29 @@ export async function resetAccount(userId: string): Promise<ResetAccountResult> 
     };
   }
 
+  // Founder 2026-07-26: the reset is where users set their own capital.
+  if (requestedCapital !== undefined) {
+    if (
+      !Number.isInteger(requestedCapital) ||
+      requestedCapital < PAPER_TRADING_MIN_CAPITAL ||
+      requestedCapital > PAPER_TRADING_MAX_CAPITAL
+    ) {
+      return {
+        ok: false,
+        status: 400,
+        reason: `Starting capital must be a whole rupee amount between ₹1,00,000 and ₹1,000 crore.`
+      };
+    }
+  }
+
   const [, created] = await prisma.$transaction([
     prisma.paperTradingAccount.update({
       where: { id: active.id },
       data: { status: "ARCHIVED", archivedAt: new Date() }
     }),
     prisma.paperTradingAccount.create({
-      data: { userId, startingCapital: active.startingCapital, generation: active.generation + 1 }
+      // Resets adopt the CURRENT default (not the archived generation's) — pre-futures accounts upgrade to ₹1Cr on reset.
+      data: { userId, startingCapital: requestedCapital ?? PAPER_TRADING_STARTING_CAPITAL, generation: active.generation + 1 }
     })
   ]);
 

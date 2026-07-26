@@ -11,13 +11,16 @@ import { resetAccount } from "@/lib/paperTrading/account";
  * current account's createdAt (see lib/paperTrading/account.ts). Prior
  * generations' order history is never deleted.
  */
-export async function POST() {
+export async function POST(request: Request) {
   const session = await getSession();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Authentication required." }, { status: 401 });
   }
 
-  const result = await resetAccount(session.user.id);
+  // Optional {"startingCapital": <int rupees>} — the reset is where users set
+  // their own capital (founder 2026-07-26); omitted = the ₹1Cr default.
+  const body = (await request.json().catch(() => null)) as { startingCapital?: number } | null;
+  const result = await resetAccount(session.user.id, body?.startingCapital);
   if (!result.ok) {
     return NextResponse.json({ error: result.reason }, { status: result.status });
   }
