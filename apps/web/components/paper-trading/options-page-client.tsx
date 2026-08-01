@@ -49,6 +49,7 @@ import { TerminalShell } from "@/components/paper-trading/terminal/terminal-shel
 import { PremiumChart } from "@/components/paper-trading/terminal/premium-chart";
 import { useEodSeries } from "@/components/paper-trading/terminal/use-eod-series";
 import { usePriceOverrides } from "@/components/paper-trading/use-price-overrides";
+import { DynamicChartWorkbench, WorkbenchMaximizeButton } from "@/components/paper-trading/workbench/workbench-maximize-button";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getLastLotsForContract } from "@/lib/paperTrading/lastLotsMemory";
@@ -150,6 +151,19 @@ function OptionsPageClientInner() {
 
   const [chartUnderlying, setChartUnderlying] = useState<string | null>(deepLinkUnderlying);
 
+  // Charting Workbench (W2) — the UNDERLYING chart's maximize button only
+  // this sprint (the premium chart's own maximize button is explicitly W3 —
+  // see the founder plan §9, entry point 4). See paper-trading-dashboard.tsx
+  // for the ticket single-mount reasoning. Closed on an underlying change so
+  // a stale workbench for the PREVIOUS underlying never lingers, and closed
+  // if the user switches to the premium chart mode (the workbench only ever
+  // shows the underlying view this sprint, so it can't stay meaningfully
+  // open across that toggle).
+  const [workbenchOpen, setWorkbenchOpen] = useState(false);
+  useEffect(() => {
+    setWorkbenchOpen(false);
+  }, [chartUnderlying]);
+
   // Chart Trading + SL/TP (Sprint B, B4) — Underlying/Contract-premium toggle
   // + the premium chart's own click-prefill preset channel, reusing the SAME
   // `selectionNonce` the ladder taps already bump (a premium-chart click can
@@ -164,6 +178,24 @@ function OptionsPageClientInner() {
   useEffect(() => {
     if (!hasSelectedContract) setChartMode("underlying");
   }, [hasSelectedContract]);
+
+  // Charting Workbench (W3, T6) — the PREMIUM chart's own maximize button
+  // (entry point 4 — order execution lives here, never on the maximized
+  // underlying view, same "decision 6" split as the small charts). Closed
+  // on a contract-identity change (a stale workbench for the PREVIOUS
+  // contract must never linger) and whenever the user leaves premium chart
+  // mode. The two workbenches (this one and the underlying's, above) are
+  // mutually exclusive — see the ticket single-mount `ticket=` prop below —
+  // so switching `chartMode` away from either one's own mode always closes
+  // ITS workbench, never both at once.
+  const [premiumWorkbenchOpen, setPremiumWorkbenchOpen] = useState(false);
+  useEffect(() => {
+    setPremiumWorkbenchOpen(false);
+  }, [selectedContract?.underlying, selectedContract?.expiry, selectedContract?.strikePrice, selectedContract?.optionType]);
+  useEffect(() => {
+    if (chartMode !== "underlying") setWorkbenchOpen(false);
+    if (chartMode !== "premium") setPremiumWorkbenchOpen(false);
+  }, [chartMode]);
   // Sprint C, C2 widens this from LIMIT-only to LIMIT|STOP (the popover
   // confirms an explicit variant, unlike Sprint B's hardcoded LIMIT click).
   const [presetOrderType, setPresetOrderType] = useState<"LIMIT" | "STOP" | undefined>(undefined);
@@ -465,6 +497,38 @@ function OptionsPageClientInner() {
       ]
     : EMPTY_ORDER_LINES;
 
+  // Charting Workbench (W2) — ONE ticket element instance, reused verbatim
+  // whether it renders in TerminalShell's own slot or inside the maximized
+  // underlying workbench (ticket single-mount rule — see
+  // paper-trading-dashboard.tsx's identical doc).
+  const ticketElement = (
+    <DockedOrderTicket
+      kind="option"
+      contract={selectedContract}
+      cash={account.availableCash}
+      heldLots={heldLotsForSelected}
+      linkedOpinionId={deepLinkOpinionId}
+      selectionNonce={selectionNonce}
+      presetSide={presetSide}
+      presetLots={presetLots}
+      onOrderPlaced={(order) => {
+        setLastOrder(order);
+        void loadAccount();
+      }}
+      onPendingOrderPlaced={(order) => {
+        setPendingOrderNotice(
+          order.variant === "STOP"
+            ? "Stop order queued — it fills at the price observed when the market crosses your trigger."
+            : "Limit order queued — it fills automatically once the market reaches your price."
+        );
+        void loadAccount();
+      }}
+      presetOrderType={presetOrderType}
+      presetLimitPrice={presetLimitPrice}
+      presetTriggerPrice={presetTriggerPrice}
+    />
+  );
+
   return (
     <div className="space-y-6">
       {error && <p className="text-sm text-rose-600">{error}</p>}
@@ -524,20 +588,26 @@ function OptionsPageClientInner() {
               </button>
             </div>
             {chartMode === "premium" && selectedContract ? (
-              <PremiumChart
-                underlying={selectedContract.underlying}
-                expiry={selectedContract.expiry}
-                strikePrice={selectedContract.strikePrice}
-                optionType={selectedContract.optionType}
-                livePremium={selectedContract.premium}
-                orderLines={premiumOrderLines}
-                onOrderIntentConfirm={handlePremiumOrderIntentConfirm}
-                onOrderLineDrag={handlePremiumOrderLineDrag}
-                onOrderLineCancel={handlePremiumOrderLineCancel}
-              />
+              <div className="relative">
+                <WorkbenchMaximizeButton onClick={() => setPremiumWorkbenchOpen(true)} label="Maximize premium chart" />
+                <PremiumChart
+                  underlying={selectedContract.underlying}
+                  expiry={selectedContract.expiry}
+                  strikePrice={selectedContract.strikePrice}
+                  optionType={selectedContract.optionType}
+                  livePremium={selectedContract.premium}
+                  orderLines={premiumOrderLines}
+                  onOrderIntentConfirm={handlePremiumOrderIntentConfirm}
+                  onOrderLineDrag={handlePremiumOrderLineDrag}
+                  onOrderLineCancel={handlePremiumOrderLineCancel}
+                />
+              </div>
             ) : (
               <>
-                <OptionsUnderlyingChart underlying={chartUnderlying} isIndex={isIndexChart} />
+                <div className="relative">
+                  {chartUnderlying && <WorkbenchMaximizeButton onClick={() => setWorkbenchOpen(true)} />}
+                  <OptionsUnderlyingChart underlying={chartUnderlying} isIndex={isIndexChart} />
+                </div>
                 <InstrumentContextCard symbol={chartUnderlying} />
               </>
             )}
@@ -553,35 +623,50 @@ function OptionsPageClientInner() {
             getHeldLots={getHeldLots}
           />
         }
-        ticket={
-          <DockedOrderTicket
-            kind="option"
-            contract={selectedContract}
-            cash={account.availableCash}
-            heldLots={heldLotsForSelected}
-            linkedOpinionId={deepLinkOpinionId}
-            selectionNonce={selectionNonce}
-            presetSide={presetSide}
-            presetLots={presetLots}
-            onOrderPlaced={(order) => {
-              setLastOrder(order);
-              void loadAccount();
-            }}
-            onPendingOrderPlaced={(order) => {
-              setPendingOrderNotice(
-                order.variant === "STOP"
-                  ? "Stop order queued — it fills at the price observed when the market crosses your trigger."
-                  : "Limit order queued — it fills automatically once the market reaches your price."
-              );
-              void loadAccount();
-            }}
-            presetOrderType={presetOrderType}
-            presetLimitPrice={presetLimitPrice}
-            presetTriggerPrice={presetTriggerPrice}
-          />
-        }
+        ticket={workbenchOpen || premiumWorkbenchOpen ? null : ticketElement}
         positions={<PositionsStrip positions={positionChips} />}
       />
+
+      {workbenchOpen && chartUnderlying && (
+        <DynamicChartWorkbench
+          feed={isIndexChart ? { kind: "index", symbol: chartUnderlying } : { kind: "equity", symbol: chartUnderlying }}
+          chartKey={`${isIndexChart ? "INDEX" : "EQ"}:${chartUnderlying}`}
+          title={chartUnderlying}
+          onClose={() => setWorkbenchOpen(false)}
+          // Decision 6 (Sprint B) holds here too: order execution attaches
+          // ONLY to the premium view, never the underlying — see
+          // OptionsUnderlyingChart's own PriceChart call, which omits these
+          // same props. The maximized underlying view stays click-inert.
+          orderLines={EMPTY_ORDER_LINES}
+          ticket={ticketElement}
+        />
+      )}
+
+      {premiumWorkbenchOpen && selectedContract && (
+        <DynamicChartWorkbench
+          feed={{
+            kind: "optionPremium",
+            underlying: selectedContract.underlying,
+            expiry: selectedContract.expiry,
+            strikePrice: selectedContract.strikePrice,
+            optionType: selectedContract.optionType,
+            livePremium: selectedContract.premium
+          }}
+          chartKey={`OPT:${selectedContract.underlying}:${selectedContract.expiry}:${selectedContract.strikePrice}:${selectedContract.optionType}`}
+          title={`${selectedContract.underlying} ${selectedContract.strikePrice} ${selectedContract.optionType}`}
+          onClose={() => setPremiumWorkbenchOpen(false)}
+          // Entry point 4 — reuses the SAME premiumOrderLines/handlers the
+          // small PremiumChart already has (options-page-client.tsx line
+          // ~579's own props), never re-derived — order execution lives on
+          // the premium view for options, exactly as it does on the small
+          // chart this replaces.
+          orderLines={premiumOrderLines}
+          onOrderIntentConfirm={handlePremiumOrderIntentConfirm}
+          onOrderLineDrag={handlePremiumOrderLineDrag}
+          onOrderLineCancel={handlePremiumOrderLineCancel}
+          ticket={ticketElement}
+        />
+      )}
 
       {pendingOrderNotice && (
         <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800">

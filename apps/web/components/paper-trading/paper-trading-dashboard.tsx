@@ -56,6 +56,7 @@ import { DockedOrderTicket } from "@/components/paper-trading/terminal/docked-or
 import { TerminalHeader } from "@/components/paper-trading/terminal/terminal-header";
 import { TerminalShell } from "@/components/paper-trading/terminal/terminal-shell";
 import { useEodSeries } from "@/components/paper-trading/terminal/use-eod-series";
+import { DynamicChartWorkbench, WorkbenchMaximizeButton } from "@/components/paper-trading/workbench/workbench-maximize-button";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -329,6 +330,16 @@ export function PaperTradingDashboard() {
     setChartQuote(null);
   }, [focusedSymbol]);
 
+  // Charting Workbench (W2) — the maximize state lives here (not inside
+  // WorkbenchMaximizeButton) because the ticket single-mount rule requires
+  // THIS component to swap its own docked ticket to `null` while the
+  // workbench is open (see the render below). Closed on a symbol change so
+  // a stale workbench for the PREVIOUS focused symbol never lingers open.
+  const [workbenchOpen, setWorkbenchOpen] = useState(false);
+  useEffect(() => {
+    setWorkbenchOpen(false);
+  }, [focusedSymbol]);
+
   const setFocusedSymbol = useCallback((symbol: string) => {
     setManualFocus(symbol);
     try {
@@ -440,6 +451,42 @@ export function PaperTradingDashboard() {
       ]
     : EMPTY_ORDER_LINES;
 
+  // Charting Workbench (W2) — ONE ticket element instance, reused verbatim
+  // whether it renders in TerminalShell's own slot or inside the maximized
+  // workbench (see the ticket single-mount rule above) — never two separate
+  // <DockedOrderTicket> JSX literals that could drift out of sync.
+  const ticketElement = (
+    <DockedOrderTicket
+      key={`${initialSymbol ?? focusedSymbol ?? ""}-${initialSide}-${initialProductType}`}
+      kind="equity"
+      cash={account.availableCash}
+      heldDeliveryQtyBySymbol={heldDeliveryQtyBySymbol}
+      hasSoldDeliveryTodayBySymbol={hasSoldDeliveryTodayBySymbol}
+      initialSymbol={initialSymbol ?? focusedSymbol}
+      initialSide={initialSide}
+      initialProductType={initialProductType}
+      linkedOpinionId={linkedOpinionId}
+      onOrderPlaced={(order) => {
+        setLastOrder(order);
+        setFocusedSymbol(order.symbol);
+        loadAccount();
+      }}
+      onPendingOrderPlaced={(order) => {
+        setPendingOrderNotice(
+          order.variant === "STOP"
+            ? "Stop order queued — it fills at the price observed when the market crosses your trigger."
+            : "Limit order queued — it fills automatically once the market reaches your price."
+        );
+        loadAccount();
+      }}
+      presetNonce={presetNonce}
+      presetSide={presetSide}
+      presetOrderType={presetOrderType}
+      presetLimitPrice={presetLimitPrice}
+      presetTriggerPrice={presetTriggerPrice}
+    />
+  );
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -491,17 +538,20 @@ export function PaperTradingDashboard() {
         chart={
           focusedSymbol ? (
             <div>
-              <PriceChart
-                key={focusedSymbol}
-                symbol={focusedSymbol}
-                series={eodSeries}
-                orderLines={orderLines}
-                onOrderIntentConfirm={handleOrderIntentConfirm}
-                onOrderLineDrag={handleOrderLineDrag}
-                onOrderLineCancel={handleOrderLineCancel}
-                onQuoteChange={(q) => setChartQuote(q ? { price: q.price } : null)}
-                pollIntervalMs={60_000}
-              />
+              <div className="relative">
+                <WorkbenchMaximizeButton onClick={() => setWorkbenchOpen(true)} />
+                <PriceChart
+                  key={focusedSymbol}
+                  symbol={focusedSymbol}
+                  series={eodSeries}
+                  orderLines={orderLines}
+                  onOrderIntentConfirm={handleOrderIntentConfirm}
+                  onOrderLineDrag={handleOrderLineDrag}
+                  onOrderLineCancel={handleOrderLineCancel}
+                  onQuoteChange={(q) => setChartQuote(q ? { price: q.price } : null)}
+                  pollIntervalMs={60_000}
+                />
+              </div>
               <InstrumentContextCard symbol={focusedSymbol} />
               <div className="mt-3 max-w-xs">
                 <PaperTradingSymbolSearchInput
@@ -520,37 +570,28 @@ export function PaperTradingDashboard() {
           )
         }
         ticket={
-          <DockedOrderTicket
-            key={`${initialSymbol ?? focusedSymbol ?? ""}-${initialSide}-${initialProductType}`}
-            kind="equity"
-            cash={account.availableCash}
-            heldDeliveryQtyBySymbol={heldDeliveryQtyBySymbol}
-            hasSoldDeliveryTodayBySymbol={hasSoldDeliveryTodayBySymbol}
-            initialSymbol={initialSymbol ?? focusedSymbol}
-            initialSide={initialSide}
-            initialProductType={initialProductType}
-            linkedOpinionId={linkedOpinionId}
-            onOrderPlaced={(order) => {
-              setLastOrder(order);
-              setFocusedSymbol(order.symbol);
-              loadAccount();
-            }}
-            onPendingOrderPlaced={(order) => {
-              setPendingOrderNotice(
-                order.variant === "STOP"
-                  ? "Stop order queued — it fills at the price observed when the market crosses your trigger."
-                  : "Limit order queued — it fills automatically once the market reaches your price."
-              );
-              loadAccount();
-            }}
-            presetNonce={presetNonce}
-            presetSide={presetSide}
-            presetOrderType={presetOrderType}
-            presetLimitPrice={presetLimitPrice}
-            presetTriggerPrice={presetTriggerPrice}
-          />
+          // Charting Workbench (W2) — ticket single-mount rule: while the
+          // workbench is open, the SAME element instance renders inside it
+          // instead (see below), and this slot goes empty — never two
+          // mounted DockedOrderTickets for one account at once.
+          workbenchOpen ? null : ticketElement
         }
       />
+
+      {workbenchOpen && focusedSymbol && (
+        <DynamicChartWorkbench
+          feed={{ kind: "equity", symbol: focusedSymbol }}
+          chartKey={`EQ:${focusedSymbol}`}
+          title={focusedSymbol}
+          onClose={() => setWorkbenchOpen(false)}
+          orderLines={orderLines}
+          onOrderIntentConfirm={handleOrderIntentConfirm}
+          onOrderLineDrag={handleOrderLineDrag}
+          onOrderLineCancel={handleOrderLineCancel}
+          onQuoteChange={(q) => setChartQuote(q ? { price: q.price } : null)}
+          ticket={ticketElement}
+        />
+      )}
 
       {lastOrder && <OrderConfirmation order={lastOrder} onDismiss={() => setLastOrder(null)} />}
       {pendingOrderNotice && (

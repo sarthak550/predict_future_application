@@ -41,6 +41,7 @@ import { DockedOrderTicket } from "@/components/paper-trading/terminal/docked-or
 import { PositionsStrip, type PositionChip } from "@/components/paper-trading/terminal/positions-strip";
 import { TerminalHeader } from "@/components/paper-trading/terminal/terminal-header";
 import { TerminalShell } from "@/components/paper-trading/terminal/terminal-shell";
+import { DynamicChartWorkbench, WorkbenchMaximizeButton } from "@/components/paper-trading/workbench/workbench-maximize-button";
 import type { PlacedFuturesOrderPayload } from "@/lib/paperTrading/futuresOrdersClient";
 import { cancelPendingOrder, repricePendingOrder, type PendingOrderPayload } from "@/lib/paperTrading/pendingOrdersClient";
 import { usePriceOverrides } from "@/components/paper-trading/use-price-overrides";
@@ -103,6 +104,14 @@ function FuturesPageClientInner() {
   const [presetLots, setPresetLots] = useState(1);
   const [selectionNonce, setSelectionNonce] = useState(0);
   const [spot, setSpot] = useState<number | null>(null);
+
+  // Charting Workbench (W2) — see paper-trading-dashboard.tsx's identical
+  // doc for the ticket single-mount reasoning. Closed on an underlying
+  // change so a stale workbench for the PREVIOUS underlying never lingers.
+  const [workbenchOpen, setWorkbenchOpen] = useState(false);
+  useEffect(() => {
+    setWorkbenchOpen(false);
+  }, [underlying]);
 
   const [lastOrder, setLastOrder] = useState<PlacedFuturesOrderPayload | null>(null);
   const [pendingOrderNotice, setPendingOrderNotice] = useState<string | null>(null);
@@ -380,6 +389,37 @@ function FuturesPageClientInner() {
       )
   ];
 
+  // Charting Workbench (W2) — ONE ticket element instance, reused verbatim
+  // whether it renders in TerminalShell's own slot or inside the maximized
+  // workbench (ticket single-mount rule — see paper-trading-dashboard.tsx's
+  // identical doc).
+  const ticketElement = (
+    <DockedOrderTicket
+      kind="future"
+      contract={selectedContract}
+      cash={account.cash}
+      heldPosition={heldForSelected}
+      selectionNonce={selectionNonce}
+      presetSide={presetSide}
+      presetLots={presetLots}
+      onOrderPlaced={(order) => {
+        setLastOrder(order);
+        void loadAccount();
+      }}
+      onPendingOrderPlaced={(order) => {
+        setPendingOrderNotice(
+          order.variant === "STOP"
+            ? "Stop order queued — it fills at the price observed when the market crosses your trigger."
+            : "Limit order queued — it fills automatically once the market reaches your price."
+        );
+        void loadAccount();
+      }}
+      presetOrderType={presetOrderType}
+      presetLimitPrice={presetLimitPrice}
+      presetTriggerPrice={presetTriggerPrice}
+    />
+  );
+
   return (
     <div className="space-y-6">
       {error && <p className="text-sm text-rose-600">{error}</p>}
@@ -414,18 +454,21 @@ function FuturesPageClientInner() {
         }
         chart={
           <div>
-            <PriceChart
-              key={underlying}
-              symbol={underlying}
-              series={EMPTY_SERIES}
-              defaultTimeframe="1D"
-              intradaySource={indexIntradaySource}
-              orderLines={orderLines}
-              onOrderIntentConfirm={handleOrderIntentConfirm}
-              onOrderLineDrag={handleOrderLineDrag}
-              onOrderLineCancel={handleOrderLineCancel}
-              pollIntervalMs={60_000}
-            />
+            <div className="relative">
+              <WorkbenchMaximizeButton onClick={() => setWorkbenchOpen(true)} />
+              <PriceChart
+                key={underlying}
+                symbol={underlying}
+                series={EMPTY_SERIES}
+                defaultTimeframe="1D"
+                intradaySource={indexIntradaySource}
+                orderLines={orderLines}
+                onOrderIntentConfirm={handleOrderIntentConfirm}
+                onOrderLineDrag={handleOrderLineDrag}
+                onOrderLineCancel={handleOrderLineCancel}
+                pollIntervalMs={60_000}
+              />
+            </div>
           </div>
         }
         ladder={
@@ -444,34 +487,23 @@ function FuturesPageClientInner() {
             getHeldLots={(u, expiry) => getHeldPosition(u, expiry)}
           />
         }
-        ticket={
-          <DockedOrderTicket
-            kind="future"
-            contract={selectedContract}
-            cash={account.cash}
-            heldPosition={heldForSelected}
-            selectionNonce={selectionNonce}
-            presetSide={presetSide}
-            presetLots={presetLots}
-            onOrderPlaced={(order) => {
-              setLastOrder(order);
-              void loadAccount();
-            }}
-            onPendingOrderPlaced={(order) => {
-              setPendingOrderNotice(
-                order.variant === "STOP"
-                  ? "Stop order queued — it fills at the price observed when the market crosses your trigger."
-                  : "Limit order queued — it fills automatically once the market reaches your price."
-              );
-              void loadAccount();
-            }}
-            presetOrderType={presetOrderType}
-            presetLimitPrice={presetLimitPrice}
-            presetTriggerPrice={presetTriggerPrice}
-          />
-        }
+        ticket={workbenchOpen ? null : ticketElement}
         positions={<PositionsStrip positions={positionChips} />}
       />
+
+      {workbenchOpen && (
+        <DynamicChartWorkbench
+          feed={{ kind: "index", symbol: underlying }}
+          chartKey={`INDEX:${underlying}`}
+          title={`${underlying} (Futures — index spot)`}
+          onClose={() => setWorkbenchOpen(false)}
+          orderLines={orderLines}
+          onOrderIntentConfirm={handleOrderIntentConfirm}
+          onOrderLineDrag={handleOrderLineDrag}
+          onOrderLineCancel={handleOrderLineCancel}
+          ticket={ticketElement}
+        />
+      )}
 
       {pendingOrderNotice && (
         <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800">

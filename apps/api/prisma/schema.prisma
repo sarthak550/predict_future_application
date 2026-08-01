@@ -99,6 +99,8 @@ model User {
   portfolios                       Portfolio[]                       @relation("PortfolioOwnerUser")
   /// Paper Trading Phase 1 accounts (all generations — ACTIVE + ARCHIVED). See model PaperTradingAccount.
   paperTradingAccounts             PaperTradingAccount[]             @relation("PaperTradingAccountOwner")
+  /// Charting Workbench (W1) — this user's persisted chart drawings across all charted instruments. See model ChartDrawing.
+  chartDrawings                    ChartDrawing[]
 }
 
 model LeaderboardSnapshot {
@@ -2296,4 +2298,53 @@ model InstrumentEnrichment {
 
   updatedAt DateTime @updatedAt
   createdAt DateTime @default(now())
+}
+
+/// Charting Workbench (W1) — one persisted trendline/pattern/annotation drawn
+/// on a KLineCharts instance. Additive, single-writer this sprint (see
+/// feedback_serialize_schema_writes) — no other model/field touched.
+model ChartDrawing {
+  id     String @id @default(cuid())
+  userId String
+
+  /// "EQ:RELIANCE" / "INDEX:NIFTY" / "OPT:NIFTY:25-Sep-2026:24800:CE" — which
+  /// terminal's chart this drawing belongs to. Deliberately NOT per-timeframe
+  /// (no interval segment in the key): points are `{timestamp, value}`-
+  /// anchored, not pixel-anchored, so a drawing drawn on the 5m chart still
+  /// makes sense after the user switches to 1D — one row serves every
+  /// interval of the same instrument. The futures terminal charts the same
+  /// index price series as the index/options terminals, so it deliberately
+  /// SHARES the underlying's `INDEX:` key rather than getting its own
+  /// `FUT:`-prefixed key — draw a trendline once, see it in both terminals.
+  chartKey String
+
+  /// One of the ~17 KLineCharts built-in overlay names (segment, fibonacciLine,
+  /// brush, ...) or one of the 4 custom overlays registered in W3 (rect,
+  /// arrow, abcd, xabcd) — see packages/validation/src/chartDrawings.ts for
+  /// the authoritative enum. Stored as a plain String (not a Prisma enum) so
+  /// W3 can register additional custom overlay names without a migration.
+  overlayName String
+
+  /// Overlay anchor points, `{timestamp: epoch ms, value: price}[]` (1-10
+  /// entries depending on overlayName — e.g. 2 for a segment, 6 for an
+  /// xabcd). Timestamp+value anchoring (not pixel coordinates) is what makes
+  /// a drawing survive an interval switch or a browser resize.
+  points Json
+
+  /// Optional per-drawing style overrides (color, line width, ...) passed
+  /// straight through to KLineCharts' overlay style config. Null uses the
+  /// workbench's default theme style for that overlay type.
+  styles Json?
+
+  /// Soft show/hide toggle (W3's per-drawing eye icon) — kept distinct from
+  /// deletion so a hidden drawing round-trips back to visible without losing
+  /// its points/styles.
+  visible Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, chartKey])
 }
