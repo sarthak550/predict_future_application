@@ -16,6 +16,23 @@
  * simple buy/sell ticket, no ladder" per the brief). Everything from
  * "Delivery holdings" down keeps the full tables (with Sell actions) — the
  * chips strip was removed 2026-07-25 as pure duplication of those tables.
+ *
+ * Chart Trading + Stop-Loss/Take-Profit (Sprint B, B3) — the terminal chart
+ * now wires: pending-order lines for the focused symbol (with cancel), a
+ * position line at avg cost with live P&L composed from the chart's own
+ * `onQuoteChange` (this is the first production consumer of that callback —
+ * confirmed at implementation time by grepping for other subscribers, per
+ * the Sprint B brief's own ground-truth note), click-to-prefill a LIMIT
+ * order into NewTradeForm's new preset channel, and an opt-in 60s 1D poll.
+ *
+ * Chart Trading + Stop-Loss/Take-Profit (Sprint C) — the click prefill above
+ * is now the order-intent POPOVER (C2: side/variant inference vs LTP,
+ * replacing the hardcoded-LIMIT click), and pending-order lines are now
+ * DRAGGABLE (C1: pointer-drag reprices via PATCH /api/paper-trading/
+ * pending-orders/[id], with optimistic-UI + revert-on-4xx-with-toast + the
+ * shared `usePriceOverrides` anti-snap-back guard against a stale account
+ * poll landing mid-drag — see that hook's own doc for the exact race it
+ * closes).
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -23,7 +40,8 @@ import { useSearchParams } from "next/navigation";
 
 import { formatNseExpiryDate } from "@predict-future/business-rules/papertrading/optionContract";
 
-import { PriceChart } from "@/components/finance/price-chart";
+import { PriceChart, type ChartOrderLine } from "@/components/finance/price-chart";
+import { EMPTY_ORDER_LINES } from "@/components/finance/chart-order-lines";
 import { PaperTradingSymbolSearchInput, type PaperSymbolOption } from "@/components/paper-trading/symbol-search-input";
 import { type PlacedOrderPayload } from "@/components/paper-trading/new-trade-form";
 import { InstrumentContextCard } from "@/components/paper-trading/instrument-context-card";
@@ -31,7 +49,8 @@ import { OrderConfirmation } from "@/components/paper-trading/order-confirmation
 import { OrderHistoryTable, type OrderHistoryEntry } from "@/components/paper-trading/order-history-table";
 import { PaperTradingDisclaimerFooter } from "@/components/paper-trading/paper-trading-disclaimer-footer";
 import { PendingOrdersPanel } from "@/components/paper-trading/pending-orders-panel";
-import type { PendingOrderPayload } from "@/lib/paperTrading/pendingOrdersClient";
+import { cancelPendingOrder, repricePendingOrder, type PendingOrderPayload } from "@/lib/paperTrading/pendingOrdersClient";
+import { usePriceOverrides } from "@/components/paper-trading/use-price-overrides";
 import { useVisiblePolling } from "@/components/paper-trading/use-visible-polling";
 import { DockedOrderTicket } from "@/components/paper-trading/terminal/docked-order-ticket";
 import { TerminalHeader } from "@/components/paper-trading/terminal/terminal-header";
@@ -145,6 +164,57 @@ export function PaperTradingDashboard() {
   const [pendingOrderNotice, setPendingOrderNotice] = useState<string | null>(null);
   const [resetting, setResetting] = useState(false);
 
+  // Chart Trading + SL/TP (Sprint B, B3) — chart-click preset channel into
+  // NewTradeForm, and the chart's own live spot (via onQuoteChange) for the
+  // position line's live P&L.
+  const [presetNonce, setPresetNonce] = useState(0);
+  const [presetSide, setPresetSide] = useState<"BUY" | "SELL" | undefined>(undefined);
+  const [presetOrderType, setPresetOrderType] = useState<"LIMIT" | "STOP" | undefined>(undefined);
+  const [presetLimitPrice, setPresetLimitPrice] = useState<number | undefined>(undefined);
+  const [presetTriggerPrice, setPresetTriggerPrice] = useState<number | undefined>(undefined);
+  const [chartQuote, setChartQuote] = useState<{ price: number } | null>(null);
+
+  // Chart Trading + SL/TP (Sprint C, C2) — the click-popover's confirmed
+  // side/variant/price feeds the SAME nonce-gated preset channel Sprint B
+  // built, now carrying the user's explicit choice instead of a hardcoded
+  // LIMIT (decision 3 of the Sprint C brief).
+  function handleOrderIntentConfirm(input: { price: number; side: "BUY" | "SELL"; variant: "LIMIT" | "STOP" }) {
+    setPresetSide(input.side);
+    setPresetOrderType(input.variant);
+    setPresetLimitPrice(input.variant === "LIMIT" ? input.price : undefined);
+    setPresetTriggerPrice(input.variant === "STOP" ? input.price : undefined);
+    setPresetNonce((n) => n + 1);
+  }
+
+  // Chart Trading + SL/TP (Sprint C, C1) — drag-to-reprice's optimistic-UI
+  // wiring: the shared usePriceOverrides hook (see that file's own doc for
+  // the exact anti-snap-back race it closes) plus a dismissible error
+  // banner for the "revert on 4xx" toast requirement.
+  const currentPendingOrderPrices = useMemo(
+    () => account?.pendingOrders.map((o) => ({ id: o.id, price: o.variant === "STOP" ? (o.triggerPrice ?? o.limitPrice) : o.limitPrice })) ?? [],
+    [account]
+  );
+  const { overrides: priceOverrides, setOverride: setPriceOverride, clearOverride: clearPriceOverride } = usePriceOverrides(currentPendingOrderPrices);
+  const [repriceError, setRepriceError] = useState<string | null>(null);
+
+  async function handleOrderLineDrag(id: string, newPrice: number) {
+    const order = account?.pendingOrders.find((o) => o.id === id);
+    if (!order) return;
+    setRepriceError(null);
+    setPriceOverride(id, newPrice);
+    const result = await repricePendingOrder(id, order.variant === "STOP" ? { triggerPrice: newPrice } : { limitPrice: newPrice });
+    if (!result.ok) {
+      // Reverts the optimistic line — NOT a silent snap-back, per the Sprint
+      // C brief's honesty framing: the user gets an explicit, visible reason
+      // the drag didn't stick, rather than discovering it later when the
+      // order doesn't behave as they assumed.
+      clearPriceOverride(id);
+      setRepriceError(result.error);
+      return;
+    }
+    await loadAccount();
+  }
+
   const loadAccount = useCallback(async () => {
     try {
       const res = await fetch("/api/paper-trading/account");
@@ -158,6 +228,13 @@ export function PaperTradingDashboard() {
       setError("Couldn't load your Paper Trading account — check your connection.");
     }
   }, []);
+
+  function handleOrderLineCancel(id: string) {
+    if (id.startsWith("position-")) return; // defensive — the position line is never cancellable
+    void cancelPendingOrder(id).then((result) => {
+      if (result.ok) void loadAccount();
+    });
+  }
 
   // Positions mark-to-market and cash tick on their own (delayed feed) instead
   // of freezing until a manual refresh — paused while the tab is hidden.
@@ -243,6 +320,15 @@ export function PaperTradingDashboard() {
 
   const focusedSymbol = deepLinkSymbol ?? manualFocus ?? largestHoldingSymbol ?? restoredLastFocus ?? null;
 
+  // Chart Trading + SL/TP (Sprint B, B3) — a stale quote from the PREVIOUS
+  // focused symbol must never compute the position line's P&L for the NEW
+  // one, even for the one render between a symbol change and the chart's own
+  // first `onQuoteChange` report. Keyed on the primitive `focusedSymbol`
+  // string, never on the chart's own quote object.
+  useEffect(() => {
+    setChartQuote(null);
+  }, [focusedSymbol]);
+
   const setFocusedSymbol = useCallback((symbol: string) => {
     setManualFocus(symbol);
     try {
@@ -302,6 +388,58 @@ export function PaperTradingDashboard() {
   const initialProductType = searchParams.get("productType") === "INTRADAY" ? "INTRADAY" : "DELIVERY";
   const linkedOpinionId = searchParams.get("linkedOpinionId");
 
+  // Chart Trading + SL/TP (Sprint B, B3) — order lines for the FOCUSED
+  // symbol's chart only: its own resting pending orders (LIMIT/STOP,
+  // cancellable) plus a position line at avg cost (delivery holding takes
+  // priority over an open intraday position, mirroring how the rest of this
+  // page already treats delivery as the "primary" equity position type).
+  // Built directly at render time from props/state — deliberately NOT a
+  // `useMemo` keyed on anything that could churn every quote tick, since
+  // this array is only ever read by PriceChart's own render (never an effect
+  // dependency anywhere), so there is no render-loop risk from recomputing
+  // it on every render.
+  const focusedPosition = focusedSymbol
+    ? (account.deliveryHoldings.find((h) => h.symbol === focusedSymbol) ?? account.openIntradayPositions.find((h) => h.symbol === focusedSymbol))
+    : undefined;
+  const orderLines: ChartOrderLine[] = focusedSymbol
+    ? [
+        ...account.pendingOrders
+          .filter((o) => o.instrumentKind === "EQUITY" && o.symbol === focusedSymbol)
+          .map((o): ChartOrderLine => {
+            // Sprint C, C1 — an active optimistic drag override (see
+            // usePriceOverrides) wins over whatever the account payload
+            // itself reports, until the account data self-confirms the new
+            // price — this is what stops a stale in-flight poll response
+            // from snapping the line back mid-drag or right after a
+            // successful reprice.
+            const price = priceOverrides[o.id] ?? (o.variant === "STOP" ? (o.triggerPrice ?? o.limitPrice) : o.limitPrice);
+            return {
+              id: o.id,
+              price,
+              kind: o.variant === "STOP" ? "pending-stop" : "pending-limit",
+              side: o.side,
+              label: `${o.variant} ${o.side} ${o.quantity} @ ${formatRupees(price)}`,
+              cancellable: true,
+              draggable: true
+            };
+          }),
+        ...(focusedPosition && focusedPosition.quantity !== 0
+          ? [
+              {
+                id: `position-${focusedSymbol}`,
+                price: focusedPosition.avgCost,
+                kind: "position" as const,
+                side: focusedPosition.quantity < 0 ? ("SELL" as const) : ("BUY" as const),
+                label:
+                  `Avg ${formatRupees(focusedPosition.avgCost)}` +
+                  (chartQuote ? ` · ${formatSignedRupees((chartQuote.price - focusedPosition.avgCost) * focusedPosition.quantity)}` : ""),
+                cancellable: false
+              }
+            ]
+          : [])
+      ]
+    : EMPTY_ORDER_LINES;
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -353,7 +491,17 @@ export function PaperTradingDashboard() {
         chart={
           focusedSymbol ? (
             <div>
-              <PriceChart key={focusedSymbol} symbol={focusedSymbol} series={eodSeries} />
+              <PriceChart
+                key={focusedSymbol}
+                symbol={focusedSymbol}
+                series={eodSeries}
+                orderLines={orderLines}
+                onOrderIntentConfirm={handleOrderIntentConfirm}
+                onOrderLineDrag={handleOrderLineDrag}
+                onOrderLineCancel={handleOrderLineCancel}
+                onQuoteChange={(q) => setChartQuote(q ? { price: q.price } : null)}
+                pollIntervalMs={60_000}
+              />
               <InstrumentContextCard symbol={focusedSymbol} />
               <div className="mt-3 max-w-xs">
                 <PaperTradingSymbolSearchInput
@@ -387,10 +535,19 @@ export function PaperTradingDashboard() {
               setFocusedSymbol(order.symbol);
               loadAccount();
             }}
-            onPendingOrderPlaced={() => {
-              setPendingOrderNotice("Limit order queued — it fills automatically once the market reaches your price.");
+            onPendingOrderPlaced={(order) => {
+              setPendingOrderNotice(
+                order.variant === "STOP"
+                  ? "Stop order queued — it fills at the price observed when the market crosses your trigger."
+                  : "Limit order queued — it fills automatically once the market reaches your price."
+              );
               loadAccount();
             }}
+            presetNonce={presetNonce}
+            presetSide={presetSide}
+            presetOrderType={presetOrderType}
+            presetLimitPrice={presetLimitPrice}
+            presetTriggerPrice={presetTriggerPrice}
           />
         }
       />
@@ -400,6 +557,14 @@ export function PaperTradingDashboard() {
         <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800">
           {pendingOrderNotice}{" "}
           <button type="button" className="underline" onClick={() => setPendingOrderNotice(null)}>
+            Dismiss
+          </button>
+        </div>
+      )}
+      {repriceError && (
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+          Couldn&apos;t move that order — {repriceError}{" "}
+          <button type="button" className="underline" onClick={() => setRepriceError(null)}>
             Dismiss
           </button>
         </div>

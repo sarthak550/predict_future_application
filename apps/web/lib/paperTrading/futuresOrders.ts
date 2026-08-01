@@ -58,22 +58,43 @@
  *     for the cron-side mirror of this exact same formula.
  *
  * Both cases are converted to the stored `netAmount` value via
- * `signedNetAmountForCashEffect` below, which accounts for deriveCash's
+ * `signedNetAmountForCashEffect`, which accounts for deriveCash's
  * existing side-based sign convention (`cash += side === "SELL" ? netAmount :
  * -netAmount`, unchanged since Phase 1) so this NEVER requires touching
  * deriveCash itself — the existing formula already produces the right result
  * once netAmount is stored with the correct sign for the desired cash effect.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Chart Trading + SL/TP (Sprint A, 2026-07-31) — REFACTORED to consume
+ * `planFuturesOrderFill` (packages/business-rules/src/papertrading/
+ * futuresOrderPlan.ts) for everything from open/close classification through
+ * netAmount, instead of the inline logic this file used to carry directly.
+ * See that module's doc for the full rationale — in short: futures pending
+ * orders (new this sprint) need the IDENTICAL classification/margin/netAmount
+ * algebra this market-order path already had, and "don't fork the logic"
+ * means both consume one shared pure function.
+ *
+ * This refactor is a BEHAVIORAL NO-OP for every pre-existing scenario except
+ * one addition: the margin-headroom check now ALSO subtracts
+ * `pendingBlockedMargin` (cash/margin already reserved by this account's own
+ * resting pending futures orders — decision 6, the same T3-regression
+ * requirement the equity/options market paths have honored since the Limit
+ * Orders sprint via `derivePendingBlockedCash`). Proven algebraically
+ * identical to the pre-refactor inline formula in
+ * apps/api/scripts/verify-papertrading-engine.ts, section 40.
  */
 
-import { computeFuturesOrderCosts } from "@predict-future/business-rules/papertrading/futuresCosts";
-import { computeFuturesMarginRequired, INDEX_FUTURES_MARGIN_RATE } from "@predict-future/business-rules/papertrading/futuresMargin";
 import { formatFuturesContractSymbol } from "@predict-future/business-rules/papertrading/futuresContract";
+import { planFuturesOrderFill } from "@predict-future/business-rules/papertrading/futuresOrderPlan";
+import { INDEX_FUTURES_MARGIN_RATE } from "@predict-future/business-rules/papertrading/futuresMargin";
+import { derivePendingBlockedCash } from "@predict-future/business-rules/papertrading/pendingOrders";
 import { parseNseExpiryDate, isIndexOptionUnderlying, type IndexOptionUnderlying } from "@predict-future/business-rules/papertrading/optionContract";
 import { deriveCash, deriveOpenFuturesPositions, type PaperEngineOrder } from "@predict-future/business-rules/papertrading/replay";
 import { isNseWeekdayMarketHours } from "@predict-future/business-rules/papertrading/marketHours";
 import type { TxSide } from "@prisma/client";
 
 import { getOrCreateActiveAccount } from "@/lib/paperTrading/account";
+import { fetchActivePendingOrders } from "@/lib/paperTrading/pendingOrders";
 import { fetchFuturesQuoteServer, findFuturesContractQuote, type FuturesQuoteSource } from "@/lib/paperTrading/futuresQuote";
 import { prisma } from "@/lib/prisma";
 
@@ -139,11 +160,6 @@ export type PlaceFuturesOrderResult =
   | { ok: true; order: PlacedFuturesOrder }
   | { ok: false; status: 400 | 422 | 502; reason: string };
 
-/** deriveCash's existing convention: `cash += side === "SELL" ? netAmount : -netAmount`. Inverting that to solve for the netAmount value that produces a DESIRED signed cash effect — see the module doc above. */
-function signedNetAmountForCashEffect(side: TxSide, cashEffect: number): number {
-  return side === "SELL" ? cashEffect : -cashEffect;
-}
-
 const IMPLIED_LEVERAGE = 1 / INDEX_FUTURES_MARGIN_RATE;
 
 export async function placeFuturesOrder(userId: string, input: PlaceFuturesOrderInput): Promise<PlaceFuturesOrderResult> {
@@ -203,69 +219,34 @@ export async function placeFuturesOrder(userId: string, input: PlaceFuturesOrder
   });
   const existingOrders = existingOrderRows as unknown as PaperEngineOrder[];
 
+  // Sprint A (decision 6) — a resting pending futures LIMIT/STOP order on
+  // this account must be respected by THIS market-order path too, exactly
+  // like the equity/options market paths already subtract
+  // derivePendingBlockedCash since the Limit Orders sprint (T3's regression
+  // requirement, now extended to futures).
+  const existingPending = await fetchActivePendingOrders(account.id);
+
   const cash = deriveCash(account.startingCapital, existingOrders);
   const openFuturesPositions = deriveOpenFuturesPositions(existingOrders);
-  const matching = openFuturesPositions.find(
-    (p) => p.underlyingSymbol === underlying && p.expiryDate.getTime() === expiryDate.getTime()
-  );
-  const currentSignedQty = matching?.quantity ?? 0;
-  const orderSignedDelta = input.side === "BUY" ? quantity : -quantity;
-  const isOpeningOrAdding = currentSignedQty === 0 || Math.sign(currentSignedQty) === Math.sign(orderSignedDelta);
+  const pendingBlockedMargin = derivePendingBlockedCash(existingPending);
 
-  // Cost stack — every field EXCEPT `.netAmount` is reused verbatim (see the module doc).
-  const costs = computeFuturesOrderCosts({ side: input.side, quantity, price: contractPrice });
+  const planResult = planFuturesOrderFill({
+    underlyingSymbol: underlying,
+    expiryDate,
+    side: input.side,
+    lots: input.lots,
+    lotSize,
+    contractPrice,
+    cash,
+    openFuturesPositions,
+    pendingBlockedMargin
+  });
 
-  let netAmount: number;
-
-  if (isOpeningOrAdding) {
-    // Margin-headroom gate. Existing OTHER open positions' notional is valued
-    // at each position's own `referencePrice` (its last daily-MTM mark, or
-    // entry price if never marked) rather than a fresh live fetch per
-    // position — this avoids an unbounded number of extra NSE calls per
-    // order (a user could hold up to 5 simultaneous index-future positions).
-    // referencePrice is at most one trading day stale (the MTM cron marks
-    // every open position daily), and the flat 15% margin rate is already
-    // deliberately biased above real SPAN minimums to absorb exactly this
-    // kind of small staleness. The contract actually being traded always
-    // uses the fresh quote just fetched above, which is the most accurate
-    // number available for it.
-    const otherPositionsMargin = openFuturesPositions
-      .filter((p) => !(p.underlyingSymbol === underlying && p.expiryDate.getTime() === expiryDate.getTime()))
-      .reduce((sum, p) => sum + computeFuturesMarginRequired(Math.abs(p.quantity) * p.referencePrice), 0);
-
-    const newTotalQtyThisContract = currentSignedQty + orderSignedDelta;
-    const thisContractMargin = computeFuturesMarginRequired(Math.abs(newTotalQtyThisContract) * contractPrice);
-    const totalMarginNeeded = otherPositionsMargin + thisContractMargin;
-    const headroom = cash - costs.totalCosts - totalMarginNeeded;
-
-    if (headroom < 0) {
-      return {
-        ok: false,
-        status: 422,
-        reason: `Insufficient margin: this position needs ~₹${totalMarginNeeded.toLocaleString("en-IN", { maximumFractionDigits: 0 })} margin (15% of notional, conservative estimate) plus ₹${costs.totalCosts.toFixed(2)} in costs, but only ₹${cash.toLocaleString("en-IN", { maximumFractionDigits: 0 })} cash is available.`
-      };
-    }
-
-    netAmount = signedNetAmountForCashEffect(input.side, -costs.totalCosts);
-  } else {
-    // Closing/reducing an existing position. Capped to held lots in ONE
-    // order — no flip-through — mirrors optionOrders.ts's identical SELL-cap
-    // precedent for the same "keep the validation simple and safe" reason:
-    // closing fully then opening a new order in the opposite direction is
-    // two explicit steps, never an implicit one.
-    const heldLots = matching?.lots ?? 0;
-    if (input.lots > heldLots) {
-      return {
-        ok: false,
-        status: 422,
-        reason: `You hold ${heldLots} lot(s) of this contract — can't close ${input.lots} in one order. Close your position fully, then place a new order if you want to flip direction.`
-      };
-    }
-
-    const directionSign = Math.sign(currentSignedQty); // +1 closing a long, -1 closing a short — matching is non-null here
-    const realizedPnlThisLeg = quantity * (contractPrice - matching!.referencePrice) * directionSign;
-    netAmount = signedNetAmountForCashEffect(input.side, realizedPnlThisLeg - costs.totalCosts);
+  if (!planResult.ok) {
+    return { ok: false, status: planResult.status, reason: planResult.reason };
   }
+  const { plan } = planResult;
+  const { costs, netAmount, isOpeningOrAdding } = plan;
 
   const symbol = formatFuturesContractSymbol(underlying, expiryDate);
   const fillTickAt = quote.asOf ?? new Date();
@@ -326,8 +307,6 @@ export async function placeFuturesOrder(userId: string, input: PlaceFuturesOrder
     }
   });
 
-  const marginRequired = computeFuturesMarginRequired(quantity * contractPrice);
-
   return {
     ok: true,
     order: {
@@ -335,7 +314,7 @@ export async function placeFuturesOrder(userId: string, input: PlaceFuturesOrder
       underlyingSymbol: underlying,
       lotSize: lotSize as number,
       quoteSource: quote.source,
-      marginRequired,
+      marginRequired: plan.marginRequired,
       impliedLeverage: IMPLIED_LEVERAGE,
       isClose: !isOpeningOrAdding
     }

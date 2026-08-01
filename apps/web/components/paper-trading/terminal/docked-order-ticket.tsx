@@ -65,6 +65,12 @@ interface EquityTicketProps {
   onOrderPlaced: (order: PlacedOrderPayload) => void;
   /** Limit Orders (Sprint, 2026-07-26) — optional so callers that haven't wired a pending-orders section still compile; the Limit toggle itself only renders when this is provided (see NewTradeForm). */
   onPendingOrderPlaced?: (order: PendingOrderPayload) => void;
+  /** Chart Trading + SL/TP (Sprint B) — chart-click preset channel, passed straight through to NewTradeForm. See that component's own doc for the full contract. */
+  presetNonce?: number;
+  presetSide?: "BUY" | "SELL";
+  presetOrderType?: "MARKET" | "LIMIT" | "STOP";
+  presetLimitPrice?: number;
+  presetTriggerPrice?: number;
 }
 
 interface OptionTicketProps {
@@ -73,13 +79,24 @@ interface OptionTicketProps {
   cash: number;
   heldLots: number;
   linkedOpinionId?: string | null;
-  /** Bumped by the parent on every ladder [B]/[S] tap — the ticket syncs its local side/lots from presetSide/presetLots exactly when this changes, decoupled from `contract`'s own object identity (which changes on every ~30s poll tick even for the SAME selected contract). */
+  /** Bumped by the parent on every ladder [B]/[S] tap OR a premium-chart click (Sprint B) — the ticket syncs its local side/lots from presetSide/presetLots exactly when this changes, decoupled from `contract`'s own object identity (which changes on every ~30s poll tick even for the SAME selected contract). */
   selectionNonce: number;
   presetSide: "BUY" | "SELL";
   presetLots: number;
   onOrderPlaced: (order: PlacedOptionOrderPayload) => void;
   /** Limit Orders (Sprint, 2026-07-26) — optional, same "toggle only renders when provided" gating as the equity ticket. */
   onPendingOrderPlaced?: (order: PendingOrderPayload) => void;
+  /**
+   * Chart Trading + SL/TP (Sprint B, B4) — set ONLY by a premium-chart click,
+   * never by a ladder tap. When present, the nonce-sync effect applies this
+   * order type + price instead of resetting to MARKET (decision 4 of the
+   * Sprint B brief: "stop resetting orderType when presets are supplied").
+   * The caller must reset these to `undefined` before the next ladder tap's
+   * nonce bump, or that tap would incorrectly preserve a stale chart preset.
+   */
+  presetOrderType?: "MARKET" | "LIMIT" | "STOP";
+  presetLimitPrice?: number;
+  presetTriggerPrice?: number;
 }
 
 interface FuturesTicketProps {
@@ -92,6 +109,12 @@ interface FuturesTicketProps {
   presetSide: "BUY" | "SELL";
   presetLots: number;
   onOrderPlaced: (order: PlacedFuturesOrderPayload) => void;
+  /** Chart Trading + SL/TP (Sprint B) — optional, same "toggle only renders when provided" gating as the equity/option tickets; the Limit/Stop toggle is unavailable when omitted. */
+  onPendingOrderPlaced?: (order: PendingOrderPayload) => void;
+  /** Same chart-click-only preset convention as OptionTicketProps above. */
+  presetOrderType?: "MARKET" | "LIMIT" | "STOP";
+  presetLimitPrice?: number;
+  presetTriggerPrice?: number;
 }
 
 export type DockedOrderTicketProps = EquityTicketProps | OptionTicketProps | FuturesTicketProps;
@@ -111,6 +134,11 @@ export function DockedOrderTicket(props: DockedOrderTicketProps) {
           linkedOpinionId={props.linkedOpinionId}
           onOrderPlaced={props.onOrderPlaced}
           onPendingOrderPlaced={props.onPendingOrderPlaced}
+          presetNonce={props.presetNonce}
+          presetSide={props.presetSide}
+          presetOrderType={props.presetOrderType}
+          presetLimitPrice={props.presetLimitPrice}
+          presetTriggerPrice={props.presetTriggerPrice}
         />
       </DockedTicketChrome>
     );
@@ -127,6 +155,10 @@ export function DockedOrderTicket(props: DockedOrderTicketProps) {
           presetSide={props.presetSide}
           presetLots={props.presetLots}
           onOrderPlaced={props.onOrderPlaced}
+          onPendingOrderPlaced={props.onPendingOrderPlaced}
+          presetOrderType={props.presetOrderType}
+          presetLimitPrice={props.presetLimitPrice}
+          presetTriggerPrice={props.presetTriggerPrice}
         />
       </DockedTicketChrome>
     );
@@ -144,6 +176,9 @@ export function DockedOrderTicket(props: DockedOrderTicketProps) {
         presetLots={props.presetLots}
         onOrderPlaced={props.onOrderPlaced}
         onPendingOrderPlaced={props.onPendingOrderPlaced}
+        presetOrderType={props.presetOrderType}
+        presetLimitPrice={props.presetLimitPrice}
+        presetTriggerPrice={props.presetTriggerPrice}
       />
     </DockedTicketChrome>
   );
@@ -158,7 +193,10 @@ function OptionTicketBody({
   presetSide,
   presetLots,
   onOrderPlaced,
-  onPendingOrderPlaced
+  onPendingOrderPlaced,
+  presetOrderType,
+  presetLimitPrice,
+  presetTriggerPrice
 }: {
   contract: SelectedContract | null;
   cash: number;
@@ -169,15 +207,20 @@ function OptionTicketBody({
   presetLots: number;
   onOrderPlaced: (order: PlacedOptionOrderPayload) => void;
   onPendingOrderPlaced?: (order: PendingOrderPayload) => void;
+  presetOrderType?: "MARKET" | "LIMIT" | "STOP";
+  presetLimitPrice?: number;
+  presetTriggerPrice?: number;
 }) {
   const [side, setSide] = useState<"BUY" | "SELL">(presetSide);
   const [lots, setLots] = useState(presetLots);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState("");
-  // Limit Orders (Sprint, 2026-07-26) — Market/Limit toggle, same shape as
-  // NewTradeForm's. Market mode's submitOptionOrder call is untouched.
-  const [orderType, setOrderType] = useState<"MARKET" | "LIMIT">("MARKET");
+  // Limit Orders (Sprint, 2026-07-26) — Market/Limit toggle, widened to
+  // Market/Limit/STOP by Chart Trading + SL/TP (Sprint B). Market mode's
+  // submitOptionOrder call is untouched.
+  const [orderType, setOrderType] = useState<"MARKET" | "LIMIT" | "STOP">(presetOrderType ?? "MARKET");
   const [limitPrice, setLimitPrice] = useState("");
+  const [triggerPrice, setTriggerPrice] = useState("");
   // Mount-computed, not render-computed — matches this domain's established
   // convention for a time-dependent value (see option-trade-panel.tsx's
   // identical pattern) so SSR and hydration agree.
@@ -186,10 +229,17 @@ function OptionTicketBody({
     setMarketClosed(!isNseWeekdayMarketHours());
   }, []);
 
-  // A ladder [B]/[S] tap bumps selectionNonce — sync local side/lots from the
-  // parent's preset exactly then, never on every re-render (which would wipe
-  // out a lots value the user is mid-adjusting) and never merely because
-  // `contract`'s object identity changed on a routine ~30s chain poll.
+  // A ladder [B]/[S] tap OR a premium-chart click (Sprint B, B4) bumps
+  // selectionNonce — sync local side/lots from the parent's preset exactly
+  // then, never on every re-render (which would wipe out a lots value the
+  // user is mid-adjusting) and never merely because `contract`'s object
+  // identity changed on a routine ~30s chain poll.
+  //
+  // Chart Trading + SL/TP (Sprint B) — a ladder tap never supplies
+  // `presetOrderType` (undefined), so this keeps resetting to MARKET exactly
+  // as before Sprint B (zero regression). A premium-chart click DOES supply
+  // it, and per decision 4 of the Sprint B brief the sync must apply that
+  // order type/price rather than wiping it back to MARKET.
   const lastSyncedNonce = useRef(-1);
   useEffect(() => {
     if (selectionNonce === lastSyncedNonce.current) return;
@@ -197,8 +247,15 @@ function OptionTicketBody({
     setSide(presetSide);
     setLots(presetLots);
     setFormError("");
-    setOrderType("MARKET");
-    setLimitPrice("");
+    if (presetOrderType) {
+      setOrderType(presetOrderType);
+      setLimitPrice(presetOrderType === "LIMIT" && presetLimitPrice != null ? String(presetLimitPrice) : "");
+      setTriggerPrice(presetOrderType === "STOP" && presetTriggerPrice != null ? String(presetTriggerPrice) : "");
+    } else {
+      setOrderType("MARKET");
+      setLimitPrice("");
+      setTriggerPrice("");
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectionNonce]);
 
@@ -214,11 +271,21 @@ function OptionTicketBody({
   const quantity = lots * contract.lotSize;
   const limitPriceNumber = Number(limitPrice);
   const validLimitPrice = limitPrice.trim() !== "" && Number.isFinite(limitPriceNumber) && limitPriceNumber > 0;
-  const estimatePrice = orderType === "MARKET" ? contract.premium : validLimitPrice ? limitPriceNumber : contract.premium;
+  const triggerPriceNumber = Number(triggerPrice);
+  const validTriggerPrice = triggerPrice.trim() !== "" && Number.isFinite(triggerPriceNumber) && triggerPriceNumber > 0;
+  const estimatePrice =
+    orderType === "MARKET"
+      ? contract.premium
+      : orderType === "LIMIT"
+        ? (validLimitPrice ? limitPriceNumber : contract.premium)
+        : validTriggerPrice
+          ? triggerPriceNumber
+          : contract.premium;
   const estimate = computeOptionOrderCosts({ side, quantity, price: estimatePrice });
   const insufficientCash = side === "BUY" && estimate.netAmount > cash;
   const exceedsHolding = side === "SELL" && lots > heldLots;
   const limitDistancePct = orderType === "LIMIT" && validLimitPrice ? ((limitPriceNumber - contract.premium) / contract.premium) * 100 : null;
+  const triggerDistancePct = orderType === "STOP" && validTriggerPrice ? ((triggerPriceNumber - contract.premium) / contract.premium) * 100 : null;
 
   const contractDate = parseExpiryDisplayDate(contract.expiry);
   const contractLabel = contractDate
@@ -231,10 +298,11 @@ function OptionTicketBody({
     if (submitting || exceedsHolding || !contract) return;
     if (orderType === "MARKET" && insufficientCash) return;
     if (orderType === "LIMIT" && !validLimitPrice) return;
+    if (orderType === "STOP" && !validTriggerPrice) return;
     setFormError("");
     setSubmitting(true);
     try {
-      if (orderType === "LIMIT") {
+      if (orderType === "LIMIT" || orderType === "STOP") {
         const result = await submitPendingOrder({
           orderKind: "OPTION",
           underlyingSymbol: contract.underlying,
@@ -243,7 +311,8 @@ function OptionTicketBody({
           expiryDate: contract.expiry,
           side,
           lots,
-          limitPrice: limitPriceNumber,
+          variant: orderType,
+          ...(orderType === "LIMIT" ? { limitPrice: limitPriceNumber } : { triggerPrice: triggerPriceNumber }),
           linkedOpinionId
         });
         if (!result.ok) {
@@ -361,6 +430,15 @@ function OptionTicketBody({
               >
                 Limit
               </button>
+              <button
+                type="button"
+                onClick={() => setOrderType("STOP")}
+                className={`rounded-xl px-3 py-1.5 text-xs font-medium transition ${
+                  orderType === "STOP" ? "bg-ink-900 text-white" : "text-ink-600 hover:text-ink-900"
+                }`}
+              >
+                Stop
+              </button>
             </div>
             {orderType === "LIMIT" && (
               <div className="flex items-center gap-2">
@@ -382,12 +460,42 @@ function OptionTicketBody({
                 )}
               </div>
             )}
+            {orderType === "STOP" && (
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={0}
+                  step="0.05"
+                  value={triggerPrice}
+                  onChange={(e) => setTriggerPrice(e.target.value)}
+                  placeholder="Trigger premium"
+                  disabled={submitting}
+                  className="w-28 rounded-xl border border-ink-200 px-3 py-1.5 text-sm"
+                />
+                {triggerDistancePct !== null && (
+                  <span className={`text-xs ${triggerDistancePct >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                    {triggerDistancePct >= 0 ? "+" : ""}
+                    {triggerDistancePct.toFixed(2)}% vs premium
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         )}
         {orderType === "LIMIT" && (
           <p className="text-xs leading-5 text-ink-500">
             Fills only when the delayed premium reaches ₹{validLimitPrice ? limitPriceNumber.toLocaleString("en-IN") : "your limit"} — at
             your limit price, never a better one. Blocked now; expires at today&apos;s session close if unfilled.
+          </p>
+        )}
+        {orderType === "STOP" && (
+          <p className="text-xs leading-5 text-ink-500">
+            Fills at the delayed premium observed when it crosses ₹
+            {validTriggerPrice ? triggerPriceNumber.toLocaleString("en-IN") : "your trigger"} — that crossing premium
+            may be better or worse than your trigger, it is never guaranteed to fill exactly at it. Blocked now
+            against the trigger premium; if the actual crossing premium would make this order infeasible, it&apos;s
+            rejected (never filled into negative cash) — you&apos;ll see why in Pending orders. Expires at
+            today&apos;s session close if unfilled.
           </p>
         )}
 
@@ -413,13 +521,19 @@ function OptionTicketBody({
         <Button
           type="submit"
           variant={side === "BUY" ? "primary" : "danger"}
-          disabled={submitting || exceedsHolding || (orderType === "MARKET" ? insufficientCash : !validLimitPrice)}
+          disabled={
+            submitting ||
+            exceedsHolding ||
+            (orderType === "MARKET" ? insufficientCash : orderType === "LIMIT" ? !validLimitPrice : !validTriggerPrice)
+          }
         >
           {submitting
             ? "Placing order…"
             : orderType === "LIMIT"
               ? `Place ${side.toLowerCase()} limit order`
-              : `Confirm ${side.toLowerCase()} order`}
+              : orderType === "STOP"
+                ? `Place ${side.toLowerCase()} stop order`
+                : `Confirm ${side.toLowerCase()} order`}
         </Button>
       </form>
     </div>
@@ -435,7 +549,11 @@ function FuturesTicketBody({
   selectionNonce,
   presetSide,
   presetLots,
-  onOrderPlaced
+  onOrderPlaced,
+  onPendingOrderPlaced,
+  presetOrderType,
+  presetLimitPrice,
+  presetTriggerPrice
 }: {
   contract: SelectedFuturesContract | null;
   cash: number;
@@ -444,6 +562,10 @@ function FuturesTicketBody({
   presetSide: "BUY" | "SELL";
   presetLots: number;
   onOrderPlaced: (order: PlacedFuturesOrderPayload) => void;
+  onPendingOrderPlaced?: (order: PendingOrderPayload) => void;
+  presetOrderType?: "MARKET" | "LIMIT" | "STOP";
+  presetLimitPrice?: number;
+  presetTriggerPrice?: number;
 }) {
   const [side, setSide] = useState<"BUY" | "SELL">(presetSide);
   const [lots, setLots] = useState(presetLots);
@@ -453,7 +575,18 @@ function FuturesTicketBody({
   useEffect(() => {
     setMarketClosed(!isNseWeekdayMarketHours());
   }, []);
+  // Chart Trading + SL/TP (Sprint B) — futures previously had no pending-order
+  // path at all (Sprint A added it); MARKET/LIMIT/STOP toggle, same shape as
+  // the equity/option tickets. MARKET mode's submitFuturesOrder call is
+  // untouched.
+  const [orderType, setOrderType] = useState<"MARKET" | "LIMIT" | "STOP">(presetOrderType ?? "MARKET");
+  const [limitPrice, setLimitPrice] = useState(presetLimitPrice != null ? String(presetLimitPrice) : "");
+  const [triggerPrice, setTriggerPrice] = useState(presetTriggerPrice != null ? String(presetTriggerPrice) : "");
 
+  // A ladder [B]/[S] tap never supplies `presetOrderType` (resets to MARKET,
+  // same as before Sprint B); the futures chart's click-to-prefill DOES
+  // supply it and must be preserved, not wiped — same "preserve, don't
+  // reset" convention as the option ticket's nonce-sync above.
   const lastSyncedNonce = useRef(-1);
   useEffect(() => {
     if (selectionNonce === lastSyncedNonce.current) return;
@@ -461,6 +594,15 @@ function FuturesTicketBody({
     setSide(presetSide);
     setLots(presetLots);
     setFormError("");
+    if (presetOrderType) {
+      setOrderType(presetOrderType);
+      setLimitPrice(presetOrderType === "LIMIT" && presetLimitPrice != null ? String(presetLimitPrice) : "");
+      setTriggerPrice(presetOrderType === "STOP" && presetTriggerPrice != null ? String(presetTriggerPrice) : "");
+    } else {
+      setOrderType("MARKET");
+      setLimitPrice("");
+      setTriggerPrice("");
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectionNonce]);
 
@@ -482,14 +624,33 @@ function FuturesTicketBody({
   const exceedsHolding = isClosing && lots > (heldPosition?.lots ?? 0);
 
   const quantity = lots * contract.lotSize;
-  const costs = computeFuturesOrderCosts({ side, quantity, price: contract.price });
-  const notional = quantity * contract.price;
+  const limitPriceNumber = Number(limitPrice);
+  const validLimitPrice = limitPrice.trim() !== "" && Number.isFinite(limitPriceNumber) && limitPriceNumber > 0;
+  const triggerPriceNumber = Number(triggerPrice);
+  const validTriggerPrice = triggerPrice.trim() !== "" && Number.isFinite(triggerPriceNumber) && triggerPriceNumber > 0;
+  // The price the margin/costs preview is computed against — the live
+  // contract price in Market mode, the user's own limit/trigger price
+  // otherwise (a pending futures order blocks margin against ITS OWN price,
+  // never the live quote — see pendingOrders.ts's web placement doc).
+  const estimatePrice =
+    orderType === "MARKET"
+      ? contract.price
+      : orderType === "LIMIT"
+        ? (validLimitPrice ? limitPriceNumber : contract.price)
+        : validTriggerPrice
+          ? triggerPriceNumber
+          : contract.price;
+  const costs = computeFuturesOrderCosts({ side, quantity, price: estimatePrice });
+  const notional = quantity * estimatePrice;
   const marginRequired = computeFuturesMarginRequired(notional);
+  const limitDistancePct = orderType === "LIMIT" && validLimitPrice ? ((limitPriceNumber - contract.price) / contract.price) * 100 : null;
+  const triggerDistancePct = orderType === "STOP" && validTriggerPrice ? ((triggerPriceNumber - contract.price) / contract.price) * 100 : null;
 
   // Soft client-side pre-check ONLY — cash here doesn't know about OTHER open
   // positions' margin usage (the docked ticket isn't handed the full account
-  // read). The server route (futuresOrders.ts) is the authoritative,
-  // aggregate-margin check; this just avoids an obviously-doomed submit.
+  // read). The server route (futuresOrders.ts / pendingOrders.ts) is the
+  // authoritative, aggregate-margin check; this just avoids an
+  // obviously-doomed submit.
   const likelyInsufficientMargin = !isClosing && cash < marginRequired + costs.totalCosts;
 
   const expiryDate = parseNseExpiryDate(contract.expiry);
@@ -501,9 +662,29 @@ function FuturesTicketBody({
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     if (submitting || exceedsHolding || !contract) return;
+    if (orderType === "LIMIT" && !validLimitPrice) return;
+    if (orderType === "STOP" && !validTriggerPrice) return;
     setFormError("");
     setSubmitting(true);
     try {
+      if (orderType === "LIMIT" || orderType === "STOP") {
+        const result = await submitPendingOrder({
+          orderKind: "FUTURE",
+          underlyingSymbol: contract.underlying,
+          expiryDate: contract.expiry,
+          side,
+          lots,
+          variant: orderType,
+          ...(orderType === "LIMIT" ? { limitPrice: limitPriceNumber } : { triggerPrice: triggerPriceNumber })
+        });
+        if (!result.ok) {
+          setFormError(result.error);
+          return;
+        }
+        onPendingOrderPlaced?.(result.order);
+        return;
+      }
+
       const result = await submitFuturesOrder({
         underlyingSymbol: contract.underlying,
         expiryDate: contract.expiry,
@@ -591,6 +772,98 @@ function FuturesTicketBody({
           <span className="text-xs text-ink-400">= {quantity.toLocaleString("en-IN")} units</span>
         </div>
 
+        {onPendingOrderPlaced && (
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="inline-flex rounded-2xl border border-ink-200 bg-white p-1">
+              <button
+                type="button"
+                onClick={() => setOrderType("MARKET")}
+                className={`rounded-xl px-3 py-1.5 text-xs font-medium transition ${
+                  orderType === "MARKET" ? "bg-ink-900 text-white" : "text-ink-600 hover:text-ink-900"
+                }`}
+              >
+                Market
+              </button>
+              <button
+                type="button"
+                onClick={() => setOrderType("LIMIT")}
+                className={`rounded-xl px-3 py-1.5 text-xs font-medium transition ${
+                  orderType === "LIMIT" ? "bg-ink-900 text-white" : "text-ink-600 hover:text-ink-900"
+                }`}
+              >
+                Limit
+              </button>
+              <button
+                type="button"
+                onClick={() => setOrderType("STOP")}
+                className={`rounded-xl px-3 py-1.5 text-xs font-medium transition ${
+                  orderType === "STOP" ? "bg-ink-900 text-white" : "text-ink-600 hover:text-ink-900"
+                }`}
+              >
+                Stop
+              </button>
+            </div>
+            {orderType === "LIMIT" && (
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={0}
+                  step="0.05"
+                  value={limitPrice}
+                  onChange={(e) => setLimitPrice(e.target.value)}
+                  placeholder="Limit price"
+                  disabled={submitting}
+                  className="w-28 rounded-xl border border-ink-200 px-3 py-1.5 text-sm"
+                />
+                {limitDistancePct !== null && (
+                  <span className={`text-xs ${limitDistancePct >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                    {limitDistancePct >= 0 ? "+" : ""}
+                    {limitDistancePct.toFixed(2)}% vs price
+                  </span>
+                )}
+              </div>
+            )}
+            {orderType === "STOP" && (
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={0}
+                  step="0.05"
+                  value={triggerPrice}
+                  onChange={(e) => setTriggerPrice(e.target.value)}
+                  placeholder="Trigger price"
+                  disabled={submitting}
+                  className="w-28 rounded-xl border border-ink-200 px-3 py-1.5 text-sm"
+                />
+                {triggerDistancePct !== null && (
+                  <span className={`text-xs ${triggerDistancePct >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                    {triggerDistancePct >= 0 ? "+" : ""}
+                    {triggerDistancePct.toFixed(2)}% vs price
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+        {orderType === "LIMIT" && (
+          <p className="text-xs leading-5 text-ink-500">
+            Fills only when the delayed contract price reaches ₹
+            {validLimitPrice ? limitPriceNumber.toLocaleString("en-IN") : "your limit"} — at your limit price, never a
+            better one. Margin is reserved now against the limit price; expires at today&apos;s session close if
+            unfilled.
+          </p>
+        )}
+        {orderType === "STOP" && (
+          <p className="text-xs leading-5 text-ink-500">
+            Fills at the delayed contract price observed when it crosses ₹
+            {validTriggerPrice ? triggerPriceNumber.toLocaleString("en-IN") : "your trigger"} — that crossing price
+            may be better or worse than your trigger, it is never guaranteed to fill exactly at it. Margin is
+            reserved now against the trigger price; if the actual crossing price would make this order infeasible
+            (insufficient margin), it&apos;s rejected (never filled) — you&apos;ll see why in Pending orders. Expires
+            at today&apos;s session close if unfilled.
+          </p>
+        )}
+
         <div className="rounded-2xl border border-ink-100 bg-ink-50/50 p-4 text-sm">
           <div className="flex items-center justify-between text-ink-700">
             <span>Notional value</span>
@@ -643,15 +916,29 @@ function FuturesTicketBody({
             You hold {heldPosition?.lots ?? 0} lot(s) — can&apos;t close {lots} in one order.
           </p>
         )}
-        {marketClosed && (
+        {marketClosed && orderType === "MARKET" && (
           <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-800">
             Market closed — orders fill only during NSE hours, 09:15–15:30 IST Mon–Fri.
           </p>
         )}
         {formError && <p className="text-xs text-rose-600">{formError}</p>}
 
-        <Button type="submit" variant={side === "BUY" ? "primary" : "danger"} disabled={submitting || exceedsHolding}>
-          {submitting ? "Placing order…" : `Confirm ${side.toLowerCase()} order`}
+        <Button
+          type="submit"
+          variant={side === "BUY" ? "primary" : "danger"}
+          disabled={
+            submitting ||
+            exceedsHolding ||
+            (orderType === "LIMIT" ? !validLimitPrice : orderType === "STOP" ? !validTriggerPrice : false)
+          }
+        >
+          {submitting
+            ? "Placing order…"
+            : orderType === "LIMIT"
+              ? `Place ${side.toLowerCase()} limit order`
+              : orderType === "STOP"
+                ? `Place ${side.toLowerCase()} stop order`
+                : `Confirm ${side.toLowerCase()} order`}
         </Button>
       </form>
     </div>

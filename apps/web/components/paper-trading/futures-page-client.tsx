@@ -10,25 +10,40 @@
  * a futures-only PositionsStrip pinned bottom (mirrors the options page's
  * "this screen's own asset class only" posture — mixed positions live on the
  * main dashboard).
+ *
+ * Chart Trading + Stop-Loss/Take-Profit (Sprint B, B3) — the underlying spot
+ * chart now wires pending-order + position lines (all explicitly "FUT"-
+ * tagged, per the Sprint B brief's decision 5 honesty requirement — this
+ * chart shows INDEX SPOT, but every line on it is a CONTRACT price, and basis
+ * is not zero), click-to-prefill a LIMIT order, cancel-from-chart, and an
+ * opt-in 60s 1D poll.
+ *
+ * Chart Trading + Stop-Loss/Take-Profit (Sprint C) — the click prefill above
+ * is now the order-intent popover (C2), and pending-order lines are now
+ * draggable (C1) — see paper-trading-dashboard.tsx's identical Sprint C doc
+ * for the full optimistic-UI/anti-snap-back contract, mirrored here.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 
 import { formatNseExpiryDate } from "@predict-future/business-rules/papertrading/optionContract";
 
-import { PriceChart, type PricePoint } from "@/components/finance/price-chart";
+import { PriceChart, type ChartOrderLine, type PricePoint } from "@/components/finance/price-chart";
 import {
   FuturesContractTable,
   type FuturesQuoteSnapshot,
   type SelectedFuturesContract
 } from "@/components/paper-trading/futures-contract-table";
 import { PaperTradingDisclaimerFooter } from "@/components/paper-trading/paper-trading-disclaimer-footer";
+import { PendingOrdersPanel } from "@/components/paper-trading/pending-orders-panel";
 import { DockedOrderTicket } from "@/components/paper-trading/terminal/docked-order-ticket";
 import { PositionsStrip, type PositionChip } from "@/components/paper-trading/terminal/positions-strip";
 import { TerminalHeader } from "@/components/paper-trading/terminal/terminal-header";
 import { TerminalShell } from "@/components/paper-trading/terminal/terminal-shell";
 import type { PlacedFuturesOrderPayload } from "@/lib/paperTrading/futuresOrdersClient";
+import { cancelPendingOrder, repricePendingOrder, type PendingOrderPayload } from "@/lib/paperTrading/pendingOrdersClient";
+import { usePriceOverrides } from "@/components/paper-trading/use-price-overrides";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -39,6 +54,8 @@ interface FuturesPositionSummary {
   expiryDate: string;
   side: "LONG" | "SHORT";
   lots: number;
+  /** Chart Trading + SL/TP (Sprint B) — the position line's price and the "ref ₹X (daily MTM)" label both need this; telescopes daily via the MTM cron, never a static entry price (see queries.ts's FuturesPositionRow doc). */
+  referencePrice: number;
   todayMtmPnl: number | null;
 }
 
@@ -49,10 +66,18 @@ interface AccountSummary {
   lifetimeNetPnl: number;
   futuresPositions: FuturesPositionSummary[];
   totalFuturesMarginRequired: number;
+  /** Chart Trading + SL/TP (Sprint B) — this account's resting pending futures orders, for the chart's order-line overlay. */
+  pendingOrders: PendingOrderPayload[];
 }
 
 function formatRupees(value: number): string {
   return `₹${value.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+}
+
+/** Compact signed rupee format for order-line labels (0dp — the chart has no room for paise). */
+function formatSignedRupeesShort(value: number): string {
+  const sign = value > 0 ? "+" : value < 0 ? "-" : "";
+  return `${sign}₹${Math.abs(value).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
 }
 
 const EMPTY_SERIES: PricePoint[] = [];
@@ -80,6 +105,18 @@ function FuturesPageClientInner() {
   const [spot, setSpot] = useState<number | null>(null);
 
   const [lastOrder, setLastOrder] = useState<PlacedFuturesOrderPayload | null>(null);
+  const [pendingOrderNotice, setPendingOrderNotice] = useState<string | null>(null);
+
+  // Chart Trading + SL/TP (Sprint B, B3 / Sprint C, C2) — chart-click preset
+  // channel, reused via the SAME `selectionNonce` the ladder [B]/[S] taps
+  // already bump (see handleSelectContract's own doc comment). Sprint B's
+  // click was LIMIT-only and never touched side; Sprint C's popover
+  // confirms an explicit side AND variant (LIMIT or STOP), so `presetSide`
+  // is now also SET by a click (not just read), and `presetOrderType`
+  // widens to include "STOP" with its own `presetTriggerPrice` field.
+  const [presetOrderType, setPresetOrderType] = useState<"LIMIT" | "STOP" | undefined>(undefined);
+  const [presetLimitPrice, setPresetLimitPrice] = useState<number | undefined>(undefined);
+  const [presetTriggerPrice, setPresetTriggerPrice] = useState<number | undefined>(undefined);
 
   const loadAccount = useCallback(async () => {
     try {
@@ -96,15 +133,24 @@ function FuturesPageClientInner() {
         todayNetPnl: a?.todayNetPnl ?? 0,
         lifetimeNetPnl: a?.lifetimeNetPnl ?? 0,
         futuresPositions: (a?.futuresPositions ?? []).map(
-          (p: { underlyingSymbol: string; expiryDate: string; side: "LONG" | "SHORT"; lots: number; todayMtmPnl: number | null }) => ({
+          (p: {
+            underlyingSymbol: string;
+            expiryDate: string;
+            side: "LONG" | "SHORT";
+            lots: number;
+            referencePrice: number;
+            todayMtmPnl: number | null;
+          }) => ({
             underlyingSymbol: p.underlyingSymbol,
             expiryDate: p.expiryDate,
             side: p.side,
             lots: p.lots,
+            referencePrice: p.referencePrice,
             todayMtmPnl: p.todayMtmPnl
           })
         ),
-        totalFuturesMarginRequired: a?.totalFuturesMarginRequired ?? 0
+        totalFuturesMarginRequired: a?.totalFuturesMarginRequired ?? 0,
+        pendingOrders: a?.pendingOrders ?? []
       });
     } catch {
       setError("Couldn't load your Paper Trading account — check your connection.");
@@ -178,7 +224,59 @@ function FuturesPageClientInner() {
     setSelectedContract(contract);
     setPresetSide(side);
     setPresetLots(isClosing ? Math.max(1, Math.min(1, held!.lots)) : 1);
+    // A fresh ladder tap always starts from a clean order type (MARKET) —
+    // never carries a stale chart-click preset from a PREVIOUS contract/click
+    // forward into this new selection.
+    setPresetOrderType(undefined);
+    setPresetLimitPrice(undefined);
+    setPresetTriggerPrice(undefined);
     setSelectionNonce((n) => n + 1);
+  }
+
+  // Chart Trading + SL/TP (Sprint C, C2) — clicking the underlying spot chart
+  // opens the order-intent popover, and confirming a choice prefills the
+  // ticket on the CURRENTLY selected contract via the SAME `selectionNonce`
+  // channel ladder taps use (decision 3 of the Sprint C brief). Guarded on
+  // `selectedContract` — with nothing selected yet there is no contract to
+  // attach a price to, and no ticket visible to prefill.
+  function handleOrderIntentConfirm(input: { price: number; side: "BUY" | "SELL"; variant: "LIMIT" | "STOP" }) {
+    if (!selectedContract) return;
+    setPresetSide(input.side);
+    setPresetOrderType(input.variant);
+    setPresetLimitPrice(input.variant === "LIMIT" ? input.price : undefined);
+    setPresetTriggerPrice(input.variant === "STOP" ? input.price : undefined);
+    setSelectionNonce((n) => n + 1);
+  }
+
+  function handleOrderLineCancel(id: string) {
+    if (id.startsWith("position-")) return;
+    void cancelPendingOrder(id).then((result) => {
+      if (result.ok) void loadAccount();
+    });
+  }
+
+  // Chart Trading + SL/TP (Sprint C, C1) — drag-to-reprice optimistic-UI
+  // wiring, identical contract to paper-trading-dashboard.tsx's (see
+  // use-price-overrides.ts's own doc for the anti-snap-back reasoning).
+  const currentPendingOrderPrices = useMemo(
+    () => account?.pendingOrders.map((o) => ({ id: o.id, price: o.variant === "STOP" ? (o.triggerPrice ?? o.limitPrice) : o.limitPrice })) ?? [],
+    [account]
+  );
+  const { overrides: priceOverrides, setOverride: setPriceOverride, clearOverride: clearPriceOverride } = usePriceOverrides(currentPendingOrderPrices);
+  const [repriceError, setRepriceError] = useState<string | null>(null);
+
+  async function handleOrderLineDrag(id: string, newPrice: number) {
+    const order = account?.pendingOrders.find((o) => o.id === id);
+    if (!order) return;
+    setRepriceError(null);
+    setPriceOverride(id, newPrice);
+    const result = await repricePendingOrder(id, order.variant === "STOP" ? { triggerPrice: newPrice } : { limitPrice: newPrice });
+    if (!result.ok) {
+      clearPriceOverride(id);
+      setRepriceError(result.error);
+      return;
+    }
+    await loadAccount();
   }
 
   // Deep-link auto-select: once the contract table reports a live quote whose
@@ -240,6 +338,48 @@ function FuturesPageClientInner() {
 
   const indexIntradaySource = { url: `/api/instruments/index/${underlying}/intraday` };
 
+  // Chart Trading + SL/TP (Sprint B, B3) — order lines for the CURRENTLY
+  // charted underlying's pending orders (any expiry — the underlying's spot
+  // chart is shared across all its contract months) and held positions.
+  // Decision 5 of the Sprint B brief (honesty requirement): every line here
+  // carries an explicit "FUT {expiry}" tag distinguishing it from a spot-price
+  // reading, and a held position is labeled "ref ₹X (daily MTM)" — never
+  // implying it's a live entry average, since referencePrice telescopes
+  // daily via the MTM cron.
+  const orderLines: ChartOrderLine[] = [
+    ...account.pendingOrders
+      .filter((o) => o.instrumentKind === "INDEX_FUTURE" && o.underlyingSymbol === underlying)
+      .map((o): ChartOrderLine => {
+        // Sprint C, C1 — an active optimistic drag override wins over the
+        // account payload's own price (see use-price-overrides.ts).
+        const price = priceOverrides[o.id] ?? (o.variant === "STOP" ? (o.triggerPrice ?? o.limitPrice) : o.limitPrice);
+        const expiryLabel = o.expiryDate ? formatNseExpiryDate(new Date(o.expiryDate)) : "";
+        return {
+          id: o.id,
+          price,
+          kind: o.variant === "STOP" ? "pending-stop" : "pending-limit",
+          side: o.side,
+          label: `FUT ${expiryLabel} ${o.variant} ${o.side} ${o.lots ?? 0} lot(s) @ ${formatRupees(price)}`,
+          cancellable: true,
+          draggable: true
+        };
+      }),
+    ...account.futuresPositions
+      .filter((p) => p.underlyingSymbol === underlying)
+      .map(
+        (p): ChartOrderLine => ({
+          id: `position-${p.underlyingSymbol}-${p.expiryDate}`,
+          price: p.referencePrice,
+          kind: "position",
+          side: p.side === "SHORT" ? "SELL" : "BUY",
+          label:
+            `FUT ${formatNseExpiryDate(new Date(p.expiryDate))} ref ${formatRupees(p.referencePrice)} (daily MTM)` +
+            (p.todayMtmPnl != null ? ` · ${formatSignedRupeesShort(p.todayMtmPnl)}` : ""),
+          cancellable: false
+        })
+      )
+  ];
+
   return (
     <div className="space-y-6">
       {error && <p className="text-sm text-rose-600">{error}</p>}
@@ -274,7 +414,18 @@ function FuturesPageClientInner() {
         }
         chart={
           <div>
-            <PriceChart key={underlying} symbol={underlying} series={EMPTY_SERIES} defaultTimeframe="1D" intradaySource={indexIntradaySource} />
+            <PriceChart
+              key={underlying}
+              symbol={underlying}
+              series={EMPTY_SERIES}
+              defaultTimeframe="1D"
+              intradaySource={indexIntradaySource}
+              orderLines={orderLines}
+              onOrderIntentConfirm={handleOrderIntentConfirm}
+              onOrderLineDrag={handleOrderLineDrag}
+              onOrderLineCancel={handleOrderLineCancel}
+              pollIntervalMs={60_000}
+            />
           </div>
         }
         ladder={
@@ -283,6 +434,9 @@ function FuturesPageClientInner() {
             onUnderlyingChange={(u) => {
               setUnderlying(u);
               setSelectedContract(null);
+              setPresetOrderType(undefined);
+              setPresetLimitPrice(undefined);
+              setPresetTriggerPrice(undefined);
             }}
             onSelectContract={handleSelectContract}
             onQuoteData={handleQuoteData}
@@ -303,10 +457,40 @@ function FuturesPageClientInner() {
               setLastOrder(order);
               void loadAccount();
             }}
+            onPendingOrderPlaced={(order) => {
+              setPendingOrderNotice(
+                order.variant === "STOP"
+                  ? "Stop order queued — it fills at the price observed when the market crosses your trigger."
+                  : "Limit order queued — it fills automatically once the market reaches your price."
+              );
+              void loadAccount();
+            }}
+            presetOrderType={presetOrderType}
+            presetLimitPrice={presetLimitPrice}
+            presetTriggerPrice={presetTriggerPrice}
           />
         }
         positions={<PositionsStrip positions={positionChips} />}
       />
+
+      {pendingOrderNotice && (
+        <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800">
+          {pendingOrderNotice}{" "}
+          <button type="button" className="underline" onClick={() => setPendingOrderNotice(null)}>
+            Dismiss
+          </button>
+        </div>
+      )}
+      {repriceError && (
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+          Couldn&apos;t move that order — {repriceError}{" "}
+          <button type="button" className="underline" onClick={() => setRepriceError(null)}>
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      <PendingOrdersPanel orders={account.pendingOrders} onCancelled={() => void loadAccount()} />
 
       <div className="rounded-[24px] border border-ink-100 bg-white p-5 text-xs leading-5 text-ink-500">
         <p className="font-medium text-ink-700">Why no stock futures yet?</p>

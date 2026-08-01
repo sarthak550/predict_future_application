@@ -19,6 +19,14 @@
  * browser's own deep-link auto-select logic is UNCHANGED (only its row
  * rendering changed, per the brief's explicit "no changes to
  * OptionChainBrowser's data-fetching/polling/flash logic" constraint).
+ *
+ * Chart Trading + Stop-Loss/Take-Profit (Sprint B, B4) — the chart slot now
+ * carries an Underlying/Contract-premium toggle: "Underlying" is the
+ * existing index/stock spot chart (default, unchanged), "Contract premium"
+ * is the NEW `PremiumChart` (terminal/premium-chart.tsx) for the currently
+ * selected contract — order lines, click-to-prefill, and the position
+ * avg-premium line all attach ONLY to the premium chart, never mixed onto
+ * the underlying view (decision 6 of the Sprint B brief).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
@@ -26,7 +34,8 @@ import { useSearchParams } from "next/navigation";
 
 import { formatNseExpiryDate, isIndexOptionUnderlying } from "@predict-future/business-rules/papertrading/optionContract";
 
-import { PriceChart, type PricePoint } from "@/components/finance/price-chart";
+import { PriceChart, type ChartOrderLine, type PricePoint } from "@/components/finance/price-chart";
+import { EMPTY_ORDER_LINES } from "@/components/finance/chart-order-lines";
 import { OptionChainBrowser, type OptionChainSnapshot, type SelectedContract } from "@/components/paper-trading/option-chain-browser";
 import { useVisiblePolling } from "@/components/paper-trading/use-visible-polling";
 import type { PlacedOptionOrderPayload } from "@/components/paper-trading/option-trade-panel";
@@ -37,11 +46,13 @@ import { DockedOrderTicket } from "@/components/paper-trading/terminal/docked-or
 import { PositionsStrip, type PositionChip } from "@/components/paper-trading/terminal/positions-strip";
 import { TerminalHeader } from "@/components/paper-trading/terminal/terminal-header";
 import { TerminalShell } from "@/components/paper-trading/terminal/terminal-shell";
+import { PremiumChart } from "@/components/paper-trading/terminal/premium-chart";
 import { useEodSeries } from "@/components/paper-trading/terminal/use-eod-series";
+import { usePriceOverrides } from "@/components/paper-trading/use-price-overrides";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getLastLotsForContract } from "@/lib/paperTrading/lastLotsMemory";
-import type { PendingOrderPayload } from "@/lib/paperTrading/pendingOrdersClient";
+import { cancelPendingOrder, repricePendingOrder, type PendingOrderPayload } from "@/lib/paperTrading/pendingOrdersClient";
 
 type LoadState = "loading" | "signed-out" | "ready";
 
@@ -58,6 +69,8 @@ interface OptionPositionSummary {
   strikePrice: number;
   expiryDate: string;
   lots: number;
+  /** Chart Trading + SL/TP (Sprint B, B4) — the premium chart's position line needs the entry cost basis; already present on the server's OptionPositionRow, this interface just hadn't declared it. */
+  avgCost: number;
   netPnl: number | null;
 }
 
@@ -76,6 +89,12 @@ interface AccountSummary {
 
 function formatRupees(value: number): string {
   return `₹${value.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+}
+
+/** Signed rupee format for the premium chart's position-line label (Sprint B, B4). */
+function formatSignedRupees(value: number): string {
+  const sign = value > 0 ? "+" : value < 0 ? "-" : "";
+  return `${sign}₹${Math.abs(value).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
 }
 
 /** ISO expiryDate string (from the JSON API response) -> NSE "DD-MMM-YYYY" format, to compare against SelectedContract.expiry (which is already in NSE format from the chain browser). */
@@ -130,6 +149,26 @@ function OptionsPageClientInner() {
   const [pendingOrderNotice, setPendingOrderNotice] = useState<string | null>(null);
 
   const [chartUnderlying, setChartUnderlying] = useState<string | null>(deepLinkUnderlying);
+
+  // Chart Trading + SL/TP (Sprint B, B4) — Underlying/Contract-premium toggle
+  // + the premium chart's own click-prefill preset channel, reusing the SAME
+  // `selectionNonce` the ladder taps already bump (a premium-chart click can
+  // only happen once a contract is already selected, so presetSide/presetLots
+  // are always already concrete by then — see openTicketForLadderTap below).
+  const [chartMode, setChartMode] = useState<"underlying" | "premium">("underlying");
+  const hasSelectedContract = selectedContract != null;
+  // Keyed on the PRIMITIVE "is anything selected" flag, never on
+  // `selectedContract`'s own object identity (which churns every ~30s chain
+  // poll even for the same contract) — falling back to "underlying" only
+  // needs to happen on the null<->non-null transition, not every poll tick.
+  useEffect(() => {
+    if (!hasSelectedContract) setChartMode("underlying");
+  }, [hasSelectedContract]);
+  // Sprint C, C2 widens this from LIMIT-only to LIMIT|STOP (the popover
+  // confirms an explicit variant, unlike Sprint B's hardcoded LIMIT click).
+  const [presetOrderType, setPresetOrderType] = useState<"LIMIT" | "STOP" | undefined>(undefined);
+  const [presetLimitPrice, setPresetLimitPrice] = useState<number | undefined>(undefined);
+  const [presetTriggerPrice, setPresetTriggerPrice] = useState<number | undefined>(undefined);
 
   const loadAccount = useCallback(async () => {
     try {
@@ -267,12 +306,65 @@ function OptionsPageClientInner() {
     setSelectedContract(contract);
     setPresetSide(side);
     setPresetLots(lots);
+    // A fresh ladder tap always starts clean — never carries a stale
+    // premium-chart-click preset forward from a PREVIOUS contract.
+    setPresetOrderType(undefined);
+    setPresetLimitPrice(undefined);
+    setPresetTriggerPrice(undefined);
     setSelectionNonce((n) => n + 1);
   }
 
   // Every ladder [B]/[S] tap pre-fills the docked ticket for one explicit
   // Confirm — the only order path. (Express instant-fill was cut 2026-07-25.)
   const handleLadderAction = openTicketForLadderTap;
+
+  // Chart Trading + SL/TP (Sprint C, C2) — clicking the PREMIUM chart opens
+  // the order-intent popover; confirming a choice prefills the ticket with
+  // the user's explicit side/variant on the currently selected contract
+  // (never the underlying spot chart, which stays click-inert — decision 6's
+  // "never mixed onto the underlying view" still holds, only the click
+  // MECHANISM on the premium chart itself changed this sprint).
+  function handlePremiumOrderIntentConfirm(input: { price: number; side: "BUY" | "SELL"; variant: "LIMIT" | "STOP" }) {
+    if (!selectedContract) return;
+    setPresetSide(input.side);
+    setPresetOrderType(input.variant);
+    setPresetLimitPrice(input.variant === "LIMIT" ? input.price : undefined);
+    setPresetTriggerPrice(input.variant === "STOP" ? input.price : undefined);
+    setSelectionNonce((n) => n + 1);
+  }
+
+  function handlePremiumOrderLineCancel(id: string) {
+    if (id.startsWith("position-")) return;
+    void cancelPendingOrder(id).then((result) => {
+      if (result.ok) void loadAccount();
+    });
+  }
+
+  // Chart Trading + SL/TP (Sprint C, C1) — drag-to-reprice optimistic-UI
+  // wiring, identical contract to paper-trading-dashboard.tsx's/futures-
+  // page-client.tsx's (see use-price-overrides.ts's own doc for the
+  // anti-snap-back reasoning). Options is the one terminal where the
+  // draggable line lives on the PREMIUM chart, not the underlying spot chart.
+  const currentPendingOrderPrices = useMemo(
+    () => account?.pendingOrders.map((o) => ({ id: o.id, price: o.variant === "STOP" ? (o.triggerPrice ?? o.limitPrice) : o.limitPrice })) ?? [],
+    [account]
+  );
+  const { overrides: priceOverrides, setOverride: setPriceOverride, clearOverride: clearPriceOverride } = usePriceOverrides(currentPendingOrderPrices);
+  const [repriceError, setRepriceError] = useState<string | null>(null);
+
+  async function handlePremiumOrderLineDrag(id: string, newPrice: number) {
+    const order = account?.pendingOrders.find((o) => o.id === id);
+    if (!order) return;
+    setRepriceError(null);
+    setPriceOverride(id, newPrice);
+    const result = await repricePendingOrder(id, order.variant === "STOP" ? { triggerPrice: newPrice } : { limitPrice: newPrice });
+    if (!result.ok) {
+      clearPriceOverride(id);
+      setRepriceError(result.error);
+      return;
+    }
+    await loadAccount();
+  }
 
   if (state === "loading") {
     return (
@@ -321,6 +413,58 @@ function OptionsPageClientInner() {
     })
   );
 
+  // Chart Trading + SL/TP (Sprint B, B4) — order lines for the SELECTED
+  // contract's premium chart only (decision 6: never attached to the
+  // underlying view). Built directly at render time, same "no memo, no
+  // effect dependency" posture as the dashboard/futures pages' orderLines.
+  const premiumOrderLines: ChartOrderLine[] = selectedContract
+    ? [
+        ...account.pendingOrders
+          .filter(
+            (o) =>
+              (o.instrumentKind === "INDEX_OPTION" || o.instrumentKind === "STOCK_OPTION") &&
+              o.underlyingSymbol === selectedContract.underlying &&
+              o.strikePrice === selectedContract.strikePrice &&
+              o.optionType === selectedContract.optionType &&
+              o.expiryDate != null &&
+              formatExpiryFromIso(o.expiryDate) === selectedContract.expiry
+          )
+          .map((o): ChartOrderLine => {
+            // Sprint C, C1 — an active optimistic drag override wins over
+            // the account payload's own price (see use-price-overrides.ts).
+            const price = priceOverrides[o.id] ?? (o.variant === "STOP" ? (o.triggerPrice ?? o.limitPrice) : o.limitPrice);
+            return {
+              id: o.id,
+              price,
+              kind: o.variant === "STOP" ? "pending-stop" : "pending-limit",
+              side: o.side,
+              label: `${o.variant} ${o.side} ${o.lots ?? 0} lot(s) @ ${formatRupees(price)}`,
+              cancellable: true,
+              draggable: true
+            };
+          }),
+        ...(() => {
+          const heldPosition = account.optionPositions.find(
+            (p) =>
+              p.underlyingSymbol === selectedContract.underlying &&
+              p.strikePrice === selectedContract.strikePrice &&
+              p.optionType === selectedContract.optionType &&
+              formatExpiryFromIso(p.expiryDate) === selectedContract.expiry
+          );
+          if (!heldPosition || heldPosition.lots === 0) return [];
+          const line: ChartOrderLine = {
+            id: `position-${heldPosition.underlyingSymbol}-${heldPosition.strikePrice}-${heldPosition.optionType}-${heldPosition.expiryDate}`,
+            price: heldPosition.avgCost,
+            kind: "position",
+            side: heldPosition.lots < 0 ? "SELL" : "BUY",
+            label: `Avg ${formatRupees(heldPosition.avgCost)}${heldPosition.netPnl != null ? ` · ${formatSignedRupees(heldPosition.netPnl)}` : ""}`,
+            cancellable: false
+          };
+          return [line];
+        })()
+      ]
+    : EMPTY_ORDER_LINES;
+
   return (
     <div className="space-y-6">
       {error && <p className="text-sm text-rose-600">{error}</p>}
@@ -357,8 +501,46 @@ function OptionsPageClientInner() {
         }
         chart={
           <div>
-            <OptionsUnderlyingChart underlying={chartUnderlying} isIndex={isIndexChart} />
-            <InstrumentContextCard symbol={chartUnderlying} />
+            <div className="mb-2 inline-flex rounded-2xl border border-ink-200 bg-white p-1">
+              <button
+                type="button"
+                onClick={() => setChartMode("underlying")}
+                className={`rounded-xl px-3 py-1.5 text-xs font-medium transition ${
+                  chartMode === "underlying" ? "bg-ink-900 text-white" : "text-ink-600 hover:text-ink-900"
+                }`}
+              >
+                Underlying
+              </button>
+              <button
+                type="button"
+                disabled={!selectedContract}
+                onClick={() => setChartMode("premium")}
+                className={`rounded-xl px-3 py-1.5 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                  chartMode === "premium" ? "bg-ink-900 text-white" : "text-ink-600 hover:text-ink-900"
+                }`}
+                title={selectedContract ? undefined : "Select a contract in the chain to see its premium chart"}
+              >
+                Contract premium
+              </button>
+            </div>
+            {chartMode === "premium" && selectedContract ? (
+              <PremiumChart
+                underlying={selectedContract.underlying}
+                expiry={selectedContract.expiry}
+                strikePrice={selectedContract.strikePrice}
+                optionType={selectedContract.optionType}
+                livePremium={selectedContract.premium}
+                orderLines={premiumOrderLines}
+                onOrderIntentConfirm={handlePremiumOrderIntentConfirm}
+                onOrderLineDrag={handlePremiumOrderLineDrag}
+                onOrderLineCancel={handlePremiumOrderLineCancel}
+              />
+            ) : (
+              <>
+                <OptionsUnderlyingChart underlying={chartUnderlying} isIndex={isIndexChart} />
+                <InstrumentContextCard symbol={chartUnderlying} />
+              </>
+            )}
           </div>
         }
         ladder={
@@ -385,10 +567,17 @@ function OptionsPageClientInner() {
               setLastOrder(order);
               void loadAccount();
             }}
-            onPendingOrderPlaced={() => {
-              setPendingOrderNotice("Limit order queued — it fills automatically once the market reaches your price.");
+            onPendingOrderPlaced={(order) => {
+              setPendingOrderNotice(
+                order.variant === "STOP"
+                  ? "Stop order queued — it fills at the price observed when the market crosses your trigger."
+                  : "Limit order queued — it fills automatically once the market reaches your price."
+              );
               void loadAccount();
             }}
+            presetOrderType={presetOrderType}
+            presetLimitPrice={presetLimitPrice}
+            presetTriggerPrice={presetTriggerPrice}
           />
         }
         positions={<PositionsStrip positions={positionChips} />}
@@ -398,6 +587,14 @@ function OptionsPageClientInner() {
         <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800">
           {pendingOrderNotice}{" "}
           <button type="button" className="underline" onClick={() => setPendingOrderNotice(null)}>
+            Dismiss
+          </button>
+        </div>
+      )}
+      {repriceError && (
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+          Couldn&apos;t move that order — {repriceError}{" "}
+          <button type="button" className="underline" onClick={() => setRepriceError(null)}>
             Dismiss
           </button>
         </div>

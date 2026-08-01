@@ -15,6 +15,23 @@
  *      available cash/quantity in EVERY order-placement path, market and
  *      limit alike).
  *
+ * Chart Trading + SL/TP (Sprint A, 2026-07-31) extended this file with:
+ *
+ *   3. `isStopTriggered` — the mirror-shape crossing rule for a STOP order
+ *      (BUY: quote >= trigger, SELL: quote <= trigger — inverted from
+ *      isLimitCrossed, since a stop triggers on the market moving THROUGH a
+ *      level rather than reaching a favorable ceiling/floor).
+ *   4. A futures-any-side rule in `derivePendingBlockedCash` and an optional
+ *      `side` parameter on `derivePendingBlockedQuantity` — see each
+ *      function's doc comment. `computePendingBlockAmount` itself needed NO
+ *      changes for either STOP or futures: a STOP row denormalizes
+ *      `limitPrice = triggerPrice` at write time (see the schema doc), so it
+ *      is invisible to this file's math as anything other than "a pending
+ *      order with a limitPrice" — and futures pending orders use a dedicated
+ *      sibling, `computePendingFuturesBlockAmount` in ./futuresOrderPlan.ts,
+ *      because a futures block is margin+costs, not a full-notional cash
+ *      debit (see that file's module doc).
+ *
  * Pure module: zero I/O, zero Prisma — importable identically from apps/api
  * and apps/web, exactly like replay.ts/costs.ts/optionsCosts.ts.
  */
@@ -22,19 +39,39 @@
 import { computeOrderCosts, type PaperOrderSide, type PaperProductType } from "./costs";
 import { computeOptionOrderCosts } from "./optionsCosts";
 
-export type PendingOrderInstrumentKind = "EQUITY" | "INDEX_OPTION" | "STOCK_OPTION";
-export type PendingOrderStatus = "PENDING" | "FILLED" | "CANCELLED" | "EXPIRED";
+export type PendingOrderInstrumentKind = "EQUITY" | "INDEX_OPTION" | "STOCK_OPTION" | "INDEX_FUTURE";
+export type PendingOrderStatus = "PENDING" | "FILLED" | "CANCELLED" | "EXPIRED" | "REJECTED";
+export type PendingOrderVariant = "LIMIT" | "STOP";
 
 /**
  * True when a resting limit order at `limitPrice` would fill against
  * `latestQuote` right now. BUY fills when the market has fallen TO OR BELOW
  * the limit (a buyer's limit is a ceiling); SELL fills when the market has
  * risen TO OR ABOVE the limit (a seller's limit is a floor). This is the
- * ONLY crossing rule in the whole feature — the fill-check cron calls this
- * once per (pending order, latest quote) pair.
+ * ONLY crossing rule for a LIMIT order — the fill-check cron calls this once
+ * per (pending LIMIT order, latest quote) pair.
  */
 export function isLimitCrossed(side: PaperOrderSide, limitPrice: number, latestQuote: number): boolean {
   return side === "BUY" ? latestQuote <= limitPrice : latestQuote >= limitPrice;
+}
+
+/**
+ * Chart Trading + SL/TP (Sprint A) — true when a resting STOP order at
+ * `triggerPrice` would trigger against `latestQuote` right now. Mirror-shape
+ * of isLimitCrossed, INVERTED: a BUY stop (breakout entry, or the closing leg
+ * of a short position's stop-loss) triggers when the market has risen TO OR
+ * ABOVE the trigger; a SELL stop (stop-loss on a long, or a breakdown-entry
+ * short) triggers when the market has fallen TO OR BELOW the trigger. Both
+ * boundaries are inclusive, matching isLimitCrossed's own inclusive
+ * convention. This is ONLY the trigger detector — it says nothing about fill
+ * PRICE. Per the schema doc's design decision 2 (the single most important
+ * honesty call in this feature), a triggered STOP fills at the actual
+ * observed crossing quote passed to this function, never at `triggerPrice`
+ * itself — see limitOrderFill.ts's fillPendingOrder for where that fill-price
+ * selection happens.
+ */
+export function isStopTriggered(side: PaperOrderSide, triggerPrice: number, latestQuote: number): boolean {
+  return side === "BUY" ? latestQuote >= triggerPrice : latestQuote <= triggerPrice;
 }
 
 export interface ComputePendingBlockAmountInput {
@@ -94,18 +131,39 @@ export interface PendingEngineOrder {
 }
 
 /**
- * Sums `blockedAmount` across every currently-PENDING BUY row for an
- * account — the amount a subsequent order-placement path (market OR limit,
- * per T3's regression requirement) must treat as already spent. Non-BUY and
- * non-PENDING rows never carry a blockedAmount, but the status/side filter
- * is explicit here anyway rather than relying solely on `blockedAmount !=
- * null`, so a future bug that mis-sets blockedAmount on the wrong row type
- * can't silently corrupt this total.
+ * Sums `blockedAmount` across every currently-PENDING row for an account that
+ * should count toward "cash already spoken for" — the amount a subsequent
+ * order-placement path (market OR limit/stop, per T3's regression
+ * requirement) must treat as already spent. For EQUITY/INDEX_OPTION/
+ * STOCK_OPTION this is BUY rows only (unchanged since the Limit Orders
+ * sprint — non-BUY and non-PENDING rows never carry a blockedAmount for
+ * these kinds, but the status/side filter is explicit here anyway rather
+ * than relying solely on `blockedAmount != null`, so a future bug that
+ * mis-sets blockedAmount on the wrong row type can't silently corrupt this
+ * total).
+ *
+ * Chart Trading + SL/TP (Sprint A) — INDEX_FUTURE gets a dedicated rule
+ * instead: EITHER side can carry a non-null blockedAmount (margin + costs,
+ * via computePendingFuturesBlockAmount) when the order is OPENING/ADDING to
+ * a position — a SELL-to-open (short) futures order blocks margin exactly
+ * like a BUY-to-open does, unlike equity intraday shorting (which Phase 1
+ * deliberately never margin-blocked, a still-unchanged posture for equity
+ * here). A futures row that's CLOSING/REDUCING a position instead carries
+ * `blockedAmount: null` (lots-blocked via derivePendingBlockedQuantity
+ * below, the same shape as an options SELL block) — so, for INDEX_FUTURE,
+ * the `blockedAmount != null` check alone is the correct and sufficient
+ * discriminator, with no side filter needed (both sides legitimately
+ * contribute here).
  */
 export function derivePendingBlockedCash(pendingOrders: PendingEngineOrder[]): number {
   let blocked = 0;
   for (const order of pendingOrders) {
-    if (order.status !== "PENDING" || order.side !== "BUY") continue;
+    if (order.status !== "PENDING") continue;
+    if (order.instrumentKind === "INDEX_FUTURE") {
+      if (order.blockedAmount != null) blocked += order.blockedAmount;
+      continue;
+    }
+    if (order.side !== "BUY") continue;
     if (order.blockedAmount != null) blocked += order.blockedAmount;
   }
   return blocked;
@@ -129,11 +187,25 @@ export function derivePendingBlockedCash(pendingOrders: PendingEngineOrder[]): n
  * this function itself does NOT filter productType — that's the caller's
  * responsibility, exactly mirroring how blockedAmount is never set for an
  * INTRADAY SELL in the first place (see the placement route).
+ *
+ * Chart Trading + SL/TP (Sprint A) — added the optional `side` parameter,
+ * defaulting to "SELL" so every pre-Sprint-A call site (equity DELIVERY
+ * SELL, options SELL) is byte-identical with zero argument changes. Futures
+ * is the one instrument kind where a CLOSING pending order can be either
+ * side — SELL closes a long, BUY closes a short (unlike equity/options,
+ * which are never short via this table) — so a futures caller must pass the
+ * specific closing side it's checking (e.g. "BUY" to find pending orders
+ * that would close an existing short) rather than relying on the SELL
+ * default.
  */
-export function derivePendingBlockedQuantity(pendingOrders: PendingEngineOrder[], symbol: string): number {
+export function derivePendingBlockedQuantity(
+  pendingOrders: PendingEngineOrder[],
+  symbol: string,
+  side: PaperOrderSide = "SELL"
+): number {
   let blocked = 0;
   for (const order of pendingOrders) {
-    if (order.status !== "PENDING" || order.side !== "SELL" || order.symbol !== symbol) continue;
+    if (order.status !== "PENDING" || order.side !== side || order.symbol !== symbol) continue;
     blocked += order.quantity;
   }
   return blocked;

@@ -97,15 +97,28 @@ export const placePaperFuturesOrderSchema = z.object({
 // ─── Limit Orders (Sprint, 2026-07-26) ─────────────────────────────────────────
 
 /**
- * A resting limit order's request body, discriminated on `orderKind` (NOT
- * `instrumentKind` — the client only ever knows "equity ticket" vs "options
- * ticket", exactly mirroring how placePaperOrderSchema/placePaperOptionOrderSchema
- * are two separate schemas above; INDEX_OPTION vs STOCK_OPTION is derived
+ * A resting limit/stop order's request body, discriminated on `orderKind`
+ * (NOT `instrumentKind` — the client only ever knows "equity ticket" vs
+ * "options ticket" vs "futures ticket", exactly mirroring how
+ * placePaperOrderSchema/placePaperOptionOrderSchema/placePaperFuturesOrderSchema
+ * are three separate schemas above; INDEX_OPTION vs STOCK_OPTION is derived
  * server-side from underlyingSymbol, never client-supplied, same as the
- * market-order path). Futures (`orderKind: "FUTURE"`) is intentionally NOT a
- * branch of this union — placePendingOrder rejects it with a dedicated, clear
- * error before this schema is even reached (see the route file), since
- * futures order placement itself doesn't exist yet this sprint.
+ * market-order path).
+ *
+ * Chart Trading + SL/TP (Sprint A, 2026-07-31) added two things to every
+ * member below: `variant` (LIMIT default, or STOP) and `triggerPrice`
+ * (STOP-only — `limitPrice` is STOP-only's mirror-absent field). Both price
+ * fields are `.optional()` at the per-member level because zod's
+ * `discriminatedUnion` requires each member to be a plain ZodObject (a
+ * `.superRefine`-wrapped member breaks the discriminant introspection) — the
+ * actual "limitPrice required for LIMIT / triggerPrice required for STOP"
+ * cross-field rule is enforced by the SHARED `.superRefine` attached to the
+ * union itself, below, which runs AFTER the union has already resolved to a
+ * concrete member.
+ *
+ * Also added: `placePendingFuturesOrderSchema` (`orderKind: "FUTURE"`) — Sprint
+ * A ships futures pending-order support (see the placement route, which no
+ * longer rejects `FUTURE` before reaching this schema).
  */
 export const placePendingEquityOrderSchema = z.object({
   orderKind: z.literal("EQUITY"),
@@ -122,7 +135,9 @@ export const placePendingEquityOrderSchema = z.object({
     .int("Quantity must be a whole number.")
     .min(1, "Quantity must be at least 1.")
     .max(PAPER_TRADING_MAX_QUANTITY, "Quantity is too large."),
-  limitPrice: z.number().positive("Limit price must be positive."),
+  variant: z.enum(["LIMIT", "STOP"]).default("LIMIT"),
+  limitPrice: z.number().positive("Limit price must be positive.").optional(),
+  triggerPrice: z.number().positive("Trigger price must be positive.").optional(),
   linkedOpinionId: z.string().trim().min(1).optional()
 });
 
@@ -143,11 +158,62 @@ export const placePendingOptionOrderSchema = z.object({
     .int("Lots must be a whole number.")
     .min(1, "Lots must be at least 1.")
     .max(PAPER_TRADING_MAX_OPTION_LOTS, "Too many lots."),
-  limitPrice: z.number().positive("Limit price must be positive."),
+  variant: z.enum(["LIMIT", "STOP"]).default("LIMIT"),
+  limitPrice: z.number().positive("Limit price must be positive.").optional(),
+  triggerPrice: z.number().positive("Trigger price must be positive.").optional(),
   linkedOpinionId: z.string().trim().min(1).optional()
 });
 
-export const placePendingOrderSchema = z.discriminatedUnion("orderKind", [
-  placePendingEquityOrderSchema,
-  placePendingOptionOrderSchema
-]);
+/** Chart Trading + SL/TP (Sprint A) — new member: futures pending orders (LIMIT and STOP), index-only, same closed enum as placePaperFuturesOrderSchema. */
+export const placePendingFuturesOrderSchema = z.object({
+  orderKind: z.literal("FUTURE"),
+  underlyingSymbol: z.enum(["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "NIFTYNXT50"]),
+  expiryDate: z.string().trim().min(1, "Expiry date is required."),
+  side: z.enum(["BUY", "SELL"]),
+  lots: z
+    .number()
+    .int("Lots must be a whole number.")
+    .min(1, "Lots must be at least 1.")
+    .max(PAPER_TRADING_MAX_FUTURES_LOTS, "Too many lots."),
+  variant: z.enum(["LIMIT", "STOP"]).default("LIMIT"),
+  limitPrice: z.number().positive("Limit price must be positive.").optional(),
+  triggerPrice: z.number().positive("Trigger price must be positive.").optional()
+});
+
+export const placePendingOrderSchema = z
+  .discriminatedUnion("orderKind", [
+    placePendingEquityOrderSchema,
+    placePendingOptionOrderSchema,
+    placePendingFuturesOrderSchema
+  ])
+  .superRefine((data, ctx) => {
+    if (data.variant === "LIMIT" && data.limitPrice == null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "limitPrice is required for a LIMIT order.", path: ["limitPrice"] });
+    }
+    if (data.variant === "STOP" && data.triggerPrice == null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "triggerPrice is required for a STOP order.", path: ["triggerPrice"] });
+    }
+  });
+
+// ─── Chart Trading + Stop-Loss/Take-Profit, Sprint C (drag-to-reprice) ────────
+
+/**
+ * PATCH /api/paper-trading/pending-orders/[id]'s request body — decision 1 of
+ * the Sprint C brief: `{limitPrice?, triggerPrice?}`, exactly one of which
+ * applies depending on the resting row's OWN `variant` (a LIMIT row expects
+ * `limitPrice`, a STOP row expects `triggerPrice` — the route/orchestration
+ * layer, not this schema, is what checks the field matches the row, since
+ * that requires reading the row first). Only requires that AT LEAST ONE
+ * field is present and positive here; `repricePendingOrder` (apps/web/lib/
+ * paperTrading/pendingOrders.ts) is the actual authority on which one this
+ * specific row needs.
+ */
+export const repricePendingOrderSchema = z
+  .object({
+    limitPrice: z.number().positive("Limit price must be positive.").optional(),
+    triggerPrice: z.number().positive("Trigger price must be positive.").optional()
+  })
+  .refine((data) => data.limitPrice != null || data.triggerPrice != null, {
+    message: "Provide a new limitPrice or triggerPrice to reprice this order.",
+    path: ["limitPrice"]
+  });

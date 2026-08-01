@@ -25,6 +25,7 @@
     "./papertrading/futuresCosts": "./src/papertrading/futuresCosts.ts",
     "./papertrading/futuresMargin": "./src/papertrading/futuresMargin.ts",
     "./papertrading/futuresContract": "./src/papertrading/futuresContract.ts",
+    "./papertrading/futuresOrderPlan": "./src/papertrading/futuresOrderPlan.ts",
     "./papertrading/replay": "./src/papertrading/replay.ts",
     "./papertrading/marketHours": "./src/papertrading/marketHours.ts",
     "./papertrading/pendingOrders": "./src/papertrading/pendingOrders.ts",

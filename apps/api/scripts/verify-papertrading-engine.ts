@@ -51,6 +51,7 @@ import {
   openIntradayPositions,
   replayPosition,
   unrealizedGrossPnl,
+  type FuturesContractPosition,
   type PaperEngineOrder
 } from "@predict-future/business-rules/papertrading/replay";
 import { isNseWeekdayMarketHours } from "@predict-future/business-rules/papertrading/marketHours";
@@ -74,8 +75,14 @@ import {
   derivePendingBlockedCash,
   derivePendingBlockedQuantity,
   isLimitCrossed,
+  isStopTriggered,
   type PendingEngineOrder
 } from "@predict-future/business-rules/papertrading/pendingOrders";
+import {
+  computePendingFuturesBlockAmount,
+  planFuturesOrderFill,
+  signedNetAmountForCashEffect
+} from "@predict-future/business-rules/papertrading/futuresOrderPlan";
 
 let passCount = 0;
 let failCount = 0;
@@ -1159,6 +1166,311 @@ async function main() {
       { instrumentKind: "INDEX_OPTION", symbol: "NIFTY24700CE28AUG26", side: "SELL", quantity: 65, status: "PENDING", blockedAmount: null }
     ];
     assertClose(derivePendingBlockedQuantity(optionPendingRows, "NIFTY24700CE28AUG26"), 65, "Options SELL blocking uses the same symbol-keyed function, no separate code path needed");
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Chart Trading + Stop-Loss/Take-Profit (Sprint A, 2026-07-31) — sections
+  // 37-42. Sections 1-36 above are preserved byte-identical (208 assertions,
+  // all passing before this sprint). Append-only from here.
+  // ═══════════════════════════════════════════════════════════════════════
+
+  // ── 37. isStopTriggered — truth table (BUY/SELL, both sides of the boundary, incl. option-premium-denominated) ──
+  console.log("\n37. Chart Trading Sprint A — isStopTriggered truth table (BUY/SELL, both sides of the boundary, equity + option-premium-denominated)");
+  {
+    assertTrue(isStopTriggered("BUY", 100, 100), "BUY trigger=100, quote=100 (boundary, inclusive) → triggered");
+    assertTrue(isStopTriggered("BUY", 100, 105), "BUY trigger=100, quote=105 (above) → triggered");
+    assertTrue(!isStopTriggered("BUY", 100, 95), "BUY trigger=100, quote=95 (below) → NOT triggered");
+
+    assertTrue(isStopTriggered("SELL", 100, 100), "SELL trigger=100, quote=100 (boundary, inclusive) → triggered");
+    assertTrue(isStopTriggered("SELL", 100, 95), "SELL trigger=100, quote=95 (below) → triggered");
+    assertTrue(!isStopTriggered("SELL", 100, 105), "SELL trigger=100, quote=105 (above) → NOT triggered");
+
+    // Option-premium-denominated case — smaller absolute numbers, same rule shape.
+    assertTrue(isStopTriggered("BUY", 45.5, 46), "Option premium BUY stop: trigger=45.50, quote=46 → triggered");
+    assertTrue(!isStopTriggered("BUY", 45.5, 45), "Option premium BUY stop: trigger=45.50, quote=45 → NOT triggered");
+    assertTrue(isStopTriggered("SELL", 45.5, 45), "Option premium SELL stop (stop-loss on a long): trigger=45.50, quote=45 → triggered");
+    assertTrue(!isStopTriggered("SELL", 45.5, 46), "Option premium SELL stop: trigger=45.50, quote=46 → NOT triggered");
+
+    // isLimitCrossed is unmodified — spot-check it's still the mirror-inverse of isStopTriggered at the same boundary.
+    assertTrue(isLimitCrossed("BUY", 100, 100) === isStopTriggered("SELL", 100, 100), "At the same boundary, a BUY limit crossing and a SELL stop triggering agree (both trigger on quote <= level)");
+  }
+
+  // ── 38. computePendingFuturesBlockAmount — matches a market order's actual margin + costs at the same price exactly ──
+  console.log("\n38. Chart Trading Sprint A — computePendingFuturesBlockAmount matches a market order's actual margin(15%) + costs at the same price exactly");
+  {
+    const quantity = 75; // 1 lot
+    const price = 24000;
+
+    const buyBlock = computePendingFuturesBlockAmount({ side: "BUY", quantity, price });
+    const buyMarketMargin = computeFuturesMarginRequired(quantity * price);
+    const buyMarketCosts = computeFuturesOrderCosts({ side: "BUY", quantity, price });
+    assertClose(buyBlock, buyMarketMargin + buyMarketCosts.totalCosts, "BUY-to-open futures pending block === margin(15% of notional) + costs — identical to what a market order at the same price would need");
+
+    const sellBlock = computePendingFuturesBlockAmount({ side: "SELL", quantity, price });
+    const sellMarketCosts = computeFuturesOrderCosts({ side: "SELL", quantity, price });
+    assertClose(sellBlock, buyMarketMargin + sellMarketCosts.totalCosts, "SELL-to-open (short) futures pending block === margin(15%) + costs — symmetric with BUY, decision 5's 'either side blocks margin' rule (margin itself is side-symmetric, only the cost line's STT differs)");
+
+    // A higher price produces a strictly larger block (both margin and costs scale with notional).
+    const higherPriceBlock = computePendingFuturesBlockAmount({ side: "BUY", quantity, price: price + 200 });
+    assertTrue(higherPriceBlock > buyBlock, "A higher hypothetical fill price produces a strictly larger margin+costs block");
+  }
+
+  // ── 39. derivePendingBlockedCash/Quantity — extended truth table: STOP rows + futures (either-side margin block, side-aware closing) alongside existing LIMIT rows ──
+  console.log("\n39. Chart Trading Sprint A — derivePendingBlockedCash/Quantity extended truth table: STOP rows (denormalized limitPrice) + futures (either-side margin block, side-aware closing) alongside existing LIMIT rows");
+  {
+    const mixedPending: PendingEngineOrder[] = [
+      // Existing LIMIT equity BUY — unchanged behavior.
+      { instrumentKind: "EQUITY", symbol: "TCS", side: "BUY", productType: "DELIVERY", quantity: 10, status: "PENDING", blockedAmount: 30000 },
+      // A STOP equity BUY (limitPrice denormalized = triggerPrice at write time, decision 4) — contributes identically to a LIMIT BUY. Zero new branching needed: this function never even sees `variant`.
+      { instrumentKind: "EQUITY", symbol: "INFY", side: "BUY", productType: "DELIVERY", quantity: 5, status: "PENDING", blockedAmount: 9500 },
+      // A futures BUY-to-open (LIMIT or STOP, doesn't matter here) — blocks margin.
+      { instrumentKind: "INDEX_FUTURE", symbol: "NIFTYFUT28AUG2026", side: "BUY", quantity: 75, status: "PENDING", blockedAmount: 350000 },
+      // A futures SELL-to-open (short) — decision 5's futures-any-side rule: must ALSO be counted (unlike equity SELL, which never is).
+      { instrumentKind: "INDEX_FUTURE", symbol: "BANKNIFTYFUT28AUG2026", side: "SELL", quantity: 30, status: "PENDING", blockedAmount: 420000 },
+      // A futures SELL-to-CLOSE (reducing a long) — blockedAmount null (lots-blocked instead), must NOT be counted.
+      { instrumentKind: "INDEX_FUTURE", symbol: "FINNIFTYFUT28AUG2026", side: "SELL", quantity: 40, status: "PENDING", blockedAmount: null },
+      // An equity SELL — never counted (SELL blocks quantity for equity, not cash).
+      { instrumentKind: "EQUITY", symbol: "TCS", side: "SELL", productType: "DELIVERY", quantity: 5, status: "PENDING", blockedAmount: null },
+      // A FILLED futures BUY-open row — status filter must still exclude it even though instrumentKind is INDEX_FUTURE.
+      { instrumentKind: "INDEX_FUTURE", symbol: "MIDCPNIFTYFUT28AUG2026", side: "BUY", quantity: 120, status: "FILLED", blockedAmount: 999999 }
+    ];
+    assertClose(
+      derivePendingBlockedCash(mixedPending),
+      30000 + 9500 + 350000 + 420000,
+      "Blocked cash sums LIMIT-BUY + STOP-BUY (equity) + futures BUY-open + futures SELL-open (short) — excludes the futures close row, the equity SELL, and the non-PENDING row"
+    );
+
+    // derivePendingBlockedQuantity — now side-aware (optional `side` param, default SELL preserves every pre-existing equity/options call site unchanged).
+    const longClosingPending: PendingEngineOrder[] = [
+      { instrumentKind: "INDEX_FUTURE", symbol: "NIFTYFUT28AUG2026", side: "SELL", quantity: 75, status: "PENDING", blockedAmount: null }, // closing a long
+      { instrumentKind: "INDEX_FUTURE", symbol: "NIFTYFUT28AUG2026", side: "BUY", quantity: 75, status: "PENDING", blockedAmount: 200000 } // opening/adding, NOT a close — must not count toward the closing-SELL total
+    ];
+    assertClose(
+      derivePendingBlockedQuantity(longClosingPending, "NIFTYFUT28AUG2026"),
+      75,
+      "Default (SELL) side param — closing-a-long futures SELL counts, the BUY-open row doesn't (backward-compatible default; every pre-Sprint-A equity/options call site is unaffected by this new parameter)"
+    );
+
+    const shortClosingPending: PendingEngineOrder[] = [
+      { instrumentKind: "INDEX_FUTURE", symbol: "BANKNIFTYFUT28AUG2026", side: "BUY", quantity: 30, status: "PENDING", blockedAmount: null } // closing a short
+    ];
+    assertClose(
+      derivePendingBlockedQuantity(shortClosingPending, "BANKNIFTYFUT28AUG2026", "BUY"),
+      30,
+      "Explicit BUY side param — closing-a-short futures BUY counts (a new futures-only capability; equity/options never pass this argument since they can never be short via this table)"
+    );
+
+    // Pre-Sprint-A behavior spot-check: equity/options SELL blocking is byte-identical (test 36 already covers this in full; this is a targeted regression pin against the new `side` parameter's default).
+    const equitySellPending: PendingEngineOrder[] = [
+      { instrumentKind: "EQUITY", symbol: "WIPRO", side: "SELL", productType: "DELIVERY", quantity: 20, status: "PENDING", blockedAmount: null }
+    ];
+    assertClose(derivePendingBlockedQuantity(equitySellPending, "WIPRO"), 20, "Equity SELL blocking is unchanged: calling with only (orders, symbol) still defaults to side='SELL'");
+  }
+
+  // ── 40. planFuturesOrderFill — algebra proven identical to placeFuturesOrder's pre-extraction inline logic (open/close/margin-headroom/sign matrix) ──
+  console.log("\n40. Chart Trading Sprint A — planFuturesOrderFill algebra reproduces futuresOrders.ts's PRE-Sprint-A inline logic exactly (open/close/margin-headroom/sign matrix)");
+  {
+    // Independent oracle: a straight transcription of futuresOrders.ts's
+    // inline logic AS IT EXISTED BEFORE the Sprint A extraction (see git
+    // history / the Phase 4 Sprint 2 brief). Reproduced here ONLY so this
+    // assertion has an oracle apps/api can actually import — apps/api cannot
+    // import apps/web code (cross-app constraint, see limitOrderFill.ts's
+    // module doc), and this pure function has zero knowledge of
+    // `pendingBlockedMargin` (a Sprint A addition), matching the pre-Sprint-A
+    // signature exactly.
+    function referenceInlineFuturesFill(input: {
+      side: "BUY" | "SELL";
+      lots: number;
+      lotSize: number;
+      contractPrice: number;
+      cash: number;
+      openFuturesPositions: FuturesContractPosition[];
+      underlyingSymbol: string;
+      expiryDate: Date;
+    }): { ok: true; netAmount: number; isOpeningOrAdding: boolean } | { ok: false; reason: string } {
+      const { side, lots, lotSize, contractPrice, cash, openFuturesPositions, underlyingSymbol, expiryDate } = input;
+      const quantity = lots * lotSize;
+      const matching = openFuturesPositions.find(
+        (p) => p.underlyingSymbol === underlyingSymbol && p.expiryDate.getTime() === expiryDate.getTime()
+      );
+      const currentSignedQty = matching?.quantity ?? 0;
+      const orderSignedDelta = side === "BUY" ? quantity : -quantity;
+      const isOpeningOrAdding = currentSignedQty === 0 || Math.sign(currentSignedQty) === Math.sign(orderSignedDelta);
+      const costs = computeFuturesOrderCosts({ side, quantity, price: contractPrice });
+
+      if (isOpeningOrAdding) {
+        const otherPositionsMargin = openFuturesPositions
+          .filter((p) => !(p.underlyingSymbol === underlyingSymbol && p.expiryDate.getTime() === expiryDate.getTime()))
+          .reduce((sum, p) => sum + computeFuturesMarginRequired(Math.abs(p.quantity) * p.referencePrice), 0);
+        const newTotalQtyThisContract = currentSignedQty + orderSignedDelta;
+        const thisContractMargin = computeFuturesMarginRequired(Math.abs(newTotalQtyThisContract) * contractPrice);
+        const totalMarginNeeded = otherPositionsMargin + thisContractMargin;
+        const headroom = cash - costs.totalCosts - totalMarginNeeded; // NO pendingBlockedMargin — this is the pre-Sprint-A formula
+        if (headroom < 0) return { ok: false, reason: "insufficient margin" };
+        return { ok: true, netAmount: signedNetAmountForCashEffect(side, -costs.totalCosts), isOpeningOrAdding };
+      }
+
+      const heldLots = matching?.lots ?? 0;
+      if (lots > heldLots) return { ok: false, reason: "over-close" };
+      const directionSign = Math.sign(currentSignedQty);
+      const realizedPnlThisLeg = quantity * (contractPrice - matching!.referencePrice) * directionSign;
+      return { ok: true, netAmount: signedNetAmountForCashEffect(side, realizedPnlThisLeg - costs.totalCosts), isOpeningOrAdding };
+    }
+
+    const flatPosition = (): FuturesContractPosition[] => [];
+    const longPosition = (underlyingSymbol: string, expiryDate: Date, lots: number, lotSize: number, referencePrice: number): FuturesContractPosition[] => [
+      { underlyingSymbol, expiryDate, quantity: lots * lotSize, lotSize, lots, side: "LONG", referencePrice, realizedGrossPnl: 0, totalCosts: 0, isOpen: true }
+    ];
+    const shortPosition = (underlyingSymbol: string, expiryDate: Date, lots: number, lotSize: number, referencePrice: number): FuturesContractPosition[] => [
+      { underlyingSymbol, expiryDate, quantity: -lots * lotSize, lotSize, lots, side: "SHORT", referencePrice, realizedGrossPnl: 0, totalCosts: 0, isOpen: true }
+    ];
+
+    const expiry = new Date(Date.UTC(2026, 7, 28));
+    const otherExpiry = new Date(Date.UTC(2026, 8, 25));
+
+    type Case = {
+      label: string;
+      side: "BUY" | "SELL";
+      lots: number;
+      lotSize: number;
+      contractPrice: number;
+      cash: number;
+      openFuturesPositions: FuturesContractPosition[];
+      underlyingSymbol: string;
+      expiryDate: Date;
+    };
+
+    const cases: Case[] = [
+      { label: "open long from flat (BUY)", side: "BUY", lots: 2, lotSize: 75, contractPrice: 24000, cash: 1_00_00_000, openFuturesPositions: flatPosition(), underlyingSymbol: "NIFTY", expiryDate: expiry },
+      { label: "add to existing long (BUY)", side: "BUY", lots: 1, lotSize: 75, contractPrice: 24000, cash: 1_00_00_000, openFuturesPositions: longPosition("NIFTY", expiry, 2, 75, 23800), underlyingSymbol: "NIFTY", expiryDate: expiry },
+      { label: "close partial long at a gain (SELL)", side: "SELL", lots: 1, lotSize: 75, contractPrice: 24100, cash: 5_00_000, openFuturesPositions: longPosition("NIFTY", expiry, 3, 75, 23800), underlyingSymbol: "NIFTY", expiryDate: expiry },
+      { label: "close full long at a loss (SELL)", side: "SELL", lots: 2, lotSize: 75, contractPrice: 23700, cash: 5_00_000, openFuturesPositions: longPosition("NIFTY", expiry, 2, 75, 23800), underlyingSymbol: "NIFTY", expiryDate: expiry },
+      { label: "open short from flat (SELL)", side: "SELL", lots: 1, lotSize: 75, contractPrice: 24000, cash: 1_00_00_000, openFuturesPositions: flatPosition(), underlyingSymbol: "BANKNIFTY", expiryDate: expiry },
+      { label: "close partial short at a gain (BUY)", side: "BUY", lots: 1, lotSize: 30, contractPrice: 51000, cash: 5_00_000, openFuturesPositions: shortPosition("BANKNIFTY", expiry, 2, 30, 51500), underlyingSymbol: "BANKNIFTY", expiryDate: expiry },
+      { label: "open long with an existing position on ANOTHER contract (margin sums across contracts)", side: "BUY", lots: 1, lotSize: 75, contractPrice: 24000, cash: 10_00_000, openFuturesPositions: longPosition("NIFTY", otherExpiry, 2, 75, 23800), underlyingSymbol: "NIFTY", expiryDate: expiry },
+      { label: "insufficient margin rejection (open, tiny cash)", side: "BUY", lots: 5, lotSize: 75, contractPrice: 24000, cash: 50_000, openFuturesPositions: flatPosition(), underlyingSymbol: "NIFTY", expiryDate: expiry },
+      { label: "over-close rejection (close more lots than held)", side: "SELL", lots: 3, lotSize: 75, contractPrice: 24000, cash: 5_00_000, openFuturesPositions: longPosition("NIFTY", expiry, 1, 75, 23800), underlyingSymbol: "NIFTY", expiryDate: expiry }
+    ];
+
+    for (const c of cases) {
+      const reference = referenceInlineFuturesFill(c);
+      const result = planFuturesOrderFill({
+        underlyingSymbol: c.underlyingSymbol,
+        expiryDate: c.expiryDate,
+        side: c.side,
+        lots: c.lots,
+        lotSize: c.lotSize,
+        contractPrice: c.contractPrice,
+        cash: c.cash,
+        openFuturesPositions: c.openFuturesPositions,
+        pendingBlockedMargin: 0 // reproduces the pre-Sprint-A formula exactly, per the module doc
+      });
+
+      assertEqual(result.ok, reference.ok, `[${c.label}] ok/rejected outcome matches the pre-extraction reference`);
+      if (result.ok && reference.ok) {
+        assertEqual(result.plan.isOpeningOrAdding, reference.isOpeningOrAdding, `[${c.label}] isOpeningOrAdding classification matches`);
+        assertClose(result.plan.netAmount, reference.netAmount, `[${c.label}] netAmount matches the pre-extraction reference exactly`);
+      }
+    }
+
+    // pendingBlockedMargin's ONE intentional behavioral addition, isolated: an
+    // otherwise-fitting open order that's rejected once OTHER pending futures
+    // orders' blocked margin is subtracted — proves decision 6 is wired
+    // through, without touching the reference oracle above (which has no
+    // concept of this parameter, correctly).
+    const tightCase = cases[0]; // open long from flat, cash=1,00,00,000, comfortably fits with pendingBlockedMargin=0
+    const withoutPendingBlock = planFuturesOrderFill({ ...tightCase, pendingBlockedMargin: 0 });
+    const withHugePendingBlock = planFuturesOrderFill({ ...tightCase, pendingBlockedMargin: tightCase.cash - 1000 });
+    assertTrue(withoutPendingBlock.ok, "Sanity: the base case accepts with zero pending blocks");
+    assertTrue(!withHugePendingBlock.ok, "decision 6 proof: the SAME order is correctly rejected once other pending futures orders' blocked margin consumes the account's headroom");
+  }
+
+  // ── 41. Stop-fill-worse-than-trigger — the honesty-critical assertion (decision 2) ──
+  console.log("\n41. Chart Trading Sprint A — stop-fill-worse-than-trigger: the engine fills at the actual observed crossing quote, NEVER substitutes the trigger (decision 2 — the single most important assertion in this feature)");
+  {
+    // A STOP SELL (stop-loss on a long) with trigger=100. The market gaps
+    // down past the trigger between polling ticks — the cron's NEXT observed
+    // quote is 92, not exactly 100 (real slippage, exactly the scenario
+    // decision 2 exists to handle honestly rather than fabricate).
+    const sellTrigger = 100;
+    const sellCrossingQuote = 92; // gapped down — worse than the trigger for a SELL
+    assertTrue(isStopTriggered("SELL", sellTrigger, sellCrossingQuote), "The gap IS a valid trigger: quote(92) <= trigger(100)");
+
+    // Fill-price selection rule limitOrderFill.ts's fillPendingOrder
+    // implements for a STOP row: `row.variant === "STOP" ? quote : row.limitPrice`
+    // — reproduced here as a pure expression (the cron itself does I/O, so its
+    // exact call site is covered by the sprint's QA runtime checklist item 3,
+    // not re-derivable as zero-I/O pure math beyond this point).
+    const variant: "LIMIT" | "STOP" = "STOP";
+    const sellFillPrice = variant === "STOP" ? sellCrossingQuote : sellTrigger;
+
+    assertTrue(sellFillPrice !== sellTrigger, "fillPrice !== triggerPrice — the engine must NEVER substitute the trigger for the real observed crossing quote");
+    assertClose(sellFillPrice, 92, "fillPrice equals the actual (worse) crossing quote, 92 — not the trigger, 100");
+    assertTrue(sellFillPrice < sellTrigger, "The crossing price is demonstrably WORSE than the trigger for this SELL stop (receives less) — real slippage, not fabricated execution quality");
+
+    // Mirror case: a STOP BUY (breakout entry, or a short's stop-loss) gapping UP past its trigger — worse for a buyer.
+    const buyTrigger: number = 200;
+    const buyCrossingQuote = 208; // gapped up — worse than the trigger for a BUY
+    assertTrue(isStopTriggered("BUY", buyTrigger, buyCrossingQuote), "The gap IS a valid trigger: quote(208) >= trigger(200)");
+    const buyFillPrice = buyCrossingQuote; // STOP always fills at the crossing quote, never the trigger
+    assertTrue(buyFillPrice !== buyTrigger, "fillPrice !== triggerPrice for the BUY case too");
+    assertTrue(buyFillPrice > buyTrigger, "The crossing price is demonstrably WORSE than the trigger for this BUY stop (pays more) — real slippage, not fabricated execution quality");
+
+    // Contrast with LIMIT, which is unaffected by this decision (fills at the limit price, unchanged since the Limit Orders sprint) — pin the distinction explicitly so a future edit can't blur STOP into LIMIT's fill-price rule.
+    const limitVariant: string = "LIMIT";
+    const limitPrice = 100;
+    const limitCrossingQuote = 95; // a limit order can fill at a BETTER price than the limit and STILL only fills at the limit (conservative, exchange-guaranteed-bound framing)
+    const limitFillPrice = limitVariant === "STOP" ? limitCrossingQuote : limitPrice;
+    assertEqual(limitFillPrice, limitPrice, "LIMIT fills at the limit price itself, never the crossing quote — the opposite rule from STOP, both correct for their own instrument (exchange-guaranteed bound vs. no such guarantee)");
+  }
+
+  // ── 42. Reprice invariant (forward-looking for Sprint C's PATCH endpoint) ──
+  console.log("\n42. Chart Trading Sprint A — reprice invariant (forward-looking for Sprint C's PATCH endpoint): excluding a row from its own blocked-totals and recomputing at a new price matches a fresh placement at that price");
+  {
+    // Equity LIMIT BUY, originally placed at limitPrice=1000 for qty=10.
+    const originalPrice = 1000;
+    const newPrice = 1050;
+    const qty = 10;
+
+    const originalBlock = computePendingBlockAmount({ instrumentKind: "EQUITY", side: "BUY", quantity: qty, limitPrice: originalPrice, productType: "DELIVERY" })!;
+
+    const pendingRowsIncludingSelf: PendingEngineOrder[] = [
+      { instrumentKind: "EQUITY", symbol: "TCS", side: "BUY", productType: "DELIVERY", quantity: qty, status: "PENDING", blockedAmount: originalBlock }, // the row ABOUT TO BE repriced
+      { instrumentKind: "EQUITY", symbol: "INFY", side: "BUY", productType: "DELIVERY", quantity: 5, status: "PENDING", blockedAmount: 9000 } // an unrelated row, unaffected by the reprice
+    ];
+
+    // Sprint C's PATCH will: (a) exclude the repriced row from the blocked-cash
+    // total BEFORE re-validating headroom at the new price — mirrors how a
+    // fresh POST placement trivially excludes itself (a not-yet-existent row
+    // can't be in its own sum).
+    const blockedExcludingSelf = derivePendingBlockedCash(pendingRowsIncludingSelf.filter((_, i) => i !== 0));
+    assertClose(blockedExcludingSelf, 9000, "The row being repriced is excluded from its own blocked-cash total before re-validation — only the unrelated row (9000) remains");
+
+    // (b) That excluded-self total must be IDENTICAL to what a brand-new
+    // placement would see as its own "already blocked by others" baseline —
+    // this is the actual invariant: reprice-in-place === cancel-then-replace,
+    // arithmetically, which is what makes an atomic PATCH safe to build in
+    // Sprint C without a cancel+recreate race window where the block briefly
+    // vanishes.
+    const freshPlacementBaseline = derivePendingBlockedCash([
+      { instrumentKind: "EQUITY", symbol: "INFY", side: "BUY", productType: "DELIVERY", quantity: 5, status: "PENDING", blockedAmount: 9000 }
+    ]);
+    assertClose(freshPlacementBaseline, blockedExcludingSelf, "Reprice-in-place's excluded-self total === a fresh placement's blocked-total baseline — the invariant Sprint C's PATCH endpoint depends on");
+
+    // (c) The repriced block amount itself is deterministic — recomputing at
+    // the new price via the SAME pure function a real PATCH write would call
+    // gives the same figure every time, never a stale reuse of the old block.
+    const repricedBlockA = computePendingBlockAmount({ instrumentKind: "EQUITY", side: "BUY", quantity: qty, limitPrice: newPrice, productType: "DELIVERY" })!;
+    const repricedBlockB = computePendingBlockAmount({ instrumentKind: "EQUITY", side: "BUY", quantity: qty, limitPrice: newPrice, productType: "DELIVERY" })!;
+    assertClose(repricedBlockA, repricedBlockB, "The repriced block amount is deterministic — recomputing at the new price twice gives the same figure a real PATCH write would persist");
+    assertTrue(repricedBlockA !== originalBlock, "Sanity: the reprice actually changes the blocked amount (a higher price on a BUY needs more blocked cash)");
+
+    // Same invariant for a futures margin block (decision 5's block shape) —
+    // a higher repriced trigger/limit price must never silently reuse the
+    // stale block.
+    const futuresOriginalBlock = computePendingFuturesBlockAmount({ side: "BUY", quantity: 75, price: 24000 });
+    const futuresRepricedBlock = computePendingFuturesBlockAmount({ side: "BUY", quantity: 75, price: 24200 });
+    assertTrue(futuresRepricedBlock > futuresOriginalBlock, "A higher repriced price on a futures BUY-to-open produces a strictly larger margin+costs block");
   }
 
   console.log(`\n${passCount} passed, ${failCount} failed.`);

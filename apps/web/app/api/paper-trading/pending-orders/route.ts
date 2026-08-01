@@ -7,15 +7,16 @@ import { listPendingOrders, placePendingOrder } from "@/lib/paperTrading/pending
 
 /**
  * GET /api/paper-trading/pending-orders — lists the caller's currently-PENDING
- * limit orders (T3's "Pending orders" section backing endpoint).
+ * limit/stop orders (T3's "Pending orders" section backing endpoint).
  *
  * POST /api/paper-trading/pending-orders — places (never fills) one resting
- * limit order. See lib/paperTrading/pendingOrders.ts for the full validation
- * + blocking algorithm. Rejects `INDEX_FUTURE`/`orderKind: "FUTURE"` with a
- * clear, dedicated error BEFORE the zod schema is even reached — futures
- * order placement itself doesn't exist yet this sprint (see the Limit Orders
- * brief's scope section), so there's no market-order lifecycle for a futures
- * limit order to sit on top of.
+ * LIMIT or STOP order (equity, options, or — Chart Trading + SL/TP Sprint A,
+ * 2026-07-31 — index futures). See lib/paperTrading/pendingOrders.ts for the
+ * full validation + blocking algorithm. The dedicated pre-zod rejection for
+ * `orderKind: "FUTURE"` that existed during the Limit Orders sprint has been
+ * removed — futures order placement shipped in Phase 4 Sprint 2, and this
+ * sprint adds the pending-order lifecycle on top of it (see design decision
+ * 5/6 in the Sprint A brief).
  */
 export async function GET() {
   const session = await getSession();
@@ -38,14 +39,6 @@ export async function POST(request: Request) {
     body = await request.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
-  }
-
-  const rawOrderKind = (body as { orderKind?: unknown; instrumentKind?: unknown })?.orderKind ?? (body as { instrumentKind?: unknown })?.instrumentKind;
-  if (rawOrderKind === "FUTURE" || rawOrderKind === "INDEX_FUTURE") {
-    return NextResponse.json(
-      { error: "Limit orders for index futures aren't supported yet — futures order placement itself hasn't shipped." },
-      { status: 400 }
-    );
   }
 
   const parsed = placePendingOrderSchema.safeParse(body);
