@@ -165,6 +165,7 @@ export default async function InstrumentDetailPage({
           chart's timeframes already tell the returns story. Component kept
           at components/finance/performance-strip.tsx for possible reuse.) */}
       <FundamentalsPanel
+        symbol={instrument.symbol}
         annualRevenue={instrument.enrichment.annualRevenue}
         annualNetIncome={instrument.enrichment.annualNetIncome}
         annualDilutedEps={instrument.enrichment.annualDilutedEps}

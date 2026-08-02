@@ -37,6 +37,8 @@ import type {
  */
 
 export type FundamentalsPanelProps = {
+  /** Bare NSE symbol — powers the Details section's "View on NSE" deep link (get-quotes page: official financials, shareholding, announcements). */
+  symbol: string;
   annualRevenue: FundamentalsPoint[] | null;
   annualNetIncome: FundamentalsPoint[] | null;
   annualDilutedEps: FundamentalsPoint[] | null;
@@ -1106,6 +1108,7 @@ function DividendsSection({ dividends }: { dividends: DividendRow[] }) {
 // ── Panel ───────────────────────────────────────────────────────────────────
 
 export function FundamentalsPanel({
+  symbol,
   annualRevenue,
   annualNetIncome,
   annualDilutedEps,
@@ -1170,16 +1173,16 @@ export function FundamentalsPanel({
         {/* Details (founder 2026-08-02, TradingView-style; description
             deliberately omitted per founder — facts grid only; Founded/IPO/
             ISIN not available from the keyless source, never fabricated). */}
-        {keyStats && (keyStats.sector || keyStats.industry || keyStats.ceoName || keyStats.website || keyStats.headquartersCity || keyStats.employees) && (
+        {(
           <div>
             <p className="mb-2 text-lg font-semibold text-ink-900">Details</p>
             <div className="grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-3">
-              {keyStats.sector && <KeyStat label="Sector" value={keyStats.sector} />}
-              {keyStats.industry && <KeyStat label="Industry" value={keyStats.industry} />}
-              {keyStats.ceoName && <KeyStat label="CEO" value={keyStats.ceoName} />}
-              {keyStats.headquartersCity && <KeyStat label="Headquarters" value={keyStats.headquartersCity} />}
-              {keyStats.employees !== undefined && <KeyStat label="Employees" value={keyStats.employees.toLocaleString("en-IN")} />}
-              {keyStats.website && (
+              {keyStats?.sector && <KeyStat label="Sector" value={keyStats.sector} />}
+              {keyStats?.industry && <KeyStat label="Industry" value={keyStats.industry} />}
+              {keyStats?.ceoName && <KeyStat label="CEO" value={keyStats.ceoName} />}
+              {keyStats?.headquartersCity && <KeyStat label="Headquarters" value={keyStats.headquartersCity} />}
+              {keyStats?.employees !== undefined && <KeyStat label="Employees" value={keyStats.employees.toLocaleString("en-IN")} />}
+              {keyStats?.website && (
                 <div>
                   <p className="text-xs text-ink-400">Website</p>
                   <a
@@ -1192,6 +1195,19 @@ export function FundamentalsPanel({
                   </a>
                 </div>
               )}
+              {/* Founder 2026-08-03: official NSE deep link — financial
+                  results, shareholding pattern, announcements live there. */}
+              <div>
+                <p className="text-xs text-ink-400">Exchange</p>
+                <a
+                  href={`https://www.nseindia.com/get-quotes/equity?symbol=${encodeURIComponent(symbol)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm font-semibold text-signal-sky hover:underline"
+                >
+                  View on NSE ↗
+                </a>
+              </div>
             </div>
           </div>
         )}
