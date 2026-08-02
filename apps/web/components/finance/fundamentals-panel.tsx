@@ -1167,6 +1167,35 @@ export function FundamentalsPanel({
 
         </div>
 
+        {/* Details (founder 2026-08-02, TradingView-style; description
+            deliberately omitted per founder — facts grid only; Founded/IPO/
+            ISIN not available from the keyless source, never fabricated). */}
+        {keyStats && (keyStats.sector || keyStats.industry || keyStats.ceoName || keyStats.website || keyStats.headquartersCity || keyStats.employees) && (
+          <div>
+            <p className="mb-2 text-lg font-semibold text-ink-900">Details</p>
+            <div className="grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-3">
+              {keyStats.sector && <KeyStat label="Sector" value={keyStats.sector} />}
+              {keyStats.industry && <KeyStat label="Industry" value={keyStats.industry} />}
+              {keyStats.ceoName && <KeyStat label="CEO" value={keyStats.ceoName} />}
+              {keyStats.headquartersCity && <KeyStat label="Headquarters" value={keyStats.headquartersCity} />}
+              {keyStats.employees !== undefined && <KeyStat label="Employees" value={keyStats.employees.toLocaleString("en-IN")} />}
+              {keyStats.website && (
+                <div>
+                  <p className="text-xs text-ink-400">Website</p>
+                  <a
+                    href={keyStats.website}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm font-semibold text-signal-sky hover:underline"
+                  >
+                    {keyStats.website.replace(/^https?:\/\/(www\.)?/, "")}
+                  </a>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {hasKeyStats && keyStats && (
           <div>
             <p className="mb-2 text-lg font-semibold text-ink-900">Key stats</p>
@@ -1224,35 +1253,6 @@ export function FundamentalsPanel({
                 formatEarningsDate(keyStats.nextEarningsDate)
               )}
             </p>
-          </div>
-        )}
-
-        {/* Details (founder 2026-08-02, TradingView-style; description
-            deliberately omitted per founder — facts grid only; Founded/IPO/
-            ISIN not available from the keyless source, never fabricated). */}
-        {keyStats && (keyStats.sector || keyStats.industry || keyStats.ceoName || keyStats.website || keyStats.headquartersCity || keyStats.employees) && (
-          <div>
-            <p className="mb-2 text-lg font-semibold text-ink-900">Details</p>
-            <div className="grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-3">
-              {keyStats.sector && <KeyStat label="Sector" value={keyStats.sector} />}
-              {keyStats.industry && <KeyStat label="Industry" value={keyStats.industry} />}
-              {keyStats.ceoName && <KeyStat label="CEO" value={keyStats.ceoName} />}
-              {keyStats.headquartersCity && <KeyStat label="Headquarters" value={keyStats.headquartersCity} />}
-              {keyStats.employees !== undefined && <KeyStat label="Employees" value={keyStats.employees.toLocaleString("en-IN")} />}
-              {keyStats.website && (
-                <div>
-                  <p className="text-xs text-ink-400">Website</p>
-                  <a
-                    href={keyStats.website}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-sm font-semibold text-signal-sky hover:underline"
-                  >
-                    {keyStats.website.replace(/^https?:\/\/(www\.)?/, "")}
-                  </a>
-                </div>
-              )}
-            </div>
           </div>
         )}
 
