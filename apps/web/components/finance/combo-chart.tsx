@@ -87,6 +87,14 @@ export type ComboChartProps = {
   series: ComboSeriesDef[];
   /** SVG viewBox height in px. Default 200. */
   height?: number;
+  /**
+   * SVG viewBox WIDTH. Default 640 (full-width sections). Half-width grid
+   * sections pass ~360 so text renders at natural size instead of being
+   * CSS-scaled to ~half (founder 2026-08-02: paired charts "looking very
+   * small, difficult to read" — the fix is a narrower canvas, not bigger
+   * font numbers, which keeps every proportion intact).
+   */
+  width?: number;
   /** §06 Asset Base Composition mode (Sprint 2) — bar-kind series in a group stack cumulatively instead of clustering side by side. Default false. */
   stackedBars?: boolean;
   /** Factory: given the primary axis's own nice-scale domain max, returns its declared-once unit + per-tick short formatter (see `AxisFormat`). */
@@ -289,6 +297,7 @@ export function ComboChart({
   categories,
   series,
   height = 200,
+  width: chartW = CHART_W,
   stackedBars = false,
   formatPrimaryAxis,
   formatSecondaryAxis,
@@ -377,7 +386,7 @@ export function ComboChart({
   // Gutter auto-sizing (fix 4b): measured from the longest rendered tick/unit
   // string for EACH axis independently — never the old fixed 44px/40px.
   const plotLeft = primaryPresentation.gutterW;
-  const plotRight = CHART_W - (hasSecondary ? (secondaryPresentation?.gutterW ?? MIN_GUTTER_W) : 0);
+  const plotRight = chartW - (hasSecondary ? (secondaryPresentation?.gutterW ?? MIN_GUTTER_W) : 0);
   const plotWidth = plotRight - plotLeft;
   const plotTop = PAD_TOP;
   const plotBottom = height - PAD_BOTTOM;
@@ -434,7 +443,7 @@ export function ComboChart({
 
   const groupIndexFromClientX = (clientX: number, rect: DOMRect): number => {
     const fracX = clamp((clientX - rect.left) / rect.width, 0, 1);
-    const vbX = clamp(fracX * CHART_W, plotLeft, plotRight);
+    const vbX = clamp(fracX * chartW, plotLeft, plotRight);
     return clamp(Math.floor((vbX - plotLeft) / groupW), 0, categories.length - 1);
   };
 
@@ -491,7 +500,7 @@ export function ComboChart({
     const anchorVbX = xCenter(idx);
     const anchorVbY = groupTopViewBoxY(idx);
     setPointerPx({
-      x: (anchorVbX / CHART_W) * rect.width,
+      x: (anchorVbX / chartW) * rect.width,
       y: (anchorVbY / height) * rect.height,
     });
   };
@@ -509,7 +518,7 @@ export function ComboChart({
   if (categories.length === 0 || activeSeries.length === 0) return null;
 
   const wrapperRect = wrapperRef.current?.getBoundingClientRect();
-  const containerW = wrapperRect?.width ?? CHART_W;
+  const containerW = wrapperRect?.width ?? chartW;
   const containerH = wrapperRect?.height ?? height;
 
   let tooltipLeft = 0;
@@ -536,7 +545,7 @@ export function ComboChart({
         onPointerLeave={handlePointerLeave}
         onPointerDown={handlePointerDown}
       >
-        <svg viewBox={`0 0 ${CHART_W} ${height}`} className="block w-full" role="img" aria-label={ariaLabel}>
+        <svg viewBox={`0 0 ${chartW} ${height}`} className="block w-full" role="img" aria-label={ariaLabel}>
           {/*
             Primary axis gridlines + labels (left gutter) — nice-scale ticks
             (3-5, axis-polish fix 2/5): every tick gets a full-width
@@ -706,22 +715,36 @@ export function ComboChart({
             );
           })}
 
-          {/* X-axis category labels */}
-          {categories.map((label, i) => {
-            const dim = activeIdx != null && activeIdx !== i;
-            return (
-              <text
-                key={`label-${i}`}
-                x={xCenter(i)}
-                y={height - 8}
-                textAnchor="middle"
-                fontSize={categories.length > 8 ? 9 : 11}
-                fill={dim ? "#cbd5e1" : "#94a3b8"}
-              >
-                {label}
-              </text>
-            );
-          })}
+          {/* X-axis category labels — thinned when they can't all fit (a
+              narrow-width chart with many payout dates would otherwise
+              collide): render every Nth label, always keeping the LAST (the
+              most recent period is the one a reader anchors on). The active
+              (hovered) category's label always renders regardless of
+              thinning, so the tooltip's category is never axis-orphaned. */}
+          {(() => {
+            const labelFontSize = categories.length > 8 ? 9 : 11;
+            const maxLabelChars = categories.reduce((m, s) => Math.max(m, s.length), 0);
+            const approxLabelW = maxLabelChars * (labelFontSize * 0.55) + 8;
+            const labelEvery = Math.max(1, Math.ceil((categories.length * approxLabelW) / Math.max(plotWidth, 1)));
+            return categories.map((label, i) => {
+              const isLast = i === categories.length - 1;
+              const onGrid = (categories.length - 1 - i) % labelEvery === 0;
+              if (!onGrid && !isLast && activeIdx !== i) return null;
+              const dim = activeIdx != null && activeIdx !== i;
+              return (
+                <text
+                  key={`label-${i}`}
+                  x={xCenter(i)}
+                  y={height - 8}
+                  textAnchor="middle"
+                  fontSize={labelFontSize}
+                  fill={dim ? "#cbd5e1" : "#94a3b8"}
+                >
+                  {label}
+                </text>
+              );
+            });
+          })()}
         </svg>
 
         {/* Cursor-following DOM tooltip */}

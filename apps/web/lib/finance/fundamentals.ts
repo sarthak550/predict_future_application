@@ -61,6 +61,7 @@
  */
 
 import { fetchQuoteSummary } from "@/lib/finance/yahooCrumb";
+import { computeBeta, type PricePoint } from "@/lib/finance/beta";
 
 const FUNDAMENTALS_TIMESERIES_BASE =
   "https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries";
@@ -81,6 +82,10 @@ const QUARTERLY_LOOKBACK_YEARS = 2.5;
 const DIVIDEND_LOOKBACK_YEARS = 3;
 /** Trailing window (calendar days) for the per-payout "annualised yield" figure — see fetchDividendHistory. */
 const DIVIDEND_TTM_WINDOW_DAYS = 365;
+/** Beta computation's shared price-history fetch window — one 5y fetch per symbol covers both Beta (5Y monthly) directly and Beta (1Y daily) via a trailing-1y slice, so only one HTTP round-trip is needed per symbol (plus the shared, cached ^NSEI fetch — see fetchIndexDailyCloses). */
+const BETA_LOOKBACK_YEARS = 5;
+/** Trailing window (calendar days) sliced out of the shared 5y fetch for the daily-mode Beta (1Y). */
+const BETA_1Y_WINDOW_DAYS = 365;
 
 /** One point in a fundamentals series, oldest-first — matches InstrumentEnrichment's JSON column shape exactly. */
 export type FundamentalsPoint = { periodEnd: string; value: number };
@@ -344,34 +349,30 @@ async function fetchDividendEvents(symbol: string, period1: number, period2: num
 type DailyClose = { date: string; close: number };
 
 /**
- * Daily close prices for `symbol` over `[period1, period2]`, oldest first.
- * Generalizes what was originally `fetchYearEndCloses` (which reduced this
- * same feed down to one close per calendar year for the now-superseded
- * per-year dividend-yield shape) — Change 1 of the 2026-08-02b sprint needs
- * an arbitrary-date "close on or before X" lookup instead, so this now
- * returns the full daily series and leaves the reduction to
- * `closeOnOrBefore` below.
+ * Daily close prices for a RAW Yahoo ticker (already suffixed/prefixed as
+ * Yahoo expects — e.g. "RELIANCE.NS" or the index ticker "^NSEI") over
+ * `[period1, period2]`, oldest first. The lower-level primitive both
+ * `fetchDailyCloses` (NSE equity symbols) and `fetchIndexDailyCloses` (Beta
+ * computation's NIFTY 50 series — see this file's Key Stats section) share,
+ * since only the symbol-to-ticker mapping differs between them.
  *
  * Returns null on a total fetch failure (network/HTTP/parse/empty) — never
- * an empty array — so callers can tell "no price data at all" (blanket null
- * price/yield across every payout) apart from "priced, just no close
- * resolves for one specific date" (array present, that date simply has no
- * entry on/before it — e.g. a payout date at the very start of the fetched
- * window with zero prior trading days in range).
+ * an empty array — so callers can tell "no price data at all" apart from
+ * "priced, just no close resolves for one specific date."
  */
-async function fetchDailyCloses(symbol: string, period1: number, period2: number): Promise<DailyClose[] | null> {
-  const url = `${CHART_BASE}/${encodeURIComponent(symbol)}.NS?interval=1d&period1=${period1}&period2=${period2}`;
+async function fetchDailyClosesForTicker(yahooTicker: string, period1: number, period2: number): Promise<DailyClose[] | null> {
+  const url = `${CHART_BASE}/${encodeURIComponent(yahooTicker)}?interval=1d&period1=${period1}&period2=${period2}`;
 
   let response: Response;
   try {
     response = await fetchWithTimeout(url);
   } catch (err) {
-    console.warn(`[fundamentals] Network error fetching daily closes for ${symbol}: ${err instanceof Error ? err.message : err}`);
+    console.warn(`[fundamentals] Network error fetching daily closes for ${yahooTicker}: ${err instanceof Error ? err.message : err}`);
     return null;
   }
 
   if (!response.ok) {
-    console.warn(`[fundamentals] Yahoo chart(daily close) returned ${response.status} for ${symbol}`);
+    console.warn(`[fundamentals] Yahoo chart(daily close) returned ${response.status} for ${yahooTicker}`);
     return null;
   }
 
@@ -379,7 +380,7 @@ async function fetchDailyCloses(symbol: string, period1: number, period2: number
   try {
     data = await response.json();
   } catch (err) {
-    console.warn(`[fundamentals] Daily close JSON parse error for ${symbol}: ${err instanceof Error ? err.message : err}`);
+    console.warn(`[fundamentals] Daily close JSON parse error for ${yahooTicker}: ${err instanceof Error ? err.message : err}`);
     return null;
   }
 
@@ -401,6 +402,19 @@ async function fetchDailyCloses(symbol: string, period1: number, period2: number
   // Yahoo returns timestamps ascending already; sort defensively rather than assume.
   rows.sort((a, b) => a.date.localeCompare(b.date));
   return rows.length > 0 ? rows : null;
+}
+
+/**
+ * Daily close prices for `symbol` over `[period1, period2]`, oldest first.
+ * Generalizes what was originally `fetchYearEndCloses` (which reduced this
+ * same feed down to one close per calendar year for the now-superseded
+ * per-year dividend-yield shape) — Change 1 of the 2026-08-02b sprint needs
+ * an arbitrary-date "close on or before X" lookup instead, so this now
+ * returns the full daily series and leaves the reduction to
+ * `closeOnOrBefore` below.
+ */
+async function fetchDailyCloses(symbol: string, period1: number, period2: number): Promise<DailyClose[] | null> {
+  return fetchDailyClosesForTicker(`${symbol}.NS`, period1, period2);
 }
 
 /** Last close on or before `targetDate` (ISO "YYYY-MM-DD"), or null if `closes` has no entry that old. `closes` must be ascending-sorted (as `fetchDailyCloses` returns). Linear scan — the series is at most a few years of trading days, called once per rendered payout during a background refresh, not a hot path. */
@@ -510,9 +524,14 @@ export interface KeyStats {
   marketCap?: number;
   trailingPE?: number;
   dividendYield?: number;
+  /** Yahoo's own beta (5Y-monthly convention, benchmark undisclosed for NSE names) — kept as-is for any row not yet refetched since the beta1Y/beta5Y sprint. New writes no longer set this field; see beta1Y/beta5Y below. */
   beta?: number;
   floatShares?: number;
   trailingEps?: number;
+  /** Self-computed vs. NIFTY 50 (^NSEI): cov(stock daily returns, index daily returns) / var(index daily returns), trailing 1 year of aligned daily closes. See beta.ts's doc comment for the full methodology and null thresholds. Undefined when insufficient aligned history (~180 daily points) or index variance is 0 — never a fabricated value. */
+  beta1Y?: number;
+  /** Self-computed vs. NIFTY 50 (^NSEI): same formula as beta1Y, trailing 5 years of aligned MONTHLY returns (month-end closes). Undefined when insufficient aligned history (~36 monthly points) or index variance is 0. */
+  beta5Y?: number;
 }
 
 /**
@@ -550,6 +569,78 @@ export async function fetchKeyStats(symbol: string): Promise<KeyStats | null> {
   put("floatShares", raw(ks, "floatShares"));
   put("trailingEps", raw(ks, "trailingEps"));
   return stats;
+}
+
+// ── Beta (1Y daily / 5Y monthly, self-computed vs. NIFTY 50) ─────────────────
+
+const NIFTY_50_TICKER = "^NSEI";
+/** Daily cadence matches KEY_STATS_TTL_MS in enrichment.ts — NIFTY's own close series is only as fresh as "once a day" needs to be. */
+const INDEX_CLOSE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * In-module cache for NIFTY 50's daily close series. Every symbol's Key
+ * Stats refresh needs this SAME series (the benchmark never changes
+ * per-stock), so without a cache a warm-enrichment batch of e.g. 25 symbols
+ * would issue 25 near-identical ^NSEI fetches within the same few minutes.
+ * A plain module-level variable is safe here because apps/web runs as a
+ * single long-lived Node process on EC2, not serverless (same assumption
+ * this file's sibling enrichment.ts documents for its own fire-and-forget
+ * background refreshes) — a serverless deploy would need a shared cache
+ * (e.g. Redis) instead, since each invocation gets a fresh module scope.
+ */
+let indexCloseCache: { fetchedAt: number; closes: DailyClose[] } | null = null;
+
+/**
+ * Cached fetch of ^NSEI's daily closes over `[period1, period2]`. On a
+ * fresh miss/expiry that fails to fetch, falls back to serving a stale
+ * cached series rather than blanking every symbol's beta for one transient
+ * Yahoo hiccup — betas computed off a slightly-stale-but-real index series
+ * are still honest; betas computed off nothing are not possible at all.
+ */
+async function fetchIndexDailyCloses(period1: number, period2: number): Promise<DailyClose[] | null> {
+  if (indexCloseCache && Date.now() - indexCloseCache.fetchedAt < INDEX_CLOSE_CACHE_TTL_MS) {
+    return indexCloseCache.closes;
+  }
+  const closes = await fetchDailyClosesForTicker(NIFTY_50_TICKER, period1, period2);
+  if (closes) {
+    indexCloseCache = { fetchedAt: Date.now(), closes };
+    return closes;
+  }
+  return indexCloseCache?.closes ?? null; // serve stale cache (if any) on a transient fetch failure, else genuinely null.
+}
+
+/**
+ * Computes Beta (1Y, daily) and Beta (5Y, monthly) for `symbol` against
+ * NIFTY 50 — see beta.ts's doc comment for the full methodology. Fetches
+ * ONE 5-year daily close series for the stock (reusing `fetchDailyCloses`)
+ * and one shared/cached 5-year daily close series for the index, then:
+ *   - Beta (1Y): slices both series down to the trailing `BETA_1Y_WINDOW_DAYS`
+ *     and runs `computeBeta` in "daily" mode.
+ *   - Beta (5Y): runs `computeBeta` on the FULL 5-year series in "monthly"
+ *     mode (which internally reduces to month-end closes).
+ * Each field independently null (never fabricated) when its own series
+ * lacked a resolvable price history or `computeBeta` found insufficient
+ * aligned points / zero index variance for that mode.
+ */
+export async function computeBetas(symbol: string): Promise<{ beta1Y: number | null; beta5Y: number | null }> {
+  const period2 = Math.floor(Date.now() / 1000);
+  const period1 = period2 - Math.floor(BETA_LOOKBACK_YEARS * 365.25 * ONE_DAY_S);
+
+  const [stockCloses, indexCloses] = await Promise.all([
+    fetchDailyCloses(symbol, period1, period2),
+    fetchIndexDailyCloses(period1, period2),
+  ]);
+
+  if (!stockCloses || !indexCloses) return { beta1Y: null, beta5Y: null };
+
+  const oneYearAgoIso = new Date((period2 - BETA_1Y_WINDOW_DAYS * ONE_DAY_S) * 1000).toISOString().slice(0, 10);
+  const stock1Y: PricePoint[] = stockCloses.filter((c) => c.date >= oneYearAgoIso);
+  const index1Y: PricePoint[] = indexCloses.filter((c) => c.date >= oneYearAgoIso);
+
+  const beta1Y = computeBeta(stock1Y, index1Y, { mode: "daily" });
+  const beta5Y = computeBeta(stockCloses, indexCloses, { mode: "monthly" });
+
+  return { beta1Y, beta5Y };
 }
 
 // ── Debt level and coverage (TradingView-style, founder 2026-07-26) ──────────

@@ -58,9 +58,14 @@ export type FundamentalsPanelProps = {
     marketCap?: number;
     trailingPE?: number;
     dividendYield?: number;
+    /** Legacy Yahoo beta (5Y-monthly, undisclosed benchmark) — fallback tile only, rendered when neither beta1Y nor beta5Y is present on this row yet. */
     beta?: number;
     floatShares?: number;
     trailingEps?: number;
+    /** Self-computed vs. NIFTY 50, trailing 1y of daily returns — see lib/finance/beta.ts. */
+    beta1Y?: number;
+    /** Self-computed vs. NIFTY 50, trailing 5y of monthly returns — see lib/finance/beta.ts. */
+    beta5Y?: number;
   } | null;
   fetchedAt: Date | null;
 };
@@ -280,9 +285,15 @@ const SERIES_COLORS = {
 } as const;
 
 const SECTION_H_HERO = 170; // §01, full-width — reduced from 210 (founder chart-polish pass: "make it small a bit")
-const SECTION_H_PAIR_TOP = 140; // §02 | §03 — the founder's EPS/Dividends side-by-side
-const SECTION_H_PAIR_MID = 150; // §04 | §05
-const SECTION_H_PAIR_BOTTOM = 200; // §06 | §07
+// Founder readability pass 2026-08-02: paired (half-width) sections were
+// unreadably small because they rendered the same 640-unit viewBox as §01
+// into half the CSS width — every glyph scaled to ~half size. Fix = a
+// NARROWER canvas (SECTION_W_PAIR, so text renders near-natural size at
+// half-column width) PLUS more height. §01 keeps the full 640 canvas.
+const SECTION_W_PAIR = 360;
+const SECTION_H_PAIR_TOP = 190; // §02 | §03 — the founder's EPS/Dividends side-by-side (was 140)
+const SECTION_H_PAIR_MID = 200; // §04 | §05 (was 150)
+const SECTION_H_PAIR_BOTTOM = 210; // §06 | §07 (was 200)
 
 /**
  * Runtime shape guard for whatever `InstrumentEnrichment.dividends` last
@@ -476,6 +487,7 @@ function EpsSection({
         categories={points.map((p) => compactPeriodLabel(p.periodEnd, mode))}
         series={series}
         height={SECTION_H_PAIR_TOP}
+        width={SECTION_W_PAIR}
         formatPrimaryAxis={makeMoneyAxisFormat(currencyCode)}
         ariaLabel="Diluted EPS by period"
         legend={false}
@@ -569,6 +581,7 @@ function OperatingEfficiencySection({
         categories={groups.map((g) => g.label)}
         series={series}
         height={SECTION_H_PAIR_MID}
+        width={SECTION_W_PAIR}
         formatPrimaryAxis={makePercentAxisFormat()}
         ariaLabel="Year-over-year growth in sales, fixed assets, receivables and inventory"
       />
@@ -698,6 +711,7 @@ function CapitalStructureSection({
         categories={groups.map((g) => g.label)}
         series={series}
         height={SECTION_H_PAIR_MID}
+        width={SECTION_W_PAIR}
         formatPrimaryAxis={makeMoneyAxisFormat(currencyCode)}
         formatSecondaryAxis={hasDE || hasATO ? makeRatioAxisFormat() : undefined}
         ariaLabel="Total assets, total debt, debt-to-equity and asset turnover by year"
@@ -808,6 +822,7 @@ function AssetBaseCompositionSection({
         categories={groups.map((g) => g.label)}
         series={series}
         height={SECTION_H_PAIR_BOTTOM}
+        width={SECTION_W_PAIR}
         stackedBars
         formatPrimaryAxis={makeMoneyAxisFormat(currencyCode)}
         ariaLabel="Fixed, current and other assets as a share of total assets by year"
@@ -864,6 +879,7 @@ function DebtCoverageSection({
         categories={groups.map((g) => g.label)}
         series={series}
         height={SECTION_H_PAIR_BOTTOM}
+        width={SECTION_W_PAIR}
         formatPrimaryAxis={makeMoneyAxisFormat(currencyCode)}
         ariaLabel="Debt, free cash flow and cash by period"
       />
@@ -956,6 +972,7 @@ function DividendsSection({ dividends }: { dividends: DividendRow[] }) {
           categories={rows.map((r) => formatShortDate(r.date))}
           series={series}
           height={SECTION_H_PAIR_TOP}
+        width={SECTION_W_PAIR}
           formatPrimaryAxis={makeMoneyAxisFormat(null)}
           formatSecondaryAxis={hasYield || hasGrowth ? makePercentAxisFormat() : undefined}
           ariaLabel="Dividend per payout, annualised yield and TTM dividend growth"
@@ -1000,6 +1017,7 @@ function DividendsSection({ dividends }: { dividends: DividendRow[] }) {
           categories={rows.map((r) => (r.isYtd ? `${r.year} YTD` : `${r.year}`))}
           series={series}
           height={SECTION_H_PAIR_TOP}
+        width={SECTION_W_PAIR}
           formatPrimaryAxis={makeMoneyAxisFormat(null)}
           formatSecondaryAxis={hasYield ? makePercentAxisFormat() : undefined}
           ariaLabel="Dividend per share and annualised yield by year"
@@ -1028,6 +1046,7 @@ function DividendsSection({ dividends }: { dividends: DividendRow[] }) {
         categories={rows.map((r) => formatShortDate(r.date))}
         series={series}
         height={SECTION_H_PAIR_TOP}
+        width={SECTION_W_PAIR}
         formatPrimaryAxis={makeMoneyAxisFormat(null)}
         ariaLabel="Dividend per payout"
         legend={false}
@@ -1108,7 +1127,21 @@ export function FundamentalsPanel({
                 <KeyStat label="Dividend yield" value={`${(keyStats.dividendYield * 100).toFixed(2)}%`} />
               )}
               {keyStats.trailingEps !== undefined && <KeyStat label="EPS (TTM)" value={`₹${keyStats.trailingEps.toFixed(2)}`} />}
-              {keyStats.beta !== undefined && <KeyStat label="Beta (5Y monthly)" value={keyStats.beta.toFixed(2)} />}
+              {/*
+                Beta — three tiles are possible depending on what this row has cached:
+                  - beta1Y and/or beta5Y present (self-computed vs. NIFTY 50, per-field
+                    independent so a symbol with <3y of history can still show a valid
+                    1Y beta with an honest null 5Y): render whichever of the two exists,
+                    each its own tile.
+                  - neither present but the legacy Yahoo `beta` is (row not yet refetched
+                    since this feature shipped): fall back to the single old tile.
+                  - none present: no beta tile at all.
+              */}
+              {keyStats.beta1Y !== undefined && <KeyStat label="Beta (1Y · daily vs NIFTY 50)" value={keyStats.beta1Y.toFixed(2)} />}
+              {keyStats.beta5Y !== undefined && <KeyStat label="Beta (5Y · monthly vs NIFTY 50)" value={keyStats.beta5Y.toFixed(2)} />}
+              {keyStats.beta1Y === undefined && keyStats.beta5Y === undefined && keyStats.beta !== undefined && (
+                <KeyStat label="Beta (5Y monthly)" value={keyStats.beta.toFixed(2)} />
+              )}
               {keyStats.floatShares !== undefined && (
                 <KeyStat label="Shares float" value={formatCompactCurrency(keyStats.floatShares, "INR").replace("₹", "")} />
               )}

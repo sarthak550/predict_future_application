@@ -27,6 +27,7 @@ import {
   fetchQuarterlyFundamentals,
   fetchDebtCoverage,
   fetchKeyStats,
+  computeBetas,
   type DividendRow,
   type FundamentalsPoint,
   type DebtCoverage,
@@ -251,27 +252,48 @@ export async function getOrFetchInstrumentEnrichment(
  * fundamentals refresher: stamp keyStatsFetchedAt FIRST (cheap race guard),
  * then fetch via the crumb session and persist only on success (a transport/
  * auth failure keeps yesterday's snapshot rather than blanking it).
+ *
+ * Also computes Beta (1Y daily) / Beta (5Y monthly) against NIFTY 50 (see
+ * fundamentals.ts's `computeBetas` and beta.ts's methodology doc comment) —
+ * bundled into this same refresh cycle since both are part of the same Key
+ * Stats tile grid and share the same daily TTL.
+ *
+ * `keyStats` is a single opaque JSON column, not per-field columns — an
+ * `update` REPLACES the whole blob, it does not merge. `fetchKeyStats`
+ * (crumb-gated quoteSummary) and `computeBetas` (plain chart-endpoint
+ * fetches, no crumb) are independent failure domains: either can succeed
+ * while the other fails. The upsert's returned row supplies the PREVIOUS
+ * snapshot as a base so a fresh success on only one side still lands
+ * without silently wiping the other side's last-known-good values.
  */
 async function refreshKeyStatsInBackground(symbol: string, companyName: string): Promise<void> {
   const now = new Date();
+  let previous: KeyStats | null = null;
   try {
-    await prisma.instrumentEnrichment.upsert({
+    const row = await prisma.instrumentEnrichment.upsert({
       where: { symbol },
       update: { keyStatsFetchedAt: now, companyName },
       create: { symbol, companyName, keyStatsFetchedAt: now },
     });
+    previous = (row.keyStats as KeyStats | null) ?? null;
   } catch (err) {
     console.error(`[enrichment] key-stats lock-write failed for ${symbol}:`, err);
     return;
   }
 
-  const stats = await fetchKeyStats(symbol);
-  if (!stats || Object.keys(stats).length === 0) return; // fail/empty → keep previous snapshot
+  const [stats, betas] = await Promise.all([fetchKeyStats(symbol), computeBetas(symbol)]);
+  const statsChanged = stats !== null && Object.keys(stats).length > 0;
+  const betasChanged = betas.beta1Y != null || betas.beta5Y != null;
+  if (!statsChanged && !betasChanged) return; // total failure on both sides → keep previous snapshot untouched
+
+  const merged: KeyStats = { ...(previous ?? {}), ...(stats ?? {}) };
+  if (betas.beta1Y != null) merged.beta1Y = betas.beta1Y;
+  if (betas.beta5Y != null) merged.beta5Y = betas.beta5Y;
 
   try {
     await prisma.instrumentEnrichment.update({
       where: { symbol },
-      data: { keyStats: stats as Prisma.InputJsonValue },
+      data: { keyStats: merged as Prisma.InputJsonValue },
     });
   } catch (err) {
     console.error(`[enrichment] key-stats result-write failed for ${symbol}:`, err);
