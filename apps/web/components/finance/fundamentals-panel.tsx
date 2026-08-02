@@ -5,7 +5,7 @@ import { useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { ComboChart, type ComboSeriesDef, type AxisFormat } from "@/components/finance/combo-chart";
 import { formatCompactCurrency } from "@/lib/utils";
-import { yoyGrowth } from "@/lib/finance/growth";
+import { qoqGrowth, yoyGrowth } from "@/lib/finance/growth";
 import type {
   DividendRow,
   DividendPayoutRow,
@@ -360,7 +360,10 @@ function IncomeStatementSection({
   const groups = alignByPeriod({ revenue, netIncome, ebitda }, mode);
   if (groups.length === 0) return null;
 
-  const growthMap = yoyGrowth(revenue, mode);
+  // Founder 2026-08-02: quarterly plots show sequential QUARTER-OVER-QUARTER
+  // growth ("quarterly growth instead of annual") — labeled "QoQ", a
+  // different metric from annual mode's YoY, never presented interchangeably.
+  const growthMap = mode === "quarterly" ? qoqGrowth(revenue) : yoyGrowth(revenue, mode);
   const growthValues = groups.map((g) => growthMap.get(g.periodEnd) ?? null);
   const hasGrowth = growthValues.some((v) => v != null);
   const hasEbitda = groups.some((g) => g.values.ebitda != null);
@@ -402,7 +405,7 @@ function IncomeStatementSection({
   if (hasGrowth) {
     series.push({
       id: "revenueGrowth",
-      label: "Revenue growth YoY",
+      label: mode === "quarterly" ? "Revenue growth QoQ" : "Revenue growth YoY",
       color: SERIES_COLORS.revenueGrowth,
       kind: "line",
       axis: "secondary",
@@ -421,7 +424,7 @@ function IncomeStatementSection({
   // since `yoyGrowth` always nulls the first point in a series.
   const footnote =
     mode === "quarterly" && !hasGrowth
-      ? "Revenue growth needs a full year of comparable quarters."
+      ? "Quarter-over-quarter growth needs at least two consecutive quarters."
       : mode === "annual" && hasGrowth
         ? firstYearGrowthFootnote(groups[0].periodEnd)
         : undefined;

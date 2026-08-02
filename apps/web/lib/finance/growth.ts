@@ -59,3 +59,45 @@ export function yoyGrowth(points: FundamentalsPoint[] | null, mode: GrowthMode):
 
   return result;
 }
+
+/**
+ * Sequential quarter-over-quarter growth, keyed by `periodEnd` — each quarter
+ * vs. the IMMEDIATELY PRECEDING quarter (founder 2026-08-02: "on the
+ * quarterly plots lets have quarterly growth instead of annual"). With
+ * Yahoo's ~5 cached quarters this yields ~4 computable points where the YoY
+ * same-quarter comparison yields ~1 — but it is a DIFFERENT metric (seasonal
+ * businesses swing QoQ), so every consumer must label it "QoQ", never bare
+ * "growth" and never interchangeably with `yoyGrowth`.
+ *
+ * "Immediately preceding" is validated by date, not array index: the prior
+ * point's `periodEnd` must fall 60–120 days earlier — a missing or
+ * late-reported quarter breaks the chain to null rather than silently
+ * comparing across a gap. Null (never 0) when: no valid prior quarter, prior
+ * value <= 0, or unparseable dates. The first quarter is always null.
+ */
+export function qoqGrowth(points: FundamentalsPoint[] | null): Map<string, number | null> {
+  const result = new Map<string, number | null>();
+  if (!points || points.length === 0) return result;
+
+  const sorted = [...points].sort((a, b) => a.periodEnd.localeCompare(b.periodEnd));
+
+  for (let i = 0; i < sorted.length; i++) {
+    const p = sorted[i];
+    const prev = i > 0 ? sorted[i - 1] : null;
+    const d = new Date(p.periodEnd);
+    const pd = prev ? new Date(prev.periodEnd) : null;
+
+    if (!prev || !pd || Number.isNaN(d.getTime()) || Number.isNaN(pd.getTime())) {
+      result.set(p.periodEnd, null);
+      continue;
+    }
+    const gapDays = (d.getTime() - pd.getTime()) / 86_400_000;
+    if (gapDays < 60 || gapDays > 120 || prev.value <= 0) {
+      result.set(p.periodEnd, null);
+      continue;
+    }
+    result.set(p.periodEnd, ((p.value - prev.value) / prev.value) * 100);
+  }
+
+  return result;
+}
