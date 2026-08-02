@@ -291,12 +291,12 @@ const SECTION_H_HERO = 170; // §01, full-width — reduced from 210 (founder ch
 // NARROWER canvas (SECTION_W_PAIR, so text renders near-natural size at
 // half-column width) PLUS more height. §01 keeps the full 640 canvas.
 const SECTION_W_PAIR = 360;
-// Founder 2026-08-02 (second sizing pass): "height is too large now… 4:3
-// ratio should be good" — all paired sections share ONE exact 4:3 canvas
-// (360×270), and the DISPLAYED chart is capped at 400px wide (ComboChart's
-// maxDisplayWidth) so a below-lg single-column stack can never balloon a
-// 360-unit canvas to full card width (the real "too large" failure mode).
-const SECTION_H_PAIR = 270;
+// Founder 2026-08-02 (third sizing pass): "the ratios went opposite I meant
+// 3:4" — PORTRAIT, taller than wide: all paired sections share ONE exact
+// 3:4 canvas (360×480). The DISPLAYED chart stays capped at 400px wide
+// (ComboChart's maxDisplayWidth) so a below-lg single-column stack can
+// never balloon a 360-unit canvas to full card width.
+const SECTION_H_PAIR = 480;
 const SECTION_H_PAIR_TOP = SECTION_H_PAIR; // §02 | §03 — the founder's EPS/Dividends side-by-side
 const SECTION_H_PAIR_MID = SECTION_H_PAIR; // §04 | §05
 const SECTION_H_PAIR_BOTTOM = SECTION_H_PAIR; // §06 | §07
