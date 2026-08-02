@@ -989,7 +989,13 @@ function DividendsSection({ dividends }: { dividends: DividendRow[] }) {
         formatValue: fmtSignedPct,
         tooltipDetail: (idx) => {
           const r = rows[idx];
-          return r.ttmDividendTotalPrevYear != null ? `vs ${fmtRupee(r.ttmDividendTotalPrevYear)} TTM a year earlier` : null;
+          if (r.ttmDividendTotalPrevYear == null) return null;
+          // Drift-fallback disclosure: when the strict prior-year window was
+          // empty and the basis anchored at last year's comparable payout,
+          // name that date explicitly (fundamentals.ts's growthBasisDate).
+          return r.growthBasisDate
+            ? `vs ${fmtRupee(r.ttmDividendTotalPrevYear)} TTM as of ${formatShortDate(r.growthBasisDate)}`
+            : `vs ${fmtRupee(r.ttmDividendTotalPrevYear)} TTM a year earlier`;
         },
       });
     }

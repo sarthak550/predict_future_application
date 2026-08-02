@@ -404,8 +404,16 @@ export function ComboChart({
   const plotLeft = hasSecondary ? secondaryGutterW : primaryPresentation.gutterW;
   const plotRight = chartW - (hasSecondary ? primaryPresentation.gutterW : 0);
   const plotWidth = plotRight - plotLeft;
+  // Rotated x-labels (founder 2026-08-02: "not all dates are visible" on
+  // COALINDIA's 11-payout chart — thinning skipped every 2nd date): when the
+  // labels can't all fit horizontally, render EVERY label rotated diagonally
+  // instead of skipping any. Rotated labels need extra bottom padding.
+  const xLabelFontSize = categories.length > 8 ? 11 : 13;
+  const maxLabelChars = categories.reduce((m, s) => Math.max(m, s.length), 0);
+  const approxLabelW = maxLabelChars * (xLabelFontSize * 0.55) + 8;
+  const rotateXLabels = categories.length * approxLabelW > plotWidth;
   const plotTop = PAD_TOP;
-  const plotBottom = height - PAD_BOTTOM;
+  const plotBottom = height - (rotateXLabels ? 52 : PAD_BOTTOM);
   const plotHeight = plotBottom - plotTop;
   const groupW = categories.length > 0 ? plotWidth / categories.length : plotWidth;
 
@@ -739,36 +747,27 @@ export function ComboChart({
             );
           })}
 
-          {/* X-axis category labels — thinned when they can't all fit (a
-              narrow-width chart with many payout dates would otherwise
-              collide): render every Nth label, always keeping the LAST (the
-              most recent period is the one a reader anchors on). The active
-              (hovered) category's label always renders regardless of
-              thinning, so the tooltip's category is never axis-orphaned. */}
-          {(() => {
-            const labelFontSize = categories.length > 8 ? 11 : 13;
-            const maxLabelChars = categories.reduce((m, s) => Math.max(m, s.length), 0);
-            const approxLabelW = maxLabelChars * (labelFontSize * 0.55) + 8;
-            const labelEvery = Math.max(1, Math.ceil((categories.length * approxLabelW) / Math.max(plotWidth, 1)));
-            return categories.map((label, i) => {
-              const isLast = i === categories.length - 1;
-              const onGrid = (categories.length - 1 - i) % labelEvery === 0;
-              if (!onGrid && !isLast && activeIdx !== i) return null;
-              const dim = activeIdx != null && activeIdx !== i;
-              return (
-                <text
-                  key={`label-${i}`}
-                  x={xCenter(i)}
-                  y={height - 8}
-                  textAnchor="middle"
-                  fontSize={labelFontSize}
-                  fill={dim ? "#cbd5e1" : "#64748b"}
-                >
-                  {label}
-                </text>
-              );
-            });
-          })()}
+          {/* X-axis category labels — EVERY label always renders (founder:
+              all dates must be visible); when they can't fit horizontally
+              they rotate diagonally instead of thinning. */}
+          {categories.map((label, i) => {
+            const dim = activeIdx != null && activeIdx !== i;
+            const lx = xCenter(i);
+            const ly = rotateXLabels ? plotBottom + 12 : height - 8;
+            return (
+              <text
+                key={`label-${i}`}
+                x={lx}
+                y={ly}
+                textAnchor={rotateXLabels ? "end" : "middle"}
+                fontSize={rotateXLabels ? Math.min(xLabelFontSize, 11) : xLabelFontSize}
+                fill={dim ? "#cbd5e1" : "#64748b"}
+                transform={rotateXLabels ? `rotate(-38 ${lx} ${ly})` : undefined}
+              >
+                {label}
+              </text>
+            );
+          })}
         </svg>
 
         {/* Cursor-following DOM tooltip */}

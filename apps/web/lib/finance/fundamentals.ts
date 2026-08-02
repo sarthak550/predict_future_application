@@ -131,6 +131,14 @@ export type DividendPayoutRow = {
    */
   ttmDividendTotalPrevYear: number | null;
   /**
+   * Non-null ONLY when the strict prior-year window was empty and the
+   * comparison fell back to the TTM anchored at last year's comparable
+   * payout (annual-payer date-drift — see the fallback block in
+   * `fetchDividendHistory`). The tooltip MUST name this date when present.
+   * Optional so rows persisted before this field existed read as undefined.
+   */
+  growthBasisDate?: string | null;
+  /**
    * `ttmDividendTotalPrevYear > 0 ? (ttmDividendTotal − ttmDividendTotalPrevYear) / ttmDividendTotalPrevYear × 100 : null`.
    * Null — NEVER a fabricated 0% or ∞% — whenever the prior-year TTM total
    * is 0 (a new payer has no meaningful "growth" from a zero base) or
@@ -497,7 +505,31 @@ export async function fetchDividendHistory(symbol: string): Promise<DividendPayo
     const ttmDividendTotal = sumInWindow(windowStartIso, e.date);
 
     const prevWindowStartIso = isoNDaysBefore(e.date, 2 * DIVIDEND_TTM_WINDOW_DAYS);
-    const ttmDividendTotalPrevYear = sumInWindow(prevWindowStartIso, windowStartIso);
+    let ttmDividendTotalPrevYear = sumInWindow(prevWindowStartIso, windowStartIso);
+    let growthBasisDate: string | null = null;
+    if (ttmDividendTotalPrevYear === 0) {
+      // Annual-payer drift fix (founder 2026-08-02, RELIANCE): payout dates
+      // shift a few days year to year, so the strict (−24mo, −12mo] window
+      // can land EMPTY even for an uninterrupted annual payer — RELIANCE's
+      // 2023-08-21 payout misses the 2024-08-19 row's window boundary by two
+      // days, nulling its growth. Fallback: anchor the comparison at the
+      // most recent payout at least ~10 months older than this one and use
+      // the TTM as of THAT date — the same quantity, measured at last year's
+      // comparable payout instead of a rigid calendar offset. The anchor
+      // date is surfaced on the row (growthBasisDate) so the tooltip
+      // disclosure names it explicitly — never silently presented as the
+      // strict-window figure.
+      const anchor = [...events]
+        .reverse()
+        .find((x) => x.date <= isoNDaysBefore(e.date, 300) && x.date > isoNDaysBefore(e.date, 2 * DIVIDEND_TTM_WINDOW_DAYS));
+      if (anchor) {
+        const anchorTtm = sumInWindow(isoNDaysBefore(anchor.date, DIVIDEND_TTM_WINDOW_DAYS), anchor.date);
+        if (anchorTtm > 0) {
+          ttmDividendTotalPrevYear = anchorTtm;
+          growthBasisDate = anchor.date;
+        }
+      }
+    }
     const growthPct = ttmDividendTotalPrevYear > 0 ? ((ttmDividendTotal - ttmDividendTotalPrevYear) / ttmDividendTotalPrevYear) * 100 : null;
 
     const priceOnDate = closes ? closeOnOrBefore(closes, e.date) : null;
@@ -508,6 +540,7 @@ export async function fetchDividendHistory(symbol: string): Promise<DividendPayo
       amount: e.amount,
       ttmDividendTotal,
       ttmDividendTotalPrevYear,
+      growthBasisDate,
       growthPct,
       priceOnDate,
       annualisedYieldPct,
