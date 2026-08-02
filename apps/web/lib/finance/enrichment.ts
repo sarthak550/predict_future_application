@@ -27,7 +27,7 @@ import {
   fetchQuarterlyFundamentals,
   fetchDebtCoverage,
   fetchKeyStats,
-  type DividendYearRow,
+  type DividendRow,
   type FundamentalsPoint,
   type DebtCoverage,
   type KeyStats,
@@ -48,8 +48,17 @@ export type InstrumentEnrichmentData = {
   quarterlyRevenue: FundamentalsPoint[] | null;
   quarterlyNetIncome: FundamentalsPoint[] | null;
   quarterlyDilutedEps: FundamentalsPoint[] | null;
-  /** One row per calendar year — ₹/share total plus a joined dividend-yield %, null yield when price data was unresolvable for that year. See fetchDividendHistory's doc comment for the full contract. */
-  dividends: DividendYearRow[] | null;
+  /**
+   * One row per dividend PAYOUT event — ₹/share amount plus a joined
+   * trailing-12-month "annualised yield" as of that payout's date. See
+   * fetchDividendHistory's doc comment for the full contract. Typed as the
+   * union `DividendRow[]` (not `DividendPayoutRow[]`) because a row read
+   * back from the DB may still hold an older shape this app previously
+   * wrote (per-calendar-year, or the original per-event shape with no yield
+   * fields at all) — see fundamentals-panel.tsx's shape-detection for how
+   * each renders.
+   */
+  dividends: DividendRow[] | null;
   /** TradingView-style Key Stats snapshot (crumb-authenticated Yahoo quoteSummary) — null until first successful fetch. */
   keyStats: KeyStats | null;
   /** Debt level and coverage series — null until first successful fetch. */
@@ -223,7 +232,7 @@ export async function getOrFetchInstrumentEnrichment(
     quarterlyRevenue: (row.quarterlyRevenue as FundamentalsPoint[] | null) ?? null,
     quarterlyNetIncome: (row.quarterlyNetIncome as FundamentalsPoint[] | null) ?? null,
     quarterlyDilutedEps: (row.quarterlyDilutedEps as FundamentalsPoint[] | null) ?? null,
-    dividends: (row.dividends as DividendYearRow[] | null) ?? null,
+    dividends: (row.dividends as DividendRow[] | null) ?? null,
     keyStats: (row.keyStats as KeyStats | null) ?? null,
     debtCoverage: (row.debtCoverage as DebtCoverage | null) ?? null,
     fundamentalsFetchedAt: row.fundamentalsFetchedAt,

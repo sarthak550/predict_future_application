@@ -4,7 +4,7 @@ import { useState } from "react";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { formatCompactINR } from "@/lib/utils";
-import type { DividendYearRow, FundamentalsPoint } from "@/lib/finance/fundamentals";
+import type { DividendRow, DividendPayoutRow, LegacyDividendYearRow, FundamentalsPoint } from "@/lib/finance/fundamentals";
 
 /**
  * Instrument Page v2 — Fundamentals panel, TradingView-style (founder
@@ -27,15 +27,23 @@ export type FundamentalsPanelProps = {
   quarterlyRevenue: FundamentalsPoint[] | null;
   quarterlyNetIncome: FundamentalsPoint[] | null;
   quarterlyDilutedEps: FundamentalsPoint[] | null;
-  /** One row per calendar year — ₹/share total plus a joined dividend-yield % (null when price data was unresolvable for that year). */
-  dividends: DividendYearRow[] | null;
-  /** Debt level and coverage (three series aligned by period) — null until fetched; individual series may be absent (esp. quarterly). */
+  /**
+   * One row per dividend payout event, in whichever shape this symbol's
+   * cache row last happened to be written in — a symbol not yet refetched
+   * since the 2026-08-02b sprint may still hold the per-calendar-year or
+   * original per-event shape. See `classifyDividendRows` below for the
+   * render-path dispatch.
+   */
+  dividends: DividendRow[] | null;
+  /** Debt level and coverage, plus EBITDA (piggybacked in the same JSON blob — see fundamentals.ts's `DebtCoverage` doc comment) — null until fetched; individual series may be absent (esp. quarterly, or EBITDA for a bank). */
   debtCoverage: {
     annualDebt: FundamentalsPoint[] | null;
     annualFreeCashFlow: FundamentalsPoint[] | null;
     annualCash: FundamentalsPoint[] | null;
     quarterlyDebt: FundamentalsPoint[] | null;
     quarterlyCash: FundamentalsPoint[] | null;
+    annualEbitda?: FundamentalsPoint[] | null;
+    quarterlyEbitda?: FundamentalsPoint[] | null;
   } | null;
   /** TradingView-style Key Stats (founder request 2026-07-26) — null until the crumb-authenticated snapshot lands. */
   keyStats: {
@@ -89,29 +97,41 @@ const DIVIDEND_COLOR = "#f59e0b"; // amber — dividends visually distinct from 
 const DEBT_COLOR = "#ec4899"; // pink (TradingView convention)
 const FCF_COLOR = "#14b8a6"; // teal
 const CASH_COLOR = "#3b82f6"; // blue
-/** Dividend-yield line (founder 2026-08-02: overlay yield on the Dividends chart). Reuses the panel's teal — not used elsewhere on the Dividends chart itself (that chart is otherwise amber-only) and reads as "healthy income", distinct from the amber ₹ bars it sits over. */
+/** EBITDA bars on the Financials chart (founder 2026-08-02b, Change 2). Violet — distinct from Revenue (blue) and Net income (emerald) on the SAME chart; not used elsewhere in this panel. */
+const EBITDA_COLOR = "#8b5cf6";
+/** Annualised-yield line (founder 2026-08-02b: per-payout trailing-12-month yield on the Dividends chart — see fundamentals.ts's DividendPayoutRow doc comment for why it's never labeled bare "yield"). Reuses the panel's teal — not used elsewhere on the Dividends chart itself (that chart is otherwise amber-only) and reads as "healthy income", distinct from the amber ₹ bars it sits over. */
 const YIELD_LINE_COLOR = FCF_COLOR;
 
 interface PeriodGroup {
   label: string;
   revenue: number | null;
   netIncome: number | null;
+  /** Founder 2026-08-02b, Change 2 — third Financials-chart series. Null per-period (a name that reports EBITDA some periods but not others) or entirely (banks — see fundamentals.ts's DebtCoverage doc comment) both degrade to "series absent", same convention as revenue/netIncome. */
+  ebitda: number | null;
 }
 
 function alignByPeriod(
   revenue: FundamentalsPoint[] | null,
   netIncome: FundamentalsPoint[] | null,
+  ebitda: FundamentalsPoint[] | null,
   mode: "annual" | "quarterly"
 ): PeriodGroup[] {
   const byPeriod = new Map<string, PeriodGroup>();
-  for (const p of revenue ?? []) {
-    byPeriod.set(p.periodEnd, { label: compactPeriodLabel(p.periodEnd, mode), revenue: p.value, netIncome: null });
-  }
-  for (const p of netIncome ?? []) {
-    const existing = byPeriod.get(p.periodEnd);
-    if (existing) existing.netIncome = p.value;
-    else byPeriod.set(p.periodEnd, { label: compactPeriodLabel(p.periodEnd, mode), revenue: null, netIncome: p.value });
-  }
+  const put = (series: FundamentalsPoint[] | null, key: "revenue" | "netIncome" | "ebitda") => {
+    for (const p of series ?? []) {
+      const existing = byPeriod.get(p.periodEnd) ?? {
+        label: compactPeriodLabel(p.periodEnd, mode),
+        revenue: null,
+        netIncome: null,
+        ebitda: null,
+      };
+      existing[key] = p.value;
+      byPeriod.set(p.periodEnd, existing);
+    }
+  };
+  put(revenue, "revenue");
+  put(netIncome, "netIncome");
+  put(ebitda, "ebitda");
   return [...byPeriod.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, g]) => g);
 }
 
@@ -125,7 +145,7 @@ function alignByPeriod(
  */
 function FinancialsBars({ groups }: { groups: PeriodGroup[] }) {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
-  const values = groups.flatMap((g) => [g.revenue, g.netIncome]).filter((v): v is number => v != null);
+  const values = groups.flatMap((g) => [g.revenue, g.netIncome, g.ebitda]).filter((v): v is number => v != null);
   if (values.length === 0) return null;
   const maxV = Math.max(...values, 0);
   const minV = Math.min(...values, 0);
@@ -135,11 +155,16 @@ function FinancialsBars({ groups }: { groups: PeriodGroup[] }) {
   const innerW = CHART_W - CHART_PAD.left - CHART_PAD.right - AXIS_W;
   const innerH = CHART_H - CHART_PAD.top - CHART_PAD.bottom;
   const groupW = innerW / groups.length;
-  const barW = Math.min(28, groupW / 3);
+  const barW = Math.min(20, groupW / 4.5);
   const y = (v: number) => CHART_PAD.top + ((maxV - v) / span) * innerH;
   const zeroY = y(0);
 
   const active = groups[hoverIdx ?? groups.length - 1];
+
+  const bar = (cx: number, v: number | null, color: string) =>
+    v != null && (
+      <rect x={cx} width={barW} y={Math.min(y(v), zeroY)} height={Math.max(2, Math.abs(y(v) - zeroY))} rx={3} fill={color} />
+    );
 
   return (
     <div>
@@ -156,12 +181,17 @@ function FinancialsBars({ groups }: { groups: PeriodGroup[] }) {
             <span className="font-semibold" style={{ color: NET_INCOME_COLOR }}>{formatCompactINR(active.netIncome)}</span>
           </>
         )}
+        {active.ebitda != null && (
+          <>
+            {" · "}EBITDA <span className="font-semibold" style={{ color: EBITDA_COLOR }}>{formatCompactINR(active.ebitda)}</span>
+          </>
+        )}
       </p>
       <svg
         viewBox={`0 0 ${CHART_W} ${CHART_H}`}
         className="w-full touch-none"
         role="img"
-        aria-label="Revenue and net income by period"
+        aria-label="Revenue, net income and EBITDA by period"
         onPointerLeave={() => setHoverIdx(null)}
       >
         {[maxV, (maxV + Math.min(minV, 0)) / 2].map((gv) => (
@@ -180,26 +210,9 @@ function FinancialsBars({ groups }: { groups: PeriodGroup[] }) {
             <g key={g.label} opacity={dim ? 0.35 : 1} onPointerEnter={() => setHoverIdx(i)} onPointerDown={() => setHoverIdx(i)}>
               {/* full-height invisible hit area so hover/tap works between thin bars */}
               <rect x={CHART_PAD.left + groupW * i} y={0} width={groupW} height={CHART_H} fill="transparent" />
-              {g.revenue != null && (
-                <rect
-                  x={cx - barW - 2}
-                  width={barW}
-                  y={Math.min(y(g.revenue), zeroY)}
-                  height={Math.max(2, Math.abs(y(g.revenue) - zeroY))}
-                  rx={3}
-                  fill={REVENUE_COLOR}
-                />
-              )}
-              {g.netIncome != null && (
-                <rect
-                  x={cx + 2}
-                  width={barW}
-                  y={Math.min(y(g.netIncome), zeroY)}
-                  height={Math.max(2, Math.abs(y(g.netIncome) - zeroY))}
-                  rx={3}
-                  fill={NET_INCOME_COLOR}
-                />
-              )}
+              {bar(cx - barW * 1.5 - 3, g.revenue, REVENUE_COLOR)}
+              {bar(cx - barW / 2, g.netIncome, NET_INCOME_COLOR)}
+              {bar(cx + barW / 2 + 3, g.ebitda, EBITDA_COLOR)}
               <text x={cx} y={CHART_H - 8} textAnchor="middle" fontSize="11" fill={dim ? "#cbd5e1" : "#94a3b8"}>
                 {g.label}
               </text>
@@ -282,20 +295,29 @@ function SmallBars({
 }
 
 /**
- * Dividends combo chart (founder 2026-08-02): amber ₹/share bars (as
- * before, now aggregated per calendar year instead of per payout event) +
- * an overlaid dividend-yield % LINE with point markers, on its own scale —
- * yields (~0.3%–7% across the universe) and ₹ dividend amounts live on
- * totally different axes, so the line is normalized independently of the
- * bars rather than sharing their y-scale. A year with a null `yieldPct`
- * (no resolvable price data) still gets its bar; the line simply has a gap
- * there — no interpolation across missing years, and the hover readout
- * says "yield unavailable" rather than showing 0%. When every row's
- * `yieldPct` is null (whole-series price failure), the line/points/axis/
- * legend are all skipped entirely and this renders identically to a
- * bars-only chart.
+ * LEGACY per-calendar-year dividends combo chart, written 2026-08-02 and
+ * superseded same-day by the per-payout `DividendPayoutBars` below (founder
+ * reverted to per-payout granularity so interim/final/special payouts are
+ * visible again). Kept ONLY to render a `LegacyDividendYearRow[]` cache row
+ * that hasn't been refetched since — see `classifyDividendRows`. No code
+ * path writes this shape anymore; this component will become dead once
+ * every symbol has refetched at least once post-2026-08-02b.
+ *
+ * Amber ₹/share bars (year totals) + an overlaid yield % LINE with point
+ * markers, on its own scale — yields (~0.3%–7% across the universe) and ₹
+ * dividend amounts live on totally different axes, so the line is
+ * normalized independently of the bars rather than sharing their y-scale. A
+ * year with a null `yieldPct` (no resolvable price data) still gets its
+ * bar; the line simply has a gap there — no interpolation across missing
+ * years, and the hover readout says "unavailable" rather than showing 0%.
+ * When every row's `yieldPct` is null (whole-series price failure), the
+ * line/points/axis/legend are all skipped entirely and this renders
+ * identically to a bars-only chart. Labeled "Annualised yield" (not bare
+ * "yield") for terminology consistency with the current per-payout chart,
+ * even though this legacy figure is a calendar-year total rather than a
+ * rolling trailing-12-month one — both are honest annual-cadence figures.
  */
-function DividendYieldBars({ rows }: { rows: DividendYearRow[] }) {
+function DividendYieldBars({ rows }: { rows: LegacyDividendYearRow[] }) {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   if (rows.length === 0) return null;
 
@@ -355,10 +377,10 @@ function DividendYieldBars({ rows }: { rows: DividendYearRow[] }) {
         {" · "}
         {active.yieldPct != null ? (
           <span className="font-semibold" style={{ color: YIELD_LINE_COLOR }}>
-            {active.yieldPct.toFixed(2)}% yield
+            Annualised yield {active.yieldPct.toFixed(2)}%
           </span>
         ) : (
-          <span className="text-ink-400">yield unavailable</span>
+          <span className="text-ink-400">Annualised yield unavailable</span>
         )}
       </p>
       <svg
@@ -415,7 +437,183 @@ function DividendYieldBars({ rows }: { rows: DividendYearRow[] }) {
       {hasYield && (
         <div className="mt-1 flex flex-wrap gap-4">
           <LegendDot color={DIVIDEND_COLOR} label="Dividend (₹/share)" />
-          <LegendDot color={YIELD_LINE_COLOR} label="Dividend yield (%)" />
+          <LegendDot color={YIELD_LINE_COLOR} label="Annualised yield (%)" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** "2025-11-15" -> "15 Nov 25", for per-payout x-axis labels and hover readouts (payout dates, unlike period-ends, need day granularity — two payouts in the same month are common). */
+function formatShortDate(iso: string): string {
+  return new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", year: "2-digit", timeZone: "UTC" }).format(new Date(iso));
+}
+
+/**
+ * Runtime shape guard for whatever `InstrumentEnrichment.dividends` last
+ * happened to hold — three shapes have been written to this Json column
+ * across three same-week sprints (see fundamentals.ts's `DividendRow` doc
+ * comment), and a cache row is only ever ONE shape at a time (written
+ * wholesale on each refresh), so sniffing the first row is sufficient.
+ */
+function classifyDividendRows(rows: DividendRow[]): "payout" | "legacyYear" | "legacyEvent" {
+  const r0 = rows[0] as Record<string, unknown>;
+  if ("year" in r0) return "legacyYear";
+  if ("ttmDividendTotal" in r0 || "annualisedYieldPct" in r0 || "priceOnDate" in r0) return "payout";
+  return "legacyEvent";
+}
+
+/**
+ * Per-payout dividends combo chart (founder 2026-08-02b, Change 1 — reverts
+ * the dividends chart to per-payout granularity so interim/final/special
+ * events are each their own bar, while keeping a yield overlay — now a
+ * trailing-12-month "annualised yield" computed AT each payout's date
+ * rather than a calendar-year figure). Same bars+line/own-scale/gap-not-
+ * bridge/degrade-to-bars-only conventions as the legacy `DividendYieldBars`
+ * above, generalized from years to individual payout events.
+ *
+ * CRITICAL LABELING (founder explicit — never present this as a bare
+ * "dividend yield"): every surface says "Annualised yield", and the hover
+ * readout discloses BOTH calculation inputs (`ttmDividendTotal`,
+ * `priceOnDate`) inline, e.g. "₹6.50 · 15 Nov 25 · Annualised yield 5.1%
+ * (₹20.50 TTM ÷ ₹402.00 price)" — never just the bare percentage. A null
+ * `annualisedYieldPct` (missing price) renders the bar with NO line
+ * contribution and the readout says "Annualised yield unavailable", never
+ * a fabricated 0%.
+ *
+ * DEVIATION FROM BRIEF: the founder's example hover copy included a payout
+ * TYPE qualifier ("₹6.50 interim"). Yahoo's `events.dividends` feed (this
+ * file's only dividend data source) carries no interim/final/special
+ * classification field at all — verified against fundamentals.ts's
+ * `fetchDividendEvents`, which only ever receives `{amount, date}` per
+ * event. Inferring a type heuristically (e.g. by amount magnitude or
+ * calendar month) would be a fragile guess presented as fact, which
+ * violates the same house honesty convention this ticket is enforcing for
+ * the yield figure itself — so the type qualifier is omitted rather than
+ * fabricated. Flagged for the founder: adding it for real would need a
+ * different data source (e.g. NSE corporate-actions feed) — separate scope.
+ */
+function DividendPayoutBars({ rows }: { rows: DividendPayoutRow[] }) {
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  if (rows.length === 0) return null;
+
+  const barValues = rows.map((r) => r.amount);
+  const maxBar = Math.max(...barValues, 0);
+  const minBar = Math.min(...barValues, 0);
+  const barSpan = maxBar - minBar || 1;
+
+  const yieldValues = rows.map((r) => r.annualisedYieldPct).filter((v): v is number => v != null);
+  const hasYield = yieldValues.length > 0;
+  const maxYield = hasYield ? Math.max(...yieldValues) : 0;
+  const minYield = hasYield ? Math.min(0, ...yieldValues) : 0;
+  const yieldSpan = maxYield - minYield || 1;
+
+  const H = 130;
+  const pad = { top: 10, bottom: 24 };
+  const innerH = H - pad.top - pad.bottom;
+  const AXIS_W = hasYield ? 40 : 0; // right-edge % labels only take space when there's a line to label
+  const chartW = CHART_W - AXIS_W;
+  const groupW = chartW / rows.length;
+  const barW = Math.min(24, groupW / 2.4);
+
+  const yBar = (v: number) => pad.top + ((maxBar - v) / barSpan) * innerH;
+  const zeroYBar = yBar(0);
+  const yYield = (v: number) => pad.top + ((maxYield - v) / yieldSpan) * innerH;
+
+  const active = rows[hoverIdx ?? rows.length - 1];
+
+  // Line points, skipping payouts with a null yield — then re-grouped into
+  // contiguous runs so the polyline breaks at a gap instead of bridging it
+  // (bridging would visually imply a yield we don't actually have).
+  const presentPoints = rows
+    .map((r, i) => (r.annualisedYieldPct != null ? { x: groupW * i + groupW / 2, y: yYield(r.annualisedYieldPct), i } : null))
+    .filter((p): p is { x: number; y: number; i: number } => p !== null);
+  const segments: { x: number; y: number }[][] = [];
+  let current: { x: number; y: number }[] = [];
+  let lastIdx = -2;
+  for (const p of presentPoints) {
+    if (p.i !== lastIdx + 1 && current.length > 0) {
+      segments.push(current);
+      current = [];
+    }
+    current.push({ x: p.x, y: p.y });
+    lastIdx = p.i;
+  }
+  if (current.length > 0) segments.push(current);
+
+  return (
+    <div>
+      <p className="mb-1 text-xs text-ink-600">
+        <span className="font-semibold text-ink-900">{formatShortDate(active.date)}</span>
+        {" · "}
+        <span className="font-semibold" style={{ color: DIVIDEND_COLOR }}>
+          ₹{active.amount.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
+        </span>
+        {" · "}
+        {active.annualisedYieldPct != null && active.ttmDividendTotal != null && active.priceOnDate != null ? (
+          <span className="font-semibold" style={{ color: YIELD_LINE_COLOR }}>
+            Annualised yield {active.annualisedYieldPct.toFixed(1)}% (₹{active.ttmDividendTotal.toLocaleString("en-IN", { maximumFractionDigits: 2 })} TTM
+            ÷ ₹{active.priceOnDate.toLocaleString("en-IN", { maximumFractionDigits: 2 })} price)
+          </span>
+        ) : (
+          <span className="text-ink-400">Annualised yield unavailable</span>
+        )}
+      </p>
+      <svg
+        viewBox={`0 0 ${CHART_W} ${H}`}
+        className="w-full touch-none"
+        role="img"
+        aria-label="Dividend per payout and annualised yield"
+        onPointerLeave={() => setHoverIdx(null)}
+      >
+        <line x1={0} x2={chartW} y1={zeroYBar} y2={zeroYBar} stroke="#e2e8f0" strokeWidth="1" />
+        {hasYield &&
+          [maxYield, minYield].map((gv, gi) => (
+            <text key={`${gv}-${gi}`} x={chartW + 6} y={yYield(gv) + 3} fontSize="10" fill={YIELD_LINE_COLOR}>
+              {gv.toFixed(1)}%
+            </text>
+          ))}
+        {rows.map((r, i) => {
+          const cx = groupW * i + groupW / 2;
+          const dim = hoverIdx !== null && hoverIdx !== i;
+          return (
+            <g key={`${r.date}-${i}`} opacity={dim ? 0.35 : 1} onPointerEnter={() => setHoverIdx(i)} onPointerDown={() => setHoverIdx(i)}>
+              <rect x={groupW * i} y={0} width={groupW} height={H} fill="transparent" />
+              <rect
+                x={cx - barW / 2}
+                width={barW}
+                y={Math.min(yBar(r.amount), zeroYBar)}
+                height={Math.max(2, Math.abs(yBar(r.amount) - zeroYBar))}
+                rx={3}
+                fill={DIVIDEND_COLOR}
+              />
+              <text x={cx} y={H - 6} textAnchor="middle" fontSize="10" fill={dim ? "#cbd5e1" : "#94a3b8"}>
+                {formatShortDate(r.date)}
+              </text>
+            </g>
+          );
+        })}
+        {hasYield &&
+          segments.map((seg, si) => (
+            <polyline key={si} points={seg.map((p) => `${p.x},${p.y}`).join(" ")} fill="none" stroke={YIELD_LINE_COLOR} strokeWidth="2" />
+          ))}
+        {hasYield &&
+          presentPoints.map((p) => (
+            <circle
+              key={p.i}
+              cx={p.x}
+              cy={p.y}
+              r={hoverIdx === p.i ? 4 : 3}
+              fill={YIELD_LINE_COLOR}
+              stroke="white"
+              strokeWidth="1.5"
+            />
+          ))}
+      </svg>
+      {hasYield && (
+        <div className="mt-1 flex flex-wrap gap-4">
+          <LegendDot color={DIVIDEND_COLOR} label="Dividend (₹/share)" />
+          <LegendDot color={YIELD_LINE_COLOR} label="Annualised yield (%)" />
         </div>
       )}
     </div>
@@ -580,7 +778,9 @@ export function FundamentalsPanel({
   const revenue = activeMode === "annual" ? annualRevenue : quarterlyRevenue;
   const netIncome = activeMode === "annual" ? annualNetIncome : quarterlyNetIncome;
   const eps = activeMode === "annual" ? annualDilutedEps : quarterlyDilutedEps;
-  const groups = alignByPeriod(revenue, netIncome, activeMode);
+  const ebitda = (activeMode === "annual" ? debtCoverage?.annualEbitda : debtCoverage?.quarterlyEbitda) ?? null;
+  const groups = alignByPeriod(revenue, netIncome, ebitda, activeMode);
+  const hasEbitda = groups.some((g) => g.ebitda != null);
 
   const latestQuarterEps =
     quarterlyDilutedEps && quarterlyDilutedEps.length > 0 ? quarterlyDilutedEps[quarterlyDilutedEps.length - 1] : null;
@@ -648,6 +848,7 @@ export function FundamentalsPanel({
                 <div className="mt-1 flex flex-wrap gap-4">
                   <LegendDot color={REVENUE_COLOR} label="Revenue" />
                   <LegendDot color={NET_INCOME_COLOR} label="Net income" />
+                  {hasEbitda && <LegendDot color={EBITDA_COLOR} label="EBITDA" />}
                 </div>
               </div>
             )}
@@ -673,12 +874,46 @@ export function FundamentalsPanel({
           </div>
         )}
 
-        {hasDividends && dividends && (
-          <div>
-            <p className="mb-1 text-xs font-semibold text-ink-500">Dividends (₹ per share) &amp; yield</p>
-            <DividendYieldBars rows={[...dividends].sort((a, b) => a.year - b.year)} />
-          </div>
-        )}
+        {hasDividends &&
+          dividends &&
+          (() => {
+            const shape = classifyDividendRows(dividends);
+            if (shape === "legacyYear") {
+              const rows = [...(dividends as LegacyDividendYearRow[])].sort((a, b) => a.year - b.year);
+              return (
+                <div>
+                  <p className="mb-1 text-xs font-semibold text-ink-500">Dividends (₹ per share) &amp; annualised yield</p>
+                  <DividendYieldBars rows={rows} />
+                </div>
+              );
+            }
+            if (shape === "payout") {
+              const rows = [...(dividends as DividendPayoutRow[])].sort((a, b) => a.date.localeCompare(b.date));
+              return (
+                <div>
+                  <p className="mb-1 text-xs font-semibold text-ink-500">Dividends (₹ per share) &amp; annualised yield</p>
+                  <DividendPayoutBars rows={rows} />
+                </div>
+              );
+            }
+            // legacyEvent — original pre-yield-sprint shape, bars-only, never had a yield field.
+            const rows = [...dividends].sort((a, b) => (a as { date: string }).date.localeCompare((b as { date: string }).date));
+            return (
+              <div>
+                <p className="mb-1 text-xs font-semibold text-ink-500">Dividends (₹ per share)</p>
+                <SmallBars
+                  items={rows.map((r) => {
+                    const row = r as { date: string; amount: number };
+                    return { label: formatShortDate(row.date), value: row.amount };
+                  })}
+                  color={DIVIDEND_COLOR}
+                  ariaLabel="Dividend per payout"
+                  readoutPrefix="Dividend"
+                  formatValue={(v) => `₹${v.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`}
+                />
+              </div>
+            );
+          })()}
       </CardContent>
     </Card>
   );

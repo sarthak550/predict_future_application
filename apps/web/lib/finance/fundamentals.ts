@@ -77,35 +77,68 @@ const ONE_DAY_S = 24 * 60 * 60;
 const ANNUAL_LOOKBACK_YEARS = 6;
 /** ~2.5 years back comfortably covers 5 quarterly points with buffer for a late-reporting quarter. */
 const QUARTERLY_LOOKBACK_YEARS = 2.5;
-/** Dividend history window shown in the panel. */
+/** Dividend history window shown in the panel (per-payout events within this range are rendered as bars). */
 const DIVIDEND_LOOKBACK_YEARS = 3;
+/** Trailing window (calendar days) for the per-payout "annualised yield" figure — see fetchDividendHistory. */
+const DIVIDEND_TTM_WINDOW_DAYS = 365;
 
 /** One point in a fundamentals series, oldest-first — matches InstrumentEnrichment's JSON column shape exactly. */
 export type FundamentalsPoint = { periodEnd: string; value: number };
 
-/** Raw per-payout event, internal building block for the year-aggregated rows below — not exported, callers only see `DividendYearRow`. */
+/** Raw per-payout event, internal building block below — not exported, callers only see `DividendPayoutRow`. */
 type DividendPoint = { date: string; amount: number };
 
 /**
- * One calendar year of dividend history (founder 2026-08-02: overlay a
- * dividend-yield LINE on the existing per-payout dividend bars). Payout
- * events are summed per calendar year and joined against that year's
- * year-end close so the panel can show both a ₹/share bar and a % yield
- * line from one row.
+ * One dividend PAYOUT event (founder 2026-08-02b: reverted the dividends
+ * chart from the previous per-calendar-year rollup back to per-payout
+ * granularity — interim/final/special payouts must be visible as separate
+ * bars again — while keeping a yield line, now computed per-payout as a
+ * trailing-12-month "annualised yield" rather than a calendar-year figure).
+ *
+ * CRITICAL (founder explicit): never present this as a bare "dividend
+ * yield" anywhere in the UI — it is a trailing-12-month figure as of one
+ * point in time, not a forward-looking or calendar-year yield. Always label
+ * it "Annualised yield" and disclose both inputs (`ttmDividendTotal`,
+ * `priceOnDate`) in any hover/readout, per house honesty convention.
  */
-export type DividendYearRow = {
-  year: number;
-  /** Sum of all per-share payout amounts (interim + final, etc.) declared in this calendar year. */
-  totalDividend: number;
+export type DividendPayoutRow = {
+  /** Ex/payout date as reported by Yahoo, ISO "YYYY-MM-DD". */
+  date: string;
+  /** Per-share amount of THIS payout event only (not a period total). */
+  amount: number;
   /**
-   * `totalDividend / year-end close * 100`. Null when no close price could
-   * be resolved for this year (absent price data, not a real 0% yield —
-   * house honesty convention: never render a missing value as zero).
+   * Sum of all payout amounts (this one included) in the 12 months ending
+   * on `date`. Nullable for type-safety/forward-compat only — in practice
+   * always computable once the payout event itself is known (derived
+   * purely from other dividend events, no price dependency).
    */
+  ttmDividendTotal: number | null;
+  /** Share close price on `date`, or the last trading-day close before it. Null when no resolvable price (whole-fetch failure or `date` falls before any close in the fetched window). */
+  priceOnDate: number | null;
+  /** `ttmDividendTotal / priceOnDate * 100`. Null (never a fabricated 0%) whenever `priceOnDate` is null. */
+  annualisedYieldPct: number | null;
+};
+
+/** Deprecated per-calendar-year shape, briefly written 2026-08-02 — superseded same-day by `DividendPayoutRow` above. Kept only so the reader can render whatever a not-yet-refetched cached row still holds; no code writes this shape anymore. */
+export type LegacyDividendYearRow = {
+  year: number;
+  totalDividend: number;
   yieldPct: number | null;
-  /** True only for the current, still-in-progress calendar year — UI must label this "<year> YTD", not a completed annual figure. */
   isYtd: boolean;
 };
+
+/** Original pre-yield-work per-event shape (`{date, amount}` only, no yield fields at all) — still what the wide (non-targeted) universe's cached rows hold, since only the 6 iteration tickers have been refetched since. */
+export type LegacyDividendEventRow = { date: string; amount: number };
+
+/**
+ * Every shape ever persisted to `InstrumentEnrichment.dividends` — a Json
+ * column with no schema-level shape enforcement, so a row read back from the
+ * DB could be ANY of these three depending on when it was last refetched.
+ * Callers must runtime-detect which one they have (see
+ * fundamentals-panel.tsx's `classifyDividendRows`) rather than assume the
+ * latest shape.
+ */
+export type DividendRow = DividendPayoutRow | LegacyDividendYearRow | LegacyDividendEventRow;
 
 export type AnnualFundamentals = {
   revenue: FundamentalsPoint[] | null;
@@ -276,28 +309,33 @@ async function fetchDividendEvents(symbol: string, period1: number, period2: num
   return points.sort((a, b) => a.date.localeCompare(b.date));
 }
 
+/** One resolved trading-day close, ascending-date-sorted — output of `fetchDailyCloses`. */
+type DailyClose = { date: string; close: number };
+
 /**
- * Daily close prices for `symbol` over `[period1, period2]`, reduced to ONE
- * close per calendar year: the last available trading-day close on/before
- * Dec 31 for a completed year, or the LATEST available close for the
- * current, still-in-progress year (this is what makes the current year's
- * yield an honest "YTD" figure instead of a placeholder). Year bucketing
- * uses `getUTCFullYear`, matching this panel's existing `compactPeriodLabel`
- * convention elsewhere in the fundamentals UI.
+ * Daily close prices for `symbol` over `[period1, period2]`, oldest first.
+ * Generalizes what was originally `fetchYearEndCloses` (which reduced this
+ * same feed down to one close per calendar year for the now-superseded
+ * per-year dividend-yield shape) — Change 1 of the 2026-08-02b sprint needs
+ * an arbitrary-date "close on or before X" lookup instead, so this now
+ * returns the full daily series and leaves the reduction to
+ * `closeOnOrBefore` below.
  *
- * Returns null on a total fetch failure (network/HTTP/parse) — never an
- * empty Map — so callers can tell "no price data at all" (blanket null
- * yieldPct across every year) apart from "priced, just no trades landed in
- * one particular year" (Map present, that year's key simply absent).
+ * Returns null on a total fetch failure (network/HTTP/parse/empty) — never
+ * an empty array — so callers can tell "no price data at all" (blanket null
+ * price/yield across every payout) apart from "priced, just no close
+ * resolves for one specific date" (array present, that date simply has no
+ * entry on/before it — e.g. a payout date at the very start of the fetched
+ * window with zero prior trading days in range).
  */
-async function fetchYearEndCloses(symbol: string, period1: number, period2: number): Promise<Map<number, number> | null> {
+async function fetchDailyCloses(symbol: string, period1: number, period2: number): Promise<DailyClose[] | null> {
   const url = `${CHART_BASE}/${encodeURIComponent(symbol)}.NS?interval=1d&period1=${period1}&period2=${period2}`;
 
   let response: Response;
   try {
     response = await fetchWithTimeout(url);
   } catch (err) {
-    console.warn(`[fundamentals] Network error fetching year-end closes for ${symbol}: ${err instanceof Error ? err.message : err}`);
+    console.warn(`[fundamentals] Network error fetching daily closes for ${symbol}: ${err instanceof Error ? err.message : err}`);
     return null;
   }
 
@@ -310,7 +348,7 @@ async function fetchYearEndCloses(symbol: string, period1: number, period2: numb
   try {
     data = await response.json();
   } catch (err) {
-    console.warn(`[fundamentals] Year-end close JSON parse error for ${symbol}: ${err instanceof Error ? err.message : err}`);
+    console.warn(`[fundamentals] Daily close JSON parse error for ${symbol}: ${err instanceof Error ? err.message : err}`);
     return null;
   }
 
@@ -323,65 +361,89 @@ async function fetchYearEndCloses(symbol: string, period1: number, period2: numb
   const closes = quoteArr?.[0]?.close as (number | null)[] | undefined;
   if (!Array.isArray(timestamps) || !Array.isArray(closes) || timestamps.length === 0) return null;
 
-  // Yahoo returns timestamps in ascending order — walking forward and
-  // overwriting per year naturally leaves the LAST valid close of each
-  // year, which is exactly "year-end close" for a completed year and
-  // "latest close so far" for the current year.
-  const byYear = new Map<number, number>();
+  const rows: DailyClose[] = [];
   for (let i = 0; i < timestamps.length; i++) {
     const close = closes[i];
     if (typeof close !== "number" || !Number.isFinite(close)) continue;
-    const year = new Date(timestamps[i] * 1000).getUTCFullYear();
-    byYear.set(year, close);
+    rows.push({ date: new Date(timestamps[i] * 1000).toISOString().slice(0, 10), close });
   }
-  return byYear.size > 0 ? byYear : null;
+  // Yahoo returns timestamps ascending already; sort defensively rather than assume.
+  rows.sort((a, b) => a.date.localeCompare(b.date));
+  return rows.length > 0 ? rows : null;
+}
+
+/** Last close on or before `targetDate` (ISO "YYYY-MM-DD"), or null if `closes` has no entry that old. `closes` must be ascending-sorted (as `fetchDailyCloses` returns). Linear scan — the series is at most a few years of trading days, called once per rendered payout during a background refresh, not a hot path. */
+function closeOnOrBefore(closes: DailyClose[], targetDate: string): number | null {
+  let result: number | null = null;
+  for (const c of closes) {
+    if (c.date > targetDate) break;
+    result = c.close;
+  }
+  return result;
 }
 
 /**
- * Dividend history, aggregated to one row per calendar year with a joined
- * dividend-yield figure (founder 2026-08-02). Window is aligned to Jan 1 of
- * `DIVIDEND_LOOKBACK_YEARS` years ago rather than a rolling day-count, so
- * every year except the current one is a COMPLETE calendar year — a rolling
- * window would otherwise clip the oldest year's total mid-year, which would
- * silently understate both its ₹ total and its yield (a truncated year
- * masquerading as a full one). Oldest first.
+ * Dividend history as individual PAYOUT events (founder 2026-08-02b —
+ * reverted from the previous per-calendar-year rollup: interim vs final vs
+ * special payouts must be visible as separate bars again), each joined with
+ * a trailing-12-month "annualised yield" computed AT that payout's date.
+ *
+ * Two windows are in play:
+ *  - DISPLAY window `[period1, period2]`: `DIVIDEND_LOOKBACK_YEARS` back
+ *    from today — only payout events in this range become rows.
+ *  - FETCH window: extended `DIVIDEND_TTM_WINDOW_DAYS` further back than
+ *    `period1`, so the TTM sum for the OLDEST displayed payout still has a
+ *    complete trailing year of events to sum, even though those earlier
+ *    events themselves never become their own row. Without this extension
+ *    the oldest displayed payout's annualised yield would be silently
+ *    understated (a partial-year sum masquerading as a trailing-12-month
+ *    one) — the same class of bug the previous per-year shape's window
+ *    alignment fix addressed, now reapplied to the per-payout window.
+ *
+ * Prices come from the SAME daily-close feed (`fetchDailyCloses`, itself a
+ * generalization of the prior per-year shape's `fetchYearEndCloses`) over
+ * the same extended fetch window, so `closeOnOrBefore` can always resolve a
+ * payout near the display window's edge.
  *
  * Null (not []) when the underlying events fetch itself failed — an empty
  * array is a valid, honest "no dividends declared" answer. A stock with
- * real dividend events but no resolvable price data still returns rows —
- * every `yieldPct` in that case is null, never a fabricated 0%.
+ * real payout events but no resolvable price data still returns rows —
+ * `priceOnDate`/`annualisedYieldPct` are null in that case, never a
+ * fabricated price or 0% yield; `ttmDividendTotal` is unaffected since it
+ * has no price dependency.
  */
-export async function fetchDividendHistory(symbol: string): Promise<DividendYearRow[] | null> {
-  const currentYear = new Date().getUTCFullYear();
-  const period1 = Math.floor(Date.UTC(currentYear - DIVIDEND_LOOKBACK_YEARS + 1, 0, 1) / 1000);
+export async function fetchDividendHistory(symbol: string): Promise<DividendPayoutRow[] | null> {
   const period2 = Math.floor(Date.now() / 1000);
+  const displayPeriod1 = period2 - Math.floor(DIVIDEND_LOOKBACK_YEARS * 365.25 * ONE_DAY_S);
+  const fetchPeriod1 = displayPeriod1 - DIVIDEND_TTM_WINDOW_DAYS * ONE_DAY_S;
+  const displayPeriod1Iso = new Date(displayPeriod1 * 1000).toISOString().slice(0, 10);
 
-  const events = await fetchDividendEvents(symbol, period1, period2);
+  const events = await fetchDividendEvents(symbol, fetchPeriod1, period2);
   if (events === null) return null; // genuine fetch failure — distinct from "no dividends."
   if (events.length === 0) return []; // valid chart, zero dividend events — honest empty answer.
 
-  const totalsByYear = new Map<number, number>();
+  // A close-price failure degrades every priceOnDate/annualisedYieldPct to
+  // null; the ₹ bars and ttmDividendTotal still render on their own —
+  // dividends without price context is a normal, honest partial state here.
+  const closes = await fetchDailyCloses(symbol, fetchPeriod1, period2);
+
+  const rows: DividendPayoutRow[] = [];
   for (const e of events) {
-    const year = Number(e.date.slice(0, 4));
-    totalsByYear.set(year, (totalsByYear.get(year) ?? 0) + e.amount);
+    if (e.date < displayPeriod1Iso) continue; // only within the display window — earlier events exist solely to feed TTM sums below.
+
+    const windowStartMs = new Date(e.date).getTime() - DIVIDEND_TTM_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+    const windowStartIso = new Date(windowStartMs).toISOString().slice(0, 10);
+    const ttmDividendTotal = events
+      .filter((x) => x.date > windowStartIso && x.date <= e.date)
+      .reduce((sum, x) => sum + x.amount, 0);
+
+    const priceOnDate = closes ? closeOnOrBefore(closes, e.date) : null;
+    const annualisedYieldPct = priceOnDate != null && priceOnDate > 0 ? (ttmDividendTotal / priceOnDate) * 100 : null;
+
+    rows.push({ date: e.date, amount: e.amount, ttmDividendTotal, priceOnDate, annualisedYieldPct });
   }
 
-  // A close-price failure degrades every yieldPct to null; the ₹ bars still
-  // render on their own — dividends without price context is a normal,
-  // honest partial state here, not treated as an error.
-  const closesByYear = await fetchYearEndCloses(symbol, period1, period2);
-
-  return [...totalsByYear.entries()]
-    .sort(([a], [b]) => a - b)
-    .map(([year, totalDividend]) => {
-      const close = closesByYear?.get(year) ?? null;
-      return {
-        year,
-        totalDividend,
-        yieldPct: close != null && close > 0 ? (totalDividend / close) * 100 : null,
-        isYtd: year === currentYear,
-      };
-    });
+  return rows;
 }
 
 // ── Key Stats (TradingView-style) — crumb-authenticated quoteSummary ─────────
@@ -435,13 +497,56 @@ export async function fetchKeyStats(symbol: string): Promise<KeyStats | null> {
 
 // ── Debt level and coverage (TradingView-style, founder 2026-07-26) ──────────
 
-/** Each series null when Yahoo has no coverage. Quarterly FCF is empty for NSE names (cash-flow reports annually); balance-sheet items report semi-annually — expect ~2 quarterly points, not 4. Verified EC2 2026-07-26: RELIANCE annualTotalDebt 3.98T / annualFreeCashFlow 691.97B / annualCashAndCashEquivalents 1.37T, 4 pts each. */
+/**
+ * Each series null when Yahoo has no coverage. Quarterly FCF is empty for
+ * NSE names (cash-flow reports annually); balance-sheet items report
+ * semi-annually — expect ~2 quarterly points, not 4. Verified EC2
+ * 2026-07-26: RELIANCE annualTotalDebt 3.98T / annualFreeCashFlow 691.97B /
+ * annualCashAndCashEquivalents 1.37T, 4 pts each.
+ *
+ * `annualEbitda`/`quarterlyEbitda` (founder 2026-08-02b, Change 2 — EBITDA
+ * as a third series on the Financials chart) are fetched in the SAME
+ * fundamentals-timeseries batch call as the debt/FCF/cash series above and
+ * PERSISTED IN THE SAME `debtCoverage` JSON column — a deliberate storage
+ * reuse, not a semantic claim that EBITDA is a debt/coverage metric. This
+ * sprint's gates forbid any `schema.prisma` change (no new column, no `db
+ * push`), and `debtCoverage` was the closest-fit existing JSON bucket
+ * already on the identical fetch cadence (7-day TTL,
+ * `refreshFundamentalsInBackground`) and fetch mechanism (one
+ * `fetchFundamentalsTimeseries` batch call). At the UI layer (`fundamentals-panel.tsx`) these two fields are consumed
+ * by `FinancialsBars`, NOT `DebtCoverageBars` — they render on the
+ * Revenue/Net-income chart, never the debt chart, despite the shared
+ * storage column.
+ *
+ * Empirically verified live 2026-08-02 across the 6 targeted tickers +
+ * SUZLON: annualEBITDA/quarterlyEBITDA return full coverage (4 annual / 5
+ * quarterly points) for RELIANCE, TCS, ITC, INFY, COALINDIA, SUZLON.
+ * HDFCBANK returns ZERO coverage on both keys (HTTP 200, empty result) — a
+ * genuine, permanent Yahoo-side absence for banks (EBITDA isn't a
+ * meaningful metric for a lender's income statement), not a bug; the UI
+ * must render the Financials chart with EBITDA simply absent for HDFCBANK,
+ * same as any other per-series gap already handled by this file's
+ * conventions. Also observed (pre-existing, NOT introduced by this change):
+ * INFY's entire fundamentals-timeseries feed — revenue, net income, EPS,
+ * and now EBITDA alike — reports in USD (`currencyCode: "USD"`), not INR,
+ * unlike every other symbol checked. This file has never been currency-code
+ * aware (see the file's top doc comment's "INR unit decision"), so INFY's
+ * Financials chart has silently mislabeled USD figures as INR since T2
+ * shipped — EBITDA merely inherits the SAME existing mislabeling
+ * consistently with its two sibling series, not a new inconsistency. Left
+ * unfixed as out-of-scope for this ticket; flagged for a dedicated
+ * currency-code-aware formatting follow-up.
+ */
 export interface DebtCoverage {
   annualDebt: FundamentalsPoint[] | null;
   annualFreeCashFlow: FundamentalsPoint[] | null;
   annualCash: FundamentalsPoint[] | null;
   quarterlyDebt: FundamentalsPoint[] | null;
   quarterlyCash: FundamentalsPoint[] | null;
+  /** EBITDA, annual — see the interface doc comment for the storage-reuse rationale and empirical coverage findings. */
+  annualEbitda: FundamentalsPoint[] | null;
+  /** EBITDA, quarterly — see the interface doc comment for the storage-reuse rationale and empirical coverage findings. */
+  quarterlyEbitda: FundamentalsPoint[] | null;
 }
 
 export async function fetchDebtCoverage(symbol: string): Promise<DebtCoverage> {
@@ -453,6 +558,8 @@ export async function fetchDebtCoverage(symbol: string): Promise<DebtCoverage> {
       "annualCashAndCashEquivalents",
       "quarterlyTotalDebt",
       "quarterlyCashAndCashEquivalents",
+      "annualEBITDA",
+      "quarterlyEBITDA",
     ],
     ANNUAL_LOOKBACK_YEARS
   );
@@ -462,5 +569,7 @@ export async function fetchDebtCoverage(symbol: string): Promise<DebtCoverage> {
     annualCash: map.get("annualCashAndCashEquivalents") ?? null,
     quarterlyDebt: map.get("quarterlyTotalDebt") ?? null,
     quarterlyCash: map.get("quarterlyCashAndCashEquivalents") ?? null,
+    annualEbitda: map.get("annualEBITDA") ?? null,
+    quarterlyEbitda: map.get("quarterlyEBITDA") ?? null,
   };
 }
