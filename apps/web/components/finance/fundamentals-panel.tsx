@@ -284,7 +284,7 @@ const SERIES_COLORS = {
   cash: "#3b82f6", // blue, palette unchanged
 } as const;
 
-const SECTION_H_HERO = 300; // §01, full-width — reduced from 210 (founder chart-polish pass: "make it small a bit")
+const SECTION_H_HERO = 240; // 80% of 300, same founder reduction // §01, full-width — reduced from 210 (founder chart-polish pass: "make it small a bit")
 // Founder readability pass 2026-08-02: paired (half-width) sections were
 // unreadably small because they rendered the same 640-unit viewBox as §01
 // into half the CSS width — every glyph scaled to ~half size. Fix = a
@@ -296,7 +296,7 @@ const SECTION_W_PAIR = 480;
 // 3:4 canvas (360×480). The DISPLAYED chart stays capped at 400px wide
 // (ComboChart's maxDisplayWidth) so a below-lg single-column stack can
 // never balloon a 360-unit canvas to full card width.
-const SECTION_H_PAIR = 300;
+const SECTION_H_PAIR = 240; // 80% of 300 (founder 2026-08-02: "reduce to 80%")
 const SECTION_H_PAIR_TOP = SECTION_H_PAIR; // §02 | §03 — the founder's EPS/Dividends side-by-side
 const SECTION_H_PAIR_MID = SECTION_H_PAIR; // §04 | §05
 const SECTION_H_PAIR_BOTTOM = SECTION_H_PAIR; // §06 | §07
