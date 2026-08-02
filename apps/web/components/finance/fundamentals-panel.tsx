@@ -512,16 +512,28 @@ function OperatingEfficiencySection({
   /** The PANEL's live Annual/Quarterly toggle (this section itself is always annual) — only consulted for the SectionHeader's "Annual" honesty qualifier. */
   toggleMode: "annual" | "quarterly";
 }) {
-  const groups = alignByPeriod(
+  const allGroups = alignByPeriod(
     { sales: annualRevenue, fixedAssets: annualNetPPE, receivables: annualAccountsReceivable, inventory: annualInventory },
     "annual"
   );
-  if (groups.length === 0) return null;
+  if (allGroups.length === 0) return null;
 
   const salesGrowth = yoyGrowth(annualRevenue, "annual");
   const fixedAssetGrowth = yoyGrowth(annualNetPPE, "annual");
   const receivablesGrowth = yoyGrowth(annualAccountsReceivable, "annual");
   const inventoryGrowth = yoyGrowth(annualInventory, "annual");
+
+  // Founder 2026-08-02: this chart is growth-only, so a year where EVERY
+  // series is null (the earliest year — Yahoo serves 4 fiscal years, so the
+  // first has no prior year to grow from) renders as a bare axis label with
+  // nothing above it, which "looks weird". Drop all-null years from the axis
+  // entirely instead of footnoting the gap. §01 keeps its earliest year (its
+  // BARS have data there; only its growth line gaps) — this trim is
+  // deliberately §04-local.
+  const groups = allGroups.filter((g) =>
+    [salesGrowth, fixedAssetGrowth, receivablesGrowth, inventoryGrowth].some((m) => m.get(g.periodEnd) != null)
+  );
+  if (groups.length === 0) return null;
 
   const salesValues = groups.map((g) => salesGrowth.get(g.periodEnd) ?? null);
   const fixedAssetValues = groups.map((g) => fixedAssetGrowth.get(g.periodEnd) ?? null);
@@ -556,7 +568,6 @@ function OperatingEfficiencySection({
         height={SECTION_H_PAIR_MID}
         formatPrimaryAxis={makePercentAxisFormat()}
         ariaLabel="Year-over-year growth in sales, fixed assets, receivables and inventory"
-        footnote={firstYearGrowthFootnote(groups[0].periodEnd)}
       />
     </div>
   );
