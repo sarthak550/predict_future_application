@@ -124,15 +124,15 @@ export type ComboChartProps = {
 const CHART_W = 640;
 const PAD_TOP = 18; // headroom for the topmost gridline's own label PLUS the declared-once axis-unit annotation above it
 const PAD_BOTTOM = 26;
-const BAR_GAP = 2;
-const MAX_BAR_W = 14;
+const BAR_GAP = 4;
+const MAX_BAR_W = 9;
 const TOOLTIP_OFFSET_X = 14;
 const TOOLTIP_OFFSET_Y = 12;
 
 // ── Gutter auto-sizing (axis-polish pass, fix 4b) ─────────────────────────────
 
 /** ~10px tabular-nums character width, expressed in this chart's 640-wide viewBox units (matches the founder brief's own estimate). */
-const CHAR_W_VB = 5.5;
+const CHAR_W_VB = 7;
 /** Gap between a tick label's inner edge and the plot area — matches the pre-existing `x = plotLeft ± 6` offset convention. */
 const GUTTER_TEXT_GAP = 6;
 /** Small buffer so the widest label's outer edge never touches the viewBox edge. */
@@ -395,8 +395,14 @@ export function ComboChart({
 
   // Gutter auto-sizing (fix 4b): measured from the longest rendered tick/unit
   // string for EACH axis independently — never the old fixed 44px/40px.
-  const plotLeft = primaryPresentation.gutterW;
-  const plotRight = chartW - (hasSecondary ? (secondaryPresentation?.gutterW ?? MIN_GUTTER_W) : 0);
+  //
+  // AXIS SIDES (founder reference image, 2026-08-02): when a secondary %
+  // axis exists, it sits on the LEFT and the primary money axis moves to
+  // the RIGHT (TradingView's Performance-chart layout); a single-axis chart
+  // keeps its primary axis on the left as before.
+  const secondaryGutterW = secondaryPresentation?.gutterW ?? MIN_GUTTER_W;
+  const plotLeft = hasSecondary ? secondaryGutterW : primaryPresentation.gutterW;
+  const plotRight = chartW - (hasSecondary ? primaryPresentation.gutterW : 0);
   const plotWidth = plotRight - plotLeft;
   const plotTop = PAD_TOP;
   const plotBottom = height - PAD_BOTTOM;
@@ -579,11 +585,11 @@ export function ComboChart({
                   strokeWidth={1}
                 />
                 <text
-                  x={plotLeft - GUTTER_TEXT_GAP}
-                  y={yPrimary(gv) + 3}
-                  textAnchor="end"
-                  fontSize={10}
-                  fill="#94a3b8"
+                  x={hasSecondary ? plotRight + GUTTER_TEXT_GAP : plotLeft - GUTTER_TEXT_GAP}
+                  y={yPrimary(gv) + 4}
+                  textAnchor={hasSecondary ? "start" : "end"}
+                  fontSize={12}
+                  fill="#64748b"
                   className="tabular-nums"
                 >
                   {primaryPresentation.tickLabels[gi]}
@@ -592,20 +598,27 @@ export function ComboChart({
             );
           })}
           {primaryPresentation.format.unit && (
-            <text x={plotLeft - GUTTER_TEXT_GAP} y={9} textAnchor="end" fontSize={9} fill="#94a3b8">
+            <text
+              x={hasSecondary ? plotRight + GUTTER_TEXT_GAP : plotLeft - GUTTER_TEXT_GAP}
+              y={10}
+              textAnchor={hasSecondary ? "start" : "end"}
+              fontSize={10}
+              fill="#94a3b8"
+            >
               {primaryPresentation.format.unit}
             </text>
           )}
 
-          {/* Secondary axis labels (right gutter, no gridlines of its own — a second gridline set on the same plot would just be visual noise), tinted to the line's own color when it's the only secondary series. */}
+          {/* Secondary axis labels (LEFT gutter per the founder reference — see the axis-sides note above; no gridlines of its own, a second gridline set would just be noise), tinted to the line's own color when it's the only secondary series. */}
           {hasSecondary && secondaryPresentation && (
             <>
               {secondaryScale.ticks.map((gv, gi) => (
                 <text
                   key={`s-${gi}`}
-                  x={plotRight + GUTTER_TEXT_GAP}
-                  y={ySecondary(gv) + 3}
-                  fontSize={10}
+                  x={plotLeft - GUTTER_TEXT_GAP}
+                  y={ySecondary(gv) + 4}
+                  textAnchor="end"
+                  fontSize={12}
                   fill={secondaryAxisColor}
                   className="tabular-nums"
                 >
@@ -613,7 +626,7 @@ export function ComboChart({
                 </text>
               ))}
               {secondaryPresentation.format.unit && (
-                <text x={plotRight + GUTTER_TEXT_GAP} y={9} fontSize={9} fill={secondaryAxisColor}>
+                <text x={plotLeft - GUTTER_TEXT_GAP} y={10} textAnchor="end" fontSize={10} fill={secondaryAxisColor}>
                   {secondaryPresentation.format.unit}
                 </text>
               )}
@@ -654,7 +667,7 @@ export function ComboChart({
                         width={barW}
                         y={Math.min(y0, y1)}
                         height={Math.max(2, Math.abs(y1 - y0))}
-                        rx={2}
+                        rx={4}
                         fill={s.color}
                       />
                     );
@@ -678,7 +691,7 @@ export function ComboChart({
                       width={barW}
                       y={Math.min(by, zeroYPrimary)}
                       height={Math.max(2, Math.abs(by - zeroYPrimary))}
-                      rx={2}
+                      rx={4}
                       fill={s.color}
                     />
                   );
@@ -690,7 +703,7 @@ export function ComboChart({
           {/* Lines (gap-not-bridge segments) + markers */}
           {lineSeries.map((s) => {
             const yOf = yFor(s);
-            const isDashed = s.axis === "secondary" || s.dashed;
+            const isDashed = s.dashed === true;
             const segments = buildLineSegments(s.values, xCenter, yOf);
             return (
               <g key={s.id}>
@@ -700,7 +713,7 @@ export function ComboChart({
                     points={seg.points.map((p) => `${p.x},${p.y}`).join(" ")}
                     fill="none"
                     stroke={s.color}
-                    strokeWidth={2}
+                    strokeWidth={2.5}
                     strokeDasharray={isDashed ? "4 3" : undefined}
                   />
                 ))}
@@ -713,10 +726,10 @@ export function ComboChart({
                         key={idx}
                         cx={p.x}
                         cy={p.y}
-                        r={activeIdx === idx ? 4 : 3}
-                        fill={s.color}
-                        stroke="white"
-                        strokeWidth={1.5}
+                        r={activeIdx === idx ? 5 : 3.5}
+                        fill="white"
+                        stroke={s.color}
+                        strokeWidth={2}
                         opacity={dim ? 0.35 : 1}
                       />
                     );
@@ -733,7 +746,7 @@ export function ComboChart({
               (hovered) category's label always renders regardless of
               thinning, so the tooltip's category is never axis-orphaned. */}
           {(() => {
-            const labelFontSize = categories.length > 8 ? 9 : 11;
+            const labelFontSize = categories.length > 8 ? 11 : 13;
             const maxLabelChars = categories.reduce((m, s) => Math.max(m, s.length), 0);
             const approxLabelW = maxLabelChars * (labelFontSize * 0.55) + 8;
             const labelEvery = Math.max(1, Math.ceil((categories.length * approxLabelW) / Math.max(plotWidth, 1)));
@@ -749,7 +762,7 @@ export function ComboChart({
                   y={height - 8}
                   textAnchor="middle"
                   fontSize={labelFontSize}
-                  fill={dim ? "#cbd5e1" : "#94a3b8"}
+                  fill={dim ? "#cbd5e1" : "#64748b"}
                 >
                   {label}
                 </text>
@@ -801,10 +814,10 @@ export function ComboChart({
       {(showLegend || footnote) && (
         <div className="mt-1.5 space-y-1">
           {showLegend && (
-            <div className="flex flex-wrap gap-4">
+            <div className="flex flex-wrap justify-center gap-5">
               {legendEntries.map((s) => (
-                <span key={s.id} className="inline-flex items-center gap-1.5 text-xs text-ink-500">
-                  <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: s.color }} />
+                <span key={s.id} className="inline-flex items-center gap-2 text-[13px] text-ink-500">
+                  <span className="h-3 w-3 rounded-full" style={{ backgroundColor: s.color }} />
                   {s.label}
                 </span>
               ))}

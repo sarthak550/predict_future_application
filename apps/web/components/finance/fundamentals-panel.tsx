@@ -131,16 +131,16 @@ function makeMoneyAxisFormat(currencyCode: string | null): (domainMax: number) =
   return (domainMax: number): AxisFormat => {
     const abs = Math.abs(domainMax);
     if (code === "INR") {
-      if (abs >= 1e12) return { unit: "₹ L Cr", tick: (v) => formatAxisNumber(v / 1e12, 1) };
-      if (abs >= 1e7) return { unit: "₹ Cr", tick: (v) => formatAxisNumber(v / 1e7, 1) };
-      if (abs >= 1e5) return { unit: "₹ L", tick: (v) => formatAxisNumber(v / 1e5, 1) };
+      if (abs >= 1e12) return { unit: "₹", tick: (v) => `${formatAxisNumber(v / 1e12, 1)} L Cr` };
+      if (abs >= 1e7) return { unit: "₹", tick: (v) => `${formatAxisNumber(v / 1e7, 1)} Cr` };
+      if (abs >= 1e5) return { unit: "₹", tick: (v) => `${formatAxisNumber(v / 1e5, 1)} L` };
       return { unit: "₹", tick: (v) => formatAxisNumber(v, 0) };
     }
     if (code === "USD") {
-      if (abs >= 1e12) return { unit: "$ T", tick: (v) => formatAxisNumber(v / 1e12, 1) };
-      if (abs >= 1e9) return { unit: "$ B", tick: (v) => formatAxisNumber(v / 1e9, 1) };
-      if (abs >= 1e6) return { unit: "$ M", tick: (v) => formatAxisNumber(v / 1e6, 1) };
-      if (abs >= 1e3) return { unit: "$ K", tick: (v) => formatAxisNumber(v / 1e3, 1) };
+      if (abs >= 1e12) return { unit: "$", tick: (v) => `${formatAxisNumber(v / 1e12, 2)} T` };
+      if (abs >= 1e9) return { unit: "$", tick: (v) => `${formatAxisNumber(v / 1e9, 2)} B` };
+      if (abs >= 1e6) return { unit: "$", tick: (v) => `${formatAxisNumber(v / 1e6, 2)} M` };
+      if (abs >= 1e3) return { unit: "$", tick: (v) => `${formatAxisNumber(v / 1e3, 2)} K` };
       return { unit: "$", tick: (v) => formatAxisNumber(v, 0) };
     }
     // Unknown/other currency — no compaction convention assumed (matches
@@ -151,12 +151,12 @@ function makeMoneyAxisFormat(currencyCode: string | null): (domainMax: number) =
 
 /** Percent axis factory — §01 revenue growth, §03 yield/growth, §04 operating efficiency. Nice-scale ticks are already round numbers (e.g. 0/5/10/15); 1 decimal of headroom covers a fractional step (e.g. 2.5%) without ever showing a spurious ".0". */
 function makePercentAxisFormat(): (domainMax: number) => AxisFormat {
-  return (): AxisFormat => ({ unit: "%", tick: (v) => formatAxisNumber(v, 1) });
+  return (): AxisFormat => ({ unit: "", tick: (v) => `${formatAxisNumber(v, 1)}%` });
 }
 
 /** Ratio (×) axis factory — §05 debt/equity + asset turnover. */
 function makeRatioAxisFormat(): (domainMax: number) => AxisFormat {
-  return (): AxisFormat => ({ unit: "×", tick: (v) => formatAxisNumber(v, 2) });
+  return (): AxisFormat => ({ unit: "", tick: (v) => `${formatAxisNumber(v, 2)}×` });
 }
 
 /**
@@ -284,23 +284,23 @@ const SERIES_COLORS = {
   cash: "#3b82f6", // blue, palette unchanged
 } as const;
 
-const SECTION_H_HERO = 170; // §01, full-width — reduced from 210 (founder chart-polish pass: "make it small a bit")
+const SECTION_H_HERO = 300; // §01, full-width — reduced from 210 (founder chart-polish pass: "make it small a bit")
 // Founder readability pass 2026-08-02: paired (half-width) sections were
 // unreadably small because they rendered the same 640-unit viewBox as §01
 // into half the CSS width — every glyph scaled to ~half size. Fix = a
 // NARROWER canvas (SECTION_W_PAIR, so text renders near-natural size at
 // half-column width) PLUS more height. §01 keeps the full 640 canvas.
-const SECTION_W_PAIR = 360;
+const SECTION_W_PAIR = 480;
 // Founder 2026-08-02 (third sizing pass): "the ratios went opposite I meant
 // 3:4" — PORTRAIT, taller than wide: all paired sections share ONE exact
 // 3:4 canvas (360×480). The DISPLAYED chart stays capped at 400px wide
 // (ComboChart's maxDisplayWidth) so a below-lg single-column stack can
 // never balloon a 360-unit canvas to full card width.
-const SECTION_H_PAIR = 480;
+const SECTION_H_PAIR = 300;
 const SECTION_H_PAIR_TOP = SECTION_H_PAIR; // §02 | §03 — the founder's EPS/Dividends side-by-side
 const SECTION_H_PAIR_MID = SECTION_H_PAIR; // §04 | §05
 const SECTION_H_PAIR_BOTTOM = SECTION_H_PAIR; // §06 | §07
-const SECTION_MAX_DISPLAY_W = 400;
+const SECTION_MAX_DISPLAY_W = 560;
 
 /**
  * Runtime shape guard for whatever `InstrumentEnrichment.dividends` last
