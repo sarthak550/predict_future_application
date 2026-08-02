@@ -598,7 +598,7 @@ function OperatingEfficiencySection({
 
   return (
     <div>
-      <SectionHeader index="04" title="Operating Efficiency" qualifier={toggleMode === "quarterly" ? "Annual" : undefined} />
+      <SectionHeader index="04" title="Operating Efficiency (Growth Rate)" qualifier={toggleMode === "quarterly" ? "Annual" : undefined} />
       <ComboChart
         categories={groups.map((g) => g.label)}
         series={series}
@@ -1137,11 +1137,14 @@ export function FundamentalsPanel({
   const showCurrencyChip = rawCurrencyCode != null && rawCurrencyCode !== "INR";
 
   return (
-    <Card>
+    <section className="space-y-4">
+      {/* Founder 2026-08-02: section heading OUTSIDE the card, matching the
+          "Analyst opinions" pattern — the old small-caps in-card label is gone. */}
+      <h2 className="text-xl font-semibold text-ink-900">Fundamentals</h2>
+      <Card>
       <CardContent className="space-y-6 p-5">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <div className="flex items-center gap-2">
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-ink-400">Fundamentals</p>
             {showCurrencyChip && (
               <span className="rounded-full border border-ink-200 px-2 py-0.5 text-[11px] text-ink-500">
                 Reported in {rawCurrencyCode}
@@ -1157,7 +1160,7 @@ export function FundamentalsPanel({
 
         {hasKeyStats && keyStats && (
           <div>
-            <p className="mb-2 text-xs font-semibold text-ink-500">Key stats</p>
+            <p className="mb-2 text-base font-semibold text-ink-900">Key stats</p>
             <div className="grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-3">
               {keyStats.marketCap !== undefined && <KeyStat label="Market cap" value={formatCompactCurrency(keyStats.marketCap, "INR")} />}
               {keyStats.trailingPE !== undefined && <KeyStat label="P/E ratio (TTM)" value={keyStats.trailingPE.toFixed(1)} />}
@@ -1195,7 +1198,7 @@ export function FundamentalsPanel({
 
         {(hasAnnual || hasQuarterly) && (
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-xs font-semibold text-ink-500">Financials</p>
+            <p className="text-base font-semibold text-ink-900">Financials</p>
             <div className="inline-flex rounded-xl border border-ink-200 bg-white p-0.5">
               {(["annual", "quarterly"] as const).map((m) => (
                 <button
@@ -1288,6 +1291,7 @@ export function FundamentalsPanel({
             })()}
         </div>
       </CardContent>
-    </Card>
+      </Card>
+    </section>
   );
 }
