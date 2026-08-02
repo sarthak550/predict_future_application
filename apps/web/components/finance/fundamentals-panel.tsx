@@ -89,10 +89,6 @@ function formatShortDate(iso: string): string {
   return new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", year: "2-digit", timeZone: "UTC" }).format(new Date(iso));
 }
 
-function formatFetchedAt(d: Date): string {
-  return new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", year: "numeric", timeZone: "Asia/Kolkata" }).format(d);
-}
-
 // ── Axis-tick formatting (founder chart-polish pass) ──────────────────────────
 //
 // `ComboChart`'s `formatPrimaryAxis`/`formatSecondaryAxis` props are
@@ -1105,7 +1101,6 @@ export function FundamentalsPanel({
   dividends,
   debtCoverage,
   keyStats,
-  fetchedAt,
 }: FundamentalsPanelProps) {
   const [mode, setMode] = useState<"annual" | "quarterly">("annual");
 
@@ -1151,11 +1146,7 @@ export function FundamentalsPanel({
               </span>
             )}
           </div>
-          {fetchedAt && (
-            <p className="text-[11px] text-ink-400">
-              Source: Yahoo Finance — may lag official filings · as of {formatFetchedAt(fetchedAt)}
-            </p>
-          )}
+
         </div>
 
         {hasKeyStats && keyStats && (
