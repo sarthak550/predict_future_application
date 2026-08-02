@@ -2,11 +2,13 @@
 
 /**
  * Charting Workbench (W2, T2 shell + T4 click-to-trade wiring; W3, T3/T4/T5
- * wires drawings + premium mode) — the fullscreen "maximize" surface:
- * `createPortal`'d to `document.body`, `fixed inset-0 z-50`, body-scroll-
- * locked while open. Layout: a top bar (title, honest-data chip, timeframe
- * pills, indicator picker, minimize), then a three-column row (44px
- * drawing-tool rail / chart / a 360px collapsible ticket panel).
+ * wires drawings + premium mode; TA Suite Sprint S1, T5/T6/T7 wires the new
+ * drawing families' text popover + toolbar redesign + style editor) — the
+ * fullscreen "maximize" surface: `createPortal`'d to `document.body`,
+ * `fixed inset-0 z-50`, body-scroll-locked while open. Layout: a top bar
+ * (title, honest-data chip, timeframe pills, indicator picker, minimize),
+ * then a three-column row (44px drawing-tool rail / chart / a 360px
+ * collapsible ticket panel).
  *
  * Rendered via `next/dynamic(..., {ssr:false})` ONLY while open by every
  * caller (paper-trading-dashboard.tsx / futures-page-client.tsx /
@@ -15,21 +17,34 @@
  * pulls in is paid only on first maximize, never on a terminal's initial
  * page load.
  *
- * W3 additions:
- *   - Drawings: owns `activeTool`/`cancelDrawingNonce`/`clearAllDrawingsNonce`
- *     state and the `useChartDrawings(chartKey)` hook, wiring both into
- *     `<KlineChart>` — see that file's own module doc for the full
- *     load/draw/persist/cancel/clear-all mechanics this component merely
- *     triggers.
- *   - Escape priority chain (T5): popover > active drawing tool > workbench
- *     close, in that order — a drawing tool being active is a NEW middle
- *     tier this sprint inserted between the two W2 cases.
- *   - Premium mode (T5/T6): `feed.kind === "optionPremium"` narrows the
- *     timeframe selector to 15m/30m, gates VOL off in the indicator picker,
- *     shows the mandatory pseudo-candle label (or the zero-snapshot accrual
- *     note) in place of the equity/index honest-data chip.
+ * **S1 additions**:
+ *   - `pendingToolStyles`: set by `WorkbenchToolbar`'s widened
+ *     `onSelectTool(name, presetStyles?)` — covers the `highlighter` alias
+ *     (D2: maps to the real `brush` overlay name + a preset) and the emoji
+ *     flyout's chosen `pfContent.emoji`, both applied at the MOMENT a new
+ *     drawing is created.
+ *   - `magnetEnabled` — the toolbar's magnet toggle, threaded to
+ *     `<KlineChart>`'s `magnetMode` prop (`createOverlay`'s own `mode`
+ *     field).
+ *   - `selectedDrawing` — populated by `onDrawingSelected` (already-wired
+ *     `onSelected` event, per T7's own doc), drives the floating
+ *     `<DrawingStyleToolbar>`. Swatch/width picks merge into the
+ *     drawing's CURRENT `styles` (looked up from `drawingsHook.drawings`
+ *     by `persistedId`) across the `line`/`polygon`/`text` buckets a pick
+ *     could plausibly affect, apply an instant `overrideOverlay` via
+ *     `drawingStyleCommand`, and fire a debounced PATCH directly against
+ *     `use-chart-drawings.ts`'s `update()`.
+ *   - `textPopover` — the D10 popover, opened either right after a
+ *     text-family tool finishes drawing (`onDrawingNeedsText`) or via the
+ *     style editor's "Edit text" button. Empty-text dismissal removes the
+ *     overlay AND its DB row via `removeDrawingCommand` (the exact same
+ *     path the Backspace hotkey already uses).
+ *   - Escape priority chain widens by one tier: text popover > popover >
+ *     active drawing tool > workbench close (the text popover handles its
+ *     own Escape internally, so this file's own listener just has to not
+ *     ALSO close the workbench while it's open).
  */
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Loader2, Minimize2, PanelRightClose, PanelRightOpen } from "lucide-react";
 
@@ -37,15 +52,68 @@ import { ChartOrderIntentPopover } from "@/components/finance/chart-order-intent
 import type { ChartOrderLine, OrderSide, OrderVariant } from "@/components/finance/chart-order-lines";
 import { KlineChart } from "./kline-chart";
 import { TimeframeSelector } from "./timeframe-selector";
-import { IndicatorPicker, type IndicatorSelection } from "./indicator-picker";
+import { IndicatorDialog } from "./indicator-dialog";
+import { IndicatorActiveStrip } from "./indicator-active-strip";
+import { IndicatorSettingsPopover } from "./indicator-settings-popover";
+import {
+  EMPTY_SELECTION,
+  MAX_SUB_PANE_INSTANCES,
+  createInstanceId,
+  getIndicatorMeta,
+  loadStoredSelection,
+  saveStoredSelection,
+  sanitizeSelectionForMode,
+  type IndicatorInstance,
+  type IndicatorSelection
+} from "./indicator-registry";
 import { WorkbenchToolbar } from "./workbench-toolbar";
+import { DrawingStyleToolbar } from "./drawing-style-toolbar";
+import { DrawingTextPopover } from "./drawing-text-popover";
 import { useChartDrawings } from "./use-chart-drawings";
 import { useWorkbenchCandles, WORKBENCH_INTERVALS, PREMIUM_INTERVALS, type CandleInterval, type WorkbenchFeed } from "./use-workbench-candles";
+import {
+  StrategyConfigPanel,
+  StrategyDisclaimerFooter,
+  loadStoredStrategyConfig,
+  saveStoredStrategyConfig,
+  type StrategyRunResult
+} from "./strategy-panel";
+import { STRATEGY_LIST, getStrategyDef, clampStrategyParams, resolveStrategyParams, defaultParamValues } from "@/lib/ta/strategies";
+import { runBacktest, intervalToProductType } from "@/lib/ta/backtest";
 
 export type { WorkbenchFeed } from "./use-workbench-candles";
 
+/** Text-family tools that get the D10 popover — see kline-chart.tsx's own `TEXT_INPUT_OVERLAYS` (this is a small, deliberate duplication rather than exporting an internal symbol from that file). */
+const TEXT_FAMILY_OVERLAYS = new Set(["calloutText", "noteAnchored"]);
+
+interface SelectedDrawingInfo {
+  overlayId: string;
+  persistedId: string | null;
+  overlayName: string;
+  left: number;
+  top: number;
+}
+
+interface TextPopoverInfo {
+  overlayId: string;
+  persistedId: string;
+  overlayName: string;
+  left: number;
+  top: number;
+  initialText: string;
+}
+
 function formatIstDateShort(iso: string): string {
   return new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", timeZone: "Asia/Kolkata" }).format(new Date(iso));
+}
+
+function mergeStylesPatch(current: Record<string, unknown> | null | undefined, patch: Record<string, unknown>): Record<string, unknown> {
+  const base = (current ?? {}) as Record<string, Record<string, unknown> | undefined>;
+  const result: Record<string, unknown> = { ...base };
+  for (const [bucket, value] of Object.entries(patch)) {
+    result[bucket] = { ...(base[bucket] ?? {}), ...(value as Record<string, unknown>) };
+  }
+  return result;
 }
 
 export function ChartWorkbench({
@@ -75,14 +143,151 @@ export function ChartWorkbench({
 }) {
   const isPremiumMode = feed.kind === "optionPremium";
   const [chartInterval, setChartInterval] = useState<CandleInterval>(() => (isPremiumMode ? "15m" : "5m"));
-  const [indicators, setIndicators] = useState<IndicatorSelection>({ main: [], sub: [] });
+
+  // TA Suite S2 — indicator library state: a multi-instance selection (see
+  // `indicator-registry.ts`'s own doc for why an instance, not a bare name,
+  // is the unit of selection). Restored once, after mount (same
+  // localStorage-after-hydration posture `indicator-picker.tsx` used), via
+  // the graceful v1→v2 reader — sanitized against THIS instance's mode
+  // (spot/premium) and starting interval immediately on restore.
+  const [indicators, setIndicators] = useState<IndicatorSelection>(EMPTY_SELECTION);
+  const [indicatorDialogOpen, setIndicatorDialogOpen] = useState(false);
+  const [indicatorSettings, setIndicatorSettings] = useState<{ instance: IndicatorInstance; left: number; top: number } | null>(null);
+
+  useEffect(() => {
+    const stored = loadStoredSelection();
+    if (stored) setIndicators(sanitizeSelectionForMode(stored, { mode: isPremiumMode ? "premium" : "spot", interval: chartInterval }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // T5 — the dual VWAP gate (premium OR 1d) and the premium volume-set gate
+  // are both interval/mode-dependent; re-sanitize whenever either changes
+  // underneath an already-open workbench (e.g. the user flips to `1d` with
+  // VWAP already on the chart) — not just once at restore.
+  useEffect(() => {
+    setIndicators((prev) => sanitizeSelectionForMode(prev, { mode: isPremiumMode ? "premium" : "spot", interval: chartInterval }));
+  }, [chartInterval, isPremiumMode]);
+
+  function persistIndicators(next: IndicatorSelection) {
+    setIndicators(next);
+    saveStoredSelection(next);
+  }
+
+  function handleAddIndicator(name: string) {
+    const meta = getIndicatorMeta(name);
+    if (!meta) return;
+    const instance: IndicatorInstance = { instanceId: createInstanceId(name), name };
+    if (meta.pane === "main") {
+      persistIndicators({ ...indicators, main: [...indicators.main, instance] });
+    } else {
+      if (indicators.sub.length >= MAX_SUB_PANE_INSTANCES) return; // dialog already disables this row — defensive no-op.
+      persistIndicators({ ...indicators, sub: [...indicators.sub, instance] });
+    }
+  }
+
+  function handleRemoveIndicator(instanceId: string) {
+    persistIndicators({
+      main: indicators.main.filter((i) => i.instanceId !== instanceId),
+      sub: indicators.sub.filter((i) => i.instanceId !== instanceId)
+    });
+    if (indicatorSettings?.instance.instanceId === instanceId) setIndicatorSettings(null);
+  }
+
+  function handleOpenIndicatorSettings(instance: IndicatorInstance, anchor: { left: number; top: number }) {
+    setIndicatorSettings({ instance, ...anchor });
+  }
+
+  function handleApplyIndicatorSettings(params: number[]) {
+    if (!indicatorSettings) return;
+    const targetId = indicatorSettings.instance.instanceId;
+    const updateList = (list: IndicatorInstance[]) => list.map((i) => (i.instanceId === targetId ? { ...i, params } : i));
+    persistIndicators({ main: updateList(indicators.main), sub: updateList(indicators.sub) });
+  }
+
   const [ticketCollapsed, setTicketCollapsed] = useState(false);
   const [intentPopover, setIntentPopover] = useState<{ price: number; left: number; top: number } | null>(null);
 
   const { candles, status, errorMessage, sourceLabel, quote, premiumMeta } = useWorkbenchCandles(feed, chartInterval);
 
+  // TA Suite S3 — right-panel tabs (D5: [Ticket | Strategy] segmented,
+  // ticket stays MOUNTED and CSS-hidden, never conditionally rendered — the
+  // single-mount rule). `hasOpenedStrategyTab` is sticky true (never resets
+  // to false) once the Strategy tab is first opened — it gates
+  // `StrategyDisclaimerFooter`'s render (see that component's own doc for
+  // why the disclaimer lives OUTSIDE the tab-scoped wrapper and needs its
+  // own separate visibility condition).
+  const [rightPanelTab, setRightPanelTab] = useState<"ticket" | "strategy">("ticket");
+  const [hasOpenedStrategyTab, setHasOpenedStrategyTab] = useState(false);
+  function selectRightPanelTab(tab: "ticket" | "strategy") {
+    setRightPanelTab(tab);
+    if (tab === "strategy") setHasOpenedStrategyTab(true);
+  }
+
+  const [strategyId, setStrategyId] = useState<string>(STRATEGY_LIST[0].id);
+  const [strategyParams, setStrategyParams] = useState<number[]>(() => defaultParamValues(STRATEGY_LIST[0]));
+  const [strategyNotional, setStrategyNotional] = useState(100000);
+  const [strategyRunResult, setStrategyRunResult] = useState<StrategyRunResult | null>(null);
+
+  // Restored once, after mount (same localStorage-after-hydration posture as the indicator selection above).
+  useEffect(() => {
+    const stored = loadStoredStrategyConfig();
+    if (!stored) return;
+    setStrategyId(stored.id);
+    setStrategyParams(stored.params);
+    setStrategyNotional(stored.notional);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    saveStoredStrategyConfig({ id: strategyId, params: strategyParams, notional: strategyNotional });
+  }, [strategyId, strategyParams, strategyNotional]);
+
+  function handleStrategyIdChange(id: string) {
+    const def = getStrategyDef(id);
+    if (!def) return;
+    setStrategyId(id);
+    setStrategyParams(defaultParamValues(def)); // a different strategy's params are a different shape/scale entirely — reset to its own defaults, never carry over the previous strategy's positional values.
+  }
+
+  function handleRunStrategy() {
+    const def = getStrategyDef(strategyId);
+    if (!def || candles.length === 0) return;
+    const clampedParams = clampStrategyParams(def, strategyParams);
+    const keyedParams = resolveStrategyParams(def, clampedParams);
+    const signals = def.compute(candles, keyedParams);
+    const productType = intervalToProductType(chartInterval);
+    const stats = runBacktest(candles, signals, { notional: strategyNotional, productType });
+    setStrategyParams(clampedParams);
+    setStrategyRunResult({
+      id: strategyId,
+      params: clampedParams,
+      signals,
+      stats,
+      ranInterval: chartInterval,
+      ranCandleCount: candles.length,
+      ranProductType: productType
+    });
+  }
+
+  function handleClearSignals() {
+    setStrategyRunResult(null);
+  }
+
+  // D8 — the SAME {id, params} the last Run used, not the live (possibly
+  // since-edited) strategyId/strategyParams state — the on-chart markers
+  // and the stats card must always describe the SAME run, never a
+  // markers-updated-live-but-stats-stale mismatch (params are still edited
+  // freely between runs; only clicking Run commits a new markers+stats pair
+  // together). PF_SIGNALS' own `calc` still recomputes fresh from whatever
+  // candles are CURRENTLY loaded on every render (an interval change is
+  // self-correcting for the markers), it's only strategyRunResult's STATS
+  // that can go stale relative to a changed interval — see
+  // `strategy-panel.tsx`'s `isStale` check for that surfacing.
+  const signalsConfig = strategyRunResult ? { id: strategyRunResult.id, params: strategyRunResult.params } : null;
+
   // W3, T3/T4 — drawing tool state + persistence hook.
   const [activeTool, setActiveTool] = useState<string | null>(null);
+  const [pendingToolStyles, setPendingToolStyles] = useState<Record<string, unknown> | null>(null);
   const [cancelDrawingNonce, setCancelDrawingNonce] = useState(0);
   const [clearAllDrawingsNonce, setClearAllDrawingsNonce] = useState(0);
   const drawingsHook = useChartDrawings(chartKey);
@@ -91,19 +296,94 @@ export function ChartWorkbench({
     void loadDrawings();
   }, [loadDrawings]);
 
+  // S1, T6 — magnet toggle.
+  const [magnetEnabled, setMagnetEnabled] = useState(false);
+
+  // S1, T7 — the currently-selected drawing (style editor target) + the
+  // instant-visual `overrideOverlay` command channel + the shared
+  // remove-by-id command channel (both the style editor's Delete AND the
+  // T5 empty-text-popover dismissal use the SAME channel).
+  const [selectedDrawing, setSelectedDrawing] = useState<SelectedDrawingInfo | null>(null);
+  const [drawingStyleCommand, setDrawingStyleCommand] = useState<{ id: string; styles: Record<string, unknown>; nonce: number } | null>(null);
+  const [removeDrawingCommand, setRemoveDrawingCommand] = useState<{ id: string; nonce: number } | null>(null);
+  const styleCommandNonceRef = useRef(0);
+  const removeCommandNonceRef = useRef(0);
+
+  // S1, T5 — the D10 text popover.
+  const [textPopover, setTextPopover] = useState<TextPopoverInfo | null>(null);
+
+  const selectedRow = useMemo(
+    () => (selectedDrawing?.persistedId ? drawingsHook.drawings.find((d) => d.id === selectedDrawing.persistedId) ?? null : null),
+    [selectedDrawing, drawingsHook.drawings]
+  );
+
   function cancelActiveDrawing() {
     if (!activeTool) return;
     setCancelDrawingNonce((n) => n + 1);
     setActiveTool(null);
+    setPendingToolStyles(null);
   }
 
-  function handleSelectTool(name: string) {
+  function handleSelectTool(name: string, presetStyles?: Record<string, unknown>) {
     if (activeTool) setCancelDrawingNonce((n) => n + 1); // abandon whatever was in progress before starting a new one.
+    setPendingToolStyles(presetStyles ?? null);
     setActiveTool(name);
   }
 
   function handleClearAll() {
     setClearAllDrawingsNonce((n) => n + 1);
+    setSelectedDrawing(null);
+    setTextPopover(null);
+  }
+
+  function applyStylePatch(patch: Record<string, unknown>) {
+    if (!selectedDrawing) return;
+    const nextStyles = mergeStylesPatch(selectedRow?.styles, patch);
+    styleCommandNonceRef.current += 1;
+    setDrawingStyleCommand({ id: selectedDrawing.overlayId, styles: nextStyles, nonce: styleCommandNonceRef.current });
+    if (selectedDrawing.persistedId) drawingsHook.update(selectedDrawing.persistedId, { styles: nextStyles });
+  }
+
+  function handleStyleDelete() {
+    if (!selectedDrawing) return;
+    removeCommandNonceRef.current += 1;
+    setRemoveDrawingCommand({ id: selectedDrawing.overlayId, nonce: removeCommandNonceRef.current });
+    setSelectedDrawing(null);
+  }
+
+  function handleEditText() {
+    if (!selectedDrawing?.persistedId) return;
+    const pfContent = (selectedRow?.styles as { pfContent?: { text?: string } } | undefined)?.pfContent;
+    setTextPopover({
+      overlayId: selectedDrawing.overlayId,
+      persistedId: selectedDrawing.persistedId,
+      overlayName: selectedDrawing.overlayName,
+      left: selectedDrawing.left,
+      top: selectedDrawing.top,
+      initialText: pfContent?.text ?? ""
+    });
+  }
+
+  function handleDrawingNeedsText(info: { overlayId: string; persistedId: string; overlayName: string; left: number; top: number }) {
+    setTextPopover({ ...info, initialText: "" });
+  }
+
+  function handleTextConfirm(text: string) {
+    if (!textPopover) return;
+    const row = drawingsHook.drawings.find((d) => d.id === textPopover.persistedId);
+    const nextStyles = mergeStylesPatch(row?.styles, { pfContent: { text } });
+    drawingsHook.update(textPopover.persistedId, { styles: nextStyles });
+    styleCommandNonceRef.current += 1;
+    setDrawingStyleCommand({ id: textPopover.overlayId, styles: nextStyles, nonce: styleCommandNonceRef.current });
+    setTextPopover(null);
+  }
+
+  function handleTextDismissEmpty() {
+    if (!textPopover) return;
+    removeCommandNonceRef.current += 1;
+    setRemoveDrawingCommand({ id: textPopover.overlayId, nonce: removeCommandNonceRef.current });
+    setTextPopover(null);
+    setSelectedDrawing(null);
   }
 
   // Body scroll lock while the workbench is open, restored on close.
@@ -115,12 +395,14 @@ export function ChartWorkbench({
     };
   }, []);
 
-  // W3, T5 — Escape priority chain: popover > active drawing tool >
-  // workbench close. A drawing tool being active is the new middle tier;
-  // the popover-open and plain-close cases are unchanged from W2.
+  // W3, T5; S1 widens with a new top tier — Escape priority chain: text
+  // popover (handles its own Escape internally — this listener just has to
+  // step aside) > order-intent popover > active drawing tool > workbench
+  // close.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== "Escape") return;
+      if (textPopover) return;
       if (intentPopover) return; // ChartOrderIntentPopover's own listener handles it first.
       if (activeTool) {
         cancelActiveDrawing();
@@ -131,7 +413,7 @@ export function ChartWorkbench({
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [intentPopover, activeTool, onClose]);
+  }, [textPopover, intentPopover, activeTool, onClose]);
 
   const onQuoteChangeRef = useRef(onQuoteChange);
   onQuoteChangeRef.current = onQuoteChange;
@@ -173,6 +455,9 @@ export function ChartWorkbench({
       ? "No premium history captured for this contract yet — history accrues as this contract is viewed (5-minute snapshots while it's on someone's screen)."
       : "Not enough premium ticks yet — check back shortly.";
 
+  const activeColor = (selectedRow?.styles as { line?: { color?: string } } | undefined)?.line?.color ?? null;
+  const activeWidth = (selectedRow?.styles as { line?: { size?: number } } | undefined)?.line?.size ?? null;
+
   const content = (
     <div className="fixed inset-0 z-50 flex flex-col bg-white" data-chart-key={chartKey}>
       <div className="flex flex-wrap items-center gap-3 border-b border-ink-100 px-4 py-2.5">
@@ -187,7 +472,12 @@ export function ChartWorkbench({
           </span>
         )}
         <TimeframeSelector intervals={isPremiumMode ? PREMIUM_INTERVALS : WORKBENCH_INTERVALS} value={chartInterval} onChange={setChartInterval} />
-        <IndicatorPicker selection={indicators} onChange={setIndicators} mode={isPremiumMode ? "premium" : "spot"} />
+        <IndicatorActiveStrip
+          instances={[...indicators.main, ...indicators.sub]}
+          onOpenSettings={handleOpenIndicatorSettings}
+          onRemove={handleRemoveIndicator}
+          onOpenDialog={() => setIndicatorDialogOpen(true)}
+        />
         <button
           type="button"
           onClick={() => setTicketCollapsed((v) => !v)}
@@ -211,7 +501,14 @@ export function ChartWorkbench({
       )}
 
       <div className="flex min-h-0 flex-1">
-        <WorkbenchToolbar activeTool={activeTool} onSelectTool={handleSelectTool} onCancelActiveTool={cancelActiveDrawing} onClearAll={handleClearAll} />
+        <WorkbenchToolbar
+          activeTool={activeTool}
+          onSelectTool={handleSelectTool}
+          onCancelActiveTool={cancelActiveDrawing}
+          onClearAll={handleClearAll}
+          magnetEnabled={magnetEnabled}
+          onToggleMagnet={() => setMagnetEnabled((v) => !v)}
+        />
 
         <div className="relative min-w-0 flex-1">
           {status === "loading" && (
@@ -235,6 +532,7 @@ export function ChartWorkbench({
               interval={chartInterval}
               mainIndicators={indicators.main}
               subIndicators={indicators.sub}
+              signalsConfig={signalsConfig}
               orderLines={orderLines}
               onSurfaceClick={handleSurfaceClick}
               onOrderLineDrag={onOrderLineDrag}
@@ -242,13 +540,48 @@ export function ChartWorkbench({
               suspendClick={isDrawingActive}
               drawings={drawingsHook.drawings}
               activeTool={activeTool}
-              onToolDrawEnd={() => setActiveTool(null)}
+              pendingToolStyles={pendingToolStyles}
+              magnetMode={magnetEnabled ? "weak_magnet" : "normal"}
+              onToolDrawEnd={() => {
+                setActiveTool(null);
+                setPendingToolStyles(null);
+              }}
               onDrawingCreate={drawingsHook.create}
               onDrawingMoveEnd={drawingsHook.update}
               onDrawingRemoved={drawingsHook.remove}
+              onDrawingSelected={setSelectedDrawing}
+              onDrawingDeselected={() => setSelectedDrawing(null)}
+              onDrawingNeedsText={handleDrawingNeedsText}
               cancelDrawingNonce={cancelDrawingNonce}
               clearAllDrawingsNonce={clearAllDrawingsNonce}
               onAllDrawingsCleared={drawingsHook.clearAll}
+              drawingStyleCommand={drawingStyleCommand}
+              removeDrawingCommand={removeDrawingCommand}
+            />
+          )}
+
+          {selectedDrawing && !textPopover && (
+            <DrawingStyleToolbar
+              left={selectedDrawing.left}
+              top={selectedDrawing.top}
+              activeColor={activeColor}
+              activeWidth={activeWidth}
+              canEditText={TEXT_FAMILY_OVERLAYS.has(selectedDrawing.overlayName)}
+              onPickColor={(color) => applyStylePatch({ line: { color }, polygon: { color, borderColor: color }, text: { backgroundColor: color } })}
+              onPickWidth={(width) => applyStylePatch({ line: { size: width } })}
+              onEditText={TEXT_FAMILY_OVERLAYS.has(selectedDrawing.overlayName) ? handleEditText : undefined}
+              onDelete={handleStyleDelete}
+            />
+          )}
+
+          {textPopover && (
+            <DrawingTextPopover
+              left={textPopover.left}
+              top={textPopover.top}
+              initialText={textPopover.initialText}
+              title={textPopover.overlayName === "noteAnchored" ? "Note" : "Callout text"}
+              onConfirm={handleTextConfirm}
+              onDismissEmpty={handleTextDismissEmpty}
             />
           )}
 
@@ -267,8 +600,87 @@ export function ChartWorkbench({
           )}
         </div>
 
-        {!ticketCollapsed && <div className="w-[360px] shrink-0 overflow-y-auto border-l border-ink-100 p-3">{ticket}</div>}
+        {!ticketCollapsed && (
+          <div className="flex w-[360px] shrink-0 flex-col border-l border-ink-100">
+            {/* TA Suite S3, T3 — [Ticket | Strategy] segmented control (D5). Switching tabs NEVER unmounts either
+                side (the single-mount rule) — both wrappers below are always in the DOM, toggled by CSS
+                `display` only, so an in-progress order-ticket draft survives a trip through the Strategy tab. */}
+            <div className="flex shrink-0 gap-1 border-b border-ink-100 p-2">
+              <button
+                type="button"
+                onClick={() => selectRightPanelTab("ticket")}
+                className={`flex-1 rounded-lg py-1.5 text-xs font-semibold ${
+                  rightPanelTab === "ticket" ? "bg-sky-600 text-white" : "text-ink-500 hover:bg-ink-100"
+                }`}
+              >
+                Ticket
+              </button>
+              <button
+                type="button"
+                onClick={() => selectRightPanelTab("strategy")}
+                className={`flex-1 rounded-lg py-1.5 text-xs font-semibold ${
+                  rightPanelTab === "strategy" ? "bg-sky-600 text-white" : "text-ink-500 hover:bg-ink-100"
+                }`}
+              >
+                Strategy
+              </button>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto p-3">
+              <div style={{ display: rightPanelTab === "ticket" ? "block" : "none" }}>{ticket}</div>
+              {hasOpenedStrategyTab && (
+                <div style={{ display: rightPanelTab === "strategy" ? "block" : "none" }}>
+                  <StrategyConfigPanel
+                    strategyId={strategyId}
+                    onStrategyIdChange={handleStrategyIdChange}
+                    paramValues={strategyParams}
+                    onParamValuesChange={setStrategyParams}
+                    notional={strategyNotional}
+                    onNotionalChange={setStrategyNotional}
+                    interval={chartInterval}
+                    candleCount={candles.length}
+                    isPremiumMode={isPremiumMode}
+                    runResult={strategyRunResult}
+                    onRun={handleRunStrategy}
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* Deliberately OUTSIDE the tab-scoped/scrollable region above — see strategy-panel.tsx's own doc for
+                why the disclaimer needs its own always-visible position, not a child of either CSS-hidden wrapper. */}
+            {hasOpenedStrategyTab && (
+              <StrategyDisclaimerFooter
+                runResult={strategyRunResult}
+                liveInterval={chartInterval}
+                liveCandleCount={candles.length}
+                isPremiumMode={isPremiumMode}
+                hasActiveSignals={strategyRunResult !== null}
+                onClear={handleClearSignals}
+              />
+            )}
+          </div>
+        )}
       </div>
+
+      {indicatorDialogOpen && (
+        <IndicatorDialog
+          mode={isPremiumMode ? "premium" : "spot"}
+          interval={chartInterval}
+          subCount={indicators.sub.length}
+          onAdd={handleAddIndicator}
+          onClose={() => setIndicatorDialogOpen(false)}
+        />
+      )}
+      {indicatorSettings && (
+        <IndicatorSettingsPopover
+          instance={indicatorSettings.instance}
+          left={indicatorSettings.left}
+          top={indicatorSettings.top}
+          onApply={handleApplyIndicatorSettings}
+          onClose={() => setIndicatorSettings(null)}
+        />
+      )}
     </div>
   );
 

@@ -39,6 +39,12 @@ export interface ChartDrawingRow {
   visible: boolean;
 }
 
+/** S1, T5/T7 — a PATCH patch: `points` (drag), `styles` (style editor / D10 text popover), or both. `update()` merges repeated calls for the SAME id behind ONE debounce timer — see that function's own doc. */
+export interface ChartDrawingUpdatePatch {
+  points?: ChartDrawingPoint[];
+  styles?: Record<string, unknown>;
+}
+
 const PATCH_DEBOUNCE_MS = 500;
 
 export function useChartDrawings(chartKey: string): {
@@ -47,9 +53,20 @@ export function useChartDrawings(chartKey: string): {
   error: string | null;
   dismissError: () => void;
   load: () => Promise<void>;
-  create: (overlayName: string, points: ChartDrawingPoint[]) => Promise<ChartDrawingRow | null>;
-  /** Debounced 500ms latest-wins per drawing id — see module doc. Fire-and-forget; callers never await a specific PATCH landing. */
-  update: (id: string, points: ChartDrawingPoint[]) => void;
+  /** S1, T5 widens `create` with an optional `styles` (the emoji flyout's chosen `pfContent.emoji`, or `highlighter`'s preset — applied at CREATION so the very first render already carries it, not a follow-up PATCH). */
+  create: (overlayName: string, points: ChartDrawingPoint[], styles?: Record<string, unknown>) => Promise<ChartDrawingRow | null>;
+  /**
+   * Debounced 500ms latest-wins PER DRAWING id — see module doc. S1, T7
+   * widens the payload to a `{points?, styles?}` patch and MERGES repeated
+   * calls within the debounce window instead of replacing wholesale: a drag
+   * (`points`) followed immediately by a style-editor color pick
+   * (`styles`) on the same drawing collapses into ONE PATCH carrying both,
+   * and 5 rapid color swatch clicks in under 1s collapse into exactly ONE
+   * PATCH carrying only the LAST style choice (the ticket's own explicit
+   * "5 clicks → 1 PATCH" acceptance test). Fire-and-forget; callers never
+   * await a specific PATCH landing.
+   */
+  update: (id: string, patch: ChartDrawingUpdatePatch) => void;
   /** Fire-and-forget DELETE — the caller (kline-chart.tsx) has already removed the overlay from the canvas by the time this fires (a real user delete, guarded upstream by `suspendSyncRef` for every programmatic removal — see kline-chart.tsx). */
   remove: (id: string) => void;
   clearAll: () => Promise<void>;
@@ -59,7 +76,7 @@ export function useChartDrawings(chartKey: string): {
   const [error, setError] = useState<string | null>(null);
 
   const debounceTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
-  const latestPendingPoints = useRef<Map<string, ChartDrawingPoint[]>>(new Map());
+  const latestPendingPatch = useRef<Map<string, ChartDrawingUpdatePatch>>(new Map());
 
   const load = useCallback(async () => {
     setStatus("loading");
@@ -82,12 +99,12 @@ export function useChartDrawings(chartKey: string): {
   // pixel coordinates (the schema/points contract W1 built specifically so
   // a drawing survives an interval switch).
   const create = useCallback(
-    async (overlayName: string, points: ChartDrawingPoint[]): Promise<ChartDrawingRow | null> => {
+    async (overlayName: string, points: ChartDrawingPoint[], styles?: Record<string, unknown>): Promise<ChartDrawingRow | null> => {
       try {
         const res = await fetch("/api/chart-drawings", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ chartKey, overlayName, points })
+          body: JSON.stringify(styles ? { chartKey, overlayName, points, styles } : { chartKey, overlayName, points })
         });
         if (!res.ok) {
           setError("Drawing not saved — it will disappear on reload.");
@@ -109,33 +126,45 @@ export function useChartDrawings(chartKey: string): {
     [chartKey]
   );
 
-  // Called from kline-chart.tsx's onPressedMoveEnd handler on an already-
-  // persisted drawing. Debounced 500ms latest-wins PER DRAWING id — a rapid
-  // sequence of small adjustments to the SAME drawing collapses into one
-  // PATCH carrying the final position; adjustments to DIFFERENT drawings
-  // debounce independently (separate timers keyed by id).
-  const update = useCallback((id: string, points: ChartDrawingPoint[]) => {
-    latestPendingPoints.current.set(id, points);
+  // Called from kline-chart.tsx's onPressedMoveEnd handler (points) and
+  // chart-workbench.tsx's style editor (styles) on an already-persisted
+  // drawing. Debounced 500ms latest-wins PER DRAWING id, patches MERGED —
+  // see the `update` doc on this hook's return type for the exact "5 rapid
+  // color clicks → 1 PATCH" / "drag then recolor → 1 PATCH carrying both"
+  // semantics. Adjustments to DIFFERENT drawings debounce independently
+  // (separate timers keyed by id).
+  const update = useCallback((id: string, patch: ChartDrawingUpdatePatch) => {
+    const existingPatch = latestPendingPatch.current.get(id) ?? {};
+    latestPendingPatch.current.set(id, {
+      points: patch.points ?? existingPatch.points,
+      styles: patch.styles ?? existingPatch.styles
+    });
     const existingTimer = debounceTimers.current.get(id);
     if (existingTimer) clearTimeout(existingTimer);
     const timer = setTimeout(() => {
       debounceTimers.current.delete(id);
-      const finalPoints = latestPendingPoints.current.get(id);
-      latestPendingPoints.current.delete(id);
-      if (!finalPoints) return;
+      const finalPatch = latestPendingPatch.current.get(id);
+      latestPendingPatch.current.delete(id);
+      if (!finalPatch || (finalPatch.points === undefined && finalPatch.styles === undefined)) return;
       fetch(`/api/chart-drawings/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ points: finalPoints })
+        body: JSON.stringify(finalPatch)
       })
         .then((res) => {
           if (res.ok) {
-            setDrawings((prev) => prev.map((d) => (d.id === id ? { ...d, points: finalPoints } : d)));
+            setDrawings((prev) =>
+              prev.map((d) =>
+                d.id === id
+                  ? { ...d, points: finalPatch.points ?? d.points, styles: finalPatch.styles ?? d.styles }
+                  : d
+              )
+            );
           } else {
-            setError("Couldn't save your drawing's new position — it may revert after a reload.");
+            setError("Couldn't save your drawing's changes — it may revert after a reload.");
           }
         })
-        .catch(() => setError("Couldn't save your drawing's new position — it may revert after a reload."));
+        .catch(() => setError("Couldn't save your drawing's changes — it may revert after a reload."));
     }, PATCH_DEBOUNCE_MS);
     debounceTimers.current.set(id, timer);
   }, []);
@@ -150,7 +179,7 @@ export function useChartDrawings(chartKey: string): {
     if (pendingTimer) {
       clearTimeout(pendingTimer);
       debounceTimers.current.delete(id);
-      latestPendingPoints.current.delete(id);
+      latestPendingPatch.current.delete(id);
     }
     fetch(`/api/chart-drawings/${id}`, { method: "DELETE" }).then((res) => {
       if (!res.ok) setError("Couldn't delete that drawing on the server — it may reappear after a reload.");
@@ -165,7 +194,7 @@ export function useChartDrawings(chartKey: string): {
     setDrawings([]);
     for (const timer of debounceTimers.current.values()) clearTimeout(timer);
     debounceTimers.current.clear();
-    latestPendingPoints.current.clear();
+    latestPendingPatch.current.clear();
     try {
       const res = await fetch(`/api/chart-drawings?chartKey=${encodeURIComponent(chartKey)}`, { method: "DELETE" });
       if (!res.ok) setError("Couldn't clear all drawings on the server — reload to check what's left.");

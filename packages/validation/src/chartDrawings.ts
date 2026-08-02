@@ -30,11 +30,13 @@ export const chartKeySchema = z
   .regex(CHART_KEY_PATTERN, "chartKey must start with EQ:, INDEX:, or OPT: followed by an identifier.");
 
 /**
- * The full overlay-name enum from the founder-locked plan (§7): the ~17
- * KLineCharts built-in overlays drawable from W1 onward, plus the 4 custom
- * overlays (`rect`, `arrow`, `abcd`, `xabcd`) that don't get draw/render
- * logic until W3. Defining the full enum now means W3 needs zero schema or
- * validation changes when it wires those four up.
+ * The full overlay-name enum. 20 values shipped by the Charting Workbench
+ * program (W1-W3): 16 KLineCharts built-ins + 4 custom overlays (`rect`,
+ * `arrow`, `abcd`, `xabcd`). The TA Suite Sprint S1 (2026-08-02, see
+ * `cto_assignment_brief_ta_suite_s1.md`) adds 42 more, family-grouped below,
+ * bringing the total to 62. `highlighter` is NOT a 63rd value here — per
+ * plan decision D2 it's a toolbar-only alias that persists as a `brush` row
+ * with preset styles, so it never appears in this enum.
  */
 export const CHART_DRAWING_OVERLAY_NAMES = [
   // Built-ins with a toolbar entry from W1/W2 onward.
@@ -54,11 +56,67 @@ export const CHART_DRAWING_OVERLAY_NAMES = [
   "brush",
   "simpleAnnotation",
   "simpleTag",
-  // Custom overlays — enum values only until W3 registers their draw/render logic.
+  // Custom overlays from W3 — rect/arrow/abcd/xabcd.
   "rect",
   "arrow",
   "abcd",
   "xabcd",
+
+  // ── S1: Pitchforks (4, 3pt) ──────────────────────────────────────────
+  "andrewsPitchfork",
+  "schiffPitchfork",
+  "modifiedSchiffPitchfork",
+  "insidePitchfork",
+
+  // ── S1: Fibonacci (7) ────────────────────────────────────────────────
+  "fibExtension",
+  "fibFan",
+  "fibTimezone",
+  "fibArc",
+  "fibCircle",
+  "fibSpeedResistanceFan",
+  "fibChannel",
+
+  // ── S1: Gann (3, 2pt) ────────────────────────────────────────────────
+  "gannBox",
+  "gannFan",
+  "gannSquare",
+
+  // ── S1: Patterns / Elliott (9) ───────────────────────────────────────
+  "cypher",
+  "threeDrives",
+  "headAndShoulders",
+  "trianglePattern",
+  "elliottImpulse",
+  "elliottCorrection",
+  "elliottTriangle",
+  "elliottDoubleCombo",
+  "elliottTripleCombo",
+
+  // ── S1: Shapes (7; `highlighter` is a brush alias, not a value here) ──
+  "ellipse",
+  "rotatedRect",
+  "triangleShape",
+  "arcShape",
+  "curve",
+  "doubleCurve",
+  "polyline",
+
+  // ── S1: Measure / Position (5) ───────────────────────────────────────
+  "longPosition",
+  "shortPosition",
+  "priceRange",
+  "dateRange",
+  "datePriceRange",
+
+  // ── S1: Annotations (6) + emoji (1) ──────────────────────────────────
+  "calloutText",
+  "noteAnchored",
+  "priceLabel",
+  "flagMark",
+  "arrowMarkUp",
+  "arrowMarkDown",
+  "emojiSticker",
 ] as const;
 
 export type ChartDrawingOverlayName = (typeof CHART_DRAWING_OVERLAY_NAMES)[number];

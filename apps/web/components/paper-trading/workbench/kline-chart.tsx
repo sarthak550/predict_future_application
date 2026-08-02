@@ -1,7 +1,8 @@
 "use client";
 
 /**
- * Charting Workbench (W2, T1) — the imperative KLineCharts wrapper.
+ * Charting Workbench (W2, T1; TA Suite Sprint S1 widens the drawings/
+ * styles surface — T5/T7) — the imperative KLineCharts wrapper.
  *
  * House render-loop law (see [[project_chart_trading_sl_tp_program]]'s
  * documented incident: an object-identity-keyed effect in price-chart.tsx
@@ -28,8 +29,29 @@
  * distinction the plan calls `applyNewData` vs `updateData` is reproduced as
  * "call `setPeriod` again to force a fresh `getBars` pull" vs "push just the
  * last bar through the `subscribeBar` channel."
+ *
+ * **TA Suite Sprint S1 — the persistedId side-channel + simpleAnnotation
+ * fix (T5).** Every drawing overlay used to carry `extendData:
+ * {persistedId}` as an OBJECT, uniformly. That's harmless for every overlay
+ * EXCEPT the built-in `simpleAnnotation`, whose own `createPointFigures`
+ * (baked into klinecharts core, `dist/index.esm.js:12309-12326`) reads
+ * `overlay.extendData` DIRECTLY as display text — an object gets
+ * coerced to `"[object Object]"` by the canvas text draw. klinecharts
+ * ALSO supports `extendData` as a FUNCTION, `(overlay) => text` — that's
+ * the mechanism used below, but ONLY for `simpleAnnotation` (the one
+ * built-in that actually reads it): its `extendData` is a closure that
+ * renders `resolvePfContent(overlay.styles).text`, real content the D1
+ * `styles.pfContent` channel already carries for every other annotation
+ * tool. To make `getPersistedId()` keep working UNIFORMLY across every
+ * overlay type (including `simpleAnnotation`, which no longer carries an
+ * object `extendData` at all) rather than special-casing the read path,
+ * persistedId now lives in `overlayIdToPersistedIdRef` — an id-KEYED
+ * side-map maintained alongside `drawingOverlayIdsRef`/`hydratedRowIdsRef`
+ * — instead of being read off `extendData`. Every other overlay type
+ * simply doesn't set `extendData` at all any more (it was only ever used
+ * for this one purpose).
  */
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, type MutableRefObject } from "react";
 import {
   init,
   dispose,
@@ -39,21 +61,33 @@ import {
   type Styles,
   type DeepPartial,
   type NeighborData,
-  type OverlayEventCallback
+  type OverlayEventCallback,
+  type OverlayStyle
 } from "klinecharts";
 
 import { snapToTick, type ChartOrderLine } from "@/components/finance/chart-order-lines";
 import { registerWorkbenchOrderLineOverlay, type PfOrderLineExtendData } from "./order-line-overlay";
-import { registerCustomDrawingOverlays, ALL_DRAWING_OVERLAYS } from "./custom-overlays";
+import { registerTaOverlays, ALL_DRAWING_OVERLAYS } from "./overlays";
+import { resolvePfContent } from "./overlays/figure-kit";
+import { registerCustomIndicators } from "./custom-indicators";
+import { registerPfSignals, PF_SIGNALS_NAME, PF_SIGNALS_INSTANCE_ID } from "./custom-indicators/pf-signals";
+import { resolveParams, type IndicatorInstance } from "./indicator-registry";
 import type { ChartDrawingPoint, ChartDrawingRow } from "./use-chart-drawings";
 import type { Candle } from "./use-workbench-candles";
 
 registerWorkbenchOrderLineOverlay();
-registerCustomDrawingOverlays();
+registerTaOverlays();
+registerCustomIndicators();
+registerPfSignals();
+
+/** Cast helper for the passthrough-JSON `styles` blob (`ChartDrawingRow.styles` / the S1 style-editor's patches) into klinecharts' own `DeepPartial<OverlayStyle>` shape — both sides are intentionally opaque `Record<string, unknown>` at the API boundary (server never validates the SHAPE of `styles`, only that it's a JSON object, per `packages/validation/src/chartDrawings.ts`'s `chartDrawingStylesSchema`), so a structural cast here is correct, not a type-safety hole. */
+function asOverlayStyles(styles: Record<string, unknown> | null | undefined): DeepPartial<OverlayStyle> | undefined {
+  return (styles ?? undefined) as DeepPartial<OverlayStyle> | undefined;
+}
 
 /**
  * W3, T7 polish — dark-mode token mapping for the workbench's hardcoded
- * light-mode colors (`WORKBENCH_THEME` below, `custom-overlays.ts`'s
+ * light-mode colors (`WORKBENCH_THEME` below, `overlays/figure-kit.ts`'s
  * ink/signal constants, `order-line-overlay.ts`'s line colors). Documented
  * as a CONSTANT only, per the W3 brief's explicit descope: this codebase has
  * no dark-mode toggle/infrastructure anywhere yet (see
@@ -148,28 +182,67 @@ function intervalToPeriod(interval: string): Period {
 const MAIN_PANE_ID = "candle_pane";
 
 /**
- * W3, T4 — the `extendData` shape every drawing overlay (built-in or
- * custom) carries at runtime: `{ persistedId: string | null }`, a mutable
- * pointer to its server row id, `null` until the create-POST resolves.
- *
- * Deliberately NOT expressed as a TypeScript interface threaded through
- * `OverlayEventCallback<E>`'s generic — `Chart.createOverlay`/
- * `overrideOverlay` are declared as FIXED (non-generic) methods on the
- * `Chart` interface (`createOverlay(value: string | OverlayCreate | ...)`,
- * `OverlayCreate` defaulting its own `E` to `unknown` with no way for a call
- * site to supply a narrower one) — confirmed by a direct `tsc` failure when
- * handlers were first typed against a `DrawingExtendData` interface
- * (contravariant parameter mismatch: `OverlayEventCallback<DrawingExtendData>`
- * is not assignable where `OverlayEventCallback<unknown>` is expected).
- * Handlers below are typed `OverlayEventCallback<unknown>` and use
- * `getPersistedId()` to narrow `extendData` at each read instead.
+ * TA Suite Sprint S2, T4 — the multi-instance indicator diff/sync. Keyed on
+ * `instanceId` (never bare `name` — see `indicator-registry.ts`'s own doc
+ * for the full verification of why `id`-filtered `removeIndicator`/
+ * `overrideIndicator` need NO paneId bookkeeping, a deliberate
+ * simplification of the brief's own "capture returned paneId in a Map ref"
+ * framing). `activeRef` holds this pane's previously-synced
+ * `instanceId → {name, paramsKey}` map; a changed `paramsKey` (params-only
+ * edit via the T4 settings popover) triggers `overrideIndicator` instead of
+ * a remove+recreate — the actual klinecharts instance object is reused,
+ * matching what `overrideIndicator`'s own `shouldUpdate` recalculation path
+ * is FOR (verified against `dist/index.esm.js`'s `IndicatorImp.prototype
+ * .shouldUpdate`'s default `JSON.stringify(prev.calcParams) !==
+ * JSON.stringify(current.calcParams)` check — a `calcParams` change alone
+ * is exactly what that path recalculates on).
  */
-function getPersistedId(extendData: unknown): string | null {
-  if (extendData && typeof extendData === "object" && "persistedId" in extendData) {
-    const value = (extendData as { persistedId: unknown }).persistedId;
-    return typeof value === "string" ? value : null;
+function syncIndicatorInstances(
+  chart: Chart,
+  instances: IndicatorInstance[],
+  activeRef: MutableRefObject<Map<string, { name: string; paramsKey: string }>>,
+  opts: { paneId?: string; isStack: boolean }
+): void {
+  const active = activeRef.current;
+  const nextIds = new Set(instances.map((i) => i.instanceId));
+
+  for (const instanceId of active.keys()) {
+    if (!nextIds.has(instanceId)) {
+      chart.removeIndicator({ id: instanceId });
+      active.delete(instanceId);
+    }
   }
-  return null;
+
+  for (const instance of instances) {
+    const params = resolveParams(instance);
+    const paramsKey = JSON.stringify(params);
+    const existing = active.get(instance.instanceId);
+    if (!existing) {
+      chart.createIndicator({ id: instance.instanceId, name: instance.name, calcParams: params, ...(opts.paneId ? { paneId: opts.paneId } : {}) }, opts.isStack);
+      active.set(instance.instanceId, { name: instance.name, paramsKey });
+    } else if (existing.paramsKey !== paramsKey) {
+      chart.overrideIndicator({ id: instance.instanceId, name: instance.name, calcParams: params });
+      active.set(instance.instanceId, { name: instance.name, paramsKey });
+    }
+  }
+}
+
+/** Tool names whose `extendData` must render `styles.pfContent` (the ONE built-in that reads `extendData` as display text — see module doc's simpleAnnotation fix). */
+const EXTEND_DATA_TEXT_OVERLAYS = new Set(["simpleAnnotation"]);
+/** Tool names that open the D10 text popover once their create-POST resolves. */
+const TEXT_INPUT_OVERLAYS = new Set(["calloutText", "noteAnchored"]);
+
+function buildExtendDataForOverlay(overlayName: string): unknown {
+  if (!EXTEND_DATA_TEXT_OVERLAYS.has(overlayName)) return undefined;
+  // A closure, per klinecharts' own supported `extendData` shapes
+  // (`isFunction(overlay.extendData) ? overlay.extendData(overlay) : ...`)
+  // — reads the SAME `styles.pfContent` channel every other annotation tool
+  // uses, so simpleAnnotation rows created via the OLD "Note" button (before
+  // this sprint, via a plain string-coerced object) and any FUTURE
+  // simpleAnnotation row alike render real text instead of "[object
+  // Object]". Never reads persistedId — that's `overlayIdToPersistedIdRef`'s
+  // job now, uniformly for every overlay type.
+  return (overlay: { styles?: unknown }) => resolvePfContent(overlay.styles as Record<string, unknown> | null | undefined).text ?? "";
 }
 
 export function KlineChart({
@@ -178,6 +251,7 @@ export function KlineChart({
   precision = 2,
   mainIndicators,
   subIndicators,
+  signalsConfig,
   orderLines,
   onSurfaceClick,
   onOrderLineDrag,
@@ -185,22 +259,31 @@ export function KlineChart({
   suspendClick,
   drawings,
   activeTool,
+  pendingToolStyles,
+  magnetMode,
   onToolDrawEnd,
   onDrawingCreate,
   onDrawingMoveEnd,
   onDrawingRemoved,
+  onDrawingSelected,
+  onDrawingDeselected,
+  onDrawingNeedsText,
   cancelDrawingNonce,
   clearAllDrawingsNonce,
-  onAllDrawingsCleared
+  onAllDrawingsCleared,
+  drawingStyleCommand,
+  removeDrawingCommand
 }: {
   candles: Candle[];
   interval: string;
   /** Decimal places for price display/tooltip — the plan's fixed "precision 2" for every instrument this sprint charts. */
   precision?: number;
-  /** MA/EMA/BOLL — rendered stacked in the main candle pane. */
-  mainIndicators: string[];
-  /** VOL/MACD/RSI — each rendered in its own sub-pane; the caller (indicator-picker.tsx via chart-workbench.tsx) enforces the max-2 cap, this wrapper just reflects whatever it's given. */
-  subIndicators: string[];
+  /** TA Suite S2 — indicator INSTANCES (not bare names, see `indicator-registry.ts`) stacked in the main candle pane. */
+  mainIndicators: IndicatorInstance[];
+  /** TA Suite S2 — indicator instances, each rendered in its own sub-pane; the caller (`indicator-dialog.tsx` via `chart-workbench.tsx`) enforces the `MAX_SUB_PANE_INSTANCES` cap, this wrapper just reflects whatever it's given. */
+  subIndicators: IndicatorInstance[];
+  /** TA Suite S3, T2 — the active strategy's `PF_SIGNALS` config (`{id, params}`), or `null`/`undefined` to remove it. A SINGLE instance (`PF_SIGNALS_INSTANCE_ID`), unlike `mainIndicators`/`subIndicators`' multi-instance model — only one strategy's signals are ever shown at once. */
+  signalsConfig?: { id: string; params: number[] } | null;
   orderLines: ChartOrderLine[];
   /** `left`/`top` are CSS pixels relative to THIS component's own root element, which fills its `position: relative` parent (chart-workbench.tsx's center pane) with no offset — so they double as coordinates relative to that wrapper too, satisfying ChartOrderIntentPopover's anchor contract. */
   onSurfaceClick?: (info: { price: number; left: number; top: number }) => void;
@@ -212,20 +295,33 @@ export function KlineChart({
   drawings?: ChartDrawingRow[];
   /** W3, T3 — the currently-selected toolbar tool name (one of `ALL_DRAWING_OVERLAYS`), or `null`. Setting this to a NEW non-null value starts a fresh KLineCharts native step-drawing session for that overlay name. */
   activeTool?: string | null;
+  /** S1, T5/T6 — style preset applied at the MOMENT a new drawing is created (e.g. the emoji flyout's chosen `pfContent.emoji`, or `highlighter`'s translucent-wide brush preset). Read once per draw-start via a ref, never round-tripped back out. */
+  pendingToolStyles?: Record<string, unknown> | null;
+  /** S1, T6 — the toolbar's magnet toggle, wired straight to `createOverlay`'s own `mode` field (`"normal"` default vs `"weak_magnet"`). */
+  magnetMode?: "normal" | "weak_magnet";
   /** Fires once a draw session ends — completed OR cancelled — so the parent can clear `activeTool` (and un-suspend click-to-trade). */
   onToolDrawEnd?: () => void;
-  /** W3, T4 step 3 — called with the finished drawing's overlay name + anchor points once `onDrawEnd` fires; the returned row (or `null` on failure) is used to patch `extendData.persistedId` onto the already-on-canvas overlay directly in this file — never round-tripped back out through a prop. */
-  onDrawingCreate?: (overlayName: string, points: ChartDrawingPoint[]) => Promise<ChartDrawingRow | null>;
-  /** W3, T4 step 4 — fired on `onPressedMoveEnd` for an already-persisted drawing; the debounce lives in `use-chart-drawings.ts`'s `update()`, not here. */
-  onDrawingMoveEnd?: (persistedId: string, points: ChartDrawingPoint[]) => void;
+  /** W3, T4 step 3; S1, T5 widens with an optional initial `styles` (pendingToolStyles) — called with the finished drawing's overlay name + anchor points once `onDrawEnd` fires; the returned row (or `null` on failure) is used to patch the persistedId side-channel onto the already-on-canvas overlay directly in this file — never round-tripped back out through a prop. */
+  onDrawingCreate?: (overlayName: string, points: ChartDrawingPoint[], styles?: Record<string, unknown>) => Promise<ChartDrawingRow | null>;
+  /** W3, T4 step 4; S1, T7 widens the patch to optionally carry `styles` too (the hook's `update()` merges points/styles patches per id behind ONE debounce timer) — fired on `onPressedMoveEnd` for an already-persisted drawing. */
+  onDrawingMoveEnd?: (persistedId: string, patch: { points?: ChartDrawingPoint[]; styles?: Record<string, unknown> }) => void;
   /** W3, T4 step 5 — fired on `onRemoved` for an already-persisted drawing, ONLY when not suspended (see `suspendDrawingSyncRef` below — the sprint's top-named correctness risk). */
   onDrawingRemoved?: (persistedId: string) => void;
+  /** S1, T7 — fired on `onSelected` for ANY drawing (persisted or not) so `chart-workbench.tsx` can position the floating style editor. `persistedId` is `null` for a drawing whose create-POST hasn't resolved yet (style edits on it are a no-op until it has). */
+  onDrawingSelected?: (info: { overlayId: string; persistedId: string | null; overlayName: string; left: number; top: number }) => void;
+  onDrawingDeselected?: () => void;
+  /** S1, T5 — fired once a text-family tool's (`calloutText`/`noteAnchored`) create-POST resolves, so the parent can open the D10 popover anchored at the drawing's own position. */
+  onDrawingNeedsText?: (info: { overlayId: string; persistedId: string; overlayName: string; left: number; top: number }) => void;
   /** W3, T3 — bump to cancel the in-progress draw (Escape, chart-workbench.tsx's priority chain). Nonce idiom, matching this codebase's existing `selectionNonce`/`presetNonce` convention rather than a `forwardRef` imperative handle. */
   cancelDrawingNonce?: number;
   /** W3, T3 — bump to remove every drawing overlay from the canvas (toolbar's "Clear all", already confirmed by the caller) and fire `onAllDrawingsCleared`. */
   clearAllDrawingsNonce?: number;
   /** Fires once clear-all has finished removing overlays from the canvas — the parent calls `use-chart-drawings.ts`'s `clearAll()` (the ONE batched `DELETE ?chartKey=`) from here. */
   onAllDrawingsCleared?: () => void;
+  /** S1, T7 — style editor swatch/width clicks: bump `nonce` with a NEW `{id, styles}` to apply an instant `overrideOverlay` (visual feedback with zero round-trip latency). The debounced PATCH itself is fired by the caller directly against `use-chart-drawings.ts`'s `update()` (it already has `persistedId` from `onDrawingSelected`) — this prop only drives the on-canvas visual. */
+  drawingStyleCommand?: { id: string; styles: Record<string, unknown>; nonce: number } | null;
+  /** S1, T5/T7 — bump `nonce` with a NEW `{id}` to remove a specific overlay by id (the D10 empty-text-popover-dismissal delete, and the style editor's own Delete button) — reuses the exact same NOT-suspended `removeOverlay` path as the Backspace hotkey, so it reaches `onDrawingRemoved` → the server DELETE identically. */
+  removeDrawingCommand?: { id: string; nonce: number } | null;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<Chart | null>(null);
@@ -254,6 +350,16 @@ export function KlineChart({
   onDrawingRemovedRef.current = onDrawingRemoved;
   const onAllDrawingsClearedRef = useRef(onAllDrawingsCleared);
   onAllDrawingsClearedRef.current = onAllDrawingsCleared;
+  const onDrawingSelectedRef = useRef(onDrawingSelected);
+  onDrawingSelectedRef.current = onDrawingSelected;
+  const onDrawingDeselectedRef = useRef(onDrawingDeselected);
+  onDrawingDeselectedRef.current = onDrawingDeselected;
+  const onDrawingNeedsTextRef = useRef(onDrawingNeedsText);
+  onDrawingNeedsTextRef.current = onDrawingNeedsText;
+  const pendingToolStylesRef = useRef(pendingToolStyles);
+  pendingToolStylesRef.current = pendingToolStyles;
+  const magnetModeRef = useRef(magnetMode);
+  magnetModeRef.current = magnetMode;
 
   // W3, T4 — drawing overlay bookkeeping, all separate from `overlaySnapshotRef`
   // (order lines) below: DISJOINT id namespaces (`dw_*` for hydrated/
@@ -266,15 +372,20 @@ export function KlineChart({
   //     overlay already exists (either from a prior hydration pass, or from
   //     a just-finished fresh draw that hasn't round-tripped back through
   //     the `drawings` prop yet).
+  //   - `overlayIdToPersistedIdRef` (S1) — the persistedId side-channel; see
+  //     module doc's simpleAnnotation fix for why this replaced reading
+  //     `extendData.persistedId` directly.
   //   - `suspendDrawingSyncRef` — true only for the DURATION of a
   //     programmatic `removeOverlay` call this component itself makes
-  //     (hydration cleanup, clear-all) — false at every other moment,
-  //     including the delete-hotkey path below, so a real user delete still
-  //     reaches `onDrawingRemoved`. THE guard the brief names as this
-  //     sprint's top correctness risk: without it, loading a user's saved
-  //     drawings (createOverlay in a loop, each of which can trigger a
-  //     KLineCharts-internal cleanup of a REPLACED same-id overlay) could
-  //     fire `onRemoved` and immediately re-delete what was just loaded.
+  //     (hydration cleanup of a stale row, clear-all) — false at every other
+  //     moment, including the delete-hotkey path below and the S1
+  //     `removeDrawingCommand` path, so a real user delete still reaches
+  //     `use-chart-drawings.ts`'s `remove()` → DELETE. THE guard the brief
+  //     names as this sprint's top correctness risk: without it, loading a
+  //     user's saved drawings (createOverlay in a loop, each of which can
+  //     trigger a KLineCharts-internal cleanup of a REPLACED same-id
+  //     overlay) could fire `onRemoved` and immediately re-delete what was
+  //     just loaded.
   //   - `pendingDrawOverlayIdRef` — the overlay id of an in-progress
   //     (not-yet-`totalStep`-complete) draw, so Escape can cancel exactly
   //     that one (confirmed against the installed package's own
@@ -282,9 +393,10 @@ export function KlineChart({
   //     `removeOverlay({id})` correctly aborts a mid-draw shape too).
   //   - `selectedDrawingOverlayIdRef` — tracks the currently-selected
   //     drawing (via each instance's own `onSelected`/`onDeselected`) for
-  //     the Backspace/Delete-to-remove hotkey.
+  //     the Backspace/Delete-to-remove hotkey AND (S1) the style editor.
   const drawingOverlayIdsRef = useRef<Set<string>>(new Set());
   const hydratedRowIdsRef = useRef<Set<string>>(new Set());
+  const overlayIdToPersistedIdRef = useRef<Map<string, string>>(new Map());
   const suspendDrawingSyncRef = useRef(false);
   const pendingDrawOverlayIdRef = useRef<string | null>(null);
   const selectedDrawingOverlayIdRef = useRef<string | null>(null);
@@ -295,6 +407,20 @@ export function KlineChart({
     return points
       .filter((p): p is { dataIndex?: number; timestamp: number; value: number } => typeof p.timestamp === "number" && typeof p.value === "number")
       .map((p) => ({ timestamp: p.timestamp, value: p.value }));
+  }
+
+  /** S1 — pixel anchor of an overlay's first point, relative to this component's own root (same contract `onSurfaceClick`'s `left`/`top` already use) — feeds `onDrawingSelected`/`onDrawingNeedsText`'s popover positioning. */
+  function firstPointPixelAnchor(overlayPoints: Array<{ dataIndex?: number; timestamp?: number; value?: number }>): { left: number; top: number } | null {
+    const chart = chartRef.current;
+    const first = overlayPoints[0];
+    if (!chart || !first || typeof first.value !== "number") return null;
+    const converted = chart.convertToPixel(
+      { dataIndex: first.dataIndex, timestamp: first.timestamp, value: first.value },
+      { paneId: MAIN_PANE_ID }
+    );
+    const point = Array.isArray(converted) ? converted[0] : converted;
+    if (!point || typeof point.x !== "number" || typeof point.y !== "number") return null;
+    return { left: point.x, top: point.y };
   }
 
   // Chart Trading + SL/TP parity (Sprint C, C1) — the SAME anti-snap-back /
@@ -433,33 +559,60 @@ export function KlineChart({
     lastCountRef.current = count;
   }, [interval, firstTs, lastTs, count, candles]);
 
-  // ── Indicators effect: keyed on primitive joined-name strings. ─────────
-  const mainKey = mainIndicators.join(",");
-  const subKey = subIndicators.join(",");
-  const activeMainRef = useRef<Set<string>>(new Set());
-  const activeSubRef = useRef<Set<string>>(new Set());
+  // ── Indicators effect: TA Suite S2 multi-instance rework. Keyed on a
+  // JSON-stringified `[instanceId, name, resolvedParams]` snapshot (the
+  // brief's own prescribed key shape) rather than the `mainIndicators`/
+  // `subIndicators` ARRAY identities (house render-loop law — the parent
+  // rebuilds these arrays fresh every render) — a params-only edit (T4
+  // settings popover) changes this string, correctly re-triggering the
+  // effect even though no instance was added/removed. `syncIndicatorInstances`
+  // (module scope, above) does the actual create/override/remove diff. ──
+  const mainInstanceKey = JSON.stringify(mainIndicators.map((i) => [i.instanceId, i.name, resolveParams(i)]));
+  const subInstanceKey = JSON.stringify(subIndicators.map((i) => [i.instanceId, i.name, resolveParams(i)]));
+  const activeMainInstancesRef = useRef<Map<string, { name: string; paramsKey: string }>>(new Map());
+  const activeSubInstancesRef = useRef<Map<string, { name: string; paramsKey: string }>>(new Map());
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    syncIndicatorInstances(chart, mainIndicators, activeMainInstancesRef, { paneId: MAIN_PANE_ID, isStack: true });
+    syncIndicatorInstances(chart, subIndicators, activeSubInstancesRef, { isStack: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mainInstanceKey, subInstanceKey]);
+
+  // ── TA Suite S3, T2 — PF_SIGNALS sync effect. Same JSON-keyed idiom as the
+  // indicator effect above, but for a SINGLE fixed-id instance (no
+  // multi-instance model needed — only one strategy's signals show at once).
+  // `null`/`undefined` removes the indicator entirely; a present config
+  // creates it once then `overrideIndicator`s on every subsequent param/
+  // strategy change (recalculates immediately per S2's verified
+  // `overrideIndicator` internals — no extra plumbing needed, same
+  // `shouldUpdate` calcParams-diff path `syncIndicatorInstances` already
+  // relies on). "Clear signals" (chart-workbench.tsx) is just this prop
+  // going back to `null` — it only ever calls `removeIndicator`, never
+  // `removeOverlay`, so it structurally cannot touch an S1 drawing. ───────
+  const signalsKey = signalsConfig ? JSON.stringify([signalsConfig.id, signalsConfig.params]) : null;
+  const activeSignalsKeyRef = useRef<string | null>(null);
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;
 
-    const nextMain = new Set(mainKey ? mainKey.split(",") : []);
-    for (const name of activeMainRef.current) {
-      if (!nextMain.has(name)) chart.removeIndicator({ name, paneId: MAIN_PANE_ID });
+    if (!signalsConfig) {
+      if (activeSignalsKeyRef.current !== null) {
+        chart.removeIndicator({ id: PF_SIGNALS_INSTANCE_ID });
+        activeSignalsKeyRef.current = null;
+      }
+      return;
     }
-    for (const name of nextMain) {
-      if (!activeMainRef.current.has(name)) chart.createIndicator({ name, paneId: MAIN_PANE_ID }, true);
-    }
-    activeMainRef.current = nextMain;
 
-    const nextSub = new Set(subKey ? subKey.split(",") : []);
-    for (const name of activeSubRef.current) {
-      if (!nextSub.has(name)) chart.removeIndicator({ name });
+    const calcParams: (string | number)[] = [signalsConfig.id, ...signalsConfig.params];
+    if (activeSignalsKeyRef.current === null) {
+      chart.createIndicator({ id: PF_SIGNALS_INSTANCE_ID, name: PF_SIGNALS_NAME, calcParams, paneId: MAIN_PANE_ID }, true);
+    } else {
+      chart.overrideIndicator({ id: PF_SIGNALS_INSTANCE_ID, name: PF_SIGNALS_NAME, calcParams });
     }
-    for (const name of nextSub) {
-      if (!activeSubRef.current.has(name)) chart.createIndicator(name, false);
-    }
-    activeSubRef.current = nextSub;
-  }, [mainKey, subKey]);
+    activeSignalsKeyRef.current = signalsKey;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signalsKey]);
 
   // ── Order-line prop-sync effect. Deliberately keyed on `orderLines`'
   // own identity (an exception to the "never key on object identity" law,
@@ -570,25 +723,31 @@ export function KlineChart({
         const overlayId = event.overlay.id;
         drawingOverlayIdsRef.current.delete(overlayId);
         if (selectedDrawingOverlayIdRef.current === overlayId) selectedDrawingOverlayIdRef.current = null;
+        const persistedId = overlayIdToPersistedIdRef.current.get(overlayId) ?? null;
+        overlayIdToPersistedIdRef.current.delete(overlayId);
         if (suspendDrawingSyncRef.current) return; // programmatic teardown (hydration replace / clear-all) — never DELETE. See module-scope doc.
-        const persistedId = getPersistedId(event.overlay.extendData);
         if (persistedId) {
           hydratedRowIdsRef.current.delete(persistedId);
           onDrawingRemovedRef.current?.(persistedId);
         }
       },
       onPressedMoveEnd: (event) => {
-        const persistedId = getPersistedId(event.overlay.extendData);
+        const persistedId = overlayIdToPersistedIdRef.current.get(event.overlay.id);
         if (!persistedId) return; // a drag before the create-POST resolved — vanishingly rare (drag can't start until the draw itself, which IS the create trigger, has already completed); no-op rather than a lossy partial update.
         const points = toDrawingPoints(event.overlay.points);
-        if (points.length > 0) onDrawingMoveEndRef.current?.(persistedId, points);
+        if (points.length > 0) onDrawingMoveEndRef.current?.(persistedId, { points });
       },
       onSelected: (event) => {
         selectedDrawingOverlayIdRef.current = event.overlay.id;
+        const persistedId = overlayIdToPersistedIdRef.current.get(event.overlay.id) ?? null;
+        const anchor = firstPointPixelAnchor(event.overlay.points);
+        if (anchor) onDrawingSelectedRef.current?.({ overlayId: event.overlay.id, persistedId, overlayName: event.overlay.name, left: anchor.left, top: anchor.top });
       },
       onDeselected: (event) => {
         if (selectedDrawingOverlayIdRef.current === event.overlay.id) selectedDrawingOverlayIdRef.current = null;
+        onDrawingDeselectedRef.current?.();
       }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
     };
   }, []);
 
@@ -603,7 +762,13 @@ export function KlineChart({
   // resolves — see that effect). Unknown `overlayName` values (a future
   // tool added after a drawing was saved) are skipped, not rendered broken
   // and not treated as an error — forward-compatible degradation per W1's
-  // schema design. ───────────────────────────────────────────────────────
+  // schema design.
+  //
+  // **S1, T7 — the hydration-gap fix**: `row.styles` is now passed into
+  // `createOverlay` (`styles: row.styles ?? undefined`) — previously
+  // dropped entirely, meaning a saved color/width choice silently reverted
+  // on every reload. This is the concrete "was silently broken, now fixed"
+  // proof the style editor ticket names explicitly. ───────────────────────
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart || !drawings) return;
@@ -620,12 +785,14 @@ export function KlineChart({
         points: row.points.map((p) => ({ timestamp: p.timestamp, value: p.value })),
         visible: row.visible,
         lock: false,
-        extendData: { persistedId: row.id },
+        styles: asOverlayStyles(row.styles),
+        extendData: buildExtendDataForOverlay(row.overlayName),
         ...buildDrawingEventHandlers()
       });
       if (created != null) {
         drawingOverlayIdsRef.current.add(overlayId);
         hydratedRowIdsRef.current.add(row.id);
+        overlayIdToPersistedIdRef.current.set(overlayId, row.id);
       }
     }
 
@@ -644,6 +811,7 @@ export function KlineChart({
       }
       hydratedRowIdsRef.current.delete(rowId);
       drawingOverlayIdsRef.current.delete(overlayId);
+      overlayIdToPersistedIdRef.current.delete(overlayId);
     }
   }, [drawings, buildDrawingEventHandlers]);
 
@@ -651,11 +819,14 @@ export function KlineChart({
   // string prop; a NEW non-null value starts one KLineCharts native
   // step-by-step drawing session (built-in click-through-N-points behavior
   // — no custom click handling needed here at all, confirmed against the
-  // installed package's real behavior, see custom-overlays.ts's module
-  // doc). `onDrawEnd` both notifies the parent (clears `activeTool`) and, if
-  // a create callback is wired, POSTs the finished points and patches
-  // `extendData.persistedId` onto this SAME overlay once that resolves —
-  // entirely within this closure, no ref/imperative-handle needed. ───────
+  // installed package's real behavior). `onDrawEnd` both notifies the
+  // parent (clears `activeTool`) and, if a create callback is wired, POSTs
+  // the finished points and patches the persistedId side-channel onto this
+  // SAME overlay once that resolves — entirely within this closure, no
+  // ref/imperative-handle needed. S1 additions: `pendingToolStyles` (a
+  // preset, e.g. the emoji flyout's chosen emoji or the highlighter's
+  // preset brush styles) is applied AT CREATION, and text-family tools fire
+  // `onDrawingNeedsText` once their row exists. ──────────────────────────
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart || !activeTool) return;
@@ -665,6 +836,7 @@ export function KlineChart({
 
     const overlayId = `draw_pending_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const handlers = buildDrawingEventHandlers();
+    const initialStyles = pendingToolStylesRef.current ?? undefined;
     const onDrawEnd: OverlayEventCallback<unknown> = (event) => {
       const id = event.overlay.id;
       pendingDrawOverlayIdRef.current = null;
@@ -674,17 +846,23 @@ export function KlineChart({
       onToolDrawEndRef.current?.();
       const creator = onDrawingCreateRef.current;
       if (!creator || points.length === 0) return;
-      void creator(toolName, points).then((row) => {
+      void creator(toolName, points, initialStyles).then((row) => {
         if (!row) return; // create() already surfaced the "not saved" toast via use-chart-drawings.ts's own error state — the overlay stays on-screen, unpersisted, exactly per the brief.
         hydratedRowIdsRef.current.add(row.id);
-        chartRef.current?.overrideOverlay({ id, extendData: { persistedId: row.id } });
+        overlayIdToPersistedIdRef.current.set(id, row.id);
+        if (TEXT_INPUT_OVERLAYS.has(toolName)) {
+          const anchor = firstPointPixelAnchor(event.overlay.points);
+          if (anchor) onDrawingNeedsTextRef.current?.({ overlayId: id, persistedId: row.id, overlayName: toolName, left: anchor.left, top: anchor.top });
+        }
       });
     };
 
     const createdId = chart.createOverlay({
       name: toolName,
       id: overlayId,
-      extendData: { persistedId: null },
+      mode: magnetModeRef.current ?? "normal",
+      styles: asOverlayStyles(initialStyles),
+      extendData: buildExtendDataForOverlay(toolName),
       ...handlers,
       onDrawEnd
     });
@@ -729,10 +907,32 @@ export function KlineChart({
       }
       drawingOverlayIdsRef.current.clear();
       hydratedRowIdsRef.current.clear();
+      overlayIdToPersistedIdRef.current.clear();
       selectedDrawingOverlayIdRef.current = null;
     }
     onAllDrawingsClearedRef.current?.();
   }, [clearAllDrawingsNonce]);
+
+  // ── S1, T7 — style-editor instant visual feedback: `overrideOverlay` on
+  // command, zero round-trip latency (the debounced PATCH itself is fired
+  // by the caller directly against `use-chart-drawings.ts`'s `update()`). ─
+  const lastStyleNonceRef = useRef(drawingStyleCommand?.nonce ?? 0);
+  useEffect(() => {
+    if (!drawingStyleCommand || drawingStyleCommand.nonce === lastStyleNonceRef.current) return;
+    lastStyleNonceRef.current = drawingStyleCommand.nonce;
+    chartRef.current?.overrideOverlay({ id: drawingStyleCommand.id, styles: asOverlayStyles(drawingStyleCommand.styles) });
+  }, [drawingStyleCommand]);
+
+  // ── S1, T5/T7 — remove-by-id command: the D10 empty-text-popover delete
+  // and the style editor's Delete button. NOT suspended — a real
+  // user-initiated delete, reaches `onDrawingRemoved` → the server DELETE
+  // via the exact same path as the Backspace hotkey. ─────────────────────
+  const lastRemoveNonceRef = useRef(removeDrawingCommand?.nonce ?? 0);
+  useEffect(() => {
+    if (!removeDrawingCommand || removeDrawingCommand.nonce === lastRemoveNonceRef.current) return;
+    lastRemoveNonceRef.current = removeDrawingCommand.nonce;
+    chartRef.current?.removeOverlay({ id: removeDrawingCommand.id });
+  }, [removeDrawingCommand]);
 
   return <div ref={containerRef} className="h-full w-full min-h-[420px]" />;
 }
