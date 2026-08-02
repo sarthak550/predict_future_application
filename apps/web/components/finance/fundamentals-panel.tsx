@@ -4,7 +4,7 @@ import { useState } from "react";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { formatCompactINR } from "@/lib/utils";
-import type { DividendPoint, FundamentalsPoint } from "@/lib/finance/fundamentals";
+import type { DividendYearRow, FundamentalsPoint } from "@/lib/finance/fundamentals";
 
 /**
  * Instrument Page v2 — Fundamentals panel, TradingView-style (founder
@@ -27,7 +27,8 @@ export type FundamentalsPanelProps = {
   quarterlyRevenue: FundamentalsPoint[] | null;
   quarterlyNetIncome: FundamentalsPoint[] | null;
   quarterlyDilutedEps: FundamentalsPoint[] | null;
-  dividends: DividendPoint[] | null;
+  /** One row per calendar year — ₹/share total plus a joined dividend-yield % (null when price data was unresolvable for that year). */
+  dividends: DividendYearRow[] | null;
   /** Debt level and coverage (three series aligned by period) — null until fetched; individual series may be absent (esp. quarterly). */
   debtCoverage: {
     annualDebt: FundamentalsPoint[] | null;
@@ -88,6 +89,8 @@ const DIVIDEND_COLOR = "#f59e0b"; // amber — dividends visually distinct from 
 const DEBT_COLOR = "#ec4899"; // pink (TradingView convention)
 const FCF_COLOR = "#14b8a6"; // teal
 const CASH_COLOR = "#3b82f6"; // blue
+/** Dividend-yield line (founder 2026-08-02: overlay yield on the Dividends chart). Reuses the panel's teal — not used elsewhere on the Dividends chart itself (that chart is otherwise amber-only) and reads as "healthy income", distinct from the amber ₹ bars it sits over. */
+const YIELD_LINE_COLOR = FCF_COLOR;
 
 interface PeriodGroup {
   label: string;
@@ -274,6 +277,147 @@ function SmallBars({
           );
         })}
       </svg>
+    </div>
+  );
+}
+
+/**
+ * Dividends combo chart (founder 2026-08-02): amber ₹/share bars (as
+ * before, now aggregated per calendar year instead of per payout event) +
+ * an overlaid dividend-yield % LINE with point markers, on its own scale —
+ * yields (~0.3%–7% across the universe) and ₹ dividend amounts live on
+ * totally different axes, so the line is normalized independently of the
+ * bars rather than sharing their y-scale. A year with a null `yieldPct`
+ * (no resolvable price data) still gets its bar; the line simply has a gap
+ * there — no interpolation across missing years, and the hover readout
+ * says "yield unavailable" rather than showing 0%. When every row's
+ * `yieldPct` is null (whole-series price failure), the line/points/axis/
+ * legend are all skipped entirely and this renders identically to a
+ * bars-only chart.
+ */
+function DividendYieldBars({ rows }: { rows: DividendYearRow[] }) {
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  if (rows.length === 0) return null;
+
+  const barValues = rows.map((r) => r.totalDividend);
+  const maxBar = Math.max(...barValues, 0);
+  const minBar = Math.min(...barValues, 0);
+  const barSpan = maxBar - minBar || 1;
+
+  const yieldValues = rows.map((r) => r.yieldPct).filter((v): v is number => v != null);
+  const hasYield = yieldValues.length > 0;
+  const maxYield = hasYield ? Math.max(...yieldValues) : 0;
+  const minYield = hasYield ? Math.min(0, ...yieldValues) : 0;
+  const yieldSpan = maxYield - minYield || 1;
+
+  const H = 130;
+  const pad = { top: 10, bottom: 24 };
+  const innerH = H - pad.top - pad.bottom;
+  const AXIS_W = hasYield ? 40 : 0; // right-edge % labels only take space when there's a line to label
+  const chartW = CHART_W - AXIS_W;
+  const groupW = chartW / rows.length;
+  const barW = Math.min(28, groupW / 2.2);
+
+  const yBar = (v: number) => pad.top + ((maxBar - v) / barSpan) * innerH;
+  const zeroYBar = yBar(0);
+  const yYield = (v: number) => pad.top + ((maxYield - v) / yieldSpan) * innerH;
+
+  const active = rows[hoverIdx ?? rows.length - 1];
+  const activeLabel = active.isYtd ? `${active.year} YTD` : `${active.year}`;
+
+  // Line points, skipping years with a null yield — then re-grouped into
+  // contiguous runs so the polyline breaks at a gap instead of bridging it
+  // (bridging would visually imply a yield we don't actually have).
+  const presentPoints = rows
+    .map((r, i) => (r.yieldPct != null ? { x: groupW * i + groupW / 2, y: yYield(r.yieldPct), i } : null))
+    .filter((p): p is { x: number; y: number; i: number } => p !== null);
+  const segments: { x: number; y: number }[][] = [];
+  let current: { x: number; y: number }[] = [];
+  let lastIdx = -2;
+  for (const p of presentPoints) {
+    if (p.i !== lastIdx + 1 && current.length > 0) {
+      segments.push(current);
+      current = [];
+    }
+    current.push({ x: p.x, y: p.y });
+    lastIdx = p.i;
+  }
+  if (current.length > 0) segments.push(current);
+
+  return (
+    <div>
+      <p className="mb-1 text-xs text-ink-600">
+        <span className="font-semibold text-ink-900">{activeLabel}</span>
+        {" · "}
+        <span className="font-semibold" style={{ color: DIVIDEND_COLOR }}>
+          ₹{active.totalDividend.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
+        </span>
+        {" · "}
+        {active.yieldPct != null ? (
+          <span className="font-semibold" style={{ color: YIELD_LINE_COLOR }}>
+            {active.yieldPct.toFixed(2)}% yield
+          </span>
+        ) : (
+          <span className="text-ink-400">yield unavailable</span>
+        )}
+      </p>
+      <svg
+        viewBox={`0 0 ${CHART_W} ${H}`}
+        className="w-full touch-none"
+        role="img"
+        aria-label="Dividend per share and dividend yield by year"
+        onPointerLeave={() => setHoverIdx(null)}
+      >
+        <line x1={0} x2={chartW} y1={zeroYBar} y2={zeroYBar} stroke="#e2e8f0" strokeWidth="1" />
+        {hasYield &&
+          [maxYield, minYield].map((gv, gi) => (
+            <text key={`${gv}-${gi}`} x={chartW + 6} y={yYield(gv) + 3} fontSize="10" fill={YIELD_LINE_COLOR}>
+              {gv.toFixed(1)}%
+            </text>
+          ))}
+        {rows.map((r, i) => {
+          const cx = groupW * i + groupW / 2;
+          const dim = hoverIdx !== null && hoverIdx !== i;
+          return (
+            <g key={r.year} opacity={dim ? 0.35 : 1} onPointerEnter={() => setHoverIdx(i)} onPointerDown={() => setHoverIdx(i)}>
+              <rect x={groupW * i} y={0} width={groupW} height={H} fill="transparent" />
+              <rect
+                x={cx - barW / 2}
+                width={barW}
+                y={Math.min(yBar(r.totalDividend), zeroYBar)}
+                height={Math.max(2, Math.abs(yBar(r.totalDividend) - zeroYBar))}
+                rx={3}
+                fill={DIVIDEND_COLOR}
+              />
+              <text x={cx} y={H - 6} textAnchor="middle" fontSize="11" fill={dim ? "#cbd5e1" : "#94a3b8"}>
+                {r.isYtd ? `${r.year} YTD` : r.year}
+              </text>
+            </g>
+          );
+        })}
+        {hasYield &&
+          segments.map((seg, si) => (
+            <polyline key={si} points={seg.map((p) => `${p.x},${p.y}`).join(" ")} fill="none" stroke={YIELD_LINE_COLOR} strokeWidth="2" />
+          ))}
+        {hasYield &&
+          presentPoints.map((p) => (
+            <circle
+              key={p.i}
+              cx={p.x}
+              cy={p.y}
+              r={hoverIdx === p.i ? 4 : 3}
+              fill={YIELD_LINE_COLOR}
+              stroke="white"
+              strokeWidth="1.5"
+            />
+          ))}
+      </svg>
+      {hasYield && (
+        <div className="mt-1 flex flex-wrap gap-4">
+          <LegendDot color={DIVIDEND_COLOR} label="Dividend (₹/share)" />
+          <LegendDot color={YIELD_LINE_COLOR} label="Dividend yield (%)" />
+        </div>
+      )}
     </div>
   );
 }
@@ -531,17 +675,8 @@ export function FundamentalsPanel({
 
         {hasDividends && dividends && (
           <div>
-            <p className="mb-1 text-xs font-semibold text-ink-500">Dividends (₹ per share)</p>
-            <SmallBars
-              items={[...dividends]
-                .sort((a, b) => a.date.localeCompare(b.date))
-                .slice(-10)
-                .map((d) => ({ label: formatPeriodLabel(d.date), value: d.amount }))}
-              color={DIVIDEND_COLOR}
-              ariaLabel="Dividend per share by payout"
-              readoutPrefix="Dividend"
-              formatValue={(v) => `₹${v.toLocaleString("en-IN", { maximumFractionDigits: 2 })} per share`}
-            />
+            <p className="mb-1 text-xs font-semibold text-ink-500">Dividends (₹ per share) &amp; yield</p>
+            <DividendYieldBars rows={[...dividends].sort((a, b) => a.year - b.year)} />
           </div>
         )}
       </CardContent>

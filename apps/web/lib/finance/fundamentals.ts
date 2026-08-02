@@ -83,7 +83,29 @@ const DIVIDEND_LOOKBACK_YEARS = 3;
 /** One point in a fundamentals series, oldest-first — matches InstrumentEnrichment's JSON column shape exactly. */
 export type FundamentalsPoint = { periodEnd: string; value: number };
 
-export type DividendPoint = { date: string; amount: number };
+/** Raw per-payout event, internal building block for the year-aggregated rows below — not exported, callers only see `DividendYearRow`. */
+type DividendPoint = { date: string; amount: number };
+
+/**
+ * One calendar year of dividend history (founder 2026-08-02: overlay a
+ * dividend-yield LINE on the existing per-payout dividend bars). Payout
+ * events are summed per calendar year and joined against that year's
+ * year-end close so the panel can show both a ₹/share bar and a % yield
+ * line from one row.
+ */
+export type DividendYearRow = {
+  year: number;
+  /** Sum of all per-share payout amounts (interim + final, etc.) declared in this calendar year. */
+  totalDividend: number;
+  /**
+   * `totalDividend / year-end close * 100`. Null when no close price could
+   * be resolved for this year (absent price data, not a real 0% yield —
+   * house honesty convention: never render a missing value as zero).
+   */
+  yieldPct: number | null;
+  /** True only for the current, still-in-progress calendar year — UI must label this "<year> YTD", not a completed annual figure. */
+  isYtd: boolean;
+};
 
 export type AnnualFundamentals = {
   revenue: FundamentalsPoint[] | null;
@@ -205,14 +227,12 @@ export async function fetchQuarterlyFundamentals(symbol: string): Promise<Quarte
 }
 
 /**
- * Dividend history over the last DIVIDEND_LOOKBACK_YEARS, oldest first.
- * Null (not []) when the fetch itself failed — an empty array is a valid,
- * honest "no dividends declared" answer and must render differently from
- * "we couldn't check."
+ * Raw per-payout dividend events (interim/final/special, each its own row)
+ * over `[period1, period2]`. Null (not []) when the fetch itself failed — an
+ * empty array is a valid, honest "no dividends declared" answer and must
+ * render differently from "we couldn't check."
  */
-export async function fetchDividendHistory(symbol: string): Promise<DividendPoint[] | null> {
-  const period2 = Math.floor(Date.now() / 1000);
-  const period1 = period2 - Math.floor(DIVIDEND_LOOKBACK_YEARS * 365.25 * ONE_DAY_S);
+async function fetchDividendEvents(symbol: string, period1: number, period2: number): Promise<DividendPoint[] | null> {
   const url = `${CHART_BASE}/${encodeURIComponent(symbol)}.NS?interval=1d&period1=${period1}&period2=${period2}&events=div`;
 
   let response: Response;
@@ -254,6 +274,114 @@ export async function fetchDividendHistory(symbol: string): Promise<DividendPoin
   }
 
   return points.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/**
+ * Daily close prices for `symbol` over `[period1, period2]`, reduced to ONE
+ * close per calendar year: the last available trading-day close on/before
+ * Dec 31 for a completed year, or the LATEST available close for the
+ * current, still-in-progress year (this is what makes the current year's
+ * yield an honest "YTD" figure instead of a placeholder). Year bucketing
+ * uses `getUTCFullYear`, matching this panel's existing `compactPeriodLabel`
+ * convention elsewhere in the fundamentals UI.
+ *
+ * Returns null on a total fetch failure (network/HTTP/parse) — never an
+ * empty Map — so callers can tell "no price data at all" (blanket null
+ * yieldPct across every year) apart from "priced, just no trades landed in
+ * one particular year" (Map present, that year's key simply absent).
+ */
+async function fetchYearEndCloses(symbol: string, period1: number, period2: number): Promise<Map<number, number> | null> {
+  const url = `${CHART_BASE}/${encodeURIComponent(symbol)}.NS?interval=1d&period1=${period1}&period2=${period2}`;
+
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(url);
+  } catch (err) {
+    console.warn(`[fundamentals] Network error fetching year-end closes for ${symbol}: ${err instanceof Error ? err.message : err}`);
+    return null;
+  }
+
+  if (!response.ok) {
+    console.warn(`[fundamentals] Yahoo chart(daily close) returned ${response.status} for ${symbol}`);
+    return null;
+  }
+
+  let data: unknown;
+  try {
+    data = await response.json();
+  } catch (err) {
+    console.warn(`[fundamentals] Year-end close JSON parse error for ${symbol}: ${err instanceof Error ? err.message : err}`);
+    return null;
+  }
+
+  const chart = (data as Record<string, unknown>)?.chart as Record<string, unknown> | undefined;
+  const result = (chart?.result as unknown[] | undefined)?.at(0) as Record<string, unknown> | undefined;
+  if (!result) return null; // unknown ticker / no chart data at all — genuine failure.
+
+  const timestamps = result.timestamp as number[] | undefined;
+  const quoteArr = (result.indicators as Record<string, unknown> | undefined)?.quote as Record<string, unknown>[] | undefined;
+  const closes = quoteArr?.[0]?.close as (number | null)[] | undefined;
+  if (!Array.isArray(timestamps) || !Array.isArray(closes) || timestamps.length === 0) return null;
+
+  // Yahoo returns timestamps in ascending order — walking forward and
+  // overwriting per year naturally leaves the LAST valid close of each
+  // year, which is exactly "year-end close" for a completed year and
+  // "latest close so far" for the current year.
+  const byYear = new Map<number, number>();
+  for (let i = 0; i < timestamps.length; i++) {
+    const close = closes[i];
+    if (typeof close !== "number" || !Number.isFinite(close)) continue;
+    const year = new Date(timestamps[i] * 1000).getUTCFullYear();
+    byYear.set(year, close);
+  }
+  return byYear.size > 0 ? byYear : null;
+}
+
+/**
+ * Dividend history, aggregated to one row per calendar year with a joined
+ * dividend-yield figure (founder 2026-08-02). Window is aligned to Jan 1 of
+ * `DIVIDEND_LOOKBACK_YEARS` years ago rather than a rolling day-count, so
+ * every year except the current one is a COMPLETE calendar year — a rolling
+ * window would otherwise clip the oldest year's total mid-year, which would
+ * silently understate both its ₹ total and its yield (a truncated year
+ * masquerading as a full one). Oldest first.
+ *
+ * Null (not []) when the underlying events fetch itself failed — an empty
+ * array is a valid, honest "no dividends declared" answer. A stock with
+ * real dividend events but no resolvable price data still returns rows —
+ * every `yieldPct` in that case is null, never a fabricated 0%.
+ */
+export async function fetchDividendHistory(symbol: string): Promise<DividendYearRow[] | null> {
+  const currentYear = new Date().getUTCFullYear();
+  const period1 = Math.floor(Date.UTC(currentYear - DIVIDEND_LOOKBACK_YEARS + 1, 0, 1) / 1000);
+  const period2 = Math.floor(Date.now() / 1000);
+
+  const events = await fetchDividendEvents(symbol, period1, period2);
+  if (events === null) return null; // genuine fetch failure — distinct from "no dividends."
+  if (events.length === 0) return []; // valid chart, zero dividend events — honest empty answer.
+
+  const totalsByYear = new Map<number, number>();
+  for (const e of events) {
+    const year = Number(e.date.slice(0, 4));
+    totalsByYear.set(year, (totalsByYear.get(year) ?? 0) + e.amount);
+  }
+
+  // A close-price failure degrades every yieldPct to null; the ₹ bars still
+  // render on their own — dividends without price context is a normal,
+  // honest partial state here, not treated as an error.
+  const closesByYear = await fetchYearEndCloses(symbol, period1, period2);
+
+  return [...totalsByYear.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([year, totalDividend]) => {
+      const close = closesByYear?.get(year) ?? null;
+      return {
+        year,
+        totalDividend,
+        yieldPct: close != null && close > 0 ? (totalDividend / close) * 100 : null,
+        isYtd: year === currentYear,
+      };
+    });
 }
 
 // ── Key Stats (TradingView-style) — crumb-authenticated quoteSummary ─────────

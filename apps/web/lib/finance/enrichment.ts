@@ -27,7 +27,7 @@ import {
   fetchQuarterlyFundamentals,
   fetchDebtCoverage,
   fetchKeyStats,
-  type DividendPoint,
+  type DividendYearRow,
   type FundamentalsPoint,
   type DebtCoverage,
   type KeyStats,
@@ -48,7 +48,8 @@ export type InstrumentEnrichmentData = {
   quarterlyRevenue: FundamentalsPoint[] | null;
   quarterlyNetIncome: FundamentalsPoint[] | null;
   quarterlyDilutedEps: FundamentalsPoint[] | null;
-  dividends: DividendPoint[] | null;
+  /** One row per calendar year — ₹/share total plus a joined dividend-yield %, null yield when price data was unresolvable for that year. See fetchDividendHistory's doc comment for the full contract. */
+  dividends: DividendYearRow[] | null;
   /** TradingView-style Key Stats snapshot (crumb-authenticated Yahoo quoteSummary) — null until first successful fetch. */
   keyStats: KeyStats | null;
   /** Debt level and coverage series — null until first successful fetch. */
@@ -222,7 +223,7 @@ export async function getOrFetchInstrumentEnrichment(
     quarterlyRevenue: (row.quarterlyRevenue as FundamentalsPoint[] | null) ?? null,
     quarterlyNetIncome: (row.quarterlyNetIncome as FundamentalsPoint[] | null) ?? null,
     quarterlyDilutedEps: (row.quarterlyDilutedEps as FundamentalsPoint[] | null) ?? null,
-    dividends: (row.dividends as DividendPoint[] | null) ?? null,
+    dividends: (row.dividends as DividendYearRow[] | null) ?? null,
     keyStats: (row.keyStats as KeyStats | null) ?? null,
     debtCoverage: (row.debtCoverage as DebtCoverage | null) ?? null,
     fundamentalsFetchedAt: row.fundamentalsFetchedAt,
