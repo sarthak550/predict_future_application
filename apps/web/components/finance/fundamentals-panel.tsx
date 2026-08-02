@@ -66,6 +66,9 @@ export type FundamentalsPanelProps = {
     beta1Y?: number;
     /** Self-computed vs. NIFTY 50, trailing 5y of monthly returns — see lib/finance/beta.ts. */
     beta5Y?: number;
+    /** Next earnings date (ISO), possibly with a window end — see KeyStats in fundamentals.ts. */
+    nextEarningsDate?: string;
+    nextEarningsDateEnd?: string;
   } | null;
   fetchedAt: Date | null;
 };
@@ -82,6 +85,11 @@ function compactPeriodLabel(isoDate: string, mode: "annual" | "quarterly"): stri
   if (mode === "annual") return `FY${yy}`;
   const mon = new Intl.DateTimeFormat("en", { month: "short", timeZone: "UTC" }).format(d);
   return `${mon} ${yy}`;
+}
+
+/** "2026-10-09" -> "09 Oct 2026" — Upcoming-earnings display. */
+function formatEarningsDate(iso: string): string {
+  return new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(iso));
 }
 
 /** "2025-11-15" -> "15 Nov 25", for per-payout x-axis labels (payout dates, unlike period-ends, need day granularity — two payouts in the same month are common). */
@@ -1103,6 +1111,10 @@ export function FundamentalsPanel({
   keyStats,
 }: FundamentalsPanelProps) {
   const [mode, setMode] = useState<"annual" | "quarterly">("annual");
+  // Mount-computed (house convention for time values) — gates the Upcoming
+  // earnings block to today-or-future dates; a stale past date on the
+  // daily-TTL cache row renders nothing rather than a false "upcoming".
+  const [todayIso] = useState(() => new Date().toISOString().slice(0, 10));
 
   const hasAnnual = [annualRevenue, annualNetIncome, annualDilutedEps].some((s) => s && s.length > 0);
   const hasQuarterly = [quarterlyRevenue, quarterlyNetIncome, quarterlyDilutedEps].some((s) => s && s.length > 0);
@@ -1151,7 +1163,7 @@ export function FundamentalsPanel({
 
         {hasKeyStats && keyStats && (
           <div>
-            <p className="mb-2 text-base font-semibold text-ink-900">Key stats</p>
+            <p className="mb-2 text-lg font-semibold text-ink-900">Key stats</p>
             <div className="grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-3">
               {keyStats.marketCap !== undefined && <KeyStat label="Market cap" value={formatCompactCurrency(keyStats.marketCap, "INR")} />}
               {keyStats.trailingPE !== undefined && <KeyStat label="P/E ratio (TTM)" value={keyStats.trailingPE.toFixed(1)} />}
@@ -1187,9 +1199,31 @@ export function FundamentalsPanel({
           </div>
         )}
 
+        {/* Upcoming earnings (founder 2026-08-02) — Yahoo calendarEvents via
+            the Key Stats snapshot. Rendered only when the cached date is
+            today-or-future (the row refreshes daily; a stale past date is
+            honest absence here, never shown as "upcoming"). A window
+            ("09 – 13 Oct 2026") means Yahoo's estimate range, not a
+            confirmed date — labeled accordingly. */}
+        {keyStats?.nextEarningsDate && keyStats.nextEarningsDate >= todayIso && (
+          <div>
+            <p className="mb-1 text-lg font-semibold text-ink-900">Upcoming earnings</p>
+            <p className="text-sm text-ink-700">
+              {keyStats.nextEarningsDateEnd && keyStats.nextEarningsDateEnd !== keyStats.nextEarningsDate ? (
+                <>
+                  {formatEarningsDate(keyStats.nextEarningsDate)} – {formatEarningsDate(keyStats.nextEarningsDateEnd)}
+                  <span className="ml-2 text-xs text-ink-400">estimated window</span>
+                </>
+              ) : (
+                formatEarningsDate(keyStats.nextEarningsDate)
+              )}
+            </p>
+          </div>
+        )}
+
         {(hasAnnual || hasQuarterly) && (
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-base font-semibold text-ink-900">Financials</p>
+            <p className="text-lg font-semibold text-ink-900">Financials</p>
             <div className="inline-flex rounded-xl border border-ink-200 bg-white p-0.5">
               {(["annual", "quarterly"] as const).map((m) => (
                 <button

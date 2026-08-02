@@ -565,6 +565,10 @@ export interface KeyStats {
   beta1Y?: number;
   /** Self-computed vs. NIFTY 50 (^NSEI): same formula as beta1Y, trailing 5 years of aligned MONTHLY returns (month-end closes). Undefined when insufficient aligned history (~36 monthly points) or index variance is 0. */
   beta5Y?: number;
+  /** Next earnings date, ISO YYYY-MM-DD, from Yahoo calendarEvents. Alone = a confirmed/exact date; with nextEarningsDateEnd = the start of an estimate window. May be in the past on a stale (daily-TTL) row — the UI decides staleness at render. */
+  nextEarningsDate?: string;
+  /** End of Yahoo's earnings estimate WINDOW ("Oct 9 – Oct 13"-style). Only present when the window has a distinct end. */
+  nextEarningsDateEnd?: string;
 }
 
 /**
@@ -576,7 +580,9 @@ export interface KeyStats {
  * it is NOT TradingView's "Beta (1Y)".
  */
 export async function fetchKeyStats(symbol: string): Promise<KeyStats | null> {
-  const data = await fetchQuoteSummary(`${symbol}.NS`, ["summaryDetail", "defaultKeyStatistics"]);
+  // calendarEvents added 2026-08-02 (founder: "upcoming earnings") — same
+  // crumb-gated request, one more module, zero extra HTTP cost.
+  const data = await fetchQuoteSummary(`${symbol}.NS`, ["summaryDetail", "defaultKeyStatistics", "calendarEvents"]);
   if (!data) return null;
   const result = ((data as Record<string, unknown>)?.quoteSummary as Record<string, unknown> | undefined)?.result as
     | Record<string, unknown>[]
@@ -592,7 +598,8 @@ export async function fetchKeyStats(symbol: string): Promise<KeyStats | null> {
   const ks = row.defaultKeyStatistics;
 
   const stats: KeyStats = {};
-  const put = (k: keyof KeyStats, v: number | undefined) => {
+  type NumericKeyStatKey = { [K in keyof KeyStats]-?: KeyStats[K] extends number | undefined ? K : never }[keyof KeyStats];
+  const put = (k: NumericKeyStatKey, v: number | undefined) => {
     if (v !== undefined) stats[k] = v;
   };
   put("marketCap", raw(sd, "marketCap"));
@@ -601,6 +608,25 @@ export async function fetchKeyStats(symbol: string): Promise<KeyStats | null> {
   put("beta", raw(sd, "beta"));
   put("floatShares", raw(ks, "floatShares"));
   put("trailingEps", raw(ks, "trailingEps"));
+
+  // Upcoming earnings: Yahoo reports either an exact confirmed date or a
+  // [start, end] estimate window (earningsDate is an ARRAY of {raw} epoch
+  // seconds — 1 element = exact, 2 = window). Persist as ISO dates,
+  // additive; absent → fields simply missing (honest absence, and a PAST
+  // date is kept — the UI decides staleness at render time, since this
+  // cache row refreshes only daily).
+  const ce = (row.calendarEvents as Record<string, unknown> | undefined)?.earnings as
+    | Record<string, unknown>
+    | undefined;
+  const earningsDates = (ce?.earningsDate as Array<{ raw?: unknown }> | undefined)
+    ?.map((d) => (typeof d?.raw === "number" ? new Date(d.raw * 1000).toISOString().slice(0, 10) : null))
+    .filter((d): d is string => d != null);
+  if (earningsDates && earningsDates.length > 0) {
+    stats.nextEarningsDate = earningsDates[0];
+    if (earningsDates.length > 1 && earningsDates[1] !== earningsDates[0]) {
+      stats.nextEarningsDateEnd = earningsDates[1];
+    }
+  }
   return stats;
 }
 
