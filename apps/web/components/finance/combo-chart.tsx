@@ -21,9 +21,37 @@ import { useLayoutEffect, useRef, useState } from "react";
  * specifies: every secondary-axis series is a DASHED line (never a bar),
  * visually marking it as "a different kind of quantity" rather than letting
  * it blend with the primary bars.
+ *
+ * AXIS POLISH PASS (founder chart-polish iteration on the shipped v2) —
+ * three related fixes, all confined to this file's axis machinery, none of
+ * which change any caller's data flow:
+ *   1. NICE-SCALE ticks (`computeNiceScale`) — gridline/tick values are now
+ *      drawn from the 1/2/2.5/5 × 10^k "nice number" family and the domain is
+ *      snapped OUTWARD to whole multiples of that step (always including 0),
+ *      instead of the old two-tick [dataMax, mid] scheme whose tick VALUES
+ *      were arbitrary fractions of the raw data range. 3-5 ticks per axis.
+ *   2. "Declared-once" axis unit (`AxisFormat`) — callers' `formatPrimaryAxis`
+ *      / `formatSecondaryAxis` props are now FACTORIES keyed by the axis's
+ *      own nice-scale max (`(domainMax) => { unit, tick }`) rather than plain
+ *      formatters, so every tick on one axis shares ONE consistent magnitude
+ *      band (e.g. "₹ L Cr") shown once, with each tick rendering just its
+ *      short number ("5", "10", "15") — a research-deck convention that also
+ *      keeps tick strings short enough to auto-size the gutter (below). Full
+ *      ₹/currency formatting is UNCHANGED in the tooltip (`s.formatValue`),
+ *      which never routes through this factory.
+ *   3. Auto-sized gutters (`computeGutterWidth` / `computeAxisPresentation`)
+ *      — the left/right axis gutters are no longer fixed 44px/40px; they're
+ *      measured from the longest rendered tick/unit string (~5.5 viewBox
+ *      units per 10px char) and clamped to [MIN_GUTTER_W, MAX_GUTTER_W]. A
+ *      defensive coarsen-to-3-ticks fallback exists for the (in practice
+ *      unreachable, given how short the compact formats are) case where even
+ *      the max gutter can't fit a label.
+ * Every section in fundamentals-panel.tsx (§01-§07, including §06's stacked
+ * mode) inherits all three fixes automatically — none of them special-case
+ * `stackedBars`.
  */
 
-// ── Public types (locked — founder-approved plan §1) ─────────────────────────
+// ── Public types (locked — founder-approved plan §1; `AxisFormat` added by the axis-polish pass above) ──
 
 export type ComboSeriesDef = {
   id: string;
@@ -42,6 +70,17 @@ export type ComboSeriesDef = {
   tooltipFallback?: (idx: number) => string | null;
 };
 
+/**
+ * An axis's rendering contract for ONE chart instance — `unit` is the
+ * "declared once" short annotation shown a single time at the top of the
+ * axis's gutter (e.g. "₹ L Cr", "%", "×"; empty string renders no
+ * annotation), and `tick` formats a single gridline VALUE into its short
+ * number string already expressed in terms of `unit` (e.g. `unit: "₹ Cr"`,
+ * `tick: (v) => (v / 1e7).toFixed(1)`-ish). Full/precise formatting for the
+ * tooltip stays on each series' own `formatValue` — this type is axis-only.
+ */
+export type AxisFormat = { unit: string; tick: (v: number) => string };
+
 export type ComboChartProps = {
   /** X-axis labels, index-aligned with every series' `values`. */
   categories: string[];
@@ -50,8 +89,10 @@ export type ComboChartProps = {
   height?: number;
   /** §06 Asset Base Composition mode (Sprint 2) — bar-kind series in a group stack cumulatively instead of clustering side by side. Default false. */
   stackedBars?: boolean;
-  formatPrimaryAxis: (v: number) => string;
-  formatSecondaryAxis?: (v: number) => string;
+  /** Factory: given the primary axis's own nice-scale domain max, returns its declared-once unit + per-tick short formatter (see `AxisFormat`). */
+  formatPrimaryAxis: (domainMax: number) => AxisFormat;
+  /** Factory: given the secondary axis's own nice-scale domain max, returns its declared-once unit + per-tick short formatter. Only consulted when a secondary-axis series is present. */
+  formatSecondaryAxis?: (domainMax: number) => AxisFormat;
   /** Tooltip title row for a category index. Defaults to `categories[idx]`. */
   tooltipTitle?: (idx: number) => string;
   ariaLabel: string;
@@ -64,17 +105,150 @@ export type ComboChartProps = {
 // ── Layout constants ──────────────────────────────────────────────────────────
 
 const CHART_W = 640;
-const LEFT_AXIS_W = 44;
-const RIGHT_AXIS_W = 40;
-const PAD_TOP = 14;
+const PAD_TOP = 18; // headroom for the topmost gridline's own label PLUS the declared-once axis-unit annotation above it
 const PAD_BOTTOM = 26;
 const BAR_GAP = 2;
 const MAX_BAR_W = 14;
 const TOOLTIP_OFFSET_X = 14;
 const TOOLTIP_OFFSET_Y = 12;
 
+// ── Gutter auto-sizing (axis-polish pass, fix 4b) ─────────────────────────────
+
+/** ~10px tabular-nums character width, expressed in this chart's 640-wide viewBox units (matches the founder brief's own estimate). */
+const CHAR_W_VB = 5.5;
+/** Gap between a tick label's inner edge and the plot area — matches the pre-existing `x = plotLeft ± 6` offset convention. */
+const GUTTER_TEXT_GAP = 6;
+/** Small buffer so the widest label's outer edge never touches the viewBox edge. */
+const GUTTER_EDGE_MARGIN = 2;
+const MIN_GUTTER_W = 28;
+const MAX_GUTTER_W = 64;
+
 function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
+}
+
+function computeGutterWidth(labels: string[]): number {
+  const maxChars = labels.reduce((m, s) => Math.max(m, s.length), 0);
+  const raw = maxChars * CHAR_W_VB + GUTTER_TEXT_GAP + GUTTER_EDGE_MARGIN;
+  return clamp(raw, MIN_GUTTER_W, MAX_GUTTER_W);
+}
+
+// ── Nice-scale ticks (axis-polish pass, fix 2) ────────────────────────────────
+
+const NICE_STEP_FRACTIONS = [1, 2, 2.5, 5];
+const MIN_TICKS = 3;
+const MAX_TICKS = 5;
+const TARGET_TICKS = 4;
+
+type NiceScale = { min: number; max: number; step: number; ticks: number[] };
+
+/**
+ * A proper "nice scale": the step is drawn from the 1/2/2.5/5 × 10^k family
+ * (never an arbitrary fraction of the raw data range), the domain is snapped
+ * OUTWARD to whole multiples of that step, and 0 is always included in the
+ * domain (never a deceptive non-zero baseline on a magnitude chart — matches
+ * this house's existing zero-baseline convention, just generalized to every
+ * tick instead of one hardcoded line). `targetTicks` is a preference: the
+ * actual tick count is whichever candidate step lands closest to it while
+ * staying inside [MIN_TICKS, MAX_TICKS], searched across a ±2-decade
+ * neighborhood of the naive rough-step estimate.
+ */
+function computeNiceScale(dataMin: number, dataMax: number, targetTicks: number): NiceScale {
+  const min0 = Math.min(0, dataMin);
+  const max0 = Math.max(0, dataMax);
+
+  if (min0 === 0 && max0 === 0) {
+    // Degenerate all-zero domain (e.g. a lone series whose only non-null
+    // values happen to be 0) — still a valid, if trivial, nice scale rather
+    // than a divide-by-zero.
+    return { min: 0, max: 1, step: 1, ticks: [0, 1] };
+  }
+
+  const range = max0 - min0;
+  const roughStep = range / Math.max(1, targetTicks - 1);
+  const exponent = Math.floor(Math.log10(roughStep));
+
+  const build = (step: number): NiceScale => {
+    const niceMin = -Math.ceil(-min0 / step) * step; // min0 <= 0 always (0 is always in-domain)
+    const niceMax = Math.ceil(max0 / step) * step;
+    const count = Math.round((niceMax - niceMin) / step) + 1;
+    // Round each tick to the step's own decimal precision to kill float
+    // accumulation drift (e.g. 0.7999999999999999 from repeated addition).
+    const decimals = Math.max(0, Math.min(10, -Math.floor(Math.log10(step)) + 2));
+    const ticks: number[] = [];
+    for (let i = 0; i < count; i++) ticks.push(Number((niceMin + i * step).toFixed(decimals)));
+    return { min: niceMin, max: niceMax, step, ticks };
+  };
+
+  const candidateSteps = new Set<number>();
+  for (const e of [exponent - 1, exponent, exponent + 1, exponent + 2]) {
+    for (const f of NICE_STEP_FRACTIONS) candidateSteps.add(f * Math.pow(10, e));
+  }
+
+  let best: NiceScale | null = null;
+  let bestScore = Infinity;
+  for (const step of [...candidateSteps].sort((a, b) => a - b)) {
+    const scale = build(step);
+    const count = scale.ticks.length;
+    if (count < MIN_TICKS || count > MAX_TICKS) continue;
+    const score = Math.abs(count - targetTicks);
+    if (score < bestScore) {
+      bestScore = score;
+      best = scale;
+    }
+  }
+
+  // Fallback (not expected to fire — the ±2-decade sweep above always finds
+  // a step whose tick count is 3-5 for any finite, non-degenerate domain):
+  // use the naive rough step directly rather than render nothing.
+  return best ?? build(Math.pow(10, exponent));
+}
+
+/** One axis's complete render-time state: its nice-scale domain, its declared-once unit + per-tick formatter, the pre-formatted tick label strings (reused by both the JSX and the gutter-width measurement), and the resulting gutter width. */
+type AxisPresentation = {
+  scale: NiceScale;
+  format: AxisFormat;
+  tickLabels: string[];
+  gutterW: number;
+};
+
+/**
+ * Ties `computeNiceScale` + a caller's `AxisFormat` factory + `computeGutterWidth`
+ * together for one axis, with a defensive coarsen-to-`MIN_TICKS` retry (plan
+ * fix 4c: "never let a tick label overflow the gutter — if it would, coarsen
+ * the tick count") for the pathological case where even `MAX_GUTTER_W` can't
+ * fit a label. In practice this retry is not expected to fire — every
+ * `AxisFormat` factory in fundamentals-panel.tsx caps its tick strings to a
+ * handful of characters by construction (see that file's `makeMoneyAxisFormat`
+ * etc.) — but it's here so an overflow degrades to fewer, still-correct
+ * ticks rather than a silently clipped label.
+ */
+function computeAxisPresentation(
+  dataMin: number,
+  dataMax: number,
+  formatFactory: (domainMax: number) => AxisFormat
+): AxisPresentation {
+  const build = (targetTicks: number): AxisPresentation => {
+    const scale = computeNiceScale(dataMin, dataMax, targetTicks);
+    const format = formatFactory(scale.max);
+    const tickLabels = scale.ticks.map((t) => format.tick(t));
+    const labels = format.unit ? [...tickLabels, format.unit] : tickLabels;
+    return { scale, format, tickLabels, gutterW: computeGutterWidth(labels) };
+  };
+
+  let presentation = build(TARGET_TICKS);
+  const rawWidth =
+    (presentation.format.unit ? [...presentation.tickLabels, presentation.format.unit] : presentation.tickLabels).reduce(
+      (m, s) => Math.max(m, s.length),
+      0
+    ) *
+      CHAR_W_VB +
+    GUTTER_TEXT_GAP +
+    GUTTER_EDGE_MARGIN;
+  if (rawWidth > MAX_GUTTER_W && TARGET_TICKS > MIN_TICKS) {
+    presentation = build(MIN_TICKS);
+  }
+  return presentation;
 }
 
 /**
@@ -141,25 +315,18 @@ export function ComboChart({
   const activeSeries = series.filter((s) => s.values.some((v) => v != null));
   const hasSecondary = activeSeries.some((s) => s.axis === "secondary");
 
-  const plotLeft = LEFT_AXIS_W;
-  const plotRight = CHART_W - (hasSecondary ? RIGHT_AXIS_W : 0);
-  const plotWidth = plotRight - plotLeft;
-  const plotTop = PAD_TOP;
-  const plotBottom = height - PAD_BOTTOM;
-  const plotHeight = plotBottom - plotTop;
-  const groupW = categories.length > 0 ? plotWidth / categories.length : plotWidth;
-
   const barSeries = activeSeries.filter((s) => s.kind === "bar");
   const lineSeries = activeSeries.filter((s) => s.kind === "line");
   const nBars = barSeries.length;
 
-  // Primary axis domain (§06 Sprint 2 smoke-test fix, T2.1): in `stackedBars`
-  // mode the visual top of a group is the CUMULATIVE SUM of its bar series,
-  // not any single series' own value — using each series' individual max (as
-  // this used to) badly under-scales the domain (e.g. Fixed=500/Current=300/
-  // Other=200 stacking to a 1000 total would size the axis to 500, pushing
-  // the top segment off the plot entirely). Non-stacked (clustered) mode is
-  // unaffected — each bar's own value is still its own visual extent there.
+  // Primary axis domain (§06 Sprint 2 smoke-test fix, T2.1, PRESERVED by the
+  // axis-polish pass below): in `stackedBars` mode the visual top of a group
+  // is the CUMULATIVE SUM of its bar series, not any single series' own
+  // value — using each series' individual max badly under-scales the domain
+  // (e.g. Fixed=500/Current=300/Other=200 stacking to a 1000 total would
+  // size the axis to 500, pushing the top segment off the plot entirely).
+  // Non-stacked (clustered) mode is unaffected — each bar's own value is
+  // still its own visual extent there.
   const primaryValues: number[] = [];
   if (stackedBars) {
     for (let i = 0; i < categories.length; i++) {
@@ -187,19 +354,39 @@ export function ComboChart({
     if (s.axis !== "primary") continue;
     for (const v of s.values) if (v != null) primaryValues.push(v);
   }
-  const primaryMax = Math.max(0, ...primaryValues);
-  const primaryMin = Math.min(0, ...primaryValues);
+  const primaryDataMin = primaryValues.length > 0 ? Math.min(...primaryValues) : 0;
+  const primaryDataMax = primaryValues.length > 0 ? Math.max(...primaryValues) : 0;
+  const primaryPresentation = computeAxisPresentation(primaryDataMin, primaryDataMax, formatPrimaryAxis);
+  const primaryScale = primaryPresentation.scale;
+  const primaryMax = primaryScale.max;
+  const primaryMin = primaryScale.min;
   const primarySpan = primaryMax - primaryMin || 1;
-  const yPrimary = (v: number) => plotTop + ((primaryMax - v) / primarySpan) * plotHeight;
-  const zeroYPrimary = yPrimary(0);
 
   const secondarySeries = activeSeries.filter((s) => s.axis === "secondary");
   const secondaryValues = secondarySeries.flatMap((s) => s.values).filter((v): v is number => v != null);
-  const secondaryMax = Math.max(0, ...secondaryValues);
-  const secondaryMin = Math.min(0, ...secondaryValues);
+  const secondaryDataMin = secondaryValues.length > 0 ? Math.min(...secondaryValues) : 0;
+  const secondaryDataMax = secondaryValues.length > 0 ? Math.max(...secondaryValues) : 0;
+  const secondaryPresentation =
+    hasSecondary && formatSecondaryAxis ? computeAxisPresentation(secondaryDataMin, secondaryDataMax, formatSecondaryAxis) : null;
+  const secondaryScale = secondaryPresentation?.scale ?? computeNiceScale(secondaryDataMin, secondaryDataMax, TARGET_TICKS);
+  const secondaryMax = secondaryScale.max;
+  const secondaryMin = secondaryScale.min;
   const secondarySpan = secondaryMax - secondaryMin || 1;
-  const ySecondary = (v: number) => plotTop + ((secondaryMax - v) / secondarySpan) * plotHeight;
   const secondaryAxisColor = secondarySeries.length === 1 ? secondarySeries[0].color : "#94a3b8";
+
+  // Gutter auto-sizing (fix 4b): measured from the longest rendered tick/unit
+  // string for EACH axis independently — never the old fixed 44px/40px.
+  const plotLeft = primaryPresentation.gutterW;
+  const plotRight = CHART_W - (hasSecondary ? (secondaryPresentation?.gutterW ?? MIN_GUTTER_W) : 0);
+  const plotWidth = plotRight - plotLeft;
+  const plotTop = PAD_TOP;
+  const plotBottom = height - PAD_BOTTOM;
+  const plotHeight = plotBottom - plotTop;
+  const groupW = categories.length > 0 ? plotWidth / categories.length : plotWidth;
+
+  const yPrimary = (v: number) => plotTop + ((primaryMax - v) / primarySpan) * plotHeight;
+  const zeroYPrimary = yPrimary(0);
+  const ySecondary = (v: number) => plotTop + ((secondaryMax - v) / secondarySpan) * plotHeight;
 
   const yFor = (s: ComboSeriesDef) => (s.axis === "secondary" ? ySecondary : yPrimary);
   const xCenter = (i: number) => plotLeft + groupW * (i + 0.5);
@@ -350,25 +537,68 @@ export function ComboChart({
         onPointerDown={handlePointerDown}
       >
         <svg viewBox={`0 0 ${CHART_W} ${height}`} className="block w-full" role="img" aria-label={ariaLabel}>
-          {/* Primary axis gridlines + labels (left gutter) */}
-          {[primaryMax, (primaryMax + Math.min(primaryMin, 0)) / 2].map((gv, gi) => (
-            <g key={`p-${gi}`}>
-              <line x1={plotLeft} x2={plotRight} y1={yPrimary(gv)} y2={yPrimary(gv)} stroke="#f1f5f9" strokeWidth={1} />
-              <text x={plotLeft - 6} y={yPrimary(gv) + 3} textAnchor="end" fontSize={10} fill="#94a3b8">
-                {formatPrimaryAxis(gv)}
-              </text>
-            </g>
-          ))}
-          <line x1={plotLeft} x2={plotRight} y1={zeroYPrimary} y2={zeroYPrimary} stroke="#e2e8f0" strokeWidth={1} />
+          {/*
+            Primary axis gridlines + labels (left gutter) — nice-scale ticks
+            (3-5, axis-polish fix 2/5): every tick gets a full-width
+            gridline (not just max/mid) at the light `#f1f5f9`, EXCEPT the
+            zero tick — always present since the domain always includes 0 —
+            which renders at the stronger `#e2e8f0` baseline color instead of
+            a separately-drawn line (the old always-drawn zero baseline is
+            now just "whichever tick equals 0" in this single unified loop).
+          */}
+          {primaryScale.ticks.map((gv, gi) => {
+            const isZero = Math.abs(gv) < primaryScale.step * 1e-6;
+            return (
+              <g key={`p-${gi}`}>
+                <line
+                  x1={plotLeft}
+                  x2={plotRight}
+                  y1={yPrimary(gv)}
+                  y2={yPrimary(gv)}
+                  stroke={isZero ? "#e2e8f0" : "#f1f5f9"}
+                  strokeWidth={1}
+                />
+                <text
+                  x={plotLeft - GUTTER_TEXT_GAP}
+                  y={yPrimary(gv) + 3}
+                  textAnchor="end"
+                  fontSize={10}
+                  fill="#94a3b8"
+                  className="tabular-nums"
+                >
+                  {primaryPresentation.tickLabels[gi]}
+                </text>
+              </g>
+            );
+          })}
+          {primaryPresentation.format.unit && (
+            <text x={plotLeft - GUTTER_TEXT_GAP} y={9} textAnchor="end" fontSize={9} fill="#94a3b8">
+              {primaryPresentation.format.unit}
+            </text>
+          )}
 
-          {/* Secondary axis labels (right gutter), tinted to the line's own color when it's the only secondary series */}
-          {hasSecondary &&
-            formatSecondaryAxis &&
-            [secondaryMax, secondaryMin].map((gv, gi) => (
-              <text key={`s-${gi}`} x={plotRight + 6} y={ySecondary(gv) + 3} fontSize={10} fill={secondaryAxisColor}>
-                {formatSecondaryAxis(gv)}
-              </text>
-            ))}
+          {/* Secondary axis labels (right gutter, no gridlines of its own — a second gridline set on the same plot would just be visual noise), tinted to the line's own color when it's the only secondary series. */}
+          {hasSecondary && secondaryPresentation && (
+            <>
+              {secondaryScale.ticks.map((gv, gi) => (
+                <text
+                  key={`s-${gi}`}
+                  x={plotRight + GUTTER_TEXT_GAP}
+                  y={ySecondary(gv) + 3}
+                  fontSize={10}
+                  fill={secondaryAxisColor}
+                  className="tabular-nums"
+                >
+                  {secondaryPresentation.tickLabels[gi]}
+                </text>
+              ))}
+              {secondaryPresentation.format.unit && (
+                <text x={plotRight + GUTTER_TEXT_GAP} y={9} fontSize={9} fill={secondaryAxisColor}>
+                  {secondaryPresentation.format.unit}
+                </text>
+              )}
+            </>
+          )}
 
           {/* Active-group vertical guide */}
           {activeIdx != null && (

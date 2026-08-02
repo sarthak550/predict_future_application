@@ -3,7 +3,7 @@
 import { useState } from "react";
 
 import { Card, CardContent } from "@/components/ui/card";
-import { ComboChart, type ComboSeriesDef } from "@/components/finance/combo-chart";
+import { ComboChart, type ComboSeriesDef, type AxisFormat } from "@/components/finance/combo-chart";
 import { formatCompactCurrency } from "@/lib/utils";
 import { yoyGrowth } from "@/lib/finance/growth";
 import type {
@@ -86,6 +86,96 @@ function formatShortDate(iso: string): string {
 
 function formatFetchedAt(d: Date): string {
   return new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", year: "numeric", timeZone: "Asia/Kolkata" }).format(d);
+}
+
+// ── Axis-tick formatting (founder chart-polish pass) ──────────────────────────
+//
+// `ComboChart`'s `formatPrimaryAxis`/`formatSecondaryAxis` props are
+// FACTORIES — `(domainMax) => AxisFormat` — called once per render with the
+// axis's own nice-scale max, so a single "declared once" unit (e.g. "₹ L
+// Cr") covers every tick on that axis (research-deck convention) instead of
+// each tick carrying its own repeated ₹/unit suffix. These are AXIS-ONLY:
+// every section's tooltip still uses its full `fmtMoney`/`fmtRupee`/etc.
+// formatter (via each series' own `formatValue`), completely unchanged by
+// this pass — only the two axis-gutter props below route through these.
+
+/** "8.7300" -> "8.73", "8.0000" -> "8", "0.0000" -> "0" — strips a fixed-decimal string down to its shortest honest representation for an axis tick. */
+function trimTrailingZeros(fixed: string): string {
+  if (!fixed.includes(".")) return fixed;
+  return fixed.replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function formatAxisNumber(value: number, maxDp: number): string {
+  const sign = value < 0 ? "-" : "";
+  return `${sign}${trimTrailingZeros(Math.abs(value).toFixed(maxDp))}`;
+}
+
+/**
+ * Money axis factory — §01/02/03/05/06/07 all route through this. Picks ONE
+ * scale band (matching `formatCompactCurrency`'s own INR lakh/crore and USD
+ * T/B/M/K thresholds) from the axis's nice-scale MAX, so every tick on the
+ * SAME axis shares one consistent magnitude (avoids a 0/50L/1Cr/1.5Cr axis
+ * silently crossing the lakh↔crore boundary mid-axis) — each tick then
+ * renders just its short number, with the unit ("₹ L Cr", "$ B", …) declared
+ * once via `AxisFormat.unit`. `currencyCode: null` is §03 Dividend Profile's
+ * deliberate ₹-only carve-out (never currency-aware, per that section's own
+ * doc comment) — everywhere else this is `debtCoverage?.currencyCode`.
+ */
+function makeMoneyAxisFormat(currencyCode: string | null): (domainMax: number) => AxisFormat {
+  const code = currencyCode ?? "INR";
+  return (domainMax: number): AxisFormat => {
+    const abs = Math.abs(domainMax);
+    if (code === "INR") {
+      if (abs >= 1e12) return { unit: "₹ L Cr", tick: (v) => formatAxisNumber(v / 1e12, 1) };
+      if (abs >= 1e7) return { unit: "₹ Cr", tick: (v) => formatAxisNumber(v / 1e7, 1) };
+      if (abs >= 1e5) return { unit: "₹ L", tick: (v) => formatAxisNumber(v / 1e5, 1) };
+      return { unit: "₹", tick: (v) => formatAxisNumber(v, 0) };
+    }
+    if (code === "USD") {
+      if (abs >= 1e12) return { unit: "$ T", tick: (v) => formatAxisNumber(v / 1e12, 1) };
+      if (abs >= 1e9) return { unit: "$ B", tick: (v) => formatAxisNumber(v / 1e9, 1) };
+      if (abs >= 1e6) return { unit: "$ M", tick: (v) => formatAxisNumber(v / 1e6, 1) };
+      if (abs >= 1e3) return { unit: "$ K", tick: (v) => formatAxisNumber(v / 1e3, 1) };
+      return { unit: "$", tick: (v) => formatAxisNumber(v, 0) };
+    }
+    // Unknown/other currency — no compaction convention assumed (matches
+    // `formatCompactCurrency`'s own fallback), unit is just the raw code.
+    return { unit: code, tick: (v) => formatAxisNumber(v, 0) };
+  };
+}
+
+/** Percent axis factory — §01 revenue growth, §03 yield/growth, §04 operating efficiency. Nice-scale ticks are already round numbers (e.g. 0/5/10/15); 1 decimal of headroom covers a fractional step (e.g. 2.5%) without ever showing a spurious ".0". */
+function makePercentAxisFormat(): (domainMax: number) => AxisFormat {
+  return (): AxisFormat => ({ unit: "%", tick: (v) => formatAxisNumber(v, 1) });
+}
+
+/** Ratio (×) axis factory — §05 debt/equity + asset turnover. */
+function makeRatioAxisFormat(): (domainMax: number) => AxisFormat {
+  return (): AxisFormat => ({ unit: "×", tick: (v) => formatAxisNumber(v, 2) });
+}
+
+/**
+ * §04's "MISSING FY23" founder feedback, root-caused: YoY growth for the
+ * earliest fiscal year in any aligned window is null BY CONSTRUCTION
+ * (`yoyGrowth` has no prior-year point to compare against — see growth.ts),
+ * not a bug. Empirically confirmed 2026-08 (widened the fundamentals-
+ * timeseries probe window to period1 = now−8y, RELIANCE.NS, all 6 annual
+ * balance-sheet keys): Yahoo still returns exactly 4 annual points
+ * (2023-03-31..2026-03-31) — it hard-caps annual coverage at 4 periods
+ * regardless of the requested window, so a 5th (FY22) point is categorically
+ * unavailable, not merely unrequested. Widening `ANNUAL_LOOKBACK_YEARS` in
+ * fundamentals.ts would therefore change nothing and was NOT done.
+ * The earliest fiscal year already renders as a visible x-axis category with
+ * a null gap (no line mark) — `ComboChart`'s category labels are never
+ * data-gated — but nothing explained WHY until this footnote names the
+ * actual missing prior year explicitly, rather than a generic "earliest year
+ * has no comparison" note.
+ */
+function firstYearGrowthFootnote(earliestPeriodEndIso: string): string {
+  const d = new Date(earliestPeriodEndIso);
+  const yy = String(d.getUTCFullYear()).slice(-2);
+  const priorYy = String(d.getUTCFullYear() - 1).slice(-2);
+  return `FY${yy} growth needs FY${priorYy} filings, which the data source doesn't provide.`;
 }
 
 function KeyStat({ label, value }: { label: string; value: string }) {
@@ -189,7 +279,7 @@ const SERIES_COLORS = {
   cash: "#3b82f6", // blue, palette unchanged
 } as const;
 
-const SECTION_H_HERO = 210; // §01, full-width
+const SECTION_H_HERO = 170; // §01, full-width — reduced from 210 (founder chart-polish pass: "make it small a bit")
 const SECTION_H_PAIR_TOP = 140; // §02 | §03 — the founder's EPS/Dividends side-by-side
 const SECTION_H_PAIR_MID = 150; // §04 | §05
 const SECTION_H_PAIR_BOTTOM = 200; // §06 | §07
@@ -322,6 +412,20 @@ function IncomeStatementSection({
     });
   }
 
+  // Founder chart-polish pass: the earliest period in ANNUAL mode always has
+  // a null revenue-growth point (no prior year to compare against — same
+  // root cause as §04's, see `firstYearGrowthFootnote`'s doc comment) but
+  // previously had no footnote explaining it in annual mode (the old
+  // condition only fired when growth was missing ENTIRELY, in quarterly
+  // mode). `hasGrowth` being true in annual mode implies exactly this case,
+  // since `yoyGrowth` always nulls the first point in a series.
+  const footnote =
+    mode === "quarterly" && !hasGrowth
+      ? "Revenue growth needs a full year of comparable quarters."
+      : mode === "annual" && hasGrowth
+        ? firstYearGrowthFootnote(groups[0].periodEnd)
+        : undefined;
+
   return (
     <div>
       <SectionHeader index="01" title="Income Statement Performance" />
@@ -329,10 +433,10 @@ function IncomeStatementSection({
         categories={groups.map((g) => g.label)}
         series={series}
         height={SECTION_H_HERO}
-        formatPrimaryAxis={fmtMoney}
-        formatSecondaryAxis={hasGrowth ? fmtPct : undefined}
+        formatPrimaryAxis={makeMoneyAxisFormat(currencyCode)}
+        formatSecondaryAxis={hasGrowth ? makePercentAxisFormat() : undefined}
         ariaLabel="Revenue, net income, EBITDA and revenue growth by period"
-        footnote={!hasGrowth && mode === "quarterly" ? "Revenue growth needs a full year of comparable quarters." : undefined}
+        footnote={footnote}
       />
     </div>
   );
@@ -369,7 +473,7 @@ function EpsSection({
         categories={points.map((p) => compactPeriodLabel(p.periodEnd, mode))}
         series={series}
         height={SECTION_H_PAIR_TOP}
-        formatPrimaryAxis={fmt}
+        formatPrimaryAxis={makeMoneyAxisFormat(currencyCode)}
         ariaLabel="Diluted EPS by period"
         legend={false}
       />
@@ -450,9 +554,9 @@ function OperatingEfficiencySection({
         categories={groups.map((g) => g.label)}
         series={series}
         height={SECTION_H_PAIR_MID}
-        formatPrimaryAxis={fmtPct}
+        formatPrimaryAxis={makePercentAxisFormat()}
         ariaLabel="Year-over-year growth in sales, fixed assets, receivables and inventory"
-        footnote="Year-over-year growth — the earliest available year has no prior-year comparison."
+        footnote={firstYearGrowthFootnote(groups[0].periodEnd)}
       />
     </div>
   );
@@ -580,8 +684,8 @@ function CapitalStructureSection({
         categories={groups.map((g) => g.label)}
         series={series}
         height={SECTION_H_PAIR_MID}
-        formatPrimaryAxis={fmtMoney}
-        formatSecondaryAxis={hasDE || hasATO ? fmtRatio : undefined}
+        formatPrimaryAxis={makeMoneyAxisFormat(currencyCode)}
+        formatSecondaryAxis={hasDE || hasATO ? makeRatioAxisFormat() : undefined}
         ariaLabel="Total assets, total debt, debt-to-equity and asset turnover by year"
         footnote={footnotes.length > 0 ? footnotes.join(" ") : undefined}
       />
@@ -691,7 +795,7 @@ function AssetBaseCompositionSection({
         series={series}
         height={SECTION_H_PAIR_BOTTOM}
         stackedBars
-        formatPrimaryAxis={fmtMoney}
+        formatPrimaryAxis={makeMoneyAxisFormat(currencyCode)}
         ariaLabel="Fixed, current and other assets as a share of total assets by year"
         footnote={
           hasNegativeOther
@@ -746,7 +850,7 @@ function DebtCoverageSection({
         categories={groups.map((g) => g.label)}
         series={series}
         height={SECTION_H_PAIR_BOTTOM}
-        formatPrimaryAxis={fmt}
+        formatPrimaryAxis={makeMoneyAxisFormat(currencyCode)}
         ariaLabel="Debt, free cash flow and cash by period"
       />
     </div>
@@ -838,8 +942,8 @@ function DividendsSection({ dividends }: { dividends: DividendRow[] }) {
           categories={rows.map((r) => formatShortDate(r.date))}
           series={series}
           height={SECTION_H_PAIR_TOP}
-          formatPrimaryAxis={fmtRupee}
-          formatSecondaryAxis={hasYield || hasGrowth ? fmtPct : undefined}
+          formatPrimaryAxis={makeMoneyAxisFormat(null)}
+          formatSecondaryAxis={hasYield || hasGrowth ? makePercentAxisFormat() : undefined}
           ariaLabel="Dividend per payout, annualised yield and TTM dividend growth"
         />
       </div>
@@ -882,8 +986,8 @@ function DividendsSection({ dividends }: { dividends: DividendRow[] }) {
           categories={rows.map((r) => (r.isYtd ? `${r.year} YTD` : `${r.year}`))}
           series={series}
           height={SECTION_H_PAIR_TOP}
-          formatPrimaryAxis={fmtRupee}
-          formatSecondaryAxis={hasYield ? fmtPct : undefined}
+          formatPrimaryAxis={makeMoneyAxisFormat(null)}
+          formatSecondaryAxis={hasYield ? makePercentAxisFormat() : undefined}
           ariaLabel="Dividend per share and annualised yield by year"
         />
       </div>
@@ -910,7 +1014,7 @@ function DividendsSection({ dividends }: { dividends: DividendRow[] }) {
         categories={rows.map((r) => formatShortDate(r.date))}
         series={series}
         height={SECTION_H_PAIR_TOP}
-        formatPrimaryAxis={fmtRupee}
+        formatPrimaryAxis={makeMoneyAxisFormat(null)}
         ariaLabel="Dividend per payout"
         legend={false}
       />
