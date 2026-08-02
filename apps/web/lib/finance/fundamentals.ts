@@ -569,6 +569,14 @@ export interface KeyStats {
   nextEarningsDate?: string;
   /** End of Yahoo's earnings estimate WINDOW ("Oct 9 – Oct 13"-style). Only present when the window has a distinct end. */
   nextEarningsDateEnd?: string;
+  // ── Company profile (Yahoo assetProfile, same request) — TradingView-style Details block. Founded/IPO/ISIN/CFI deliberately absent (not in this keyless source). ──
+  sector?: string;
+  industry?: string;
+  /** First officer whose title matches CEO/Chief Executive, else Yahoo's first-listed officer. */
+  ceoName?: string;
+  website?: string;
+  headquartersCity?: string;
+  employees?: number;
 }
 
 /**
@@ -582,7 +590,7 @@ export interface KeyStats {
 export async function fetchKeyStats(symbol: string): Promise<KeyStats | null> {
   // calendarEvents added 2026-08-02 (founder: "upcoming earnings") — same
   // crumb-gated request, one more module, zero extra HTTP cost.
-  const data = await fetchQuoteSummary(`${symbol}.NS`, ["summaryDetail", "defaultKeyStatistics", "calendarEvents"]);
+  const data = await fetchQuoteSummary(`${symbol}.NS`, ["summaryDetail", "defaultKeyStatistics", "calendarEvents", "assetProfile"]);
   if (!data) return null;
   const result = ((data as Record<string, unknown>)?.quoteSummary as Record<string, unknown> | undefined)?.result as
     | Record<string, unknown>[]
@@ -626,6 +634,23 @@ export async function fetchKeyStats(symbol: string): Promise<KeyStats | null> {
     if (earningsDates.length > 1 && earningsDates[1] !== earningsDates[0]) {
       stats.nextEarningsDateEnd = earningsDates[1];
     }
+  }
+  // Company profile (founder 2026-08-02: TradingView-style "Details") —
+  // assetProfile rides the same request. Founded/IPO date/ISIN/CFI are NOT
+  // available from this keyless source and are deliberately omitted rather
+  // than fabricated (ISIN could come from NSE's equity master later).
+  const ap = row.assetProfile as Record<string, unknown> | undefined;
+  const str = (v: unknown): string | undefined => (typeof v === "string" && v.trim() !== "" ? v : undefined);
+  if (ap) {
+    stats.sector = str(ap.sector);
+    stats.industry = str(ap.industry);
+    stats.website = str(ap.website);
+    stats.headquartersCity = str(ap.city);
+    const emp = ap.fullTimeEmployees;
+    if (typeof emp === "number" && Number.isFinite(emp) && emp > 0) stats.employees = emp;
+    const officers = ap.companyOfficers as Array<Record<string, unknown>> | undefined;
+    const ceo = officers?.find((o) => typeof o.title === "string" && /chief executive|c\.?e\.?o/i.test(o.title)) ?? officers?.[0];
+    stats.ceoName = str(ceo?.name);
   }
   return stats;
 }
