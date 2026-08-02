@@ -1,23 +1,39 @@
 /**
  * TA Suite Sprint S1, T6 — the toolbar's registry: one `ToolMeta` entry per
- * drawable tool (all 62 `DrawingOverlayName`s + the `highlighter` alias =
- * 63), each assigned to exactly one of the 8 families from the Locked
- * Design §2 rail spec: **Lines 12 / Fibonacci 8 / Pitchfork+Gann 7 /
- * Patterns 11 / Shapes 11 / Measure 5 / Annotations 8 / Emoji 1** — those
- * counts are a compile-time-checked FACT of this file (12+8+7+11+11+5+8+1 =
- * 63, verified by hand against `ALL_DRAWING_OVERLAYS.length + 1`), not
- * approximate groupings:
+ * drawable tool, each assigned to exactly one family from the Locked
+ * Design §2 rail spec.
  *
- * - Lines absorbs the 12 plain line/ray/channel built-ins.
- * - Fibonacci absorbs the 1 built-in `fibonacciLine` alongside the 7 new
- *   fib tools.
- * - Patterns absorbs `abcd`/`xabcd` (the pre-S1 harmonic-pattern customs)
- *   alongside the 9 new pattern/Elliott tools — they're harmonic PATTERNS,
- *   not plain lines, a better home than "Lines" ever was for them.
- * - Shapes absorbs `rect`/`arrow` (pre-S1 customs) + the built-in `brush`
- *   + the `highlighter` alias, alongside the 7 new shape tools.
- * - Annotations absorbs the built-in `simpleAnnotation`/`simpleTag`
- *   alongside the 6 new annotation tools.
+ * **Founder-feedback pass (2026-08-03)** added 25 more tools (62 → 87 real
+ * `DrawingOverlayName`s; 88 toolbar entries incl. the `highlighter` alias)
+ * across the original 8 families plus one NEW family, **Cycles**:
+ * **Lines 18 / Fibonacci 13 / Pitchfork+Gann 8 / Patterns 11 / Shapes 14 /
+ * Cycles 3 / Measure 7 / Annotations 13 / Emoji 1** — sums to 88, verified
+ * by hand against `ALL_DRAWING_OVERLAYS.length + 1`, same discipline as the
+ * original S1 family-count identity check:
+ *
+ * - Lines: +6 (`infoLine`/`trendAngle`/`crossLine`/`regressionTrend`/
+ *   `flatTopBottom`/`disjointChannel` — the brief's "Channels" group folded
+ *   into Lines rather than spun out as its own family, since it's only 3
+ *   tools and Lines was already the natural home for channel-shaped tools).
+ * - Fibonacci: +5 (`trendBasedFibTime`/`fibSpiral`/
+ *   `fibSpeedResistanceArcs`/`fibWedge`/`pitchfan`).
+ * - Pitchfork+Gann: +1 (`gannSquareFixed`).
+ * - Shapes: +3 (`arrowMarker`/`circleShape`/`pathLine`).
+ * - Cycles (NEW): +3 (`cyclicLines`/`timeCycles`/`sineLine`) — the brief's
+ *   own explicit "new family Cycles, rail icon" instruction, unlike
+ *   Forecasting/Volume below which it left as either-or.
+ * - Measure: +2 (`sector` — the brief's "Forecasting" tool, folded into
+ *   Measure rather than a 9th family for one tool; `anchoredVWAP` — the
+ *   brief's own explicit "Volume ... new entry in the Measure family").
+ * - Annotations: +5 (`textLabel`/`priceNote`/`pin`/`commentBubble`/
+ *   `signpost`).
+ *
+ * **Deviation flagged**: the brief's own prose enumerates 25 distinct tool
+ * names (hand-recounted twice) but its header says "24 MISSING TOOLS" —
+ * the same kind of internally-inconsistent round-number-vs-enumeration gap
+ * this program hit before (Charting Workbench W1's "Overlay enum is 20
+ * values not 21"). Went with the enumeration (25) as the source of truth,
+ * same call made then.
  *
  * `TOOL_REGISTRY … satisfies Record<ToolbarToolName, ToolMeta>` is the
  * compile-time toolbar-coverage guard (D6-adjacent, extends the pre-S1
@@ -74,12 +90,32 @@ import {
   CircleDashed,
   ArrowUpDown,
   ArrowDown,
+  Info,
+  MoveDiagonal,
+  Sigma,
+  Rows3,
+  Columns3,
+  PieChart,
+  Text,
+  Speech,
+  MapPin,
+  MessageCircle,
+  Signpost,
+  ArrowBigRight,
+  CircleDot,
+  Repeat,
+  RadioTower,
+  Wind,
+  ScanLine,
+  Radar,
+  GitCompareArrows,
+  Orbit,
   type LucideIcon
 } from "lucide-react";
 
 import { ALL_DRAWING_OVERLAYS, type ToolbarToolName } from "./overlays/catalog";
 
-export type FamilyId = "lines" | "fibonacci" | "pitchforkGann" | "patterns" | "shapes" | "measure" | "annotations" | "emoji";
+export type FamilyId = "lines" | "fibonacci" | "pitchforkGann" | "patterns" | "shapes" | "cycles" | "measure" | "annotations" | "emoji";
 
 export interface FamilySpec {
   id: FamilyId;
@@ -87,13 +123,14 @@ export interface FamilySpec {
   icon: LucideIcon;
 }
 
-/** Rail order, left to right — matches the Locked Design §2 spec's own listed order. */
+/** Rail order, left to right — matches the Locked Design §2 spec's own listed order. `cycles` (2026-08-03 founder-feedback pass) inserted after `shapes`, grouping it with the other geometry-drawing families rather than tacking it on at the end. */
 export const TOOL_FAMILIES: FamilySpec[] = [
   { id: "lines", label: "Lines", icon: Minus },
   { id: "fibonacci", label: "Fibonacci", icon: Percent },
   { id: "pitchforkGann", label: "Pitchfork & Gann", icon: Waypoints },
   { id: "patterns", label: "Patterns", icon: Spline },
   { id: "shapes", label: "Shapes", icon: ShapesIcon },
+  { id: "cycles", label: "Cycles", icon: Orbit },
   { id: "measure", label: "Measure", icon: Ruler },
   { id: "annotations", label: "Annotations", icon: MessageSquare },
   { id: "emoji", label: "Emoji", icon: Smile }
@@ -103,10 +140,12 @@ export interface ToolMeta {
   label: string;
   family: FamilyId;
   icon: LucideIcon;
+  /** True for tools that need real traded volume — disabled (greyed, non-selectable, tooltip explains why) while the workbench is charting option-premium pseudo-candles. Currently only `anchoredVWAP`, mirroring `indicator-registry.ts`'s identically-named field on `VWAP` itself. */
+  premiumDisabled?: boolean;
 }
 
 export const TOOL_REGISTRY = {
-  // ── Lines (12) ──────────────────────────────────────────────────────
+  // ── Lines (18 — 12 pre-existing + 6 from the 2026-08-03 pass) ───────
   segment: { label: "Segment", family: "lines", icon: Minus },
   rayLine: { label: "Ray", family: "lines", icon: ArrowRight },
   straightLine: { label: "Line", family: "lines", icon: Slash },
@@ -119,8 +158,14 @@ export const TOOL_REGISTRY = {
   verticalStraightLine: { label: "Vertical", family: "lines", icon: Milestone },
   priceChannelLine: { label: "Channel", family: "lines", icon: Route },
   parallelStraightLine: { label: "Parallel", family: "lines", icon: Waypoints },
+  infoLine: { label: "Info line", family: "lines", icon: Info },
+  trendAngle: { label: "Trend angle", family: "lines", icon: MoveDiagonal },
+  crossLine: { label: "Cross line", family: "lines", icon: Crosshair },
+  regressionTrend: { label: "Regression trend", family: "lines", icon: Sigma },
+  flatTopBottom: { label: "Flat top/bottom", family: "lines", icon: Rows3 },
+  disjointChannel: { label: "Disjoint channel", family: "lines", icon: Columns3 },
 
-  // ── Fibonacci (8) ───────────────────────────────────────────────────
+  // ── Fibonacci (13 — 8 pre-existing + 5 from the 2026-08-03 pass) ────
   fibonacciLine: { label: "Fib line", family: "fibonacci", icon: Percent },
   fibExtension: { label: "Fib extension", family: "fibonacci", icon: TrendingUp },
   fibFan: { label: "Fib fan", family: "fibonacci", icon: Fan },
@@ -129,8 +174,13 @@ export const TOOL_REGISTRY = {
   fibCircle: { label: "Fib circle", family: "fibonacci", icon: Circle },
   fibSpeedResistanceFan: { label: "Fib speed/resistance fan", family: "fibonacci", icon: Grid3x3 },
   fibChannel: { label: "Fib channel", family: "fibonacci", icon: Layers },
+  trendBasedFibTime: { label: "Trend-based fib time", family: "fibonacci", icon: ScanLine },
+  fibSpiral: { label: "Fib spiral", family: "fibonacci", icon: Radar },
+  fibSpeedResistanceArcs: { label: "Fib speed/resistance arcs", family: "fibonacci", icon: CircleDashed },
+  fibWedge: { label: "Fib wedge", family: "fibonacci", icon: GitCompareArrows },
+  pitchfan: { label: "Pitchfan", family: "fibonacci", icon: Fan },
 
-  // ── Pitchfork + Gann (7) ────────────────────────────────────────────
+  // ── Pitchfork + Gann (8 — 7 pre-existing + 1 from the 2026-08-03 pass) ─
   andrewsPitchfork: { label: "Andrews pitchfork", family: "pitchforkGann", icon: Waypoints },
   schiffPitchfork: { label: "Schiff pitchfork", family: "pitchforkGann", icon: GitBranch },
   modifiedSchiffPitchfork: { label: "Modified Schiff pitchfork", family: "pitchforkGann", icon: Compass },
@@ -138,6 +188,7 @@ export const TOOL_REGISTRY = {
   gannBox: { label: "Gann box", family: "pitchforkGann", icon: Grid3x3 },
   gannFan: { label: "Gann fan", family: "pitchforkGann", icon: Fan },
   gannSquare: { label: "Gann square", family: "pitchforkGann", icon: Square },
+  gannSquareFixed: { label: "Gann square (fixed)", family: "pitchforkGann", icon: Grid3x3 },
 
   // ── Patterns (11 — incl. the pre-S1 abcd/xabcd harmonics) ────────────
   abcd: { label: "ABCD", family: "patterns", icon: Spline },
@@ -152,7 +203,7 @@ export const TOOL_REGISTRY = {
   elliottDoubleCombo: { label: "Elliott double combo (0WXY)", family: "patterns", icon: Waves },
   elliottTripleCombo: { label: "Elliott triple combo (0WXYXZ)", family: "patterns", icon: Waves },
 
-  // ── Shapes (11 — incl. pre-S1 rect/arrow, brush, highlighter alias) ──
+  // ── Shapes (14 — 11 pre-existing + 3 from the 2026-08-03 pass) ──────
   rect: { label: "Rectangle", family: "shapes", icon: Square },
   arrow: { label: "Arrow", family: "shapes", icon: ArrowUpRight },
   brush: { label: "Brush", family: "shapes", icon: Brush },
@@ -164,15 +215,25 @@ export const TOOL_REGISTRY = {
   curve: { label: "Curve", family: "shapes", icon: Spline },
   doubleCurve: { label: "Double curve", family: "shapes", icon: Spline },
   polyline: { label: "Polyline", family: "shapes", icon: Move },
+  arrowMarker: { label: "Arrow marker", family: "shapes", icon: ArrowBigRight },
+  circleShape: { label: "Circle", family: "shapes", icon: CircleDot },
+  pathLine: { label: "Path", family: "shapes", icon: Route },
 
-  // ── Measure / Position (5) ────────────────────────────────────────────
+  // ── Cycles (3 — new family, 2026-08-03 pass) ────────────────────────
+  cyclicLines: { label: "Cyclic lines", family: "cycles", icon: Repeat },
+  timeCycles: { label: "Time cycles", family: "cycles", icon: RadioTower },
+  sineLine: { label: "Sine line", family: "cycles", icon: Wind },
+
+  // ── Measure / Position (7 — 5 pre-existing + 2 from the 2026-08-03 pass) ─
   longPosition: { label: "Long position", family: "measure", icon: TrendingUp },
   shortPosition: { label: "Short position", family: "measure", icon: TrendingDown },
   priceRange: { label: "Price range", family: "measure", icon: ArrowUpDown },
   dateRange: { label: "Date range", family: "measure", icon: MoveHorizontal },
   datePriceRange: { label: "Date + price range", family: "measure", icon: Crosshair },
+  sector: { label: "Sector (forecast)", family: "measure", icon: PieChart },
+  anchoredVWAP: { label: "Anchored VWAP", family: "measure", icon: Anchor, premiumDisabled: true },
 
-  // ── Annotations (8 — incl. built-in simpleAnnotation/simpleTag) ──────
+  // ── Annotations (13 — 8 pre-existing + 5 from the 2026-08-03 pass) ──
   simpleAnnotation: { label: "Note (legacy)", family: "annotations", icon: MessageSquare },
   simpleTag: { label: "Tag", family: "annotations", icon: Tag },
   calloutText: { label: "Callout", family: "annotations", icon: Type },
@@ -181,6 +242,11 @@ export const TOOL_REGISTRY = {
   flagMark: { label: "Flag", family: "annotations", icon: Flag },
   arrowMarkUp: { label: "Arrow up", family: "annotations", icon: ArrowUpRight },
   arrowMarkDown: { label: "Arrow down", family: "annotations", icon: ArrowDown },
+  textLabel: { label: "Text label", family: "annotations", icon: Text },
+  priceNote: { label: "Price note", family: "annotations", icon: Speech },
+  pin: { label: "Pin", family: "annotations", icon: MapPin },
+  commentBubble: { label: "Comment", family: "annotations", icon: MessageCircle },
+  signpost: { label: "Signpost", family: "annotations", icon: Signpost },
 
   // ── Emoji (1) ─────────────────────────────────────────────────────────
   emojiSticker: { label: "Emoji sticker", family: "emoji", icon: Star }

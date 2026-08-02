@@ -7,10 +7,12 @@
  * export names as before, no breaking rename, per the ticket's explicit
  * constraint.
  *
- * 16 KLineCharts built-ins + 4 W3 customs (rect/arrow/abcd/xabcd) + 42 new
- * S1 tools = **62 total**. `highlighter` is a toolbar-only alias for
- * `brush` (plan decision D2) — it is NOT a 63rd entry here; see
- * `tool-registry.ts` for where the alias is handled.
+ * 16 KLineCharts built-ins + 4 W3 customs (rect/arrow/abcd/xabcd) + 42 S1
+ * tools + 25 tools from the 2026-08-03 founder-feedback pass (see
+ * `tool-registry.ts`'s own module doc for the exact per-family breakdown
+ * and the "24 vs 25" count-discrepancy note) = **87 total**. `highlighter`
+ * is a toolbar-only alias for `brush` (plan decision D2) — it is NOT an
+ * 88th entry here; see `tool-registry.ts` for where the alias is handled.
  */
 export const BUILT_IN_DRAWING_OVERLAYS = [
   "segment",
@@ -39,10 +41,24 @@ export type LegacyCustomDrawingOverlay = (typeof LEGACY_CUSTOM_DRAWING_OVERLAYS)
 export const PITCHFORK_DRAWING_OVERLAYS = ["andrewsPitchfork", "schiffPitchfork", "modifiedSchiffPitchfork", "insidePitchfork"] as const;
 export type PitchforkDrawingOverlay = (typeof PITCHFORK_DRAWING_OVERLAYS)[number];
 
-export const FIBONACCI_DRAWING_OVERLAYS = ["fibExtension", "fibFan", "fibTimezone", "fibArc", "fibCircle", "fibSpeedResistanceFan", "fibChannel"] as const;
+export const FIBONACCI_DRAWING_OVERLAYS = [
+  "fibExtension",
+  "fibFan",
+  "fibTimezone",
+  "fibArc",
+  "fibCircle",
+  "fibSpeedResistanceFan",
+  "fibChannel",
+  // 2026-08-03 founder-feedback pass.
+  "trendBasedFibTime",
+  "fibSpiral",
+  "fibSpeedResistanceArcs",
+  "fibWedge",
+  "pitchfan",
+] as const;
 export type FibonacciDrawingOverlay = (typeof FIBONACCI_DRAWING_OVERLAYS)[number];
 
-export const GANN_DRAWING_OVERLAYS = ["gannBox", "gannFan", "gannSquare"] as const;
+export const GANN_DRAWING_OVERLAYS = ["gannBox", "gannFan", "gannSquare", "gannSquareFixed"] as const;
 export type GannDrawingOverlay = (typeof GANN_DRAWING_OVERLAYS)[number];
 
 export const PATTERN_DRAWING_OVERLAYS = [
@@ -58,16 +74,59 @@ export const PATTERN_DRAWING_OVERLAYS = [
 ] as const;
 export type PatternDrawingOverlay = (typeof PATTERN_DRAWING_OVERLAYS)[number];
 
-export const SHAPE_DRAWING_OVERLAYS = ["ellipse", "rotatedRect", "triangleShape", "arcShape", "curve", "doubleCurve", "polyline"] as const;
+export const SHAPE_DRAWING_OVERLAYS = [
+  "ellipse",
+  "rotatedRect",
+  "triangleShape",
+  "arcShape",
+  "curve",
+  "doubleCurve",
+  "polyline",
+  // 2026-08-03 founder-feedback pass.
+  "arrowMarker",
+  "circleShape",
+  "pathLine",
+] as const;
 export type ShapeDrawingOverlay = (typeof SHAPE_DRAWING_OVERLAYS)[number];
 
-export const MEASURE_DRAWING_OVERLAYS = ["longPosition", "shortPosition", "priceRange", "dateRange", "datePriceRange"] as const;
+/** 2026-08-03 founder-feedback pass — new family, 3 tools. */
+export const CYCLE_DRAWING_OVERLAYS = ["cyclicLines", "timeCycles", "sineLine"] as const;
+export type CycleDrawingOverlay = (typeof CYCLE_DRAWING_OVERLAYS)[number];
+
+export const MEASURE_DRAWING_OVERLAYS = [
+  "longPosition",
+  "shortPosition",
+  "priceRange",
+  "dateRange",
+  "datePriceRange",
+  // 2026-08-03 founder-feedback pass.
+  "sector",
+  "anchoredVWAP",
+] as const;
 export type MeasureDrawingOverlay = (typeof MEASURE_DRAWING_OVERLAYS)[number];
 
-export const ANNOTATION_DRAWING_OVERLAYS = ["calloutText", "noteAnchored", "priceLabel", "flagMark", "arrowMarkUp", "arrowMarkDown", "emojiSticker"] as const;
+export const ANNOTATION_DRAWING_OVERLAYS = [
+  "calloutText",
+  "noteAnchored",
+  "priceLabel",
+  "flagMark",
+  "arrowMarkUp",
+  "arrowMarkDown",
+  "emojiSticker",
+  // 2026-08-03 founder-feedback pass.
+  "textLabel",
+  "priceNote",
+  "pin",
+  "commentBubble",
+  "signpost",
+] as const;
 export type AnnotationDrawingOverlay = (typeof ANNOTATION_DRAWING_OVERLAYS)[number];
 
-/** Full 62-name toolbar/validation catalogue. */
+/** 2026-08-03 founder-feedback pass — the "Lines"-family Channels group, folded into Lines rather than spun out as its own family (only 3 tools). */
+export const LINE_DRAWING_OVERLAYS = ["infoLine", "trendAngle", "crossLine", "regressionTrend", "flatTopBottom", "disjointChannel"] as const;
+export type LineDrawingOverlay = (typeof LINE_DRAWING_OVERLAYS)[number];
+
+/** Full 87-name toolbar/validation catalogue. */
 export const ALL_DRAWING_OVERLAYS = [
   ...BUILT_IN_DRAWING_OVERLAYS,
   ...LEGACY_CUSTOM_DRAWING_OVERLAYS,
@@ -78,6 +137,8 @@ export const ALL_DRAWING_OVERLAYS = [
   ...SHAPE_DRAWING_OVERLAYS,
   ...MEASURE_DRAWING_OVERLAYS,
   ...ANNOTATION_DRAWING_OVERLAYS,
+  ...LINE_DRAWING_OVERLAYS,
+  ...CYCLE_DRAWING_OVERLAYS,
 ] as const;
 export type DrawingOverlayName = (typeof ALL_DRAWING_OVERLAYS)[number];
 

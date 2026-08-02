@@ -229,8 +229,8 @@ function syncIndicatorInstances(
 
 /** Tool names whose `extendData` must render `styles.pfContent` (the ONE built-in that reads `extendData` as display text — see module doc's simpleAnnotation fix). */
 const EXTEND_DATA_TEXT_OVERLAYS = new Set(["simpleAnnotation"]);
-/** Tool names that open the D10 text popover once their create-POST resolves. */
-const TEXT_INPUT_OVERLAYS = new Set(["calloutText", "noteAnchored"]);
+/** Tool names that open the D10 text popover once their create-POST resolves. Founder-feedback pass (2026-08-03) widens this with the 4 new text-content annotation tools (`textLabel`/`priceNote`/`commentBubble`/`signpost`) — `pin` is deliberately NOT here, it's a glyph-only marker like `flagMark`/`arrowMark*`. */
+const TEXT_INPUT_OVERLAYS = new Set(["calloutText", "noteAnchored", "textLabel", "priceNote", "commentBubble", "signpost"]);
 
 function buildExtendDataForOverlay(overlayName: string): unknown {
   if (!EXTEND_DATA_TEXT_OVERLAYS.has(overlayName)) return undefined;

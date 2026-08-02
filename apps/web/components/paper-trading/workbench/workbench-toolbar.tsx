@@ -23,8 +23,32 @@
  * reflects the FAMILY's own last-used tool (from `toolRecents`) once one
  * exists, per the plan's "family face icon = last-used tool" — falls back
  * to the family's default icon otherwise.
+ *
+ * **Founder bug fix (2026-08-03)**: `ToolFlyout` used to render INSIDE the
+ * rail `<button>` it opens from (`<button onClick={handleFamilyClick}>
+ * {isOpen && <ToolFlyout/>}</button>`). `ToolFlyout` itself renders several
+ * `<button>`s (search-close, per-row select, per-row favorite star, emoji
+ * swatches) — a `<button>` nested inside a `<button>` is invalid HTML, but
+ * because the flyout mounts via client-side DOM mutation (not the initial
+ * HTML parse), the browser does NOT auto-correct it: the nested buttons sit
+ * as real DOM descendants of the outer rail button. A click on any inner
+ * button therefore natively BUBBLES up to the outer button's own `onClick`
+ * after the inner handler runs. Picking a tool called `pick()` (closes the
+ * flyout: `setOpenFamily(null)`), and the SAME click then bubbled into
+ * `handleFamilyClick`, whose toggle updater (`prev === family ? null :
+ * family`) saw `prev` already `null` and flipped it straight back OPEN —
+ * net effect: the flyout never visibly closed, exactly the founder's
+ * report ("after choosing the marker it should shrink — right now it's
+ * covering the chart"). Fixed by making each rail button and its flyout
+ * SIBLINGS inside a `relative` wrapper `<div>` instead of parent/child —
+ * selecting a tool now closes the flyout with nothing left to bubble into.
+ * Also added: Escape-to-close and outside-pointerdown-to-close for any open
+ * flyout (neither existed before), same `pointerdown`-capture + `keydown`
+ * idiom as `drawing-text-popover.tsx`, scoped to a ref around the whole
+ * rail so clicks anywhere inside the toolbar (family buttons, flyout rows)
+ * never count as "outside."
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Magnet, Search, Trash2 } from "lucide-react";
 
 import { TOOL_FAMILIES, TOOL_REGISTRY, type FamilyId, type ToolRegistryName } from "./tool-registry";
@@ -71,7 +95,8 @@ export function WorkbenchToolbar({
   onCancelActiveTool,
   onClearAll,
   magnetEnabled,
-  onToggleMagnet
+  onToggleMagnet,
+  premiumMode
 }: {
   activeTool: string | null;
   onSelectTool: (overlayName: string, presetStyles?: Record<string, unknown>) => void;
@@ -79,15 +104,38 @@ export function WorkbenchToolbar({
   onClearAll: () => void;
   magnetEnabled: boolean;
   onToggleMagnet: () => void;
+  /** True while charting option-premium pseudo-candles — passed straight through to `ToolFlyout` to grey out `premiumDisabled` tools (currently only `anchoredVWAP`). */
+  premiumMode?: boolean;
 }) {
   const [openFamily, setOpenFamily] = useState<FamilyId | "search" | null>(null);
   const [favorites, setFavorites] = useState<Set<string>>(new Set());
   const [recents, setRecents] = useState<string[]>([]);
+  const railRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     setFavorites(new Set(readStoredNames(FAVORITES_KEY)));
     setRecents(readStoredNames(RECENTS_KEY));
   }, []);
+
+  // Founder bug fix (2026-08-03) — Escape and outside-pointerdown both
+  // close whichever flyout is open. Only attached while a flyout IS open
+  // (not on every mount) so this never fights `drawing-text-popover.tsx`'s
+  // own, higher-priority Escape handling when neither is relevant.
+  useEffect(() => {
+    if (openFamily === null) return;
+    function handlePointerDown(e: PointerEvent) {
+      if (railRef.current && !railRef.current.contains(e.target as Node)) setOpenFamily(null);
+    }
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpenFamily(null);
+    }
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [openFamily]);
 
   function toggleFavorite(name: ToolRegistryName) {
     setFavorites((prev) => {
@@ -157,22 +205,24 @@ export function WorkbenchToolbar({
   );
 
   return (
-    <div className="relative flex w-11 shrink-0 flex-col items-center gap-1 overflow-visible border-r border-ink-100 py-2">
-      <button
-        type="button"
-        title="Search all tools"
-        aria-label="Search all tools"
-        aria-pressed={openFamily === "search"}
-        onClick={handleSearchClick}
-        className={`relative flex h-11 w-11 shrink-0 items-center justify-center rounded-lg transition-colors ${
-          openFamily === "search" ? "bg-sky-600 text-white" : "text-ink-500 hover:bg-ink-100 hover:text-ink-900"
-        }`}
-      >
-        <Search className="h-4 w-4" aria-hidden="true" />
+    <div ref={railRef} className="relative flex w-11 shrink-0 flex-col items-center gap-1 overflow-visible border-r border-ink-100 py-2">
+      <div className="relative shrink-0">
+        <button
+          type="button"
+          title="Search all tools"
+          aria-label="Search all tools"
+          aria-pressed={openFamily === "search"}
+          onClick={handleSearchClick}
+          className={`flex h-11 w-11 items-center justify-center rounded-lg transition-colors ${
+            openFamily === "search" ? "bg-sky-600 text-white" : "text-ink-500 hover:bg-ink-100 hover:text-ink-900"
+          }`}
+        >
+          <Search className="h-4 w-4" aria-hidden="true" />
+        </button>
         {openFamily === "search" && (
-          <ToolFlyout family="search" activeTool={activeTool} favorites={favorites} onToggleFavorite={toggleFavorite} onSelectTool={pick} onClose={() => setOpenFamily(null)} />
+          <ToolFlyout family="search" activeTool={activeTool} favorites={favorites} premiumMode={premiumMode} onToggleFavorite={toggleFavorite} onSelectTool={pick} onClose={() => setOpenFamily(null)} />
         )}
-      </button>
+      </div>
 
       <button
         type="button"
@@ -220,30 +270,32 @@ export function WorkbenchToolbar({
         const FaceIcon = lastUsed ? TOOL_REGISTRY[lastUsed].icon : fam.icon;
         const isOpen = openFamily === fam.id;
         return (
-          <button
-            key={fam.id}
-            type="button"
-            title={lastUsed ? `${fam.label} — last used: ${TOOL_REGISTRY[lastUsed].label}` : fam.label}
-            aria-label={fam.label}
-            aria-pressed={isOpen}
-            onClick={() => handleFamilyClick(fam.id)}
-            className={`relative flex h-11 w-11 shrink-0 items-center justify-center rounded-lg transition-colors ${
-              isOpen ? "bg-sky-600 text-white" : "text-ink-500 hover:bg-ink-100 hover:text-ink-900"
-            }`}
-          >
-            <FaceIcon className="h-4 w-4" aria-hidden="true" />
+          <div key={fam.id} className="relative shrink-0">
+            <button
+              type="button"
+              title={lastUsed ? `${fam.label} — last used: ${TOOL_REGISTRY[lastUsed].label}` : fam.label}
+              aria-label={fam.label}
+              aria-pressed={isOpen}
+              onClick={() => handleFamilyClick(fam.id)}
+              className={`flex h-11 w-11 items-center justify-center rounded-lg transition-colors ${
+                isOpen ? "bg-sky-600 text-white" : "text-ink-500 hover:bg-ink-100 hover:text-ink-900"
+              }`}
+            >
+              <FaceIcon className="h-4 w-4" aria-hidden="true" />
+            </button>
             {isOpen && (
               <ToolFlyout
                 family={fam.id}
                 activeTool={activeTool}
                 favorites={favorites}
+                premiumMode={premiumMode}
                 onToggleFavorite={toggleFavorite}
                 onSelectTool={pick}
                 onSelectEmoji={fam.id === "emoji" ? pickEmoji : undefined}
                 onClose={() => setOpenFamily(null)}
               />
             )}
-          </button>
+          </div>
         );
       })}
 

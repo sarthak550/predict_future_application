@@ -63,6 +63,7 @@ import {
   loadStoredSelection,
   saveStoredSelection,
   sanitizeSelectionForMode,
+  resolveParams,
   type IndicatorInstance,
   type IndicatorSelection
 } from "./indicator-registry";
@@ -80,11 +81,23 @@ import {
 } from "./strategy-panel";
 import { STRATEGY_LIST, getStrategyDef, clampStrategyParams, resolveStrategyParams, defaultParamValues } from "@/lib/ta/strategies";
 import { runBacktest, intervalToProductType } from "@/lib/ta/backtest";
+import { computeIndicatorSignal, type IndicatorSignal } from "@/lib/ta/indicator-signals";
+import { computeTechnicalRating } from "@/lib/ta/technicals";
+import { TechnicalsGauge } from "./technicals-gauge";
 
 export type { WorkbenchFeed } from "./use-workbench-candles";
 
-/** Text-family tools that get the D10 popover — see kline-chart.tsx's own `TEXT_INPUT_OVERLAYS` (this is a small, deliberate duplication rather than exporting an internal symbol from that file). */
-const TEXT_FAMILY_OVERLAYS = new Set(["calloutText", "noteAnchored"]);
+/** Text-family tools that get the D10 popover — see kline-chart.tsx's own `TEXT_INPUT_OVERLAYS` (this is a small, deliberate duplication rather than exporting an internal symbol from that file). Founder-feedback pass (2026-08-03) widens this with `textLabel`/`priceNote`/`commentBubble`/`signpost`. */
+const TEXT_FAMILY_OVERLAYS = new Set(["calloutText", "noteAnchored", "textLabel", "priceNote", "commentBubble", "signpost"]);
+/** Popover titles for each text-family tool — falls back to "Callout text" for anything unlisted (defensive, should never actually hit given the Set above is kept in sync). */
+const TEXT_POPOVER_TITLES: Record<string, string> = {
+  calloutText: "Callout text",
+  noteAnchored: "Note",
+  textLabel: "Text label",
+  priceNote: "Price note",
+  commentBubble: "Comment",
+  signpost: "Signpost"
+};
 
 interface SelectedDrawingInfo {
   overlayId: string;
@@ -208,6 +221,32 @@ export function ChartWorkbench({
   const [intentPopover, setIntentPopover] = useState<{ price: number; left: number; top: number } | null>(null);
 
   const { candles, status, errorMessage, sourceLabel, quote, premiumMeta } = useWorkbenchCandles(feed, chartInterval);
+
+  // Founder-feedback pass (2026-08-03) — PART A (per-indicator signal chips) + PART B (Technicals Rating gauge).
+  // Both `computeIndicatorSignal`/`computeTechnicalRating` are pure functions over `candles` — recomputed here
+  // (the owner of both the candle array and the indicator-selection state) and threaded down as plain data,
+  // same "compute in the parent, render in the child" split `drawingsHook`/`strategyRunResult` already use.
+  // Keyed on PRIMITIVES only (render-loop law) — `candlesKey` is the candle array's own last timestamp + length
+  // (recomputes exactly when the loaded window actually changes, not on every render), `instancesKey` is a
+  // stringified snapshot of every active instance's id/name/params (recomputes exactly when an indicator is
+  // added/removed/reconfigured) — NEITHER memo depends on the `candles`/`indicators` object references directly.
+  const candlesKey = candles.length > 0 ? `${candles.length}:${candles[candles.length - 1].timestamp}` : "empty";
+  const instancesKey = [...indicators.main, ...indicators.sub].map((i) => `${i.instanceId}:${i.name}:${(i.params ?? []).join(",")}`).join("|");
+
+  const instanceSignals = useMemo(() => {
+    const map = new Map<string, IndicatorSignal>();
+    for (const instance of [...indicators.main, ...indicators.sub]) {
+      map.set(instance.instanceId, computeIndicatorSignal(instance.name, resolveParams(instance), candles));
+    }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [instancesKey, candlesKey]);
+
+  const technicalRating = useMemo(
+    () => computeTechnicalRating(candles),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [candlesKey]
+  );
 
   // TA Suite S3 — right-panel tabs (D5: [Ticket | Strategy] segmented,
   // ticket stays MOUNTED and CSS-hidden, never conditionally rendered — the
@@ -474,6 +513,7 @@ export function ChartWorkbench({
         <TimeframeSelector intervals={isPremiumMode ? PREMIUM_INTERVALS : WORKBENCH_INTERVALS} value={chartInterval} onChange={setChartInterval} />
         <IndicatorActiveStrip
           instances={[...indicators.main, ...indicators.sub]}
+          signals={instanceSignals}
           onOpenSettings={handleOpenIndicatorSettings}
           onRemove={handleRemoveIndicator}
           onOpenDialog={() => setIndicatorDialogOpen(true)}
@@ -508,6 +548,7 @@ export function ChartWorkbench({
           onClearAll={handleClearAll}
           magnetEnabled={magnetEnabled}
           onToggleMagnet={() => setMagnetEnabled((v) => !v)}
+          premiumMode={isPremiumMode}
         />
 
         <div className="relative min-w-0 flex-1">
@@ -579,7 +620,7 @@ export function ChartWorkbench({
               left={textPopover.left}
               top={textPopover.top}
               initialText={textPopover.initialText}
-              title={textPopover.overlayName === "noteAnchored" ? "Note" : "Callout text"}
+              title={TEXT_POPOVER_TITLES[textPopover.overlayName] ?? "Callout text"}
               onConfirm={handleTextConfirm}
               onDismissEmpty={handleTextDismissEmpty}
             />
@@ -630,6 +671,7 @@ export function ChartWorkbench({
               <div style={{ display: rightPanelTab === "ticket" ? "block" : "none" }}>{ticket}</div>
               {hasOpenedStrategyTab && (
                 <div style={{ display: rightPanelTab === "strategy" ? "block" : "none" }}>
+                  <TechnicalsGauge rating={technicalRating} />
                   <StrategyConfigPanel
                     strategyId={strategyId}
                     onStrategyIdChange={handleStrategyIdChange}

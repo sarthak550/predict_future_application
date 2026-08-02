@@ -18,6 +18,13 @@
  * guard, the same `registered` boolean pattern `order-line-overlay.ts`'s
  * `registerWorkbenchOrderLineOverlay` established (safe under React 18 dev
  * double-invoke / hot reload).
+ *
+ * Founder-feedback pass (2026-08-03) adds `lines.ts` (the new "Lines"-family
+ * Channels group + infoLine/trendAngle/crossLine) and `cycles.ts` (the new
+ * Cycles family) — `fibonacci.ts`/`gann.ts`/`shapes.ts`/`measure.ts`/
+ * `annotations.ts` are all EXTENDED in place (same register function names,
+ * more overlays registered inside each), so this file's own wiring only
+ * needs the 2 new imports/calls below.
  */
 import "./ta-consistency"; // type-only guard — see that file's doc.
 import { registerLegacyShapeOverlays } from "./legacy-shapes";
@@ -28,6 +35,8 @@ import { registerPatternOverlays } from "./patterns";
 import { registerShapeOverlays } from "./shapes";
 import { registerMeasureOverlays } from "./measure";
 import { registerAnnotationOverlays } from "./annotations";
+import { registerLineOverlays } from "./lines";
+import { registerCycleOverlays } from "./cycles";
 
 export * from "./catalog";
 
@@ -44,4 +53,6 @@ export function registerTaOverlays(): void {
   registerShapeOverlays();
   registerMeasureOverlays();
   registerAnnotationOverlays();
+  registerLineOverlays();
+  registerCycleOverlays();
 }

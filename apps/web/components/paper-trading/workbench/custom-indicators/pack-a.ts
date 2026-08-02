@@ -47,7 +47,7 @@
 import type { IndicatorTemplate } from "klinecharts";
 import { registerIndicator } from "klinecharts";
 
-import { ema, wilderAtr, supertrend as computeSupertrend } from "@/lib/ta/math";
+import { ema, wilderAtr, supertrend as computeSupertrend, sessionVwap, ichimokuLines, rollingHigh, rollingLow } from "@/lib/ta/math";
 
 interface OhlcCandle {
   timestamp: number;
@@ -58,36 +58,10 @@ interface OhlcCandle {
 }
 
 // ── Shared local helpers (indicator-specific plumbing — not promoted to
-// `lib/ta/math.ts`, which is scoped to the 6 pure functions the brief names
-// explicitly). ────────────────────────────────────────────────────────────
-
-function rollingHigh(candles: readonly OhlcCandle[], period: number): (number | undefined)[] {
-  const out: (number | undefined)[] = new Array(candles.length);
-  for (let i = 0; i < candles.length; i++) {
-    if (i < period - 1) {
-      out[i] = undefined;
-      continue;
-    }
-    let hi = -Infinity;
-    for (let k = i - period + 1; k <= i; k++) hi = Math.max(hi, candles[k].high);
-    out[i] = hi;
-  }
-  return out;
-}
-
-function rollingLow(candles: readonly OhlcCandle[], period: number): (number | undefined)[] {
-  const out: (number | undefined)[] = new Array(candles.length);
-  for (let i = 0; i < candles.length; i++) {
-    if (i < period - 1) {
-      out[i] = undefined;
-      continue;
-    }
-    let lo = Infinity;
-    for (let k = i - period + 1; k <= i; k++) lo = Math.min(lo, candles[k].low);
-    out[i] = lo;
-  }
-  return out;
-}
+// `lib/ta/math.ts`). `rollingHigh`/`rollingLow` themselves WERE promoted
+// (founder-feedback pass, 2026-08-03 — `indicator-signals.ts`/
+// `technicals.ts` need the identical window-high/low primitive), imported
+// above instead of defined locally. ─────────────────────────────────────
 
 /** IST calendar date key (`YYYY-MM-DD`) for session-boundary detection — same "IST-midnight session math" convention as `reference_nse_data_gotchas` memory documents for the rest of the codebase. */
 function istDateKey(timestampMs: number): string {
@@ -135,20 +109,7 @@ export const ichimoku: IndicatorTemplate<IchimokuPoint, number> = {
   ],
   calc: (dataList, indicator) => {
     const [tenkanPeriod, kijunPeriod, senkouBPeriod] = indicator.calcParams;
-    const tenkanHigh = rollingHigh(dataList, tenkanPeriod);
-    const tenkanLow = rollingLow(dataList, tenkanPeriod);
-    const kijunHigh = rollingHigh(dataList, kijunPeriod);
-    const kijunLow = rollingLow(dataList, kijunPeriod);
-    const senkouBHigh = rollingHigh(dataList, senkouBPeriod);
-    const senkouBLow = rollingLow(dataList, senkouBPeriod);
-    return dataList.map((_, i) => {
-      const point: IchimokuPoint = {};
-      if (tenkanHigh[i] !== undefined) point.tenkan = (tenkanHigh[i]! + tenkanLow[i]!) / 2;
-      if (kijunHigh[i] !== undefined) point.kijun = (kijunHigh[i]! + kijunLow[i]!) / 2;
-      if (point.tenkan !== undefined && point.kijun !== undefined) point.senkouA = (point.tenkan + point.kijun) / 2;
-      if (senkouBHigh[i] !== undefined) point.senkouB = (senkouBHigh[i]! + senkouBLow[i]!) / 2;
-      return point;
-    });
+    return ichimokuLines(dataList, tenkanPeriod, kijunPeriod, senkouBPeriod);
   },
   createTooltipDataSource: ({ indicator, crosshair }) => {
     const dataIndex = crosshair.dataIndex ?? 0;
@@ -283,24 +244,7 @@ export const vwap: IndicatorTemplate<{ vwap?: number }, number> = {
   shouldOhlc: true,
   calcParams: [],
   figures: [{ key: "vwap", title: "VWAP: ", type: "line" }],
-  calc: (dataList) => {
-    let cumPv = 0;
-    let cumVol = 0;
-    let lastKey: string | null = null;
-    return dataList.map((c) => {
-      const key = istDateKey(c.timestamp);
-      if (key !== lastKey) {
-        cumPv = 0;
-        cumVol = 0;
-        lastKey = key;
-      }
-      const vol = c.volume ?? 0;
-      const typicalPrice = (c.high + c.low + c.close) / 3;
-      cumPv += typicalPrice * vol;
-      cumVol += vol;
-      return { vwap: cumVol > 0 ? cumPv / cumVol : undefined };
-    });
-  }
+  calc: (dataList) => sessionVwap(dataList).map((vwap) => ({ vwap }))
 };
 
 // ── KELTNER ───────────────────────────────────────────────────────────────

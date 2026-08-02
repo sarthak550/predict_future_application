@@ -16,6 +16,13 @@
  * both ≥32px touch targets with a visible selected/active state that
  * doesn't rely on color alone (a filled star icon / a ring, not just a
  * color swap) — the sprint's explicit a11y acceptance line.
+ *
+ * Founder-feedback pass (2026-08-03) — `premiumMode` disables any row whose
+ * `ToolMeta.premiumDisabled` is set (currently only `anchoredVWAP`, same
+ * field name/posture as `indicator-dialog.tsx`'s identical gate on the
+ * `VWAP` indicator): the row is unclickable, visually dimmed, and carries a
+ * `title` tooltip explaining why — never silently hidden, so a user doesn't
+ * wonder where the tool went.
  */
 import { useMemo, useState } from "react";
 import { Search, Star, X } from "lucide-react";
@@ -29,6 +36,7 @@ export function ToolFlyout({
   family,
   activeTool,
   favorites,
+  premiumMode,
   onToggleFavorite,
   onSelectTool,
   onSelectEmoji,
@@ -37,6 +45,8 @@ export function ToolFlyout({
   family: FamilyId | "search";
   activeTool: string | null;
   favorites: Set<string>;
+  /** True while charting option-premium pseudo-candles — disables any `premiumDisabled` tool row. See module doc. */
+  premiumMode?: boolean;
   onToggleFavorite: (name: ToolRegistryName) => void;
   onSelectTool: (name: ToolRegistryName) => void;
   /** Only meaningful for the `emoji` family — see module doc. */
@@ -46,18 +56,26 @@ export function ToolFlyout({
   const [query, setQuery] = useState("");
   const trimmed = query.trim().toLowerCase();
 
-  const groups = useMemo((): Array<{ label: string; rows: Array<{ name: ToolRegistryName; label: string; icon: (typeof TOOL_REGISTRY)[ToolRegistryName]["icon"] }> }> => {
+  const groups = useMemo((): Array<{
+    label: string;
+    rows: Array<{ name: ToolRegistryName; label: string; icon: (typeof TOOL_REGISTRY)[ToolRegistryName]["icon"]; premiumDisabled?: boolean }>;
+  }> => {
     if (trimmed.length > 0) {
       return TOOL_FAMILIES.map((fam) => ({
         label: fam.label,
         rows: toolsInFamily(fam.id)
           .filter(({ meta }) => meta.label.toLowerCase().includes(trimmed) || String(fam).toLowerCase().includes(trimmed))
-          .map(({ name, meta }) => ({ name, label: meta.label, icon: meta.icon }))
+          .map(({ name, meta }) => ({ name, label: meta.label, icon: meta.icon, premiumDisabled: meta.premiumDisabled }))
       })).filter((g) => g.rows.length > 0);
     }
     if (family === "search") return [];
     const fam = TOOL_FAMILIES.find((f) => f.id === family);
-    return [{ label: fam?.label ?? "", rows: toolsInFamily(family).map(({ name, meta }) => ({ name, label: meta.label, icon: meta.icon })) }];
+    return [
+      {
+        label: fam?.label ?? "",
+        rows: toolsInFamily(family).map(({ name, meta }) => ({ name, label: meta.label, icon: meta.icon, premiumDisabled: meta.premiumDisabled }))
+      }
+    ];
   }, [trimmed, family]);
 
   return (
@@ -97,12 +115,19 @@ export function ToolFlyout({
       {groups.map((group) => (
         <div key={group.label}>
           {trimmed.length > 0 && <p className="px-3 pt-2 text-[10px] font-semibold uppercase tracking-wide text-ink-400">{group.label}</p>}
-          {group.rows.map(({ name, label, icon: Icon }) => {
+          {group.rows.map(({ name, label, icon: Icon, premiumDisabled }) => {
             const isFavorite = favorites.has(name);
             const isActive = activeTool === name;
+            const disabled = Boolean(premiumMode && premiumDisabled);
             return (
               <div key={name} className={`flex items-center gap-2 px-2 py-1 ${isActive ? "bg-sky-50" : "hover:bg-ink-50"}`}>
-                <button type="button" onClick={() => onSelectTool(name)} className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-1.5 py-1.5 text-left">
+                <button
+                  type="button"
+                  disabled={disabled}
+                  title={disabled ? "Not available for option premium data (no real traded volume)" : undefined}
+                  onClick={() => !disabled && onSelectTool(name)}
+                  className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-1.5 py-1.5 text-left disabled:cursor-not-allowed disabled:opacity-40"
+                >
                   <Icon className={`h-4 w-4 shrink-0 ${isActive ? "text-sky-600" : "text-ink-500"}`} aria-hidden="true" />
                   <span className={`truncate text-xs ${isActive ? "font-semibold text-sky-700" : "text-ink-700"}`}>{label}</span>
                 </button>

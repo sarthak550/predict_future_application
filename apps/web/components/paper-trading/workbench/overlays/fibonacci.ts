@@ -29,10 +29,14 @@ import {
   FIB_SEQUENCE,
   pixelXToDataIndex,
   dataIndexToPixelX,
+  lerp,
   SKY,
   SKY_FILL,
   VIOLET,
+  AMBER,
+  TEAL,
 } from "./figure-kit";
+import { computePitchforkGeometry, medianDirection } from "./pitchfork-math";
 
 function pointValue(points: Array<{ value?: number }>, index: number): number {
   return points[index]?.value ?? 0;
@@ -265,6 +269,169 @@ export function registerFibonacciOverlays(): void {
         const extended = extendToRightEdge(a, b, rightX);
         figures.push(level === 0 || level === 1 ? solidLine([a, extended], color, 1.3) : dashedLine([a, extended], color, 1));
         figures.push(labelFigure(a, formatPercentLabel(level), { align: "left", background: color }));
+      }
+      return figures;
+    },
+  });
+
+  // ── trendBasedFibTime — 3pt (A, B, C), totalStep 4. Verticals at ────────
+  // dataIndex(C) + fib(n) * (dataIndex(B) - dataIndex(A)) for n in the
+  // Fibonacci sequence — the SAME dataIndex-delta convention `fibTimezone`
+  // established, just with the "unit" span measured between A→B while the
+  // verticals themselves originate from C (the "trend-based" distinction
+  // from plain `fibTimezone`).
+  registerOverlay({
+    name: "trendBasedFibTime",
+    totalStep: 4,
+    needDefaultPointFigure: true,
+    needDefaultXAxisFigure: true,
+    needDefaultYAxisFigure: true,
+    createPointFigures: ({ coordinates, bounding, xAxis, overlay }: OverlayCreateFiguresCallbackParams<unknown>): OverlayFigure[] => {
+      if (coordinates.length < 2) return [dashedLine(coordinates)];
+      const color = resolveLineColor(overlay.styles, SKY);
+      if (coordinates.length < 3) return [dashedLine([coordinates[0], coordinates[1]], color, 1)];
+      const [pA, pB, pC] = coordinates;
+      const dataIndexA = pixelXToDataIndex(xAxis, pA.x);
+      const dataIndexB = pixelXToDataIndex(xAxis, pB.x);
+      const dataIndexC = pixelXToDataIndex(xAxis, pC.x);
+      const unit = dataIndexB - dataIndexA;
+      const top = 0;
+      const bottom = bounding.height;
+      const figures: OverlayFigure[] = [dashedLine([pA, pB], color, 1)];
+      const maxX = bounding.width * 3;
+      for (const fib of FIB_SEQUENCE) {
+        const targetDataIndex = dataIndexC + fib * unit;
+        const x = dataIndexToPixelX(xAxis, targetDataIndex, pC.x);
+        if (Math.abs(x) > maxX) break;
+        figures.push(dashedLine([{ x, y: top }, { x, y: bottom }], color, 1));
+        figures.push(labelFigure({ x, y: top + 14 }, String(fib), { background: color }));
+      }
+      return figures;
+    },
+  });
+
+  // ── fibSpiral — 2pt (A, B), totalStep 3. Logarithmic (golden) spiral ────
+  // from A: r(θ) = a·φ^(2θ/π) — grows by the golden ratio φ every quarter
+  // turn, the standard "golden spiral" parametrization — scaled so radius
+  // = |AB| after exactly one full turn (a = |AB|/φ⁴). ~3 turns, sampled
+  // into ONE polyline `solidLine` figure (verified multi-point `line`
+  // figures render as a true connected polyline — see `cycles.ts`'s
+  // `sineLine` doc for the same verification, against `dist/index.esm.js`'s
+  // `drawLine`).
+  registerOverlay({
+    name: "fibSpiral",
+    totalStep: 3,
+    needDefaultPointFigure: true,
+    needDefaultXAxisFigure: true,
+    needDefaultYAxisFigure: true,
+    createPointFigures: ({ coordinates, overlay }: OverlayCreateFiguresCallbackParams<unknown>): OverlayFigure[] => {
+      if (coordinates.length < 2) return [];
+      const color = resolveLineColor(overlay.styles, VIOLET);
+      const [pA, pB] = coordinates;
+      const scale = Math.hypot(pB.x - pA.x, pB.y - pA.y) || 1;
+      const phase = Math.atan2(pB.y - pA.y, pB.x - pA.x);
+      const PHI = (1 + Math.sqrt(5)) / 2;
+      const a = scale / Math.pow(PHI, 4);
+      const turns = 3;
+      const points: Coordinate[] = [];
+      const steps = 180; // 3 turns * 60 samples/turn — smooth without being an unbounded loop.
+      for (let i = 0; i <= steps; i++) {
+        const theta = (i / steps) * turns * 2 * Math.PI;
+        const r = a * Math.pow(PHI, (2 * theta) / Math.PI);
+        points.push({ x: pA.x + r * Math.cos(theta + phase), y: pA.y + r * Math.sin(theta + phase) });
+      }
+      return [solidLine(points, color, 1.4)];
+    },
+  });
+
+  // ── fibSpeedResistanceArcs — 2pt (A, B), totalStep 3. Quarter-arcs ──────
+  // centered at A, radius = |AB| * fib level, sweeping from the horizontal
+  // (0°, the positive-x pixel axis) to the A→B ray — the classic "bounded
+  // in the A-B box" Speed Resistance Arcs look, distinct from `fibArc`'s
+  // own full semicircle (±90° around the A→B direction). Correct for the
+  // common down-right/up-right drag directions this tool is normally drawn
+  // in; a leftward drag (B left of A) sweeps the LONG way round instead of
+  // reflecting across a second reference angle — a documented simplification
+  // for the uncommon case, not a silent bug.
+  registerOverlay({
+    name: "fibSpeedResistanceArcs",
+    totalStep: 3,
+    needDefaultPointFigure: true,
+    needDefaultXAxisFigure: true,
+    needDefaultYAxisFigure: true,
+    createPointFigures: ({ coordinates, overlay }: OverlayCreateFiguresCallbackParams<unknown>): OverlayFigure[] => {
+      if (coordinates.length < 2) return [];
+      const color = resolveLineColor(overlay.styles, SKY);
+      const [pA, pB] = coordinates;
+      const radiusFull = Math.hypot(pB.x - pA.x, pB.y - pA.y);
+      const angleToB = Math.atan2(pB.y - pA.y, pB.x - pA.x);
+      const startAngle = Math.min(0, angleToB);
+      const endAngle = Math.max(0, angleToB);
+      const figures: OverlayFigure[] = [solidLine([pA, pB], color, 1)];
+      for (const level of FIB_RETRACEMENT_LEVELS) {
+        if (level === 0) continue;
+        figures.push(arcFigure(pA.x, pA.y, radiusFull * level, startAngle, endAngle, color, level === 1 ? 1.4 : 1));
+      }
+      return figures;
+    },
+  });
+
+  // ── fibWedge — 3pt (A, B, C), totalStep 4. Two rays A→B, A→C + fib- ─────
+  // fraction arcs of the SHORTER ray, swept between the two ray angles.
+  registerOverlay({
+    name: "fibWedge",
+    totalStep: 4,
+    needDefaultPointFigure: true,
+    needDefaultXAxisFigure: true,
+    needDefaultYAxisFigure: true,
+    createPointFigures: ({ coordinates, overlay }: OverlayCreateFiguresCallbackParams<unknown>): OverlayFigure[] => {
+      if (coordinates.length < 2) return [dashedLine(coordinates)];
+      const color = resolveLineColor(overlay.styles, AMBER);
+      const [pA, pB, pC] = coordinates;
+      if (!pC) return [solidLine([pA, pB], color, 1.2)];
+      const lenB = Math.hypot(pB.x - pA.x, pB.y - pA.y);
+      const lenC = Math.hypot(pC.x - pA.x, pC.y - pA.y);
+      const shorter = Math.min(lenB, lenC) || 1;
+      const angleB = Math.atan2(pB.y - pA.y, pB.x - pA.x);
+      const angleC = Math.atan2(pC.y - pA.y, pC.x - pA.x);
+      const startAngle = Math.min(angleB, angleC);
+      const endAngle = Math.max(angleB, angleC);
+      const figures: OverlayFigure[] = [solidLine([pA, pB], color, 1.2), solidLine([pA, pC], color, 1.2)];
+      for (const level of FIB_RETRACEMENT_LEVELS) {
+        if (level === 0) continue;
+        figures.push(arcFigure(pA.x, pA.y, shorter * level, startAngle, endAngle, color, level === 1 ? 1.4 : 1));
+      }
+      return figures;
+    },
+  });
+
+  // ── pitchfan — 3pt (A, B, C), totalStep 4. Andrews-style median (A → ────
+  // midpoint(B,C)) + fib-fraction fan rays parallel to the median, anchored
+  // at fib-fraction points along the B→C "tine line" — reuses
+  // `pitchfork-math.ts`'s shared geometry (the "andrews" variant) rather
+  // than re-deriving the median, same discipline as S1's `pitchforks.ts`.
+  registerOverlay({
+    name: "pitchfan",
+    totalStep: 4,
+    needDefaultPointFigure: true,
+    needDefaultXAxisFigure: true,
+    needDefaultYAxisFigure: true,
+    createPointFigures: ({ coordinates, bounding, overlay }: OverlayCreateFiguresCallbackParams<unknown>): OverlayFigure[] => {
+      if (coordinates.length < 2) return [dashedLine(coordinates)];
+      const color = resolveLineColor(overlay.styles, TEAL);
+      if (coordinates.length < 3) return [dashedLine([coordinates[0], coordinates[1]], color, 1)];
+      const [p0, p1, p2] = coordinates;
+      const geo = computePitchforkGeometry(p0, p1, p2, "andrews");
+      const dir = medianDirection(geo);
+      const rightX = bounding.width;
+      const medianExtended = extendToRightEdge(geo.medianStart, geo.medianEnd, rightX);
+      const figures: OverlayFigure[] = [solidLine([geo.medianStart, medianExtended], color, 1.6)];
+      for (const level of FIB_RETRACEMENT_LEVELS) {
+        const anchor = lerp(geo.tineAAnchor, geo.tineBAnchor, level);
+        const rayFar: Coordinate = { x: anchor.x + dir.x, y: anchor.y + dir.y };
+        const extended = extendToRightEdge(anchor, rayFar, rightX);
+        figures.push(level === 0 || level === 1 ? solidLine([anchor, extended], color, 1.2) : dashedLine([anchor, extended], color, 0.9));
+        figures.push(labelFigure(anchor, formatPercentLabel(level), { background: color }));
       }
       return figures;
     },

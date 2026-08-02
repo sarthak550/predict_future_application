@@ -9,31 +9,13 @@
 import type { IndicatorTemplate } from "klinecharts";
 import { registerIndicator } from "klinecharts";
 
-import { rsi, sma, wilderAtr, wma, vwma, hma } from "@/lib/ta/math";
+import { wilderAtr, wma, vwma, hma, moneyFlowIndex, stochRsi as computeStochRsi, aroon as computeAroon } from "@/lib/ta/math";
 
 interface OhlcvCandle {
   high: number;
   low: number;
   close: number;
   volume?: number;
-}
-
-/** SMA over a sparse (leading-`undefined`-run) series, applied only to the DEFINED suffix and mapped back onto the original index space — see `stochrsi`'s own doc comment below for why this exists instead of a naive `sma(values.map(v => v ?? NaN), period)`. */
-function compactSma(values: readonly (number | undefined)[], period: number, length: number): (number | undefined)[] {
-  const compact: number[] = [];
-  const compactIndexToOriginal: number[] = [];
-  values.forEach((v, i) => {
-    if (v !== undefined && Number.isFinite(v)) {
-      compact.push(v);
-      compactIndexToOriginal.push(i);
-    }
-  });
-  const smoothed = sma(compact, period);
-  const out: (number | undefined)[] = new Array(length).fill(undefined);
-  smoothed.forEach((v, i) => {
-    if (v !== undefined) out[compactIndexToOriginal[i]] = v;
-  });
-  return out;
 }
 
 // ── ATRX ──────────────────────────────────────────────────────────────────
@@ -62,43 +44,19 @@ export const stochrsi: IndicatorTemplate<{ k?: number; d?: number }, number> = {
     { key: "k", title: "K: ", type: "line" },
     { key: "d", title: "D: ", type: "line" }
   ],
+  // Founder-feedback pass (2026-08-03): calc body promoted to `lib/ta/math.ts`'s
+  // `stochRsi()` (the exact NaN-poisoning `compactSma` fix this comment used
+  // to describe now lives there, generalized) — the `STOCHRSI` signal chip
+  // and this chart indicator now share one implementation.
   calc: (dataList, indicator) => {
     const [rsiPeriod, stochPeriod, kSmooth, dSmooth] = indicator.calcParams;
-    const closes = dataList.map((c) => c.close);
-    const rsiValues = rsi(closes, rsiPeriod);
-
-    const stochRsiRaw: (number | undefined)[] = new Array(dataList.length);
-    for (let i = 0; i < dataList.length; i++) {
-      if (i < rsiPeriod + stochPeriod - 1) {
-        stochRsiRaw[i] = undefined;
-        continue;
-      }
-      const window = rsiValues.slice(i - stochPeriod + 1, i + 1) as number[];
-      if (window.some((v) => v === undefined)) {
-        stochRsiRaw[i] = undefined;
-        continue;
-      }
-      const hi = Math.max(...window);
-      const lo = Math.min(...window);
-      const current = rsiValues[i]!;
-      stochRsiRaw[i] = hi === lo ? 0 : ((current - lo) / (hi - lo)) * 100;
-    }
-
-    // `sma()`'s rolling window sum is a running total (`sum += v; sum -=
-    // v[i-period]`) — feeding it a placeholder `NaN` for the leading
-    // undefined run would poison that running sum PERMANENTLY (`NaN - x`
-    // is always `NaN`, so it never "rolls out" of the window the way a
-    // real numeric placeholder would). `compactSma` avoids this by
-    // smoothing only over the DEFINED-value run, then mapping the result
-    // back onto the original (sparse) index space — used for both the K
-    // and D smoothing passes below (caught by this module's own dev-time
-    // fixture: an earlier version fed `NaN` into K's `sma()` call directly
-    // and every K/D value downstream came back `NaN`, silently, with no
-    // thrown error).
-    const kValues = compactSma(stochRsiRaw, kSmooth, dataList.length);
-    const dValues = compactSma(kValues, dSmooth, dataList.length);
-
-    return dataList.map((_, i) => ({ k: kValues[i], d: dValues[i] }));
+    return computeStochRsi(
+      dataList.map((c) => c.close),
+      rsiPeriod,
+      stochPeriod,
+      kSmooth,
+      dSmooth
+    );
   }
 };
 
@@ -161,24 +119,12 @@ export const mfi: IndicatorTemplate<{ mfi?: number }, number> = {
   precision: 2,
   calcParams: [14],
   figures: [{ key: "mfi", title: "MFI: ", type: "line" }],
+  // Founder-feedback pass (2026-08-03): calc body promoted to `lib/ta/math.ts`'s
+  // `moneyFlowIndex()` — the `MFI` signal chip and this chart indicator now
+  // share one implementation.
   calc: (dataList, indicator) => {
     const [period] = indicator.calcParams;
-    const typicalPrices = dataList.map((c) => (c.high + c.low + c.close) / 3);
-    const rawFlow = dataList.map((c, i) => typicalPrices[i] * (c.volume ?? 0));
-
-    return dataList.map((_, i) => {
-      if (i < period) return {};
-      let posSum = 0;
-      let negSum = 0;
-      for (let k = i - period + 1; k <= i; k++) {
-        if (k === 0) continue; // no prior typical price to compare the very first loaded bar against.
-        if (typicalPrices[k] > typicalPrices[k - 1]) posSum += rawFlow[k];
-        else if (typicalPrices[k] < typicalPrices[k - 1]) negSum += rawFlow[k];
-      }
-      if (negSum === 0) return { mfi: 100 };
-      const moneyRatio = posSum / negSum;
-      return { mfi: 100 - 100 / (1 + moneyRatio) };
-    });
+    return moneyFlowIndex(dataList, period).map((mfi) => ({ mfi }));
   }
 };
 
@@ -225,23 +171,12 @@ export const aroon: IndicatorTemplate<{ up?: number; down?: number }, number> = 
     { key: "up", title: "Up: ", type: "line" },
     { key: "down", title: "Down: ", type: "line" }
   ],
+  // Founder-feedback pass (2026-08-03): calc body promoted to `lib/ta/math.ts`'s
+  // `aroon()` — the `AROON` signal chip and this chart indicator now share
+  // one implementation.
   calc: (dataList, indicator) => {
     const [period] = indicator.calcParams;
-    return dataList.map((_, i) => {
-      if (i < period) return {};
-      let highIdx = i - period;
-      let lowIdx = i - period;
-      for (let k = i - period; k <= i; k++) {
-        if (dataList[k].high >= dataList[highIdx].high) highIdx = k;
-        if (dataList[k].low <= dataList[lowIdx].low) lowIdx = k;
-      }
-      const barsSinceHigh = i - highIdx;
-      const barsSinceLow = i - lowIdx;
-      return {
-        up: ((period - barsSinceHigh) / period) * 100,
-        down: ((period - barsSinceLow) / period) * 100
-      };
-    });
+    return computeAroon(dataList, period);
   }
 };
 

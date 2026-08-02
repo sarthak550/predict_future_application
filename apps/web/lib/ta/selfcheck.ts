@@ -29,6 +29,8 @@ import { computeOrderCosts } from "@predict-future/business-rules/papertrading/c
 
 import { runBacktest, intervalToProductType, type BacktestTrade } from "./backtest";
 import { maCross, finalizeSignals, type StrategyCandle, type StrategySignal } from "./strategies";
+import { computeTechnicalRating } from "./technicals";
+import { computeIndicatorSignal } from "./indicator-signals";
 
 // ── Tiny assertion harness ───────────────────────────────────────────────
 
@@ -259,6 +261,98 @@ function checkFinalizeSignalsDropsLeadingSell(): void {
   assert("finalizeSignals: second surviving signal is the SELL at index 3", finalized[1]?.index === 3 && finalized[1]?.side === "SELL");
 }
 
+// ── Fixture 3: `computeTechnicalRating` — a constructed uptrend must vote
+// buy-heavy, downtrend sell-heavy, flat neutral-heavy. Per the founder-
+// feedback pass's own "never fabricate" rule, a monotonic series still
+// leaves SOME oscillators reading a mixed/contrarian signal at the final
+// bar (a sustained uptrend commonly shows short-term "overbought" on
+// several oscillators — a real, correct property of technical-rating
+// systems, not a bug) — so the DIRECTIONAL assertions below are on the
+// deterministic MA group (hand-provable: monotonic price ⇒ close on the
+// same side of every SMA/EMA, every bar) and on the combined `overall`
+// bucket (which the MA group's un-mixed strength is enough to tip into the
+// correct family even with a contrarian oscillator group — see below). ───
+
+function buildMonotonicCandles(n: number, start: number, step: number): StrategyCandle[] {
+  const baseTs = Date.UTC(2026, 0, 1);
+  const dayMs = 24 * 60 * 60 * 1000;
+  return Array.from({ length: n }, (_, i) => {
+    const c = start + step * i;
+    return { timestamp: baseTs + i * dayMs, open: c, high: c, low: c, close: c, volume: 1000 };
+  });
+}
+
+function buildConstantCandles(n: number, price: number): StrategyCandle[] {
+  const baseTs = Date.UTC(2026, 0, 1);
+  const dayMs = 24 * 60 * 60 * 1000;
+  return Array.from({ length: n }, (_, i) => ({ timestamp: baseTs + i * dayMs, open: price, high: price, low: price, close: price, volume: 1000 }));
+}
+
+function checkTechnicalRatingFixtures(): void {
+  // Uptrend: 80 monotonically increasing bars — every SMA/EMA sits below the current close every bar (a moving
+  // average of a strictly increasing series is always < the latest value), so the MA group is UNANIMOUS buy
+  // across every one of its 8 qualifying lines (periods 10/20/30/50 × SMA+EMA; 100/200 correctly SKIPPED — only
+  // 80 bars loaded, the "never fabricate" rule) — a hand-provable, not just empirical, property.
+  const up = buildMonotonicCandles(80, 1000, 2);
+  const upRating = computeTechnicalRating(up);
+  assert("technicalRating: uptrend MA group is unanimous buy", upRating.ma.buy === 8 && upRating.ma.sell === 0 && upRating.ma.neutral === 0, JSON.stringify(upRating.ma));
+  assert("technicalRating: uptrend MA vote is strongBuy", upRating.ma.vote === "strongBuy", upRating.ma.vote);
+  assert("technicalRating: uptrend overall lands in the buy family (buy/strongBuy)", upRating.overall === "buy" || upRating.overall === "strongBuy", upRating.overall);
+  assert("technicalRating: uptrend MA periods 100/200 skipped, not fabricated (80 bars loaded)", upRating.ma.buy + upRating.ma.sell + upRating.ma.neutral === 8, `got ${upRating.ma.buy + upRating.ma.sell + upRating.ma.neutral}`);
+
+  // Downtrend — the exact mirror.
+  const down = buildMonotonicCandles(80, 1000, -2);
+  const downRating = computeTechnicalRating(down);
+  assert("technicalRating: downtrend MA group is unanimous sell", downRating.ma.buy === 0 && downRating.ma.sell === 8 && downRating.ma.neutral === 0, JSON.stringify(downRating.ma));
+  assert("technicalRating: downtrend MA vote is strongSell", downRating.ma.vote === "strongSell", downRating.ma.vote);
+  assert("technicalRating: downtrend overall lands in the sell family (sell/strongSell)", downRating.overall === "sell" || downRating.overall === "strongSell", downRating.overall);
+
+  // Flat: 250 bars at a CONSTANT price — every SMA/EMA equals the close exactly (hand-provable: the moving
+  // average of a constant series IS that constant), so the MA group is unanimous NEUTRAL across all 12
+  // qualifying lines (250 bars covers all six periods including 100/200). `overall` combines this neutral-heavy
+  // MA group with a (also neutral-heavy, empirically — most oscillators sit at their own defined "no signal"
+  // midpoint on unchanging closes) oscillator group.
+  const flat = buildConstantCandles(250, 1000);
+  const flatRating = computeTechnicalRating(flat);
+  assert("technicalRating: flat MA group is unanimous neutral", flatRating.ma.buy === 0 && flatRating.ma.sell === 0 && flatRating.ma.neutral === 12, JSON.stringify(flatRating.ma));
+  assert("technicalRating: flat MA vote is neutral", flatRating.ma.vote === "neutral", flatRating.ma.vote);
+  assert("technicalRating: flat overall is neutral", flatRating.overall === "neutral", flatRating.overall);
+}
+
+// ── Fixture 4: `computeIndicatorSignal` — 3 hand-verified per-indicator
+// signal-state fixtures (the honesty-law dispatcher, not the rating gauge). ─
+
+function checkIndicatorSignalFixtures(): void {
+  // RSI(6) on a strictly monotonic 20-bar uptrend (closes 10..29, +1/bar): every price change is a GAIN, so
+  // avgLoss is seeded at 0 and NEVER accumulates a loss again — `rsi = avgLoss===0 ? 100 : ...` fires on every
+  // bar from the seed index onward. Exactly 100, not just "high" — hand-traced from the seeding rule itself
+  // (`math.ts`'s own `rsi()` doc), same discipline as the maCross fixture above.
+  const risingCloses = Array.from({ length: 20 }, (_, i) => 10 + i);
+  const risingCandles = closesToCandles(risingCloses);
+  const rsiSignal = computeIndicatorSignal("RSI", [6, 12, 24], risingCandles);
+  assert("indicatorSignal: RSI(6) on a strict uptrend is exactly 100", rsiSignal.valueText.includes("RSI(6) 100.00"), rsiSignal.valueText);
+  assert("indicatorSignal: RSI(6) on a strict uptrend is overbought", rsiSignal.state === "overbought", `${rsiSignal.state}`);
+
+  // AROON(25) on a strictly monotonic 30-bar uptrend: with STRICTLY increasing high AND low, the rolling-window
+  // "most recent bar with the highest high" is ALWAYS the current bar itself (barsSinceHigh=0 ⇒ up=100%), and
+  // the "most recent bar with the lowest low" is ALWAYS the window's OLDEST bar (barsSinceLow=period ⇒ down=0%)
+  // — hand-provable for ANY strictly monotonic series, not just this one, via the exact `>=`/`<=` comparison
+  // order `math.ts`'s `aroon()` uses (see that function's own promoted-from-pack-b doc).
+  const aroonCandles = closesToCandles(Array.from({ length: 30 }, (_, i) => 100 + i));
+  const aroonSignal = computeIndicatorSignal("AROON", [25], aroonCandles);
+  assert("indicatorSignal: AROON(25) on a strict uptrend is Up 100% / Down 0%", aroonSignal.valueText === "Up 100% · Down 0%", aroonSignal.valueText);
+  assert("indicatorSignal: AROON(25) on a strict uptrend is bullish", aroonSignal.state === "bullish", `${aroonSignal.state}`);
+
+  // BOLL(5,2) on a 6-bar spike fixture [10,10,10,10,10,100] — hand-computed exactly like the maCross fixture:
+  // window[1..5]=[10,10,10,10,100], mean=140/5=28, population variance=(4×18² + 72²)/5=6480/5=1296, sd=√1296=36,
+  // upper=28+2×36=100, lower=28-2×36=-44. The spike bar's close (100) sits EXACTLY at the upper band.
+  const boomCandles = closesToCandles([10, 10, 10, 10, 10, 100]);
+  const bollSignal = computeIndicatorSignal("BOLL", [5, 2], boomCandles);
+  assert("indicatorSignal: BOLL(5,2) spike — mid/upper/lower hand-computed exactly", bollSignal.valueText === "Mid 28.00 · Upper 100.00 · Lower -44.00", bollSignal.valueText);
+  assert("indicatorSignal: BOLL(5,2) spike close sits at/above the upper band — bullish", bollSignal.state === "bullish", `${bollSignal.state}`);
+  assert("indicatorSignal: BOLL(5,2) spike stateText", bollSignal.stateText === "At/above upper band", `${bollSignal.stateText}`);
+}
+
 // ── Run everything ────────────────────────────────────────────────────────
 
 const signals = checkMaCrossSignals();
@@ -267,6 +361,8 @@ checkZeroSignalEdgeCase();
 checkSingleOpenTradeEdgeCase();
 checkQtyMinOneGuard();
 checkFinalizeSignalsDropsLeadingSell();
+checkTechnicalRatingFixtures();
+checkIndicatorSignalFixtures();
 
 // eslint-disable-next-line no-console
 console.log(`ta:check — ${passCount} passed, ${failCount} failed.`);

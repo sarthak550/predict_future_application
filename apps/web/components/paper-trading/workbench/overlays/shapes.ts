@@ -15,8 +15,8 @@
  * is the correct usage here — `drawPath` offsets EVERY command's args by
  * the figure's own `(x,y)`, uppercase or lowercase alike.
  */
-import { registerOverlay, type OverlayFigure, type OverlayCreateFiguresCallbackParams } from "klinecharts";
-import { solidLine, dashedLine, fillPolygon, pathFigure, resolveLineColor, resolvePolygonColor, INK_600, SKY_FILL } from "./figure-kit";
+import { registerOverlay, type Coordinate, type OverlayFigure, type OverlayCreateFiguresCallbackParams } from "klinecharts";
+import { solidLine, dashedLine, fillPolygon, circleFigure, pathFigure, resolveLineColor, resolvePolygonColor, INK_600, SKY_FILL } from "./figure-kit";
 
 export function registerShapeOverlays(): void {
   // ── ellipse — 3pt: P0 center, P1 major-axis endpoint (radius + ─────────
@@ -163,6 +163,96 @@ export function registerShapeOverlays(): void {
       const color = resolveLineColor(overlay.styles, INK_600);
       const figures: OverlayFigure[] = [];
       for (let i = 1; i < coordinates.length; i++) figures.push(solidLine([coordinates[i - 1], coordinates[i]], color, 1.4));
+      return figures;
+    },
+  });
+
+  // ── arrowMarker — 2pt: ONE thick filled arrow polygon (shaft + head), ───
+  // wider-bodied than the pre-existing thin-line-plus-barbs `arrow`
+  // (`legacy-shapes.ts`) per the brief's own explicit contrast. `atan2`
+  // direction + a perpendicular unit vector, same quadrant-safe technique
+  // `arrow` itself established, just building a single closed polygon
+  // instead of a line + separate barb triangle.
+  registerOverlay({
+    name: "arrowMarker",
+    totalStep: 3,
+    needDefaultPointFigure: true,
+    needDefaultXAxisFigure: true,
+    needDefaultYAxisFigure: true,
+    createPointFigures: ({ coordinates, overlay }: OverlayCreateFiguresCallbackParams<unknown>): OverlayFigure[] => {
+      if (coordinates.length < 2) return [];
+      const color = resolveLineColor(overlay.styles, INK_600);
+      const [p0, p1] = coordinates;
+      const len = Math.hypot(p1.x - p0.x, p1.y - p0.y) || 1;
+      const ux = (p1.x - p0.x) / len;
+      const uy = (p1.y - p0.y) / len;
+      const perpX = -uy;
+      const perpY = ux;
+      const shaftHalfWidth = 4;
+      const headLength = Math.min(18, len * 0.6);
+      const headHalfWidth = 9;
+      const shaftEnd: Coordinate = { x: p1.x - ux * headLength, y: p1.y - uy * headLength };
+      const offset = (base: Coordinate, halfWidth: number, sign: 1 | -1): Coordinate => ({
+        x: base.x + sign * perpX * halfWidth,
+        y: base.y + sign * perpY * halfWidth,
+      });
+      const polygon: Coordinate[] = [
+        offset(p0, shaftHalfWidth, 1),
+        offset(shaftEnd, shaftHalfWidth, 1),
+        offset(shaftEnd, headHalfWidth, 1),
+        p1,
+        offset(shaftEnd, headHalfWidth, -1),
+        offset(shaftEnd, shaftHalfWidth, -1),
+        offset(p0, shaftHalfWidth, -1),
+      ];
+      return [fillPolygon(polygon, color, color, 1)];
+    },
+  });
+
+  // ── circleShape — 2pt: plain center→edge circle. The `fibCircle` tool ───
+  // draws CONCENTRIC fib-fraction circles; this is the single, plain,
+  // stroke_fill circle TradingView ships that this workbench never had.
+  registerOverlay({
+    name: "circleShape",
+    totalStep: 3,
+    needDefaultPointFigure: true,
+    needDefaultXAxisFigure: true,
+    needDefaultYAxisFigure: true,
+    createPointFigures: ({ coordinates, overlay }: OverlayCreateFiguresCallbackParams<unknown>): OverlayFigure[] => {
+      if (coordinates.length < 2) return [];
+      const color = resolveLineColor(overlay.styles, INK_600);
+      const fill = resolvePolygonColor(overlay.styles, SKY_FILL);
+      const [center, edge] = coordinates;
+      const radius = Math.hypot(edge.x - center.x, edge.y - center.y) || 1;
+      return [circleFigure(center.x, center.y, radius, color, { fill, size: 1.4 })];
+    },
+  });
+
+  // ── pathLine — up to 6 anchors (totalStep 7, same "fixed anchor count, ──
+  // no finish-on-click" convention `polyline` established per D3) + a
+  // filled arrowhead at the LAST point, oriented along the final segment's
+  // own direction (falls back to the first→only segment while fewer than 2
+  // points exist).
+  registerOverlay({
+    name: "pathLine",
+    totalStep: 7,
+    needDefaultPointFigure: true,
+    needDefaultXAxisFigure: true,
+    needDefaultYAxisFigure: true,
+    createPointFigures: ({ coordinates, overlay }: OverlayCreateFiguresCallbackParams<unknown>): OverlayFigure[] => {
+      if (coordinates.length < 2) return [];
+      const color = resolveLineColor(overlay.styles, INK_600);
+      const figures: OverlayFigure[] = [];
+      for (let i = 1; i < coordinates.length; i++) figures.push(solidLine([coordinates[i - 1], coordinates[i]], color, 1.4));
+      const last = coordinates[coordinates.length - 1];
+      const prev = coordinates[coordinates.length - 2];
+      const angle = Math.atan2(last.y - prev.y, last.x - prev.x);
+      const headLength = 12;
+      const headAngle = Math.PI / 7;
+      const backAngle = angle + Math.PI;
+      const leftBarb: Coordinate = { x: last.x + headLength * Math.cos(backAngle - headAngle), y: last.y + headLength * Math.sin(backAngle - headAngle) };
+      const rightBarb: Coordinate = { x: last.x + headLength * Math.cos(backAngle + headAngle), y: last.y + headLength * Math.sin(backAngle + headAngle) };
+      figures.push(fillPolygon([last, leftBarb, rightBarb], color, color, 1));
       return figures;
     },
   });

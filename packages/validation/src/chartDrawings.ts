@@ -34,9 +34,13 @@ export const chartKeySchema = z
  * program (W1-W3): 16 KLineCharts built-ins + 4 custom overlays (`rect`,
  * `arrow`, `abcd`, `xabcd`). The TA Suite Sprint S1 (2026-08-02, see
  * `cto_assignment_brief_ta_suite_s1.md`) adds 42 more, family-grouped below,
- * bringing the total to 62. `highlighter` is NOT a 63rd value here — per
- * plan decision D2 it's a toolbar-only alias that persists as a `brush` row
- * with preset styles, so it never appears in this enum.
+ * bringing the total to 62. The 2026-08-03 founder-feedback pass adds 25
+ * more (see `apps/web/components/paper-trading/workbench/tool-registry.ts`'s
+ * module doc for the exact per-family breakdown and its "24 vs 25"
+ * enumeration note), bringing the total to **87**. `highlighter` is NOT an
+ * 88th value here — per plan decision D2 it's a toolbar-only alias that
+ * persists as a `brush` row with preset styles, so it never appears in this
+ * enum.
  */
 export const CHART_DRAWING_OVERLAY_NAMES = [
   // Built-ins with a toolbar entry from W1/W2 onward.
@@ -82,6 +86,16 @@ export const CHART_DRAWING_OVERLAY_NAMES = [
   "gannFan",
   "gannSquare",
 
+  // ── 2026-08-03: Fibonacci +5 ─────────────────────────────────────────
+  "trendBasedFibTime",
+  "fibSpiral",
+  "fibSpeedResistanceArcs",
+  "fibWedge",
+  "pitchfan",
+
+  // ── 2026-08-03: Gann +1 ──────────────────────────────────────────────
+  "gannSquareFixed",
+
   // ── S1: Patterns / Elliott (9) ───────────────────────────────────────
   "cypher",
   "threeDrives",
@@ -117,6 +131,35 @@ export const CHART_DRAWING_OVERLAY_NAMES = [
   "arrowMarkUp",
   "arrowMarkDown",
   "emojiSticker",
+
+  // ── 2026-08-03: Lines +6 (incl. the "Channels" group) ────────────────
+  "infoLine",
+  "trendAngle",
+  "crossLine",
+  "regressionTrend",
+  "flatTopBottom",
+  "disjointChannel",
+
+  // ── 2026-08-03: Shapes +3 ────────────────────────────────────────────
+  "arrowMarker",
+  "circleShape",
+  "pathLine",
+
+  // ── 2026-08-03: Cycles +3 (new family) ───────────────────────────────
+  "cyclicLines",
+  "timeCycles",
+  "sineLine",
+
+  // ── 2026-08-03: Measure +2 ───────────────────────────────────────────
+  "sector",
+  "anchoredVWAP",
+
+  // ── 2026-08-03: Annotations +5 ───────────────────────────────────────
+  "textLabel",
+  "priceNote",
+  "pin",
+  "commentBubble",
+  "signpost",
 ] as const;
 
 export type ChartDrawingOverlayName = (typeof CHART_DRAWING_OVERLAY_NAMES)[number];
