@@ -122,8 +122,15 @@ async function refreshFundamentalsInBackground(symbol: string, companyName: stri
   // dividends: null means the fetch itself failed (keep old value); [] is a
   // valid "no dividends declared" answer and MUST be written, not skipped.
   if (dividends !== null) data.dividends = dividends as Prisma.InputJsonValue;
-  // debtCoverage: write when ANY series returned — per-series absence inside the blob is the honest signal.
-  if (Object.values(debtCoverage).some((s) => s !== null)) data.debtCoverage = debtCoverage as unknown as Prisma.InputJsonValue;
+  // debtCoverage: write when ANY series returned — per-series absence inside
+  // the blob is the honest signal. `currencyCode` (Sprint 1, T1.1) is a
+  // derived scalar, not a series, and must NOT count as "data" here — a
+  // batch that returned a currencyCode but zero usable series (shouldn't
+  // happen in practice, since currencyCode is only ever set from a series
+  // that itself succeeded, but kept explicit for correctness) must still be
+  // treated as a total failure, matching pre-T1.1 behavior exactly.
+  const debtCoverageSeries = Object.fromEntries(Object.entries(debtCoverage).filter(([key]) => key !== "currencyCode"));
+  if (Object.values(debtCoverageSeries).some((s) => s !== null)) data.debtCoverage = debtCoverage as unknown as Prisma.InputJsonValue;
 
   if (Object.keys(data).length === 0) return; // total failure across every series — nothing to persist.
 

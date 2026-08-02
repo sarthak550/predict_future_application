@@ -113,6 +113,25 @@ export type DividendPayoutRow = {
    * purely from other dividend events, no price dependency).
    */
   ttmDividendTotal: number | null;
+  /**
+   * Fundamentals Panel v2 (Sprint 1, T1.1) — same trailing-12-month sum as
+   * `ttmDividendTotal`, but for the window ending exactly ONE YEAR before
+   * `date` (i.e. the (date−24mo, date−12mo] window) — the comparison basis
+   * for `growthPct` below. Nullable for the same type-safety/forward-compat
+   * reason as `ttmDividendTotal` (also derived purely from dividend events,
+   * no price dependency) — in practice always computable, including a
+   * genuine `0` for a symbol with no payouts in that earlier window (e.g. a
+   * recent IPO or a new dividend payer), which is an honest zero, not an
+   * absent one.
+   */
+  ttmDividendTotalPrevYear: number | null;
+  /**
+   * `ttmDividendTotalPrevYear > 0 ? (ttmDividendTotal − ttmDividendTotalPrevYear) / ttmDividendTotalPrevYear × 100 : null`.
+   * Null — NEVER a fabricated 0% or ∞% — whenever the prior-year TTM total
+   * is 0 (a new payer has no meaningful "growth" from a zero base) or
+   * unresolvable.
+   */
+  growthPct: number | null;
   /** Share close price on `date`, or the last trading-day close before it. Null when no resolvable price (whole-fetch failure or `date` falls before any close in the fetched window). */
   priceOnDate: number | null;
   /** `ttmDividendTotal / priceOnDate * 100`. Null (never a fabricated 0%) whenever `priceOnDate` is null. */
@@ -162,25 +181,34 @@ async function fetchWithTimeout(url: string): Promise<Response> {
   }
 }
 
-type TimeseriesResultRow = { asOfDate?: string; reportedValue?: { raw?: number } };
+type TimeseriesResultRow = { asOfDate?: string; reportedValue?: { raw?: number }; currencyCode?: string };
 type TimeseriesResultElement = {
   meta?: { type?: string[] };
   [dataKey: string]: unknown;
 };
 
+/** Return shape of `fetchFundamentalsTimeseries` — the parsed per-key series PLUS the per-key `currencyCode` observed on that series' rows (verified live: `currencyCode` is a per-ROW field, e.g. INFY.NS's `annualTotalRevenue` rows each carry `"currencyCode": "USD"` — see `fetchDebtCoverage`'s doc comment for how callers reduce this to one blob-level code). */
+type FundamentalsTimeseriesResult = {
+  series: Map<string, FundamentalsPoint[]>;
+  /** type-key -> the currencyCode found on its rows (first non-empty one seen; a series' rows are expected to agree within themselves). Only set for keys that also made it into `series` (i.e. had at least one valid point). */
+  currencyCodes: Map<string, string>;
+};
+
 /**
  * Fetches a batch of `type` keys from fundamentals-timeseries in one request
- * and returns a map of type-key -> its series (oldest first), or an empty
- * map on total failure. Per-key absence (see file doc comment) is NOT an
- * error — it just means that key is missing from the returned map, which
- * callers read as "series absent" via `?? null`.
+ * and returns each key's series (oldest first) plus its currencyCode, or
+ * empty maps on total failure. Per-key absence (see file doc comment) is NOT
+ * an error — it just means that key is missing from the returned maps,
+ * which callers read as "series absent" via `?? null`.
  */
 async function fetchFundamentalsTimeseries(
   symbol: string,
   typeKeys: string[],
   lookbackYears: number
-): Promise<Map<string, FundamentalsPoint[]>> {
-  const result = new Map<string, FundamentalsPoint[]>();
+): Promise<FundamentalsTimeseriesResult> {
+  const series = new Map<string, FundamentalsPoint[]>();
+  const currencyCodes = new Map<string, string>();
+  const empty: FundamentalsTimeseriesResult = { series, currencyCodes };
   const period2 = Math.floor(Date.now() / 1000);
   const period1 = period2 - Math.floor(lookbackYears * 365.25 * ONE_DAY_S);
   const url = `${FUNDAMENTALS_TIMESERIES_BASE}/${encodeURIComponent(symbol)}.NS?type=${typeKeys.join(",")}&period1=${period1}&period2=${period2}`;
@@ -190,12 +218,12 @@ async function fetchFundamentalsTimeseries(
     response = await fetchWithTimeout(url);
   } catch (err) {
     console.warn(`[fundamentals] Network error fetching ${symbol}: ${err instanceof Error ? err.message : err}`);
-    return result;
+    return empty;
   }
 
   if (!response.ok) {
     console.warn(`[fundamentals] Yahoo fundamentals-timeseries returned ${response.status} for ${symbol}`);
-    return result;
+    return empty;
   }
 
   let data: unknown;
@@ -203,7 +231,7 @@ async function fetchFundamentalsTimeseries(
     data = await response.json();
   } catch (err) {
     console.warn(`[fundamentals] JSON parse error for ${symbol}: ${err instanceof Error ? err.message : err}`);
-    return result;
+    return empty;
   }
 
   const elements = (data as Record<string, unknown>)?.timeseries as Record<string, unknown> | undefined;
@@ -216,46 +244,49 @@ async function fetchFundamentalsTimeseries(
     if (!Array.isArray(rows) || rows.length === 0) continue; // absent series — see file doc comment
 
     const points: FundamentalsPoint[] = [];
+    let currencyCode: string | undefined;
     for (const row of rows) {
       if (!row || !row.asOfDate || typeof row.reportedValue?.raw !== "number") continue;
       points.push({ periodEnd: row.asOfDate, value: row.reportedValue.raw });
+      if (!currencyCode && typeof row.currencyCode === "string" && row.currencyCode) currencyCode = row.currencyCode;
     }
     if (points.length > 0) {
-      result.set(
+      series.set(
         typeKey,
         points.sort((a, b) => a.periodEnd.localeCompare(b.periodEnd))
       );
+      if (currencyCode) currencyCodes.set(typeKey, currencyCode);
     }
   }
 
-  return result;
+  return { series, currencyCodes };
 }
 
 /** Annual revenue, net income, diluted EPS. Each field null when Yahoo has no coverage for that series on this symbol. */
 export async function fetchAnnualFundamentals(symbol: string): Promise<AnnualFundamentals> {
-  const map = await fetchFundamentalsTimeseries(
+  const { series } = await fetchFundamentalsTimeseries(
     symbol,
     ["annualTotalRevenue", "annualNetIncome", "annualDilutedEPS"],
     ANNUAL_LOOKBACK_YEARS
   );
   return {
-    revenue: map.get("annualTotalRevenue") ?? null,
-    netIncome: map.get("annualNetIncome") ?? null,
-    dilutedEps: map.get("annualDilutedEPS") ?? null,
+    revenue: series.get("annualTotalRevenue") ?? null,
+    netIncome: series.get("annualNetIncome") ?? null,
+    dilutedEps: series.get("annualDilutedEPS") ?? null,
   };
 }
 
 /** Quarterly revenue, net income, diluted EPS (latest ~5 quarters). Each field null when Yahoo has no coverage. */
 export async function fetchQuarterlyFundamentals(symbol: string): Promise<QuarterlyFundamentals> {
-  const map = await fetchFundamentalsTimeseries(
+  const { series } = await fetchFundamentalsTimeseries(
     symbol,
     ["quarterlyTotalRevenue", "quarterlyNetIncome", "quarterlyDilutedEPS"],
     QUARTERLY_LOOKBACK_YEARS
   );
   return {
-    revenue: map.get("quarterlyTotalRevenue") ?? null,
-    netIncome: map.get("quarterlyNetIncome") ?? null,
-    dilutedEps: map.get("quarterlyDilutedEPS") ?? null,
+    revenue: series.get("quarterlyTotalRevenue") ?? null,
+    netIncome: series.get("quarterlyNetIncome") ?? null,
+    dilutedEps: series.get("quarterlyDilutedEPS") ?? null,
   };
 }
 
@@ -386,61 +417,87 @@ function closeOnOrBefore(closes: DailyClose[], targetDate: string): number | nul
  * Dividend history as individual PAYOUT events (founder 2026-08-02b —
  * reverted from the previous per-calendar-year rollup: interim vs final vs
  * special payouts must be visible as separate bars again), each joined with
- * a trailing-12-month "annualised yield" computed AT that payout's date.
+ * a trailing-12-month "annualised yield" computed AT that payout's date,
+ * PLUS (Fundamentals Panel v2, Sprint 1, T1.1) a TTM-dividend-growth figure
+ * comparing that trailing-12-month total against the SAME trailing-12-month
+ * window exactly one year earlier.
  *
- * Two windows are in play:
- *  - DISPLAY window `[period1, period2]`: `DIVIDEND_LOOKBACK_YEARS` back
- *    from today — only payout events in this range become rows.
- *  - FETCH window: extended `DIVIDEND_TTM_WINDOW_DAYS` further back than
- *    `period1`, so the TTM sum for the OLDEST displayed payout still has a
- *    complete trailing year of events to sum, even though those earlier
- *    events themselves never become their own row. Without this extension
- *    the oldest displayed payout's annualised yield would be silently
- *    understated (a partial-year sum masquerading as a trailing-12-month
- *    one) — the same class of bug the previous per-year shape's window
- *    alignment fix addressed, now reapplied to the per-payout window.
- *
- * Prices come from the SAME daily-close feed (`fetchDailyCloses`, itself a
- * generalization of the prior per-year shape's `fetchYearEndCloses`) over
- * the same extended fetch window, so `closeOnOrBefore` can always resolve a
- * payout near the display window's edge.
+ * THREE windows are in play now (widened from two — Sprint 1, T1.1):
+ *  - DISPLAY window `[displayPeriod1, period2]`: `DIVIDEND_LOOKBACK_YEARS`
+ *    back from today — only payout events in this range become rows.
+ *  - PRICES fetch window `[pricesPeriod1, period2]`: extended ONE
+ *    `DIVIDEND_TTM_WINDOW_DAYS` further back than `displayPeriod1` — same
+ *    as before this ticket, UNCHANGED — so `closeOnOrBefore` can still
+ *    resolve a price for a payout near the display window's edge. Prices
+ *    are only ever needed for `ttmDividendTotal` (whose window never
+ *    reaches further back than this), never for the new prior-year
+ *    comparison (`ttmDividendTotalPrevYear`/`growthPct` have no price
+ *    dependency at all), so this window does NOT need to widen further.
+ *  - EVENTS fetch window `[eventsPeriod1, period2]`: extended TWO
+ *    `DIVIDEND_TTM_WINDOW_DAYS` back — one more full year further than the
+ *    prices window. The oldest displayed payout's `ttmDividendTotalPrevYear`
+ *    needs events reaching back to (that payout's date − 2 years); since
+ *    the oldest displayed payout's date is by construction >=
+ *    `displayPeriod1`, `eventsPeriod1 = displayPeriod1 − 2×TTM_WINDOW`
+ *    always reaches far enough for every row, by construction — no payout
+ *    can ever see a partially-covered prior-year window.
  *
  * Null (not []) when the underlying events fetch itself failed — an empty
  * array is a valid, honest "no dividends declared" answer. A stock with
  * real payout events but no resolvable price data still returns rows —
  * `priceOnDate`/`annualisedYieldPct` are null in that case, never a
- * fabricated price or 0% yield; `ttmDividendTotal` is unaffected since it
- * has no price dependency.
+ * fabricated price or 0% yield; `ttmDividendTotal`/`ttmDividendTotalPrevYear`
+ * are unaffected since neither has a price dependency. `growthPct` is null
+ * (never 0%/∞%) whenever the prior-year TTM total is 0 — a new payer's
+ * "growth" from a zero base isn't a meaningful percentage.
  */
 export async function fetchDividendHistory(symbol: string): Promise<DividendPayoutRow[] | null> {
   const period2 = Math.floor(Date.now() / 1000);
   const displayPeriod1 = period2 - Math.floor(DIVIDEND_LOOKBACK_YEARS * 365.25 * ONE_DAY_S);
-  const fetchPeriod1 = displayPeriod1 - DIVIDEND_TTM_WINDOW_DAYS * ONE_DAY_S;
+  const pricesPeriod1 = displayPeriod1 - DIVIDEND_TTM_WINDOW_DAYS * ONE_DAY_S; // unchanged from pre-T1.1 behavior
+  const eventsPeriod1 = displayPeriod1 - 2 * DIVIDEND_TTM_WINDOW_DAYS * ONE_DAY_S; // widened one more trailing year (T1.1)
   const displayPeriod1Iso = new Date(displayPeriod1 * 1000).toISOString().slice(0, 10);
 
-  const events = await fetchDividendEvents(symbol, fetchPeriod1, period2);
+  const events = await fetchDividendEvents(symbol, eventsPeriod1, period2);
   if (events === null) return null; // genuine fetch failure — distinct from "no dividends."
   if (events.length === 0) return []; // valid chart, zero dividend events — honest empty answer.
 
   // A close-price failure degrades every priceOnDate/annualisedYieldPct to
-  // null; the ₹ bars and ttmDividendTotal still render on their own —
-  // dividends without price context is a normal, honest partial state here.
-  const closes = await fetchDailyCloses(symbol, fetchPeriod1, period2);
+  // null; the ₹ bars and ttmDividendTotal(/PrevYear)/growthPct still render
+  // on their own — dividends without price context is a normal, honest
+  // partial state here.
+  const closes = await fetchDailyCloses(symbol, pricesPeriod1, period2);
+
+  /** Sum of `events` with `date` in `(windowStartIso, windowEndIso]` — the shared building block for both TTM windows below. */
+  const sumInWindow = (windowStartIso: string, windowEndIso: string): number =>
+    events.filter((x) => x.date > windowStartIso && x.date <= windowEndIso).reduce((sum, x) => sum + x.amount, 0);
+
+  const isoNDaysBefore = (dateIso: string, days: number): string =>
+    new Date(new Date(dateIso).getTime() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
   const rows: DividendPayoutRow[] = [];
   for (const e of events) {
     if (e.date < displayPeriod1Iso) continue; // only within the display window — earlier events exist solely to feed TTM sums below.
 
-    const windowStartMs = new Date(e.date).getTime() - DIVIDEND_TTM_WINDOW_DAYS * 24 * 60 * 60 * 1000;
-    const windowStartIso = new Date(windowStartMs).toISOString().slice(0, 10);
-    const ttmDividendTotal = events
-      .filter((x) => x.date > windowStartIso && x.date <= e.date)
-      .reduce((sum, x) => sum + x.amount, 0);
+    const windowStartIso = isoNDaysBefore(e.date, DIVIDEND_TTM_WINDOW_DAYS);
+    const ttmDividendTotal = sumInWindow(windowStartIso, e.date);
+
+    const prevWindowStartIso = isoNDaysBefore(e.date, 2 * DIVIDEND_TTM_WINDOW_DAYS);
+    const ttmDividendTotalPrevYear = sumInWindow(prevWindowStartIso, windowStartIso);
+    const growthPct = ttmDividendTotalPrevYear > 0 ? ((ttmDividendTotal - ttmDividendTotalPrevYear) / ttmDividendTotalPrevYear) * 100 : null;
 
     const priceOnDate = closes ? closeOnOrBefore(closes, e.date) : null;
     const annualisedYieldPct = priceOnDate != null && priceOnDate > 0 ? (ttmDividendTotal / priceOnDate) * 100 : null;
 
-    rows.push({ date: e.date, amount: e.amount, ttmDividendTotal, priceOnDate, annualisedYieldPct });
+    rows.push({
+      date: e.date,
+      amount: e.amount,
+      ttmDividendTotal,
+      ttmDividendTotalPrevYear,
+      growthPct,
+      priceOnDate,
+      annualisedYieldPct,
+    });
   }
 
   return rows;
@@ -513,10 +570,10 @@ export async function fetchKeyStats(symbol: string): Promise<KeyStats | null> {
  * push`), and `debtCoverage` was the closest-fit existing JSON bucket
  * already on the identical fetch cadence (7-day TTL,
  * `refreshFundamentalsInBackground`) and fetch mechanism (one
- * `fetchFundamentalsTimeseries` batch call). At the UI layer (`fundamentals-panel.tsx`) these two fields are consumed
- * by `FinancialsBars`, NOT `DebtCoverageBars` — they render on the
- * Revenue/Net-income chart, never the debt chart, despite the shared
- * storage column.
+ * `fetchFundamentalsTimeseries` batch call). At the UI layer
+ * (`fundamentals-panel.tsx`'s `IncomeStatementSection`, Sprint 1 T1.2) these
+ * two fields render on the §01 Revenue/Net-income/EBITDA chart, never the
+ * §07 debt chart, despite the shared storage column.
  *
  * Empirically verified live 2026-08-02 across the 6 targeted tickers +
  * SUZLON: annualEBITDA/quarterlyEBITDA return full coverage (4 annual / 5
@@ -535,7 +592,17 @@ export async function fetchKeyStats(symbol: string): Promise<KeyStats | null> {
  * shipped — EBITDA merely inherits the SAME existing mislabeling
  * consistently with its two sibling series, not a new inconsistency. Left
  * unfixed as out-of-scope for this ticket; flagged for a dedicated
- * currency-code-aware formatting follow-up.
+ * currency-code-aware formatting follow-up (RESOLVED — Sprint 1, T1.1:
+ * see `currencyCode` below and `formatCompactCurrency` in packages/utils).
+ *
+ * Fundamentals Panel v2 (Sprint 1, T1.1) — six more annual balance-sheet
+ * keys join this SAME batch call (still zero extra HTTP requests): the
+ * asset/equity/PP&E/receivables/current-assets/inventory series §04–§06 of
+ * the founder-approved plan need. ALL SIX are annual-only, deliberately —
+ * Yahoo's quarterly balance-sheet coverage for NSE names is bimodal
+ * (semi-annual in practice, not truly quarterly) and would introduce a
+ * basis mismatch against the quarterly income-statement series if mixed in;
+ * documented here rather than silently omitted.
  */
 export interface DebtCoverage {
   annualDebt: FundamentalsPoint[] | null;
@@ -547,10 +614,37 @@ export interface DebtCoverage {
   annualEbitda: FundamentalsPoint[] | null;
   /** EBITDA, quarterly — see the interface doc comment for the storage-reuse rationale and empirical coverage findings. */
   quarterlyEbitda: FundamentalsPoint[] | null;
+  /** Total assets, annual — feeds §05 Capital Structure and §06 Asset Base Composition (Sprint 2). */
+  annualTotalAssets: FundamentalsPoint[] | null;
+  /** Total stockholders' equity, annual — the denominator of §05's D/E line (Sprint 2). */
+  annualStockholdersEquity: FundamentalsPoint[] | null;
+  /** Net property/plant/equipment ("fixed assets"), annual — feeds §04's fixed-asset growth line and §06's stacked composition (Sprint 2). */
+  annualNetPPE: FundamentalsPoint[] | null;
+  /** Accounts receivable, annual (the reliable Yahoo key for NSE names — verified across the 6 iteration tickers). Absent for services businesses with no meaningful receivables line (e.g. INFY) — a genuine per-symbol gap, not a bug. Feeds §04 (Sprint 2). */
+  annualAccountsReceivable: FundamentalsPoint[] | null;
+  /** Total current assets, annual — feeds §06's stacked composition (Sprint 2). */
+  annualCurrentAssets: FundamentalsPoint[] | null;
+  /** Inventory, annual — absent for services businesses (e.g. INFY), a genuine per-symbol gap. Feeds §04 (Sprint 2). */
+  annualInventory: FundamentalsPoint[] | null;
+  /**
+   * Currency code Yahoo reported these series in (e.g. "INR", "USD" — INFY
+   * reports its ENTIRE fundamentals-timeseries feed in USD, not INR, unlike
+   * every other NSE name checked). Computed by reducing the currencyCode
+   * observed across every series IN THIS BATCH: all-agree -> that code;
+   * disagree -> the first-listed series' code (see this function's own
+   * inline comment for why "the first-listed series" rather than the plan's
+   * literal "revenue's code" — revenue isn't part of this batch). Null only
+   * when NO series in the batch returned any data at all. Persisted ONLY in
+   * this blob (never duplicated onto `AnnualFundamentals`/
+   * `QuarterlyFundamentals`) — consumers needing currency-aware formatting
+   * for revenue/net income/EPS/dividends read it from here via
+   * `debtCoverage?.currencyCode`, per the founder-approved plan's §5.
+   */
+  currencyCode: string | null;
 }
 
 export async function fetchDebtCoverage(symbol: string): Promise<DebtCoverage> {
-  const map = await fetchFundamentalsTimeseries(
+  const { series, currencyCodes } = await fetchFundamentalsTimeseries(
     symbol,
     [
       "annualTotalDebt",
@@ -560,16 +654,50 @@ export async function fetchDebtCoverage(symbol: string): Promise<DebtCoverage> {
       "quarterlyCashAndCashEquivalents",
       "annualEBITDA",
       "quarterlyEBITDA",
+      "annualTotalAssets",
+      "annualStockholdersEquity",
+      "annualNetPPE",
+      "annualAccountsReceivable",
+      "annualCurrentAssets",
+      "annualInventory",
     ],
     ANNUAL_LOOKBACK_YEARS
   );
+
+  const distinctCodes = new Set(currencyCodes.values());
+  let currencyCode: string | null = null;
+  if (distinctCodes.size === 1) {
+    currencyCode = [...distinctCodes][0];
+  } else if (distinctCodes.size > 1) {
+    // Deviation from the plan's literal "mixed -> revenue's code" tie-break:
+    // `annualTotalRevenue` isn't fetched in THIS batch (fetchAnnualFundamentals
+    // fetches it separately) — re-requesting it here purely for a tie-break
+    // would be a genuine extra network call, contradicting this function's
+    // "zero extra requests" constraint. In-batch agreement is what this
+    // blob's OWN fields actually need anyway, so on disagreement we fall
+    // back to the first-listed key's code instead. Every symbol observed so
+    // far (including INFY) reports ALL its series in one currency, so this
+    // branch is defensive — not expected to fire in practice.
+    currencyCode = currencyCodes.get("annualTotalDebt") ?? currencyCodes.values().next().value ?? null;
+    console.warn(
+      `[fundamentals] Mixed currencyCode across debtCoverage series for ${symbol}: ${[...distinctCodes].join(", ")} — using ${currencyCode}`
+    );
+  }
+
   return {
-    annualDebt: map.get("annualTotalDebt") ?? null,
-    annualFreeCashFlow: map.get("annualFreeCashFlow") ?? null,
-    annualCash: map.get("annualCashAndCashEquivalents") ?? null,
-    quarterlyDebt: map.get("quarterlyTotalDebt") ?? null,
-    quarterlyCash: map.get("quarterlyCashAndCashEquivalents") ?? null,
-    annualEbitda: map.get("annualEBITDA") ?? null,
-    quarterlyEbitda: map.get("quarterlyEBITDA") ?? null,
+    annualDebt: series.get("annualTotalDebt") ?? null,
+    annualFreeCashFlow: series.get("annualFreeCashFlow") ?? null,
+    annualCash: series.get("annualCashAndCashEquivalents") ?? null,
+    quarterlyDebt: series.get("quarterlyTotalDebt") ?? null,
+    quarterlyCash: series.get("quarterlyCashAndCashEquivalents") ?? null,
+    annualEbitda: series.get("annualEBITDA") ?? null,
+    quarterlyEbitda: series.get("quarterlyEBITDA") ?? null,
+    annualTotalAssets: series.get("annualTotalAssets") ?? null,
+    annualStockholdersEquity: series.get("annualStockholdersEquity") ?? null,
+    annualNetPPE: series.get("annualNetPPE") ?? null,
+    annualAccountsReceivable: series.get("annualAccountsReceivable") ?? null,
+    annualCurrentAssets: series.get("annualCurrentAssets") ?? null,
+    annualInventory: series.get("annualInventory") ?? null,
+    currencyCode,
   };
 }

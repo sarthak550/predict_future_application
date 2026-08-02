@@ -116,6 +116,48 @@ export function formatCompactINR(value: number, options?: { precision?: number }
   return `${sign}${abs.toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: precision })}`;
 }
 
+/**
+ * Fundamentals Panel v2 (Sprint 1, T1.1) — currency-aware companion to
+ * `formatCompactINR` above, which stays UNCHANGED (its no-₹-prefix contract
+ * is documented and depended upon by its existing call sites). This is a
+ * NEW, additive formatter for call sites that must render Yahoo
+ * fundamentals-timeseries figures whose `currencyCode` may be non-INR (see
+ * apps/web/lib/finance/fundamentals.ts's `DebtCoverage` doc comment — INFY's
+ * entire timeseries feed reports in USD, not INR, unlike every other NSE
+ * symbol checked).
+ *   - "INR" (or omitted/null) -> "₹" + formatCompactINR's crore/lakh
+ *     compaction (delegates rather than duplicates, so the two formatters
+ *     can never drift on the INR path).
+ *   - "USD" -> "$" + Western compaction (T/B/M/K, matching US financial-
+ *     media convention rather than Indian crore/lakh).
+ *   - any other/unknown code -> "<CODE> " prefix + plain en-IN grouped
+ *     number — no compaction convention is assumed for a currency this file
+ *     has never seen in practice.
+ */
+export function formatCompactCurrency(value: number, currencyCode?: string | null, options?: { precision?: number }): string {
+  const code = currencyCode ?? "INR";
+  const precision = options?.precision ?? 2;
+
+  if (code === "INR") {
+    return `₹${formatCompactINR(value, { precision })}`;
+  }
+
+  const abs = Math.abs(value);
+  const sign = value < 0 ? "-" : "";
+
+  if (code === "USD") {
+    const grouped = (scaled: number) =>
+      scaled.toLocaleString("en-US", { minimumFractionDigits: precision, maximumFractionDigits: precision });
+    if (abs >= 1e12) return `${sign}$${grouped(abs / 1e12)}T`;
+    if (abs >= 1e9) return `${sign}$${grouped(abs / 1e9)}B`;
+    if (abs >= 1e6) return `${sign}$${grouped(abs / 1e6)}M`;
+    if (abs >= 1e3) return `${sign}$${grouped(abs / 1e3)}K`;
+    return `${sign}$${abs.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: precision })}`;
+  }
+
+  return `${sign}${code} ${abs.toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: precision })}`;
+}
+
 export function safeJsonParse<T>(value: string, fallback: T) {
   try {
     return JSON.parse(value) as T;
