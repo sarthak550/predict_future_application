@@ -473,7 +473,7 @@ function IncomeStatementSection({
 
   return (
     <div>
-      <SectionHeader index="01" title="Income Statement Performance" />
+      <SectionHeader index="01" title="Financials" />
       <ComboChart
         categories={groups.map((g) => g.label)}
         series={series}
@@ -513,7 +513,7 @@ function EpsSection({
   ];
   return (
     <div>
-      <SectionHeader index="02" title="Shareholder Returns" />
+      <SectionHeader index="02" title="Earnings Per Share (EPS)" />
       <ComboChart
         categories={points.map((p) => compactPeriodLabel(p.periodEnd, mode))}
         series={series}
@@ -608,7 +608,7 @@ function OperatingEfficiencySection({
 
   return (
     <div>
-      <SectionHeader index="04" title="Operating Efficiency (Growth Rate)" qualifier={toggleMode === "quarterly" ? "Annual" : undefined} />
+      <SectionHeader index="04" title="Operating Efficiency (Growth Rates)" qualifier={toggleMode === "quarterly" ? "Annual" : undefined} />
       <ComboChart
         categories={groups.map((g) => g.label)}
         series={series}
@@ -1258,7 +1258,7 @@ export function FundamentalsPanel({
 
         {(hasAnnual || hasQuarterly) && (
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-lg font-semibold text-ink-900">Financials</p>
+            <p className="text-lg font-semibold text-ink-900">Financial Performance</p>
             <div className="inline-flex rounded-xl border border-ink-200 bg-white p-0.5">
               {(["annual", "quarterly"] as const).map((m) => (
                 <button
