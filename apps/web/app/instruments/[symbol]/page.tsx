@@ -5,7 +5,6 @@ import { AnalystDisclaimerFooter } from "@/components/finance/disclaimer-footer"
 import { ExpandableCallsTable } from "@/components/finance/expandable-calls-table";
 import { FundamentalsPanel } from "@/components/finance/fundamentals-panel";
 import { InstrumentSentimentGauge } from "@/components/finance/instrument-sentiment-gauge";
-import { PerformanceStrip } from "@/components/finance/performance-strip";
 import { PriceChart } from "@/components/finance/price-chart";
 import { PulseTabs } from "@/components/finance/pulse-tabs";
 import { QuoteHeader } from "@/components/finance/quote-header";
@@ -160,8 +159,11 @@ export default async function InstrumentDetailPage({
       {/* Instrument Page v2 — commodity context ("is this analyst's thesis
           backed by real earnings growth?"), deliberately placed AFTER
           Analyst opinions (the moat) and BEFORE PulseTabs — non-negotiable
-          ordering per the CTO assignment brief's thesis-alignment section. */}
-      <PerformanceStrip performance={instrument.performance} />
+          ordering per the CTO assignment brief's thesis-alignment section.
+          (PerformanceStrip removed 2026-08-02 per founder — price-return
+          chips read as noise next to the fundamentals charts; the price
+          chart's timeframes already tell the returns story. Component kept
+          at components/finance/performance-strip.tsx for possible reuse.) */}
       <FundamentalsPanel
         annualRevenue={instrument.enrichment.annualRevenue}
         annualNetIncome={instrument.enrichment.annualNetIncome}
