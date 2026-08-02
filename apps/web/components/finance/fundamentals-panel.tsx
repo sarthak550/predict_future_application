@@ -291,9 +291,16 @@ const SECTION_H_HERO = 170; // §01, full-width — reduced from 210 (founder ch
 // NARROWER canvas (SECTION_W_PAIR, so text renders near-natural size at
 // half-column width) PLUS more height. §01 keeps the full 640 canvas.
 const SECTION_W_PAIR = 360;
-const SECTION_H_PAIR_TOP = 190; // §02 | §03 — the founder's EPS/Dividends side-by-side (was 140)
-const SECTION_H_PAIR_MID = 200; // §04 | §05 (was 150)
-const SECTION_H_PAIR_BOTTOM = 210; // §06 | §07 (was 200)
+// Founder 2026-08-02 (second sizing pass): "height is too large now… 4:3
+// ratio should be good" — all paired sections share ONE exact 4:3 canvas
+// (360×270), and the DISPLAYED chart is capped at 400px wide (ComboChart's
+// maxDisplayWidth) so a below-lg single-column stack can never balloon a
+// 360-unit canvas to full card width (the real "too large" failure mode).
+const SECTION_H_PAIR = 270;
+const SECTION_H_PAIR_TOP = SECTION_H_PAIR; // §02 | §03 — the founder's EPS/Dividends side-by-side
+const SECTION_H_PAIR_MID = SECTION_H_PAIR; // §04 | §05
+const SECTION_H_PAIR_BOTTOM = SECTION_H_PAIR; // §06 | §07
+const SECTION_MAX_DISPLAY_W = 400;
 
 /**
  * Runtime shape guard for whatever `InstrumentEnrichment.dividends` last
@@ -374,9 +381,22 @@ function IncomeStatementSection({
   // Founder 2026-08-02: quarterly plots show sequential QUARTER-OVER-QUARTER
   // growth ("quarterly growth instead of annual") — labeled "QoQ", a
   // different metric from annual mode's YoY, never presented interchangeably.
-  const growthMap = mode === "quarterly" ? qoqGrowth(revenue) : yoyGrowth(revenue, mode);
-  const growthValues = groups.map((g) => growthMap.get(g.periodEnd) ?? null);
+  // QoQ points carry their comparison basis (Yahoo's quarterly series has
+  // real holes) — disclosed per-point via tooltipDetail below.
+  const qoqMap = mode === "quarterly" ? qoqGrowth(revenue) : null;
+  const yoyMap = mode === "quarterly" ? null : yoyGrowth(revenue, mode);
+  const qoqPoints = qoqMap ? groups.map((g) => qoqMap.get(g.periodEnd) ?? null) : null;
+  const growthValues = qoqPoints
+    ? qoqPoints.map((p) => (p ? p.pct : null))
+    : groups.map((g) => yoyMap?.get(g.periodEnd) ?? null);
   const hasGrowth = growthValues.some((v) => v != null);
+  const growthTooltipDetail = qoqPoints
+    ? (idx: number) => {
+        const p = qoqPoints[idx];
+        if (!p) return null;
+        return `vs ${formatPeriodLabel(p.basisPeriodEnd)}${p.basisIsNonAdjacent ? " (prior quarter unreported)" : ""}`;
+      }
+    : undefined;
   const hasEbitda = groups.some((g) => g.values.ebitda != null);
 
   const fmtMoney = (v: number) => formatCompactCurrency(v, currencyCode);
@@ -423,6 +443,7 @@ function IncomeStatementSection({
       dashed: true,
       values: growthValues,
       formatValue: fmtPct,
+      tooltipDetail: growthTooltipDetail,
     });
   }
 
@@ -488,6 +509,7 @@ function EpsSection({
         series={series}
         height={SECTION_H_PAIR_TOP}
         width={SECTION_W_PAIR}
+        maxDisplayWidth={SECTION_MAX_DISPLAY_W}
         formatPrimaryAxis={makeMoneyAxisFormat(currencyCode)}
         ariaLabel="Diluted EPS by period"
         legend={false}
@@ -582,6 +604,7 @@ function OperatingEfficiencySection({
         series={series}
         height={SECTION_H_PAIR_MID}
         width={SECTION_W_PAIR}
+        maxDisplayWidth={SECTION_MAX_DISPLAY_W}
         formatPrimaryAxis={makePercentAxisFormat()}
         ariaLabel="Year-over-year growth in sales, fixed assets, receivables and inventory"
       />
@@ -712,6 +735,7 @@ function CapitalStructureSection({
         series={series}
         height={SECTION_H_PAIR_MID}
         width={SECTION_W_PAIR}
+        maxDisplayWidth={SECTION_MAX_DISPLAY_W}
         formatPrimaryAxis={makeMoneyAxisFormat(currencyCode)}
         formatSecondaryAxis={hasDE || hasATO ? makeRatioAxisFormat() : undefined}
         ariaLabel="Total assets, total debt, debt-to-equity and asset turnover by year"
@@ -823,6 +847,7 @@ function AssetBaseCompositionSection({
         series={series}
         height={SECTION_H_PAIR_BOTTOM}
         width={SECTION_W_PAIR}
+        maxDisplayWidth={SECTION_MAX_DISPLAY_W}
         stackedBars
         formatPrimaryAxis={makeMoneyAxisFormat(currencyCode)}
         ariaLabel="Fixed, current and other assets as a share of total assets by year"
@@ -853,12 +878,15 @@ function DebtCoverageSection({
   freeCashFlow,
   cash,
   mode,
+  showAnnualQualifier = false,
   currencyCode,
 }: {
   debt: FundamentalsPoint[] | null;
   freeCashFlow: FundamentalsPoint[] | null;
   cash: FundamentalsPoint[] | null;
   mode: "annual" | "quarterly";
+  /** True when the panel toggle is on Quarterly but this section fell back to annual data (semi-annual quarterly filings too sparse) — renders the same "Annual" honesty qualifier §04–§06 use. */
+  showAnnualQualifier?: boolean;
   currencyCode: string | null;
 }) {
   const groups = alignByPeriod({ debt, fcf: freeCashFlow, cash }, mode);
@@ -874,12 +902,13 @@ function DebtCoverageSection({
 
   return (
     <div>
-      <SectionHeader index="07" title="Debt Level & Coverage" />
+      <SectionHeader index="07" title="Debt Level & Coverage" qualifier={showAnnualQualifier ? "Annual" : undefined} />
       <ComboChart
         categories={groups.map((g) => g.label)}
         series={series}
         height={SECTION_H_PAIR_BOTTOM}
         width={SECTION_W_PAIR}
+        maxDisplayWidth={SECTION_MAX_DISPLAY_W}
         formatPrimaryAxis={makeMoneyAxisFormat(currencyCode)}
         ariaLabel="Debt, free cash flow and cash by period"
       />
@@ -973,6 +1002,7 @@ function DividendsSection({ dividends }: { dividends: DividendRow[] }) {
           series={series}
           height={SECTION_H_PAIR_TOP}
         width={SECTION_W_PAIR}
+        maxDisplayWidth={SECTION_MAX_DISPLAY_W}
           formatPrimaryAxis={makeMoneyAxisFormat(null)}
           formatSecondaryAxis={hasYield || hasGrowth ? makePercentAxisFormat() : undefined}
           ariaLabel="Dividend per payout, annualised yield and TTM dividend growth"
@@ -1018,6 +1048,7 @@ function DividendsSection({ dividends }: { dividends: DividendRow[] }) {
           series={series}
           height={SECTION_H_PAIR_TOP}
         width={SECTION_W_PAIR}
+        maxDisplayWidth={SECTION_MAX_DISPLAY_W}
           formatPrimaryAxis={makeMoneyAxisFormat(null)}
           formatSecondaryAxis={hasYield ? makePercentAxisFormat() : undefined}
           ariaLabel="Dividend per share and annualised yield by year"
@@ -1047,6 +1078,7 @@ function DividendsSection({ dividends }: { dividends: DividendRow[] }) {
         series={series}
         height={SECTION_H_PAIR_TOP}
         width={SECTION_W_PAIR}
+        maxDisplayWidth={SECTION_MAX_DISPLAY_W}
         formatPrimaryAxis={makeMoneyAxisFormat(null)}
         ariaLabel="Dividend per payout"
         legend={false}
@@ -1223,15 +1255,31 @@ export function FundamentalsPanel({
               toggleMode={activeMode}
             />
           )}
-          {debtCoverage && (
-            <DebtCoverageSection
-              debt={activeMode === "annual" ? debtCoverage.annualDebt : debtCoverage.quarterlyDebt}
-              freeCashFlow={activeMode === "annual" ? debtCoverage.annualFreeCashFlow : null}
-              cash={activeMode === "annual" ? debtCoverage.annualCash : debtCoverage.quarterlyCash}
-              mode={activeMode}
-              currencyCode={currencyCode}
-            />
-          )}
+          {debtCoverage &&
+            (() => {
+              // Founder 2026-08-02: "quarterly debt level coverage not
+              // properly shown" — balance-sheet items report SEMI-annually
+              // for many NSE names (RELIANCE: 2 quarterly points; TCS: 5),
+              // so quarterly mode rendered a sparse 2-bar chart with no FCF.
+              // When the quarterly series is that thin (< 3 periods), fall
+              // back to the ANNUAL data with the same explicit "Annual"
+              // qualifier §04–§06 already use in quarterly mode.
+              const quarterlyPeriods = new Set([
+                ...(debtCoverage.quarterlyDebt ?? []).map((p) => p.periodEnd),
+                ...(debtCoverage.quarterlyCash ?? []).map((p) => p.periodEnd),
+              ]).size;
+              const useQuarterly = activeMode === "quarterly" && quarterlyPeriods >= 3;
+              return (
+                <DebtCoverageSection
+                  debt={useQuarterly ? debtCoverage.quarterlyDebt : debtCoverage.annualDebt}
+                  freeCashFlow={useQuarterly ? null : debtCoverage.annualFreeCashFlow}
+                  cash={useQuarterly ? debtCoverage.quarterlyCash : debtCoverage.annualCash}
+                  mode={useQuarterly ? "quarterly" : "annual"}
+                  showAnnualQualifier={activeMode === "quarterly" && !useQuarterly}
+                  currencyCode={currencyCode}
+                />
+              );
+            })()}
         </div>
       </CardContent>
     </Card>

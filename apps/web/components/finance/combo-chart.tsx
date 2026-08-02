@@ -95,6 +95,15 @@ export type ComboChartProps = {
    * font numbers, which keeps every proportion intact).
    */
   width?: number;
+  /**
+   * Caps the RENDERED chart width in CSS px (centered when the container is
+   * wider). Without it, a narrow-canvas chart stacking to a full-width
+   * single column below `lg` scales up enormously (founder 2026-08-02:
+   * "height is too large" — a 360×270 canvas at ~850px card width renders
+   * ~640px tall). The viewBox aspect (e.g. the founder-requested 4:3) is
+   * preserved at every display size.
+   */
+  maxDisplayWidth?: number;
   /** §06 Asset Base Composition mode (Sprint 2) — bar-kind series in a group stack cumulatively instead of clustering side by side. Default false. */
   stackedBars?: boolean;
   /** Factory: given the primary axis's own nice-scale domain max, returns its declared-once unit + per-tick short formatter (see `AxisFormat`). */
@@ -298,6 +307,7 @@ export function ComboChart({
   series,
   height = 200,
   width: chartW = CHART_W,
+  maxDisplayWidth,
   stackedBars = false,
   formatPrimaryAxis,
   formatSecondaryAxis,
@@ -540,7 +550,8 @@ export function ComboChart({
     <div>
       <div
         ref={wrapperRef}
-        className="relative touch-none select-none"
+        className="relative mx-auto touch-none select-none"
+        style={maxDisplayWidth != null ? { maxWidth: maxDisplayWidth } : undefined}
         onPointerMove={handlePointerMove}
         onPointerLeave={handlePointerLeave}
         onPointerDown={handlePointerDown}

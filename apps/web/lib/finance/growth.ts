@@ -75,8 +75,16 @@ export function yoyGrowth(points: FundamentalsPoint[] | null, mode: GrowthMode):
  * comparing across a gap. Null (never 0) when: no valid prior quarter, prior
  * value <= 0, or unparseable dates. The first quarter is always null.
  */
-export function qoqGrowth(points: FundamentalsPoint[] | null): Map<string, number | null> {
-  const result = new Map<string, number | null>();
+export type QoqGrowthPoint = {
+  pct: number;
+  /** The prior quarter this growth was computed against — consumers MUST disclose it in the tooltip ("vs Jun 2025"), because Yahoo's quarterly series has real holes. */
+  basisPeriodEnd: string;
+  /** True when the comparison skipped over an unreported quarter (gap > ~1 quarter) — consumers append "(prior quarter unreported)" so a 2-quarter jump is never silently presented as sequential. */
+  basisIsNonAdjacent: boolean;
+};
+
+export function qoqGrowth(points: FundamentalsPoint[] | null): Map<string, QoqGrowthPoint | null> {
+  const result = new Map<string, QoqGrowthPoint | null>();
   if (!points || points.length === 0) return result;
 
   const sorted = [...points].sort((a, b) => a.periodEnd.localeCompare(b.periodEnd));
@@ -92,11 +100,21 @@ export function qoqGrowth(points: FundamentalsPoint[] | null): Map<string, numbe
       continue;
     }
     const gapDays = (d.getTime() - pd.getTime()) / 86_400_000;
-    if (gapDays < 60 || gapDays > 120 || prev.value <= 0) {
+    // Yahoo's quarterly series genuinely skips quarters (e.g. Sep-2025 absent
+    // for RELIANCE and TCS alike, verified 2026-08-02) — a strict adjacent-
+    // quarter rule nulled half the line ("quarterly growths are still not
+    // there properly", founder). Compare vs the previous REPORTED quarter up
+    // to ~2 quarters back, flagging non-adjacency so the tooltip disclosure
+    // keeps it honest; beyond that (or a non-positive base) stays null.
+    if (gapDays < 60 || gapDays > 200 || prev.value <= 0) {
       result.set(p.periodEnd, null);
       continue;
     }
-    result.set(p.periodEnd, ((p.value - prev.value) / prev.value) * 100);
+    result.set(p.periodEnd, {
+      pct: ((p.value - prev.value) / prev.value) * 100,
+      basisPeriodEnd: prev.periodEnd,
+      basisIsNonAdjacent: gapDays > 120,
+    });
   }
 
   return result;
