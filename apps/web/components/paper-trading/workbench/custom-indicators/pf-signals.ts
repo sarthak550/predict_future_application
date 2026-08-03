@@ -39,7 +39,8 @@
 import type { IndicatorTemplate } from "klinecharts";
 import { registerIndicator } from "klinecharts";
 
-import { getStrategyDef, resolveStrategyParams, type StrategyCandle, type StrategySide } from "@/lib/ta/strategies";
+import { getStrategyDef, resolveStrategyParams, type StrategyCandle, type StrategySide, type StrategySignal } from "@/lib/ta/strategies";
+import { SCRIPT_SENTINEL } from "@/lib/ta/user-scripts";
 
 interface PfSignalPoint {
   side?: StrategySide;
@@ -56,6 +57,40 @@ const SELL_COLOR = "#f43f5e";
 export const PF_SIGNALS_NAME = "PF_SIGNALS";
 export const PF_SIGNALS_INSTANCE_ID = "pf_signals_instance";
 
+/**
+ * User Strategy Scripting (SS1), D9 — the reserved `calcParams[0]` value
+ * that routes `calc()` into the PRECOMPUTED branch instead of the template
+ * (`STRATEGY_REGISTRY`) branch. `calcParams` is typed `(string |
+ * number)[]` (see `IndicatorTemplate<PfSignalPoint, string | number,
+ * unknown>` above) — a script's resolved `StrategySignal[]` can't ride
+ * inside it directly, so instead `calcParams` carries this sentinel +
+ * a `runToken` (a fresh opaque string per run), and the actual signals live
+ * in the module-level store below, set via `setPrecomputedScriptSignals`
+ * BEFORE the sentinel-keyed `calcParams` is ever applied to the chart.
+ * Defined in `lib/ta/user-scripts.ts` (a pure module) and re-exported here
+ * so `lib/ta/selfcheck.ts` can assert `SCRIPT_SENTINEL` is never a
+ * `STRATEGY_REGISTRY` key without pulling `klinecharts` into a plain `tsx`
+ * Node run — see that file's own doc comment on this constant.
+ */
+export { SCRIPT_SENTINEL };
+
+/**
+ * At most ONE entry — the most recent run's signals — never an
+ * accumulating map. Repeated Run clicks (SS2's editor) must not leak
+ * memory: each call to `setPrecomputedScriptSignals` REPLACES this store's
+ * single entry outright.
+ */
+let precomputedScriptSignals: { runToken: string; signals: readonly StrategySignal[] } | null = null;
+
+/** Sets the single precomputed-signals entry for `PF_SIGNALS`'s script branch. Called by the (SS2) editor's Run flow BEFORE `kline-chart.tsx`'s sync effect applies `calcParams: [SCRIPT_SENTINEL, runToken]` — see this file's module doc and `kline-chart.tsx`'s own `PfSignalsConfig` doc for the full ordering contract. */
+export function setPrecomputedScriptSignals(runToken: string, signals: readonly StrategySignal[]): void {
+  precomputedScriptSignals = { runToken, signals };
+}
+
+function getPrecomputedScriptSignals(runToken: string): readonly StrategySignal[] | undefined {
+  return precomputedScriptSignals?.runToken === runToken ? precomputedScriptSignals.signals : undefined;
+}
+
 export const pfSignals: IndicatorTemplate<PfSignalPoint, string | number, unknown> = {
   name: PF_SIGNALS_NAME,
   shortName: "Strategy Signals",
@@ -69,6 +104,19 @@ export const pfSignals: IndicatorTemplate<PfSignalPoint, string | number, unknow
   calcParams: [],
   figures: [], // fully custom-painted in draw() below — see module doc for why this is what makes markers non-interactive.
   calc: (dataList, indicator) => {
+    // User Strategy Scripting (SS1), D9 — precomputed-script branch, checked
+    // FIRST. Everything from `const [strategyId, ...rawParams]` below this
+    // block is the pre-SS1 template branch, untouched (byte-identical,
+    // verified by diff).
+    if (indicator.calcParams[0] === SCRIPT_SENTINEL) {
+      const runToken = indicator.calcParams[1] !== undefined ? String(indicator.calcParams[1]) : undefined;
+      const scriptSignals = runToken !== undefined ? getPrecomputedScriptSignals(runToken) : undefined;
+      const byScriptSignalIndex = new Map((scriptSignals ?? []).map((s) => [s.index, s]));
+      return dataList.map((_, i) => {
+        const s = byScriptSignalIndex.get(i);
+        return s ? { side: s.side, price: s.price } : {};
+      });
+    }
     const [strategyId, ...rawParams] = indicator.calcParams;
     const def = strategyId !== undefined ? getStrategyDef(String(strategyId)) : undefined;
     if (!def) return dataList.map(() => ({}));

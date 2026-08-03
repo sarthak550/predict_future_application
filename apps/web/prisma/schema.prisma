@@ -253,6 +253,27 @@ model User {
   reviewedChallenges Challenge[]        @relation("UserReviewedChallenges")
   ownedGroups        Group[]            @relation("OwnedGroups")
   groupMemberships   GroupMembership[]
+  /// User Strategy Scripting (SS1) — this user's saved sandboxed JS strategy scripts. See model UserStrategyScript.
+  userScripts        UserStrategyScript[]
+}
+
+/// User Strategy Scripting (SS1) — one user-authored JavaScript strategy
+/// script. Mirrors `apps/api/prisma/schema.prisma`'s `UserStrategyScript`
+/// model exactly — kept in sync as a pair per this repo's schema
+/// convention. See the apps/api copy's doc comment for the full rationale
+/// (20KB source cap, 50-script per-user cap, why unique-per-name).
+model UserStrategyScript {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  source    String   @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, name])
+  @@index([userId])
 }
 
 model Wallet {

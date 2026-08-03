@@ -6,3 +6,4 @@ export * from "./news";
 export * from "./paperTrading";
 export * from "./portfolio";
 export * from "./story";
+export * from "./userScripts";

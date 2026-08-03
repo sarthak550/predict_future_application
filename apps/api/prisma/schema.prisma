@@ -101,6 +101,8 @@ model User {
   paperTradingAccounts             PaperTradingAccount[]             @relation("PaperTradingAccountOwner")
   /// Charting Workbench (W1) — this user's persisted chart drawings across all charted instruments. See model ChartDrawing.
   chartDrawings                    ChartDrawing[]
+  /// User Strategy Scripting (SS1) — this user's saved sandboxed JS strategy scripts. See model UserStrategyScript.
+  userScripts                      UserStrategyScript[]
 }
 
 model LeaderboardSnapshot {
@@ -2347,4 +2349,34 @@ model ChartDrawing {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, chartKey])
+}
+
+/// User Strategy Scripting (SS1) — one user-authored JavaScript strategy
+/// script ("Pine Script for Predict Future"). Scripts execute exclusively in
+/// the author's OWN browser tab inside a denylist-sandboxed Web Worker (see
+/// `strategy-worker.ts`'s own module doc for the full security-boundary
+/// statement) — this row is pure persistence, never executed server-side.
+/// `source` is capped at `USER_SCRIPT_SOURCE_MAX_BYTES` (20KB,
+/// `packages/validation/src/userScripts.ts`) — generous for a whole-series
+/// `{bars, ta, helpers} -> signals` script while keeping a single row cheap
+/// to fetch in bulk (GET /api/user-scripts returns full rows, source
+/// included, so opening any script for editing never needs a second round
+/// trip). `USER_SCRIPT_MAX_PER_USER` (50) bounds the CRUD route's
+/// count-then-create cap check, same accepted-TOCTOU posture as
+/// `ChartDrawing`'s per-chartKey cap. `@@unique([userId, name])` gives every
+/// script a human-meaningful, per-user-unique name (surfaced as a clean 409
+/// on collision, never a raw 500) instead of requiring the UI to disambiguate
+/// same-named scripts by id.
+model UserStrategyScript {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  source    String   @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, name])
+  @@index([userId])
 }
