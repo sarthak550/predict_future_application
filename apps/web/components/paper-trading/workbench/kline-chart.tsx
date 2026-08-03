@@ -279,7 +279,20 @@ function syncIndicatorInstances(
     const paramsKey = JSON.stringify(params);
     const existing = active.get(instance.instanceId);
     if (!existing) {
-      chart.createIndicator({ id: instance.instanceId, name: instance.name, calcParams: params, ...(opts.paneId ? { paneId: opts.paneId } : {}) }, opts.isStack);
+      chart.createIndicator(
+        {
+          id: instance.instanceId,
+          name: instance.name,
+          calcParams: params,
+          // Founder 2026-08-04 lingo fix: klinecharts' "SMA" is a SMOOTHED MA
+          // (the industry's SMMA), while "SMA" everywhere else in this app is
+          // the SIMPLE MA — relabel the on-chart pane legend so both never
+          // wear the same acronym. Display-only; registry name unchanged.
+          ...(instance.name === "SMA" ? { shortName: "SMMA" } : {}),
+          ...(opts.paneId ? { paneId: opts.paneId } : {})
+        },
+        opts.isStack
+      );
       active.set(instance.instanceId, { name: instance.name, paramsKey });
     } else if (existing.paramsKey !== paramsKey) {
       chart.overrideIndicator({ id: instance.instanceId, name: instance.name, calcParams: params });

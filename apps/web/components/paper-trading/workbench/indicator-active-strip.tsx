@@ -22,7 +22,7 @@
  */
 import { Plus, Settings2, X } from "lucide-react";
 
-import { formatInstanceLabel, type IndicatorInstance } from "./indicator-registry";
+import { formatInstanceLabel, type IndicatorInstance , indicatorDisplayName } from "./indicator-registry";
 import type { IndicatorSignal, SignalState } from "@/lib/ta/indicator-signals";
 import { SignalReasonTrigger } from "./signal-reason-trigger";
 
@@ -78,7 +78,7 @@ export function IndicatorActiveStrip({
             <button
               type="button"
               title="Settings"
-              aria-label={`${instance.name} settings`}
+              aria-label={`${indicatorDisplayName(instance.name)} settings`}
               onClick={(e) => {
                 const rect = e.currentTarget.getBoundingClientRect();
                 onOpenSettings(instance, { left: rect.left, top: rect.bottom + 4 });
@@ -90,7 +90,7 @@ export function IndicatorActiveStrip({
             <button
               type="button"
               title="Remove"
-              aria-label={`Remove ${instance.name}`}
+              aria-label={`Remove ${indicatorDisplayName(instance.name)}`}
               onClick={() => onRemove(instance.instanceId)}
               className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-ink-400 hover:bg-rose-100 hover:text-rose-600"
             >

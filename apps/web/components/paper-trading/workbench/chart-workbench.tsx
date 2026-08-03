@@ -251,7 +251,12 @@ export function ChartWorkbench({
   // (recomputes exactly when the loaded window actually changes, not on every render), `instancesKey` is a
   // stringified snapshot of every active instance's id/name/params (recomputes exactly when an indicator is
   // added/removed/reconfigured) — NEITHER memo depends on the `candles`/`indicators` object references directly.
-  const candlesKey = candles.length > 0 ? `${candles.length}:${candles[candles.length - 1].timestamp}` : "empty";
+  // Founder 2026-08-04: signals must update INSTANTLY during market hours —
+  // an in-progress bar mutates close/high/low WITHOUT changing its timestamp,
+  // so the key must include the last bar's values or intrabar ticks would
+  // repaint the chart while the signal chips/table/gauge silently staled.
+  const last = candles.length > 0 ? candles[candles.length - 1] : null;
+  const candlesKey = last ? `${candles.length}:${last.timestamp}:${last.close}:${last.high}:${last.low}` : "empty";
   const instancesKey = [...indicators.main, ...indicators.sub].map((i) => `${i.instanceId}:${i.name}:${(i.params ?? []).join(",")}`).join("|");
 
   // Founder feedback (2026-08-04), Part 1 — the detached strip now

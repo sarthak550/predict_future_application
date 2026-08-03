@@ -40,7 +40,7 @@
 import { useState } from "react";
 import { RotateCcw, X } from "lucide-react";
 
-import { clampParams, getIndicatorMeta, resolveParams, type IndicatorInstance } from "./indicator-registry";
+import { clampParams, getIndicatorMeta, resolveParams, type IndicatorInstance , indicatorDisplayName } from "./indicator-registry";
 import { SWATCH_COLORS, LINE_WIDTHS } from "./overlays/figure-kit";
 
 export function IndicatorSettingsPopover({
@@ -86,7 +86,7 @@ export function IndicatorSettingsPopover({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-2 flex items-center gap-1.5">
-          <p className="text-xs font-semibold text-ink-800">{instance.name} settings</p>
+          <p className="text-xs font-semibold text-ink-800">{indicatorDisplayName(instance.name)} settings</p>
           <button type="button" onClick={onClose} className="ml-auto rounded p-1 text-ink-400 hover:bg-ink-100 hover:text-ink-700" title="Close" aria-label="Close">
             <X className="h-3.5 w-3.5" aria-hidden="true" />
           </button>

@@ -54,7 +54,7 @@ export function IndicatorDialog({
   const allRows = useMemo(() => Object.values(INDICATOR_REGISTRY), []);
 
   const visibleRows = useMemo(() => {
-    const base = trimmed.length > 0 ? allRows.filter((m) => m.name.toLowerCase().includes(trimmed) || m.description.toLowerCase().includes(trimmed)) : allRows.filter((m) => m.category === category);
+    const base = trimmed.length > 0 ? allRows.filter((m) => m.name.toLowerCase().includes(trimmed) || (m.displayLabel ?? "").toLowerCase().includes(trimmed) || m.description.toLowerCase().includes(trimmed)) : allRows.filter((m) => m.category === category);
     return [...base].sort((a, b) => a.name.localeCompare(b.name));
   }, [allRows, trimmed, category]);
 
@@ -111,7 +111,7 @@ export function IndicatorDialog({
                 : undefined;
             return (
               <button
-                key={meta.name}
+                key={meta.displayLabel ?? meta.name}
                 type="button"
                 disabled={disabled}
                 title={title}
@@ -120,7 +120,7 @@ export function IndicatorDialog({
               >
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
-                    <span className="text-sm font-semibold text-ink-800">{meta.name}</span>
+                    <span className="text-sm font-semibold text-ink-800">{meta.displayLabel ?? meta.name}</span>
                     <span
                       className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
                         meta.pane === "main" ? "bg-emerald-50 text-emerald-700" : "bg-sky-50 text-sky-700"

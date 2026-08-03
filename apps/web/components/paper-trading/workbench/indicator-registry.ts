@@ -64,6 +64,8 @@ export interface IndicatorParamSpec {
 export interface IndicatorMeta {
   /** The klinecharts-registered indicator name — passed verbatim to `createIndicator`/`registerIndicator`. */
   name: string;
+  /** Display name when it differs from the klinecharts registry `name` — founder 2026-08-04: "SMA" collided (klinecharts' SMA is a SMOOTHED MA while the signals table's SMA(n) is the industry-standard SIMPLE MA). Display-only: `name` stays the registry/persistence key. */
+  displayLabel?: string;
   category: IndicatorCategory;
   pane: IndicatorPaneKind;
   defaultParams: number[];
@@ -111,6 +113,7 @@ const BUILTIN_REGISTRY: Record<string, IndicatorMeta> = {
   // Trend — main pane
   MA: {
     name: "MA",
+    displayLabel: "MA (Simple)",
     category: "Trend",
     pane: "main",
     defaultParams: [5, 10, 30, 60],
@@ -129,6 +132,7 @@ const BUILTIN_REGISTRY: Record<string, IndicatorMeta> = {
   },
   SMA: {
     name: "SMA",
+    displayLabel: "SMMA (Smoothed)",
     category: "Trend",
     pane: "main",
     defaultParams: [12, 2],
@@ -688,4 +692,10 @@ export function saveStoredSelection(selection: IndicatorSelection): void {
 export function sanitizeSelectionForMode(selection: IndicatorSelection, opts: { mode: "spot" | "premium"; interval: string }): IndicatorSelection {
   const filterFn = (i: IndicatorInstance) => isIndicatorAllowed(i.name, opts);
   return { main: selection.main.filter(filterFn), sub: selection.sub.filter(filterFn).slice(0, MAX_SUB_PANE_INSTANCES) };
+}
+
+/** Display name for an indicator registry key — `displayLabel` when set (the SMA/SMMA disambiguation), else the key itself. */
+export function indicatorDisplayName(name: string): string {
+  const meta = (INDICATOR_REGISTRY as Record<string, IndicatorMeta | undefined>)[name];
+  return meta?.displayLabel ?? name;
 }
