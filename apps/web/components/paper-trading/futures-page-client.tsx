@@ -45,6 +45,7 @@ import { DynamicChartWorkbench, WorkbenchMaximizeButton } from "@/components/pap
 import type { PlacedFuturesOrderPayload } from "@/lib/paperTrading/futuresOrdersClient";
 import { cancelPendingOrder, repricePendingOrder, type PendingOrderPayload } from "@/lib/paperTrading/pendingOrdersClient";
 import { usePriceOverrides } from "@/components/paper-trading/use-price-overrides";
+import { useWorkbenchAutoRestore, useWorkbenchUrlParam } from "@/components/paper-trading/use-workbench-url-param";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -85,7 +86,20 @@ const EMPTY_SERIES: PricePoint[] = [];
 
 export function FuturesPageClient() {
   const searchParams = useSearchParams();
-  return <FuturesPageClientInner key={searchParams.toString()} />;
+  // Founder bug fix (2026-08-06) — the `?workbench=` param (see
+  // use-workbench-url-param.ts) must NOT be part of this remount key: this
+  // wrapper deliberately gives FuturesPageClientInner a fresh instance
+  // whenever the query string changes (a new deep-link navigation resets
+  // deep-link-derived state cleanly — see the doc above), but toggling the
+  // workbench open/closed does its OWN router.replace and must not blow
+  // away the selected contract / loaded account / everything else just to
+  // persist one flag.
+  const remountKey = useMemo(() => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("workbench");
+    return params.toString();
+  }, [searchParams]);
+  return <FuturesPageClientInner key={remountKey} />;
 }
 
 function FuturesPageClientInner() {
@@ -108,10 +122,29 @@ function FuturesPageClientInner() {
   // Charting Workbench (W2) — see paper-trading-dashboard.tsx's identical
   // doc for the ticket single-mount reasoning. Closed on an underlying
   // change so a stale workbench for the PREVIOUS underlying never lingers.
-  const [workbenchOpen, setWorkbenchOpen] = useState(false);
-  useEffect(() => {
-    setWorkbenchOpen(false);
-  }, [underlying]);
+  //
+  // Founder bug fix (2026-08-06) — refresh-persistence via `?workbench=1`,
+  // same `useWorkbenchAutoRestore` mechanism as paper-trading-dashboard.tsx
+  // (see that file's doc + use-workbench-url-param.ts for the full
+  // restore-vs-real-change race it avoids). `underlying` here is resolved
+  // SYNCHRONOUSLY on the very first render (`deepLinkUnderlying ?? "NIFTY"`,
+  // never null) — the hook still works unmodified: its "first resolution"
+  // just happens on the initial effect run instead of a later one.
+  const [workbenchParam, setWorkbenchParam] = useWorkbenchUrlParam();
+  const [workbenchOpen, setWorkbenchOpenState] = useState(false);
+  const setWorkbenchOpen = useCallback(
+    (open: boolean) => {
+      setWorkbenchOpenState(open);
+      setWorkbenchParam(open ? "1" : null);
+    },
+    [setWorkbenchParam]
+  );
+  useWorkbenchAutoRestore(
+    underlying,
+    workbenchParam === "1",
+    () => setWorkbenchOpenState(true),
+    () => setWorkbenchOpen(false)
+  );
 
   const [lastOrder, setLastOrder] = useState<PlacedFuturesOrderPayload | null>(null);
   const [pendingOrderNotice, setPendingOrderNotice] = useState<string | null>(null);

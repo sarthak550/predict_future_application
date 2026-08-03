@@ -52,6 +52,7 @@ import { PendingOrdersPanel } from "@/components/paper-trading/pending-orders-pa
 import { cancelPendingOrder, repricePendingOrder, type PendingOrderPayload } from "@/lib/paperTrading/pendingOrdersClient";
 import { usePriceOverrides } from "@/components/paper-trading/use-price-overrides";
 import { useVisiblePolling } from "@/components/paper-trading/use-visible-polling";
+import { useWorkbenchAutoRestore, useWorkbenchUrlParam } from "@/components/paper-trading/use-workbench-url-param";
 import { DockedOrderTicket } from "@/components/paper-trading/terminal/docked-order-ticket";
 import { TerminalHeader } from "@/components/paper-trading/terminal/terminal-header";
 import { TerminalShell } from "@/components/paper-trading/terminal/terminal-shell";
@@ -335,10 +336,33 @@ export function PaperTradingDashboard() {
   // THIS component to swap its own docked ticket to `null` while the
   // workbench is open (see the render below). Closed on a symbol change so
   // a stale workbench for the PREVIOUS focused symbol never lingers open.
-  const [workbenchOpen, setWorkbenchOpen] = useState(false);
-  useEffect(() => {
-    setWorkbenchOpen(false);
-  }, [focusedSymbol]);
+  //
+  // Founder bug fix (2026-08-06) — "when we refresh, the chart view goes
+  // away": open/closed state is now mirrored into a `?workbench=1` URL
+  // param (use-workbench-url-param.ts) so a hard refresh — or a browser
+  // back/forward landing back on this exact URL — restores it.
+  // `workbenchOpen` stays the actual render-driving boolean (every other
+  // call site below is unchanged); `setWorkbenchOpen` now also writes the
+  // URL. `useWorkbenchAutoRestore` replaces the old bare `[focusedSymbol]`
+  // effect: it restores an open workbench the FIRST time `focusedSymbol`
+  // resolves (deep-link/holding/localStorage — see above — can take a tick
+  // to settle), and force-closes (+ cleans the URL) on every REAL change
+  // after that, same as before.
+  const [workbenchParam, setWorkbenchParam] = useWorkbenchUrlParam();
+  const [workbenchOpen, setWorkbenchOpenState] = useState(false);
+  const setWorkbenchOpen = useCallback(
+    (open: boolean) => {
+      setWorkbenchOpenState(open);
+      setWorkbenchParam(open ? "1" : null);
+    },
+    [setWorkbenchParam]
+  );
+  useWorkbenchAutoRestore(
+    focusedSymbol,
+    workbenchParam === "1",
+    () => setWorkbenchOpenState(true),
+    () => setWorkbenchOpen(false)
+  );
 
   const setFocusedSymbol = useCallback((symbol: string) => {
     setManualFocus(symbol);

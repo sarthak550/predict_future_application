@@ -54,6 +54,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getLastLotsForContract } from "@/lib/paperTrading/lastLotsMemory";
 import { cancelPendingOrder, repricePendingOrder, type PendingOrderPayload } from "@/lib/paperTrading/pendingOrdersClient";
+import { useWorkbenchAutoRestore, useWorkbenchUrlParam } from "@/components/paper-trading/use-workbench-url-param";
 
 type LoadState = "loading" | "signed-out" | "ready";
 
@@ -123,7 +124,18 @@ function isIndexUnderlying(symbol: string): boolean {
  */
 export function OptionsPageClient() {
   const searchParams = useSearchParams();
-  return <OptionsPageClientInner key={searchParams.toString()} />;
+  // Founder bug fix (2026-08-06) — the `?workbench=` param (see
+  // use-workbench-url-param.ts) must NOT be part of this remount key, for
+  // the same reason futures-page-client.tsx's identical wrapper excludes
+  // it: toggling the workbench does its OWN router.replace and must not
+  // blow away the selected contract / chain state / everything else just
+  // to persist which chart is maximized.
+  const remountKey = useMemo(() => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("workbench");
+    return params.toString();
+  }, [searchParams]);
+  return <OptionsPageClientInner key={remountKey} />;
 }
 
 function OptionsPageClientInner() {
@@ -151,24 +163,13 @@ function OptionsPageClientInner() {
 
   const [chartUnderlying, setChartUnderlying] = useState<string | null>(deepLinkUnderlying);
 
-  // Charting Workbench (W2) — the UNDERLYING chart's maximize button only
-  // this sprint (the premium chart's own maximize button is explicitly W3 —
-  // see the founder plan §9, entry point 4). See paper-trading-dashboard.tsx
-  // for the ticket single-mount reasoning. Closed on an underlying change so
-  // a stale workbench for the PREVIOUS underlying never lingers, and closed
-  // if the user switches to the premium chart mode (the workbench only ever
-  // shows the underlying view this sprint, so it can't stay meaningfully
-  // open across that toggle).
-  const [workbenchOpen, setWorkbenchOpen] = useState(false);
-  useEffect(() => {
-    setWorkbenchOpen(false);
-  }, [chartUnderlying]);
-
   // Chart Trading + SL/TP (Sprint B, B4) — Underlying/Contract-premium toggle
   // + the premium chart's own click-prefill preset channel, reusing the SAME
   // `selectionNonce` the ladder taps already bump (a premium-chart click can
   // only happen once a contract is already selected, so presetSide/presetLots
   // are always already concrete by then — see openTicketForLadderTap below).
+  // (Declared before the two workbench blocks below since both reference
+  // `setChartMode` in their own restore callbacks.)
   const [chartMode, setChartMode] = useState<"underlying" | "premium">("underlying");
   const hasSelectedContract = selectedContract != null;
   // Keyed on the PRIMITIVE "is anything selected" flag, never on
@@ -179,6 +180,43 @@ function OptionsPageClientInner() {
     if (!hasSelectedContract) setChartMode("underlying");
   }, [hasSelectedContract]);
 
+  // Charting Workbench (W2) — the UNDERLYING chart's maximize button only
+  // this sprint (the premium chart's own maximize button is explicitly W3 —
+  // see the founder plan §9, entry point 4). See paper-trading-dashboard.tsx
+  // for the ticket single-mount reasoning. Closed on an underlying change so
+  // a stale workbench for the PREVIOUS underlying never lingers, and closed
+  // if the user switches to the premium chart mode (the workbench only ever
+  // shows the underlying view this sprint, so it can't stay meaningfully
+  // open across that toggle).
+  //
+  // Founder bug fix (2026-08-06) — refresh-persistence: this page has TWO
+  // workbenches (underlying + premium), so the single `?workbench=` param
+  // carries which one — `"underlying" | "premium"` — rather than a bare
+  // `"1"`. `useWorkbenchAutoRestore` handles the routine "restore once
+  // `chartUnderlying` resolves, close on any REAL later change" half
+  // exactly like the other 2 terminal pages; the PREMIUM half needs its own
+  // fallback (below) since a premium restore additionally needs a resolved
+  // `selectedContract`, which — unlike a focused symbol/underlying — has no
+  // guarantee of EVER resolving on a plain refresh (see that block's doc).
+  const [workbenchParam, setWorkbenchParam] = useWorkbenchUrlParam();
+  const [workbenchOpen, setWorkbenchOpenState] = useState(false);
+  const setWorkbenchOpen = useCallback(
+    (open: boolean) => {
+      setWorkbenchOpenState(open);
+      setWorkbenchParam(open ? "underlying" : null);
+    },
+    [setWorkbenchParam]
+  );
+  useWorkbenchAutoRestore(
+    chartUnderlying,
+    workbenchParam === "underlying",
+    () => {
+      setChartMode("underlying");
+      setWorkbenchOpenState(true);
+    },
+    () => setWorkbenchOpen(false)
+  );
+
   // Charting Workbench (W3, T6) — the PREMIUM chart's own maximize button
   // (entry point 4 — order execution lives here, never on the maximized
   // underlying view, same "decision 6" split as the small charts). Closed
@@ -188,13 +226,85 @@ function OptionsPageClientInner() {
   // mutually exclusive — see the ticket single-mount `ticket=` prop below —
   // so switching `chartMode` away from either one's own mode always closes
   // ITS workbench, never both at once.
-  const [premiumWorkbenchOpen, setPremiumWorkbenchOpen] = useState(false);
+  //
+  // Founder bug fix (2026-08-06) — refresh-persistence for `?workbench=
+  // premium`. The routine "restore once resolved / close on real change"
+  // half is `useWorkbenchAutoRestore` again, keyed on a composite
+  // contract-identity string (object identity itself churns every ~30s
+  // chain poll — see the effect this replaces). But a premium restore can
+  // ALSO be asked for on a URL with no way to ever resolve a contract (the
+  // ladder-tap selection that put the page into premium mode originally was
+  // never itself persisted to the URL — only a full contract deep-link
+  // (`?underlying=&expiry=&strike=&optionType=`) can repopulate
+  // `selectedContract` automatically) — the bounded fallback effect below
+  // handles that: falls back to the underlying chart (or, if even THAT
+  // hasn't resolved, no workbench at all) rather than leave a permanently
+  // empty "waiting for a contract" premium workbench open.
+  const [premiumWorkbenchOpen, setPremiumWorkbenchOpenState] = useState(false);
+  const setPremiumWorkbenchOpen = useCallback(
+    (open: boolean) => {
+      setPremiumWorkbenchOpenState(open);
+      setWorkbenchParam(open ? "premium" : null);
+    },
+    [setWorkbenchParam]
+  );
+  const contractKey = selectedContract
+    ? `${selectedContract.underlying}:${selectedContract.expiry}:${selectedContract.strikePrice}:${selectedContract.optionType}`
+    : null;
+  useWorkbenchAutoRestore(
+    contractKey,
+    workbenchParam === "premium",
+    () => {
+      setChartMode("premium");
+      setPremiumWorkbenchOpenState(true);
+    },
+    () => setPremiumWorkbenchOpen(false)
+  );
+  // Runs at most once (`consumedRef`): if the URL asked for the premium
+  // chart but there's no deep-linked contract that could EVER auto-resolve
+  // `selectedContract` (a plain `?workbench=premium` with no
+  // `underlying/expiry/strike/optionType`), fall back immediately. If a
+  // deep-linked contract IS present, give its own auto-select effect
+  // (handleChainData, above) a bounded window to resolve it — an
+  // expired/invalid strike would otherwise leave this waiting forever.
+  const premiumFallbackConsumedRef = useRef(false);
   useEffect(() => {
-    setPremiumWorkbenchOpen(false);
-  }, [selectedContract?.underlying, selectedContract?.expiry, selectedContract?.strikePrice, selectedContract?.optionType]);
+    if (premiumFallbackConsumedRef.current) return;
+    if (workbenchParam !== "premium") return;
+    if (selectedContract) {
+      premiumFallbackConsumedRef.current = true;
+      return;
+    }
+    const hasDeepLinkContract = Boolean(
+      deepLinkUnderlying && deepLinkExpiry && deepLinkStrike != null && Number.isFinite(deepLinkStrike) && deepLinkOptionType
+    );
+    const fallBackToUnderlying = () => {
+      premiumFallbackConsumedRef.current = true;
+      if (chartUnderlying) {
+        setChartMode("underlying");
+        setWorkbenchOpenState(true);
+        setWorkbenchParam("underlying");
+      } else {
+        setWorkbenchParam(null);
+      }
+    };
+    if (!hasDeepLinkContract) {
+      fallBackToUnderlying();
+      return;
+    }
+    const timer = setTimeout(() => {
+      if (!premiumFallbackConsumedRef.current && !selectedContract) fallBackToUnderlying();
+    }, 6_000);
+    return () => clearTimeout(timer);
+  }, [workbenchParam, selectedContract, chartUnderlying, deepLinkUnderlying, deepLinkExpiry, deepLinkStrike, deepLinkOptionType, setWorkbenchParam]);
   useEffect(() => {
-    if (chartMode !== "underlying") setWorkbenchOpen(false);
-    if (chartMode !== "premium") setPremiumWorkbenchOpen(false);
+    // Mutual exclusion between the two workbenches — guarded on the boolean
+    // actually being `true` so this doesn't fire a spurious "close" (and
+    // its URL write) on mount, before either restore effect above has had a
+    // chance to open one from `?workbench=`.
+    if (chartMode !== "underlying" && workbenchOpen) setWorkbenchOpen(false);
+    if (chartMode !== "premium" && premiumWorkbenchOpen) setPremiumWorkbenchOpen(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chartMode]);
   // Sprint C, C2 widens this from LIMIT-only to LIMIT|STOP (the popover
   // confirms an explicit variant, unlike Sprint B's hardcoded LIMIT click).
