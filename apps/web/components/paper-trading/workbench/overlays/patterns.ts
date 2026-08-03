@@ -7,7 +7,24 @@
  * neckline / converging trendlines respectively, not a plain zigzag.
  */
 import { registerOverlay, type Coordinate, type OverlayFigure, type OverlayCreateFiguresCallbackParams } from "klinecharts";
-import { solidLine, dashedLine, extendToRightEdge, fillPolygon, resolveLineColor, resolvePolygonColor, labelFigure, formatPercentLabel, formatRupeesLabel, INK_600, SKY, SKY_FILL, AMBER } from "./figure-kit";
+import {
+  solidLine,
+  dashedLine,
+  extendToRightEdge,
+  fillPolygon,
+  resolveLineColor,
+  resolvePolygonColor,
+  labelFigure,
+  midpoint,
+  formatRupeesLabel,
+  formatRatioLabel,
+  computeCypherRatios,
+  computeAdjacentLegRatios,
+  INK_600,
+  SKY,
+  SKY_FILL,
+  AMBER,
+} from "./figure-kit";
 
 function circledLabel(point: Coordinate, text: string, color: string): OverlayFigure {
   return labelFigure(point, text, { background: color, dy: 16 });
@@ -28,45 +45,82 @@ function buildLabeledZigzag(labels: string[], color: string) {
   };
 }
 
-/** Value-space ratio labels at each leg's midpoint — cypher's own acceptance criterion ("ratio labels in VALUE space", not pixel-distance ratios). Ratio is each leg's |Δvalue| relative to the FIRST leg's |Δvalue|. */
-function buildRatioLabeledZigzag(labels: string[], color: string) {
-  return ({ coordinates, overlay }: OverlayCreateFiguresCallbackParams<unknown>): OverlayFigure[] => {
-    if (coordinates.length < 2) return [];
-    const figures: OverlayFigure[] = [];
-    const values = overlay.points.map((p) => p.value ?? 0);
-    const firstLeg = Math.abs((values[1] ?? 0) - (values[0] ?? 0)) || 1;
-    for (let i = 1; i < coordinates.length; i++) {
-      const p0 = coordinates[i - 1];
-      const p1 = coordinates[i];
-      figures.push(solidLine([p0, p1], color, 1.4));
-      const legValue = Math.abs((values[i] ?? 0) - (values[i - 1] ?? 0));
-      const mid = { x: (p0.x + p1.x) / 2, y: (p0.y + p1.y) / 2 };
-      figures.push(labelFigure(mid, formatPercentLabel(legValue / firstLeg), { background: color, dy: 10 }));
-    }
-    coordinates.forEach((point, i) => figures.push(circledLabel(point, labels[i] ?? String(i), color)));
-    return figures;
-  };
-}
-
 export function registerPatternOverlays(): void {
-  // ── cypher — 5pt (X,A,B,C,D), totalStep 6. Ratio labels in value space. ─
+  // ── cypher — 5pt (X,A,B,C,D), totalStep 6. Ratio labels in VALUE space —
+  // bespoke createPointFigures (not the shared `buildLabeledZigzag`, and no
+  // longer the deleted `buildRatioLabeledZigzag`) since, per the corrected
+  // Cypher convention, each point's ratio is measured against a DIFFERENT
+  // base leg, not one uniform reference:
+  //
+  //   Tool-values-gap-fixes brief, T4.1 — CORRECTNESS FIX. The old code
+  //   divided every leg by the FIRST leg (XA) — right for B, WRONG for C
+  //   and D. See `figure-kit.ts`'s `computeCypherRatios` doc for the full
+  //   worked example (X=100,A=150,B=130,C=180,D=140 → B=0.400, C=2.500,
+  //   D=0.500, hand-verified and asserted in `lib/ta/selfcheck.ts`).
+  //   X→A itself is the reference leg and gets no ratio label (a "1.000"
+  //   there would be redundant).
   registerOverlay({
     name: "cypher",
     totalStep: 6,
     needDefaultPointFigure: true,
     needDefaultXAxisFigure: true,
     needDefaultYAxisFigure: true,
-    createPointFigures: buildRatioLabeledZigzag(["X", "A", "B", "C", "D"], AMBER),
+    createPointFigures: ({ coordinates, overlay }: OverlayCreateFiguresCallbackParams<unknown>): OverlayFigure[] => {
+      if (coordinates.length < 2) return [];
+      const color = AMBER;
+      const [x, a, b, c, d] = coordinates;
+      const values = overlay.points.map((p) => p.value ?? 0);
+      const ratios = computeCypherRatios(values);
+      const figures: OverlayFigure[] = [solidLine([x, a], color, 1.4), circledLabel(x, "X", color), circledLabel(a, "A", color)];
+      if (coordinates.length >= 3) {
+        figures.push(solidLine([a, b], color, 1.4), circledLabel(b, "B", color));
+        figures.push(labelFigure(midpoint(a, b), `B ${formatRatioLabel(ratios.b)}`, { background: color, dy: 10 }));
+      }
+      if (coordinates.length >= 4) {
+        figures.push(solidLine([b, c], color, 1.4), circledLabel(c, "C", color));
+        figures.push(labelFigure(midpoint(b, c), `C ${formatRatioLabel(ratios.c)}`, { background: color, dy: 10 }));
+      }
+      if (coordinates.length >= 5) {
+        figures.push(solidLine([c, d], color, 1.4), circledLabel(d, "D", color));
+        figures.push(labelFigure(midpoint(c, d), `D ${formatRatioLabel(ratios.d)}`, { background: color, dy: 10 }));
+      }
+      return figures;
+    },
   });
 
-  // ── threeDrives — 7pt (0,A,1,B,2,C,3), totalStep 8. ─────────────────────
+  // ── threeDrives — 7pt (0,A,1,B,2,C,3), totalStep 8. Point labels via the ─
+  // shared zigzag geometry, PLUS (Tool-values-gap-fixes brief, T4.2) a
+  // per-leg ratio label — a pattern tool whose whole purpose is validating
+  // ratios was previously shipping with zero of them. Each leg validates
+  // against its OWN immediately preceding leg (see `figure-kit.ts`'s
+  // `computeAdjacentLegRatios` doc), NOT a single fixed reference leg like
+  // `cypher` above — the first leg (0→A) has no predecessor and gets no
+  // ratio, matching `abcd`'s own established convention. Ratio labels reuse
+  // `formatRatioLabel` (3-decimal), same as `abcd`/`xabcd`/`cypher`.
   registerOverlay({
     name: "threeDrives",
     totalStep: 8,
     needDefaultPointFigure: true,
     needDefaultXAxisFigure: true,
     needDefaultYAxisFigure: true,
-    createPointFigures: buildLabeledZigzag(["0", "A", "1", "B", "2", "C", "3"], INK_600),
+    createPointFigures: ({ coordinates, overlay }: OverlayCreateFiguresCallbackParams<unknown>): OverlayFigure[] => {
+      if (coordinates.length < 2) return [];
+      const color = INK_600;
+      const labels = ["0", "A", "1", "B", "2", "C", "3"];
+      const figures: OverlayFigure[] = [];
+      for (let i = 1; i < coordinates.length; i++) {
+        figures.push(solidLine([coordinates[i - 1], coordinates[i]], color, 1.4));
+      }
+      coordinates.forEach((point, i) => figures.push(circledLabel(point, labels[i] ?? String(i), color)));
+      const values = overlay.points.map((p) => p.value ?? 0);
+      const ratios = computeAdjacentLegRatios(values);
+      for (let i = 2; i < coordinates.length; i++) {
+        const ratio = ratios[i - 2];
+        if (ratio === undefined) continue;
+        figures.push(labelFigure(midpoint(coordinates[i - 1], coordinates[i]), formatRatioLabel(ratio), { background: AMBER, dy: 10 }));
+      }
+      return figures;
+    },
   });
 
   // ── headAndShoulders — 7pt (baseline, L-shoulder, L-trough, head, ──────

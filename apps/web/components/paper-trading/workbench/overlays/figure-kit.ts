@@ -90,6 +90,111 @@ export function formatRatioLabel(v: number): string {
   return Number.isFinite(v) ? v.toFixed(3) : "—";
 }
 
+/**
+ * Tool-values-gap-fixes brief, T1.1 — elapsed CALENDAR time between two
+ * anchors (`dateRange`/`datePriceRange`), a sibling stat to the existing
+ * bar-count label (TradingView's own Date Range tool is confirmed —
+ * `43000517005` — to show BOTH). TradingView's exact on-canvas string isn't
+ * literally quoted by that help article, so the bucket convention below is
+ * OUR OWN, deliberately documented rather than guessed at silently:
+ *
+ *   < 1 day  → "{h}h"   (hours, rounded)
+ *   1-7 days → "{d}d"   (days, rounded — a full week still reads "7d", not "1w")
+ *   8-59 days → "{w}w"  (weeks, rounded — flat 7-day week)
+ *   60-729 days → "{mo}mo" (months, rounded — flat 30-day month, a deliberate
+ *                            simplification over a calendar-accurate 30.44,
+ *                            consistent with this file's other "immune to
+ *                            zoom/calendar-gap" bar-index conventions)
+ *   ≥ 730 days → "{y.y}y" (years, ONE decimal, flat 365-day year)
+ *
+ * Boundaries are placed so the LOWER unit wins exactly at its own upper edge
+ * (`abs <= WEEK` keeps a 7-day span as "7d", not "1w"; `abs <= DAY` keeps a
+ * 1-day span as "1d") — picked once here and asserted in `selfcheck.ts`,
+ * never re-decided ad hoc at a call site. Every non-zero span rounds to AT
+ * LEAST 1 of its unit (`Math.max(1, Math.round(...))`) — a 2-minute drag
+ * must never render "0h", which would read as "no time elapsed" and be
+ * actively misleading for a genuinely nonzero span.
+ */
+export function formatElapsedLabel(ms: number): string {
+  const abs = Math.abs(ms);
+  if (abs <= 0) return "0h";
+  const HOUR = 60 * 60 * 1000;
+  const DAY = 24 * HOUR;
+  const WEEK = 7 * DAY;
+  const MONTH = 30 * DAY;
+  const YEAR = 365 * DAY;
+  if (abs < DAY) return `${Math.max(1, Math.round(abs / HOUR))}h`;
+  if (abs <= WEEK) return `${Math.max(1, Math.round(abs / DAY))}d`;
+  if (abs < 60 * DAY) return `${Math.max(1, Math.round(abs / WEEK))}w`;
+  if (abs < 730 * DAY) return `${Math.max(1, Math.round(abs / MONTH))}mo`;
+  return `${(abs / YEAR).toFixed(1)}y`;
+}
+
+/**
+ * Tool-values-gap-fixes brief, T4.1 — `cypher`'s CORRECTED ratio-base
+ * formula. The pattern's 5 anchors (`values` = `[X, A, B, C, D]`, click
+ * order, VALUE/price space) validate against three DIFFERENT base legs, not
+ * a single uniform reference (the bug this replaces divided every leg by
+ * the first leg, `XA`, which is only correct for B):
+ *
+ *   B = |AB| / |XA|  — B retraces the reference leg XA. (unchanged — already correct)
+ *   C = |BC| / |AB|  — C extends the AB leg, NOT XA.
+ *   D = |CD| / |XC|  — D retraces the XC completion leg (the standard
+ *                      78.6%-style Cypher completion rule), NOT XA.
+ *
+ * `XC` is a NEW local (not computed by the pre-fix code at all) — the
+ * distance from the very first anchor to the third-drawn point (C), which
+ * only exists once C has been placed. Every leg length is `|| 1` guarded
+ * against a degenerate (zero-length) base leg, matching this file's other
+ * ratio helpers.
+ */
+export function computeCypherRatios(values: readonly number[]): { b: number; c: number; d: number } {
+  const [x, a, b, c, d] = values;
+  const xa = Math.abs(a - x) || 1;
+  const ab = Math.abs(b - a) || 1;
+  const bc = Math.abs(c - b);
+  const xc = Math.abs(c - x) || 1;
+  const cd = Math.abs(d - c);
+  return { b: Math.abs(b - a) / xa, c: bc / ab, d: cd / xc };
+}
+
+/**
+ * Tool-values-gap-fixes brief, T4.2 — `threeDrives`'s per-leg ratio
+ * convention: EVERY leg validates against its IMMEDIATELY PRECEDING leg
+ * (not a single fixed reference leg like `computeCypherRatios` above) —
+ * `ratio[i] = |values[i] - values[i-1]| / |values[i-1] - values[i-2]|`. The
+ * first leg (`values[0]` → `values[1]`) has no predecessor and gets no
+ * ratio, matching `abcd`'s own established convention (its first leg, A→B,
+ * is undecorated too — see `legacy-shapes.ts`). Returns one ratio per leg
+ * from index 2 onward, i.e. `values.length - 2` entries, aligned to
+ * `values[2..]` (caller pairs `ratios[i-2]` with the leg ending at
+ * `values[i]`).
+ */
+export function computeAdjacentLegRatios(values: readonly number[]): number[] {
+  const ratios: number[] = [];
+  for (let i = 2; i < values.length; i++) {
+    const prevLeg = Math.abs(values[i - 1] - values[i - 2]) || 1;
+    const leg = Math.abs(values[i] - values[i - 1]);
+    ratios.push(leg / prevLeg);
+  }
+  return ratios;
+}
+
+/**
+ * Tool-values-gap-fixes brief, T3.2/T3.3 — the TradingView-confirmed
+ * "Ranges And Ratio" corner label (`43000518149` — "time and price ranges
+ * and ratio... at the Square's corners"), shared VERBATIM by `gannSquare`
+ * (T3.2) and `gannSquareFixed` (T3.3) so the two variants render
+ * byte-identical corner text instead of two independently-drifting string
+ * formats. `bars` guarded `|| 1` against a degenerate same-pixel drag
+ * (mirrors `gannSquareFixed`'s own existing `pricePerBar` guard).
+ */
+export function formatGannRangeRatioLabel(bars: number, priceRange: number): string {
+  const safeBars = bars || 1;
+  const ratio = priceRange / safeBars;
+  return `${safeBars} bar${safeBars === 1 ? "" : "s"} · ${formatRupeesLabel(priceRange)} · ratio ${ratio.toFixed(2)}/bar`;
+}
+
 // ── Style-override resolution ───────────────────────────────────────────
 type StylesRecord = Record<string, unknown> | null | undefined;
 

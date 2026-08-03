@@ -24,6 +24,7 @@ import {
   labelFigure,
   formatRupeesLabel,
   formatPercentLabel,
+  formatUnsignedPercentLabel,
   FIB_RETRACEMENT_LEVELS,
   FIB_EXTENSION_LEVELS,
   FIB_SEQUENCE,
@@ -101,7 +102,11 @@ export function registerFibonacciOverlays(): void {
         const rayPoint: Coordinate = { x: pB.x, y };
         const extended = extendToRightEdge(pA, rayPoint, rightX);
         figures.push(level === 0 || level === 1 ? solidLine([pA, extended], color, 1.3) : dashedLine([pA, extended], color, 1));
-        figures.push(labelFigure(rayPoint, formatPercentLabel(level), { background: color }));
+        // Tool-values-gap-fixes brief, T2.1 — add ₹ price alongside the level
+        // (matching `fibExtension`'s combined format), and use the UNSIGNED
+        // percent formatter (a fib level has no natural direction — the
+        // signed `formatPercentLabel`'s "+61.8%" read wrong here).
+        figures.push(labelFigure(rayPoint, `${formatUnsignedPercentLabel(level)} · ${formatRupeesLabel(price)}`, { background: color }));
       }
       return figures;
     },
@@ -160,6 +165,10 @@ export function registerFibonacciOverlays(): void {
         if (level === 0) continue;
         const r = radiusFull * level;
         figures.push(arcFigure(pA.x, pA.y, r, angle - Math.PI / 2, angle + Math.PI / 2, color, level === 1 ? 1.4 : 1));
+        // Tool-values-gap-fixes brief, T2.2 — % label where the arc crosses
+        // the A→B ray direction (no dedicated TV page found, but 7/9 sibling
+        // fib tools have a confirmed Levels toggle — pattern-matched gap).
+        figures.push(labelFigure({ x: pA.x + r * Math.cos(angle), y: pA.y + r * Math.sin(angle) }, formatUnsignedPercentLabel(level), { background: color }));
       }
       return figures;
     },
@@ -183,6 +192,9 @@ export function registerFibonacciOverlays(): void {
       for (const level of FIB_RETRACEMENT_LEVELS) {
         if (level === 0) continue;
         figures.push(circleFigure(center.x, center.y, radiusFull * level, color, { size: level === 1 ? 1.4 : 1, dashed: level !== 1 }));
+        // Tool-values-gap-fixes brief, T2.3 — TradingView-CONFIRMED gap
+        // (`43000518159`, "Levels" toggle = "labels with the circles' values").
+        figures.push(labelFigure({ x: center.x, y: center.y - radiusFull * level }, formatUnsignedPercentLabel(level), { background: color }));
       }
       return figures;
     },
@@ -208,12 +220,21 @@ export function registerFibonacciOverlays(): void {
       const figures: OverlayFigure[] = [
         fillPolygon([{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }], fill, color, 1),
       ];
+      // Tool-values-gap-fixes brief, T2.4 — TradingView-CONFIRMED gap
+      // (`43000518156`, "left/right/top/bottom labels with levels' values" on
+      // the grid). Label the top of each vertical division and the left of
+      // each horizontal division with its `formatUnsignedPercentLabel`
+      // fraction — the existing "1/3"/"2/3" diagonal-ray labels below are a
+      // distinct, legitimate Speed-Resistance-Lines convention and are left
+      // untouched.
       for (let i = 1; i < 8; i++) {
         const fraction = i / 8;
         const vx = x0 + (x1 - x0) * fraction;
         const hy = y0 + (y1 - y0) * fraction;
         figures.push(dashedLine([{ x: vx, y: y0 }, { x: vx, y: y1 }], color, 0.8));
         figures.push(dashedLine([{ x: x0, y: hy }, { x: x1, y: hy }], color, 0.8));
+        figures.push(labelFigure({ x: vx, y: y0 }, formatUnsignedPercentLabel(fraction), { background: color, dy: 2 }));
+        figures.push(labelFigure({ x: x0, y: hy }, formatUnsignedPercentLabel(fraction), { background: color, align: "left" }));
       }
       const rightX = bounding.width;
       const oneThird = { x: pB.x, y: pA.y + (pB.y - pA.y) / 3 };
@@ -379,7 +400,13 @@ export function registerFibonacciOverlays(): void {
       const figures: OverlayFigure[] = [solidLine([pA, pB], color, 1)];
       for (const level of FIB_RETRACEMENT_LEVELS) {
         if (level === 0) continue;
-        figures.push(arcFigure(pA.x, pA.y, radiusFull * level, startAngle, endAngle, color, level === 1 ? 1.4 : 1));
+        const r = radiusFull * level;
+        figures.push(arcFigure(pA.x, pA.y, r, startAngle, endAngle, color, level === 1 ? 1.4 : 1));
+        // Tool-values-gap-fixes brief, T2.5 — TradingView-CONFIRMED gap
+        // (`43000518157`). Same placement approach as `fibArc` (T2.2): label
+        // at the arc's point along the A→B ray direction (`angleToB`, always
+        // one of the two sweep bounds by construction above).
+        figures.push(labelFigure({ x: pA.x + r * Math.cos(angleToB), y: pA.y + r * Math.sin(angleToB) }, formatUnsignedPercentLabel(level), { background: color }));
       }
       return figures;
     },
@@ -405,10 +432,16 @@ export function registerFibonacciOverlays(): void {
       const angleC = Math.atan2(pC.y - pA.y, pC.x - pA.x);
       const startAngle = Math.min(angleB, angleC);
       const endAngle = Math.max(angleB, angleC);
+      const midAngle = (startAngle + endAngle) / 2;
       const figures: OverlayFigure[] = [solidLine([pA, pB], color, 1.2), solidLine([pA, pC], color, 1.2)];
       for (const level of FIB_RETRACEMENT_LEVELS) {
         if (level === 0) continue;
-        figures.push(arcFigure(pA.x, pA.y, shorter * level, startAngle, endAngle, color, level === 1 ? 1.4 : 1));
+        const r = shorter * level;
+        figures.push(arcFigure(pA.x, pA.y, r, startAngle, endAngle, color, level === 1 ? 1.4 : 1));
+        // Tool-values-gap-fixes brief, T2.6 — TradingView-CONFIRMED gap
+        // (`43000518153`, "Levels" = "text displaying arcs' levels values").
+        // Label at the arc's midpoint angle between the two rays.
+        figures.push(labelFigure({ x: pA.x + r * Math.cos(midAngle), y: pA.y + r * Math.sin(midAngle) }, formatUnsignedPercentLabel(level), { background: color }));
       }
       return figures;
     },

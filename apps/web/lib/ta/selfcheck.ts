@@ -26,11 +26,29 @@
  * shows its full blast radius in one pass.
  */
 import { computeOrderCosts } from "@predict-future/business-rules/papertrading/costs";
+import { USER_SCRIPT_MAX_SIGNALS } from "@predict-future/validation/userScripts";
+
+import {
+  formatElapsedLabel,
+  computeCypherRatios,
+  computeAdjacentLegRatios,
+  formatGannRangeRatioLabel
+} from "../../components/paper-trading/workbench/overlays/figure-kit";
 
 import { runBacktest, intervalToProductType, type BacktestTrade } from "./backtest";
-import { maCross, finalizeSignals, type StrategyCandle, type StrategySignal } from "./strategies";
+import { maCross, finalizeSignals, STRATEGY_REGISTRY, type StrategyCandle, type StrategySignal } from "./strategies";
 import { combineRatingWithCustoms, computeTechnicalRating, computeTechnicalDetail, evaluateCustomSignal, CUSTOMIZABLE_RULES, type DetailRow } from "./technicals";
 import { computeIndicatorSignal } from "./indicator-signals";
+import {
+  runScriptSync,
+  resolveSignalsAgainstBars,
+  buildWrappedSource,
+  WRAP_LINE_OFFSET,
+  DENYLIST_KEYS,
+  SCRIPT_SENTINEL,
+  MISSING_RUN_FUNCTION_MESSAGE,
+  INVALID_SCRIPT_RESULT_MESSAGE
+} from "./user-scripts";
 
 // ── Tiny assertion harness ───────────────────────────────────────────────
 
@@ -549,6 +567,254 @@ function checkCombineRatingWithCustoms(): void {
   assert("combine: 20 custom sells never raise the overall", rank(withSells.overall) <= rank(rating.overall));
 }
 checkCombineRatingWithCustoms();
+
+// ── User Strategy Scripting (SS1) — lib/ta/user-scripts.ts fixtures ────────
+// Node-runnable, zero Worker/DOM dependency (D1) — every function below is
+// exercised directly via `runScriptSync`, the exact same seam
+// `strategy-worker.ts` calls inside the real sandboxed Worker.
+
+/** D1/D3 round-trip: a hand-written fixture script against the SAME `fixtureCandles` series this file already defines — asserts the resolved `StrategySignal[]` pulls `price`/`timestamp` from `fixtureCandles[2]`/`fixtureCandles[3]`, never from the script (which structurally CAN'T supply them — `RawScriptSignal` has no such fields at all). */
+function checkUserScriptRoundTrip(): void {
+  const script = `function run(bars, ta, helpers) { return [helpers.buy(2), helpers.sell(3)]; }`;
+  const outcome = runScriptSync(script, fixtureCandles);
+  assert("userScript: round-trip script runs ok", outcome.ok === true, JSON.stringify(outcome));
+  if (!outcome.ok) return;
+  assert("userScript: round-trip produces 2 raw signals", outcome.signals.length === 2, JSON.stringify(outcome.signals));
+
+  const resolved = resolveSignalsAgainstBars(outcome.signals, fixtureCandles);
+  assert("userScript: resolved signal count matches raw count", resolved.length === 2, JSON.stringify(resolved));
+  const buy = resolved.find((s) => s.side === "BUY");
+  const sell = resolved.find((s) => s.side === "SELL");
+  assert(
+    "userScript: BUY signal resolves price/timestamp from fixtureCandles[2], never from the script",
+    !!buy && buy.price === fixtureCandles[2].close && buy.timestamp === fixtureCandles[2].timestamp,
+    JSON.stringify(buy)
+  );
+  assert(
+    "userScript: SELL signal resolves price/timestamp from fixtureCandles[3], never from the script",
+    !!sell && sell.price === fixtureCandles[3].close && sell.timestamp === fixtureCandles[3].timestamp,
+    JSON.stringify(sell)
+  );
+}
+
+/** D6's `helpers.finalize` parity: a script that recomputes maCross[2,3]'s own SMA-cross logic BY HAND via `ta.sma`, then calls `helpers.finalize(raw)` — its output must match `maCross.compute()`'s real, `finalizeSignals()`-processed output (`maCrossSignals`, already independently validated by `checkMaCrossSignals`/`checkBacktestCostCrossCheck` above) exactly. Proves `helpers.finalize` is the REAL `finalizeSignals`, not a stub or a second hand-rolled dedup. */
+function checkHelpersFinalizeParity(maCrossSignals: StrategySignal[]): void {
+  const script = `
+    function run(bars, ta, helpers) {
+      var closes = helpers.closes(bars);
+      var fast = ta.sma(closes, 2);
+      var slow = ta.sma(closes, 3);
+      var raw = [];
+      for (var i = 0; i < bars.length; i++) {
+        if (fast[i] === undefined || slow[i] === undefined) continue;
+        if (fast[i] > slow[i]) raw.push(helpers.buy(i));
+        else if (fast[i] < slow[i]) raw.push(helpers.sell(i));
+      }
+      return helpers.finalize(raw);
+    }
+  `;
+  const outcome = runScriptSync(script, fixtureCandles);
+  assert("userScript: helpers.finalize parity script runs ok", outcome.ok === true, JSON.stringify(outcome));
+  if (!outcome.ok) return;
+
+  const resolved = resolveSignalsAgainstBars(outcome.signals, fixtureCandles);
+  const actualShape = resolved.map((s) => ({ index: s.index, side: s.side }));
+  const expectedShape = maCrossSignals.map((s) => ({ index: s.index, side: s.side }));
+  assert(
+    "userScript: a script's own ta.sma cross logic + helpers.finalize() matches maCross.compute()'s real finalizeSignals()-processed output exactly",
+    JSON.stringify(actualShape) === JSON.stringify(expectedShape),
+    `actual=${JSON.stringify(actualShape)} expected=${JSON.stringify(expectedShape)}`
+  );
+}
+
+/**
+ * Denylist template smoke test — Node-side, explicitly NOT a live-browser
+ * security proof (see SS3 for that). Two parts: (1) a structural check that
+ * `buildWrappedSource`'s returned TEXT actually contains a lexical shadow
+ * line for every `DENYLIST_KEYS` entry (proof the template didn't silently
+ * drop the block); (2) a real (if Node-scoped, not the true Worker-level
+ * global-object boundary) behavioral check — a script that logs `typeof`
+ * four denylisted names must see `"undefined"` for all of them, because
+ * `buildWrappedSource`'s lexical shadow layer applies inside Node's
+ * `new Function` execution context exactly as it does inside a real Worker
+ * — see `lib/ta/user-scripts.ts`'s own module doc for why this layer is
+ * real-but-not-sufficient (a script reaching `globalThis.fetch` directly
+ * would bypass it; that's what `strategy-worker.ts`'s REAL
+ * `Object.defineProperty` pass against the true global object closes).
+ */
+function checkDenylistTemplateSmokeTest(): void {
+  const wrapped = buildWrappedSource("function run(bars, ta, helpers) { return []; }");
+  for (const key of DENYLIST_KEYS) {
+    assert(`userScript: wrapped-source template textually contains a denylist shadow for '${key}'`, wrapped.includes(`const ${key} = undefined;`));
+  }
+
+  const script = `
+    function run(bars, ta, helpers) {
+      console.log(typeof fetch, typeof XMLHttpRequest, typeof WebSocket, typeof setTimeout);
+      return [];
+    }
+  `;
+  const outcome = runScriptSync(script, fixtureCandles);
+  assert("userScript: denylist smoke-test script runs ok", outcome.ok === true, JSON.stringify(outcome));
+  if (!outcome.ok) return;
+  assert(
+    "userScript: denylisted globals read as 'undefined' inside a script's own lexical scope",
+    outcome.logs[0] === "undefined undefined undefined undefined",
+    JSON.stringify(outcome.logs)
+  );
+}
+
+/** D5's `WRAP_LINE_OFFSET` arithmetic — a deliberate syntax error on a KNOWN line (line 3 of the user's own source, below) must be corrected to exactly that line, never `3 + WRAP_LINE_OFFSET` or any other wrong value. Uses `acorn`'s direct parse of the raw user source (see `checkSyntax` in `lib/ta/user-scripts.ts`), which needs no `WRAP_LINE_OFFSET` arithmetic at all since it parses the user's text verbatim — this fixture proves that path end-to-end. */
+function checkSyntaxErrorLineCorrection(): void {
+  const script = ["function run(bars, ta, helpers) {", "  // deliberate syntax error on the next line", "  const x = ;", "  return [];", "}"].join("\n");
+  const outcome = runScriptSync(script, fixtureCandles);
+  assert("userScript: a syntax error resolves ok:false, never throws out of runScriptSync", outcome.ok === false, JSON.stringify(outcome));
+  if (outcome.ok) return;
+  assert("userScript: syntax error line is corrected to the user's own line 3, not a wrapped-text line", outcome.error.line === 3, JSON.stringify(outcome.error));
+  assert("userScript: WRAP_LINE_OFFSET is a positive, non-hand-typed constant", Number.isInteger(WRAP_LINE_OFFSET) && WRAP_LINE_OFFSET > 0, String(WRAP_LINE_OFFSET));
+}
+
+/** D7: a script returning 25,000 raw signals must still resolve `ok: true`, TRUNCATED to exactly `USER_SCRIPT_MAX_SIGNALS` — never rejected outright (a `.max()`-style hard reject would make this a run FAILURE, contradicting D7's "ran successfully, just capped" contract). */
+function checkSignalCapTruncation(): void {
+  const manyBars = closesToCandles(Array.from({ length: 25_000 }, (_, i) => 100 + (i % 5)));
+  const script = `
+    function run(bars, ta, helpers) {
+      var out = [];
+      for (var i = 0; i < bars.length; i++) {
+        out.push(helpers.buy(i));
+      }
+      return out;
+    }
+  `;
+  const outcome = runScriptSync(script, manyBars);
+  assert("userScript: a 25k-signal script still resolves ok:true (truncated, not rejected)", outcome.ok === true, outcome.ok ? "" : JSON.stringify(outcome.error));
+  if (!outcome.ok) return;
+  assert(
+    `userScript: 25k raw signals truncated to exactly USER_SCRIPT_MAX_SIGNALS (${USER_SCRIPT_MAX_SIGNALS})`,
+    outcome.signals.length === USER_SCRIPT_MAX_SIGNALS,
+    `got ${outcome.signals.length}`
+  );
+}
+
+/** D8 honesty law: malformed `run()` return shapes (a bare string, `null`, a non-numeric `index`) must each resolve to a clean `ok: false` — NEVER a thrown exception escaping `runScriptSync` itself, and never a fabricated signal. */
+function checkMalformedResultHonesty(): void {
+  const notArrayOutcome = runScriptSync(`function run(bars, ta, helpers) { return "not an array"; }`, fixtureCandles);
+  assert("userScript: a script returning a bare string resolves ok:false, never throws", notArrayOutcome.ok === false, JSON.stringify(notArrayOutcome));
+  if (!notArrayOutcome.ok) {
+    assert(
+      "userScript: a script returning a bare string gets the documented invalid-result message",
+      notArrayOutcome.error.message === INVALID_SCRIPT_RESULT_MESSAGE,
+      notArrayOutcome.error.message
+    );
+  }
+
+  const nullOutcome = runScriptSync(`function run(bars, ta, helpers) { return null; }`, fixtureCandles);
+  assert("userScript: a script returning null resolves ok:false, never throws", nullOutcome.ok === false, JSON.stringify(nullOutcome));
+
+  const badIndexOutcome = runScriptSync(`function run(bars, ta, helpers) { return [{ index: "not a number", side: "BUY" }]; }`, fixtureCandles);
+  assert("userScript: an array with a non-numeric index resolves ok:false, never throws", badIndexOutcome.ok === false, JSON.stringify(badIndexOutcome));
+}
+
+/** D4: a script with no top-level `run` function must fail with the EXACT documented message, not a raw, unformatted `ReferenceError`. */
+function checkMissingRunFunction(): void {
+  const outcome = runScriptSync(`const notRun = function () { return []; };`, fixtureCandles);
+  assert("userScript: a script with no top-level run() resolves ok:false", outcome.ok === false, JSON.stringify(outcome));
+  if (outcome.ok) return;
+  assert(
+    "userScript: missing-run error carries the exact documented message, not a raw ReferenceError",
+    outcome.error.message === MISSING_RUN_FUNCTION_MESSAGE,
+    outcome.error.message
+  );
+}
+
+/** D9: `SCRIPT_SENTINEL` (`"__pf_script__"`) must never collide with a real `STRATEGY_REGISTRY` key — the one correctness property `PF_SIGNALS`'s `calc()` branch dispatch (`calcParams[0] === SCRIPT_SENTINEL`) depends on to never misroute a template strategy into the script branch or vice versa. */
+function checkScriptSentinelNeverCollidesWithStrategyRegistry(): void {
+  assert(
+    "userScript: SCRIPT_SENTINEL is never a STRATEGY_REGISTRY key (PF_SIGNALS calc() branch-dispatch safety)",
+    !(SCRIPT_SENTINEL in STRATEGY_REGISTRY),
+    SCRIPT_SENTINEL
+  );
+}
+
+checkUserScriptRoundTrip();
+checkHelpersFinalizeParity(signals);
+checkDenylistTemplateSmokeTest();
+checkSyntaxErrorLineCorrection();
+checkSignalCapTruncation();
+checkMalformedResultHonesty();
+checkMissingRunFunction();
+checkScriptSentinelNeverCollidesWithStrategyRegistry();
+
+// ── Tool-values-gap-fixes brief (2026-08-04) — pure formula fixtures for
+// the workbench overlay tools' new/corrected value labels. Only the PURE
+// numeric/string functions are exercised here (imported straight from
+// `overlays/figure-kit.ts`, which carries zero runtime klinecharts
+// dependency — its only `klinecharts` import is `import type`, erased at
+// compile time, so this Node process never touches the chart library) —
+// the pixel-coordinate `createPointFigures` bodies themselves need real
+// chart context and are QA'd in-browser instead, same split this file's
+// own module doc already draws between `lib/ta/math.ts` and
+// `overlays/figure-kit.ts`. ───────────────────────────────────────────────
+
+/** T1.1 — `formatElapsedLabel`'s bucket-boundary convention, hand-verified at each edge (see the function's own doc for why the boundaries are placed where they are). */
+function checkFormatElapsedLabel(): void {
+  const HOUR = 60 * 60 * 1000;
+  const DAY = 24 * HOUR;
+
+  assert("formatElapsedLabel: 3 hours -> '3h'", formatElapsedLabel(3 * HOUR) === "3h", formatElapsedLabel(3 * HOUR));
+  assert(
+    "formatElapsedLabel: exactly 7 days -> '7d', not '1w' (our chosen boundary convention, deliberately asserted)",
+    formatElapsedLabel(7 * DAY) === "7d",
+    formatElapsedLabel(7 * DAY)
+  );
+  assert("formatElapsedLabel: 8 days crosses into the week bucket -> '1w'", formatElapsedLabel(8 * DAY) === "1w", formatElapsedLabel(8 * DAY));
+  assert("formatElapsedLabel: 90 days (multi-month case) -> '3mo'", formatElapsedLabel(90 * DAY) === "3mo", formatElapsedLabel(90 * DAY));
+  assert("formatElapsedLabel: ~800 days -> '2.2y' (800/365 = 2.1918.., one decimal)", formatElapsedLabel(800 * DAY) === "2.2y", formatElapsedLabel(800 * DAY));
+  assert(
+    "formatElapsedLabel: a nonzero 2-minute span never floors to '0h'",
+    formatElapsedLabel(2 * 60 * 1000) === "1h",
+    formatElapsedLabel(2 * 60 * 1000)
+  );
+  assert("formatElapsedLabel: a genuinely zero span is '0h'", formatElapsedLabel(0) === "0h", formatElapsedLabel(0));
+}
+
+/** T4.1 — `cypher`'s corrected ratio-base formula. Worked example from the CTO brief: X=100, A=150, B=130, C=180, D=140. XA=50, AB=20 -> B=20/50=0.400. BC=50 -> C=BC/AB=50/20=2.500 (the pre-fix bug would have wrongly computed BC/XA=50/50=1.000). XC=|180-100|=80, CD=|140-180|=40 -> D=CD/XC=40/80=0.500 (the pre-fix bug would have wrongly computed CD/XA=40/50=0.800). */
+function checkComputeCypherRatios(): void {
+  const ratios = computeCypherRatios([100, 150, 130, 180, 140]);
+  assertClose("computeCypherRatios: B = AB/XA = 20/50 = 0.400", ratios.b, 0.4);
+  assertClose("computeCypherRatios: C = BC/AB = 50/20 = 2.500 (fixed base leg — was wrongly BC/XA = 1.000)", ratios.c, 2.5);
+  assertClose("computeCypherRatios: D = CD/XC = 40/80 = 0.500 (fixed base leg — was wrongly CD/XA = 0.800)", ratios.d, 0.5);
+}
+
+/** T4.2 — `threeDrives`'s per-leg-vs-preceding-leg ratio helper. 7-point worked example: [100(0), 150(A), 120(1), 160(B), 110(2), 170(C), 100(3)]. Legs: 0->A=50 (no ratio, no predecessor), A->1=30 (ratio 30/50=0.6), 1->B=40 (ratio 40/30), B->2=50 (ratio 50/40=1.25), 2->C=60 (ratio 60/50=1.2), C->3=70 (ratio 70/60). */
+function checkComputeAdjacentLegRatios(): void {
+  const ratios = computeAdjacentLegRatios([100, 150, 120, 160, 110, 170, 100]);
+  assert("computeAdjacentLegRatios: exactly 5 ratios for a 7-point series (legs 2-6, first leg excluded)", ratios.length === 5, `got ${ratios.length}`);
+  assertClose("computeAdjacentLegRatios: leg2 (A->1) = 30/50 = 0.6", ratios[0], 0.6);
+  assertClose("computeAdjacentLegRatios: leg3 (1->B) = 40/30", ratios[1], 40 / 30);
+  assertClose("computeAdjacentLegRatios: leg4 (B->2) = 50/40 = 1.25", ratios[2], 1.25);
+  assertClose("computeAdjacentLegRatios: leg5 (2->C) = 60/50 = 1.2", ratios[3], 1.2);
+  assertClose("computeAdjacentLegRatios: leg6 (C->3) = 70/60", ratios[4], 70 / 60);
+}
+
+/** T3.2/T3.3 — the shared Gann Square "Ranges And Ratio" corner label, exact string match (including the singular/plural "bar"/"bars" branch). */
+function checkFormatGannRangeRatioLabel(): void {
+  assert(
+    "formatGannRangeRatioLabel: 10 bars, ₹250 range -> exact string, ratio 25.00/bar",
+    formatGannRangeRatioLabel(10, 250) === "10 bars · ₹250 · ratio 25.00/bar",
+    formatGannRangeRatioLabel(10, 250)
+  );
+  assert(
+    "formatGannRangeRatioLabel: 1 bar uses the singular 'bar', not 'bars'",
+    formatGannRangeRatioLabel(1, 42) === "1 bar · ₹42 · ratio 42.00/bar",
+    formatGannRangeRatioLabel(1, 42)
+  );
+}
+
+checkFormatElapsedLabel();
+checkComputeCypherRatios();
+checkComputeAdjacentLegRatios();
+checkFormatGannRangeRatioLabel();
 
 console.log(`ta:check — ${passCount} passed, ${failCount} failed.`);
 if (failCount > 0) {

@@ -23,6 +23,7 @@ import {
   labelFigure,
   formatRupeesLabel,
   formatPercentLabel,
+  formatElapsedLabel,
   resolveLineColor,
   resolvePolygonColor,
   pixelXToDataIndex,
@@ -103,10 +104,17 @@ function positionFigures(coordinates: Coordinate[], points: Array<Partial<Point>
     const targetPct = entryValue !== 0 ? (targetValue - entryValue) / entryValue : 0;
     const stopPct = entryValue !== 0 ? (stopValue - entryValue) / entryValue : 0;
     const chipY = Math.min(entryPx.y, stopPx.y, targetPx.y) - 24;
+    // Tool-values-gap-fixes brief, T1.2 — TradingView's Long/Short Position
+    // tool (`43000475660`/`43000517002`) shows risk/reward in CURRENCY
+    // amount, not just percent. `risk`/`reward` are already computed above
+    // for the R:R ratio — this just threads them into the chip text too, no
+    // new math. Qty/account-size sizing deliberately NOT added here — see
+    // this file's own module doc / the brief for why that's a separate,
+    // bigger product decision.
     figures.push(
       labelFigure(
         { x: entryPx.x, y: chipY },
-        `R:R 1:${rr.toFixed(1)} · target ${formatPercentLabel(targetPct)} · stop ${formatPercentLabel(stopPct)}`,
+        `R:R 1:${rr.toFixed(1)} · risk ${formatRupeesLabel(risk)} (${formatPercentLabel(stopPct)}) · reward ${formatRupeesLabel(reward)} (${formatPercentLabel(targetPct)})`,
         { align: "left", background: direction === "long" ? EMERALD : ROSE },
       ),
     );
@@ -167,7 +175,13 @@ export function registerMeasureOverlays(): void {
   // timestamp ÷ fixed-interval-ms division — a deliberate, documented
   // improvement: dataIndex arithmetic is immune to both zoom AND calendar
   // gaps, verified identical across two zoom levels per the ticket's own
-  // acceptance criterion).
+  // acceptance criterion). Tool-values-gap-fixes brief, T1.1 — TradingView's
+  // Date Range tool (`43000517005`) is confirmed to show bar count AND
+  // elapsed CALENDAR time; the elapsed component uses real anchor
+  // timestamps (`overlay.points[i].timestamp`), not dataIndex — bar count
+  // and calendar time are deliberately two DIFFERENT measures here (a bar
+  // count skips weekends/holidays, calendar time doesn't), matching what
+  // TradingView's own combined stat actually communicates.
   registerOverlay({
     name: "dateRange",
     totalStep: 3,
@@ -181,12 +195,16 @@ export function registerMeasureOverlays(): void {
       const dataIndex0 = pixelXToDataIndex(xAxis, p0.x);
       const dataIndex1 = pixelXToDataIndex(xAxis, p1.x);
       const bars = Math.round(Math.abs(dataIndex1 - dataIndex0));
+      const elapsedMs = Math.abs((overlay.points[1]?.timestamp ?? 0) - (overlay.points[0]?.timestamp ?? 0));
       const mid = { x: (p0.x + p1.x) / 2, y: Math.min(p0.y, p1.y) - 18 };
-      return [dashedLine([p0, p1], color, 1.4), labelFigure(mid, `${bars} bar${bars === 1 ? "" : "s"}`, { background: color })];
+      return [dashedLine([p0, p1], color, 1.4), labelFigure(mid, `${bars} bar${bars === 1 ? "" : "s"} · ${formatElapsedLabel(elapsedMs)}`, { background: color })];
     },
   });
 
   // ── datePriceRange — 2pt, both Δ price and Δ bars in one chip. ─────────
+  // Tool-values-gap-fixes brief, T1.1 — same elapsed-time addition as
+  // `dateRange` above (Date Range's own combined bars+elapsed stat, plus
+  // Price Range's Δ/%).
   registerOverlay({
     name: "datePriceRange",
     totalStep: 3,
@@ -204,10 +222,15 @@ export function registerMeasureOverlays(): void {
       const dataIndex0 = pixelXToDataIndex(xAxis, p0.x);
       const dataIndex1 = pixelXToDataIndex(xAxis, p1.x);
       const bars = Math.round(Math.abs(dataIndex1 - dataIndex0));
+      const elapsedMs = Math.abs((overlay.points[1]?.timestamp ?? 0) - (overlay.points[0]?.timestamp ?? 0));
       const mid = { x: (p0.x + p1.x) / 2, y: (p0.y + p1.y) / 2 };
       return [
         outlinedRect(Math.min(p0.x, p1.x), Math.min(p0.y, p1.y), Math.abs(p1.x - p0.x), Math.abs(p1.y - p0.y), delta >= 0 ? EMERALD_FILL : ROSE_FILL, color, 1),
-        labelFigure(mid, `Δ ${formatRupeesLabel(delta)} (${formatPercentLabel(pct)}) · ${bars} bar${bars === 1 ? "" : "s"}`, { background: delta >= 0 ? EMERALD : ROSE }),
+        labelFigure(
+          mid,
+          `Δ ${formatRupeesLabel(delta)} (${formatPercentLabel(pct)}) · ${bars} bar${bars === 1 ? "" : "s"} · ${formatElapsedLabel(elapsedMs)}`,
+          { background: delta >= 0 ? EMERALD : ROSE },
+        ),
       ];
     },
   });
