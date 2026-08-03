@@ -81,14 +81,15 @@
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { ArrowLeftRight, Loader2, Minimize2, PanelRightClose, PanelRightOpen } from "lucide-react";
+import dynamic from "next/dynamic";
+import { ArrowLeftRight, Code2, Loader2, Minimize2, PanelRightClose, PanelRightOpen } from "lucide-react";
 
 import { ChartOrderIntentPopover } from "@/components/finance/chart-order-intent-popover";
 import { ChartAxisPlusButton } from "@/components/finance/chart-axis-plus-button";
 import { ChartContextMenu } from "@/components/finance/chart-context-menu";
 import { ChartTradeHint, useTradeHintDismissed } from "@/components/finance/chart-trade-hint";
 import type { ChartOrderLine, OrderSide, OrderVariant } from "@/components/finance/chart-order-lines";
-import { KlineChart } from "./kline-chart";
+import { KlineChart, type PfSignalsConfig } from "./kline-chart";
 import { TimeframeSelector } from "./timeframe-selector";
 import { IndicatorDialog } from "./indicator-dialog";
 import { IndicatorActiveStrip } from "./indicator-active-strip";
@@ -122,6 +123,7 @@ import {
   type StrategyRunResult
 } from "./strategy-panel";
 import { STRATEGY_LIST, getStrategyDef, clampStrategyParams, resolveStrategyParams, defaultParamValues } from "@/lib/ta/strategies";
+import type { StrategySignal } from "@/lib/ta/strategies";
 import { runBacktest, intervalToProductType } from "@/lib/ta/backtest";
 import { computeIndicatorSignal, type IndicatorSignal } from "@/lib/ta/indicator-signals";
 import { combineRatingWithCustoms, computeTechnicalRating, computeTechnicalDetail, evaluateCustomSignal, type DetailRow } from "@/lib/ta/technicals";
@@ -131,6 +133,21 @@ import { CustomSignalBuilder, loadStoredCustomSignals, saveStoredCustomSignals, 
 import { HeartbeatChip } from "./heartbeat-chip";
 
 export type { WorkbenchFeed } from "./use-workbench-candles";
+
+/**
+ * User Strategy Scripting (SS2), D2 — the script editor drawer is a THIRD-
+ * level lazy chunk: this file is already the SECOND level (rendered only
+ * via `next/dynamic(..., {ssr:false})` from `workbench-maximize-button.tsx`,
+ * see this file's own module doc), and `ScriptEditorDrawer` is dynamically
+ * imported from HERE, nested one level deeper — so CodeMirror's payload is
+ * paid only when a user who has ALREADY paid for the klinecharts chunk (by
+ * maximizing a chart) THEN also opens the Scripts drawer. This file itself
+ * never statically imports anything from `codemirror`/
+ * `@codemirror/lang-javascript` — only the small toggle button below and a
+ * `boolean` open/closed state live here; everything downstream of this
+ * `dynamic(...)` call is where CodeMirror actually gets pulled in.
+ */
+const ScriptEditorDrawer = dynamic(() => import("./user-scripts/script-editor-drawer").then((m) => m.ScriptEditorDrawer), { ssr: false });
 
 /** Text-family tools that get the D10 popover — see kline-chart.tsx's own `TEXT_INPUT_OVERLAYS` (this is a small, deliberate duplication rather than exporting an internal symbol from that file). Founder-feedback pass (2026-08-03) widens this with `textLabel`/`priceNote`/`commentBubble`/`signpost`. */
 const TEXT_FAMILY_OVERLAYS = new Set(["calloutText", "noteAnchored", "textLabel", "priceNote", "commentBubble", "signpost"]);
@@ -573,6 +590,19 @@ export function ChartWorkbench({
   const [strategyNotional, setStrategyNotional] = useState(100000);
   const [strategyRunResult, setStrategyRunResult] = useState<StrategyRunResult | null>(null);
 
+  // User Strategy Scripting (SS2) — the `</> Scripts` bottom drawer.
+  // `hasOpenedScriptDrawer` is sticky-true (never resets), same pattern as
+  // `hasOpenedStrategyTab` above — it mounts `ScriptEditorDrawer` (and pays
+  // its lazy-chunk cost) exactly once per workbench session; `scriptDrawerOpen`
+  // only toggles a CSS `display` after that, so an in-progress edit/console
+  // output/open-script selection survives closing and reopening the drawer.
+  const [scriptDrawerOpen, setScriptDrawerOpen] = useState(false);
+  const [hasOpenedScriptDrawer, setHasOpenedScriptDrawer] = useState(false);
+  function toggleScriptDrawer() {
+    setScriptDrawerOpen((v) => !v);
+    setHasOpenedScriptDrawer(true);
+  }
+
   // Restored once, after mount (same localStorage-after-hydration posture as the indicator selection above).
   useEffect(() => {
     const stored = loadStoredStrategyConfig();
@@ -610,12 +640,39 @@ export function ChartWorkbench({
       stats,
       ranInterval: chartInterval,
       ranCandleCount: candles.length,
-      ranProductType: productType
+      ranProductType: productType,
+      origin: { kind: "template", strategyId }
     });
+    setActiveSignalsSource("template");
   }
 
   function handleClearSignals() {
     setStrategyRunResult(null);
+    // Only clears the CHART's markers if the template run was actually the
+    // active source — a script run's own markers (if any) are a fully
+    // independent producer and must survive this button (User Strategy
+    // Scripting SS2's "neither corrupts the other" contract).
+    setActiveSignalsSource((prev) => (prev === "template" ? null : prev));
+  }
+
+  // User Strategy Scripting (SS2) — the script editor drawer's run results
+  // feed the chart through this callback, completely independent of the
+  // Strategy tab's own `strategyRunResult`/`handleRunStrategy` above (SS1's
+  // `script-runner.ts` already resolved price/timestamp on the main thread
+  // before this ever fires — see that file's own doc). `scriptSignalsConfig`
+  // and `strategyRunResult` are BOTH always kept up to date independently;
+  // `activeSignalsSource` alone decides which one is currently painted on
+  // the single shared `PF_SIGNALS` chart instance — "last run wins," same
+  // as a real terminal only ever shows one active strategy overlay at a
+  // time. Switching the [Ticket | Strategy] tab, or opening/closing the
+  // Scripts drawer, never touches this state — only clicking Run (either
+  // producer) or Clear (template-scoped, see `handleClearSignals`) does.
+  const [scriptSignalsConfig, setScriptSignalsConfig] = useState<{ kind: "script"; runToken: string; signals: StrategySignal[] } | null>(null);
+  const [activeSignalsSource, setActiveSignalsSource] = useState<"template" | "script" | null>(null);
+
+  function handleScriptSignals(config: { kind: "script"; runToken: string; signals: StrategySignal[] }) {
+    setScriptSignalsConfig(config);
+    setActiveSignalsSource("script");
   }
 
   // D8 — the SAME {id, params} the last Run used, not the live (possibly
@@ -628,7 +685,12 @@ export function ChartWorkbench({
   // self-correcting for the markers), it's only strategyRunResult's STATS
   // that can go stale relative to a changed interval — see
   // `strategy-panel.tsx`'s `isStale` check for that surfacing.
-  const signalsConfig = strategyRunResult ? { id: strategyRunResult.id, params: strategyRunResult.params } : null;
+  const signalsConfig: PfSignalsConfig | null =
+    activeSignalsSource === "script" && scriptSignalsConfig
+      ? scriptSignalsConfig
+      : activeSignalsSource === "template" && strategyRunResult
+        ? { kind: "template", id: strategyRunResult.id, params: strategyRunResult.params }
+        : null;
 
   // W3, T3/T4 — drawing tool state + persistence hook.
   const [activeTool, setActiveTool] = useState<string | null>(null);
@@ -880,6 +942,17 @@ export function ChartWorkbench({
           onRemove={handleRemoveIndicator}
           onOpenDialog={() => setIndicatorDialogOpen(true)}
         />
+        <button
+          type="button"
+          onClick={toggleScriptDrawer}
+          className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium ${
+            scriptDrawerOpen ? "border-sky-300 bg-sky-50 text-sky-700" : "border-ink-200 text-ink-600 hover:bg-ink-100 hover:text-ink-900"
+          }`}
+          title="Script editor"
+        >
+          <Code2 className="h-3.5 w-3.5" aria-hidden="true" />
+          Scripts
+        </button>
         <div className="ml-auto flex items-center gap-2">
           {chartModeSwitcher && (
             <button
@@ -1160,6 +1233,24 @@ export function ChartWorkbench({
           </div>
         )}
       </div>
+
+      {/* User Strategy Scripting (SS2), D2/D4 — the script editor drawer.
+          Mounted once `hasOpenedScriptDrawer` goes true (sticky), then
+          purely CSS-toggled by `scriptDrawerOpen` so editor/console/list
+          state survives closing and reopening it — see the state's own doc
+          above. `display: none` rather than unmounting also means the
+          lazy-loaded CodeMirror chunk, once paid for, is never re-fetched. */}
+      {hasOpenedScriptDrawer && (
+        <div style={{ display: scriptDrawerOpen ? "flex" : "none" }} className="min-h-0">
+          <ScriptEditorDrawer
+            candles={candles}
+            interval={chartInterval}
+            isPremiumMode={isPremiumMode}
+            notional={strategyNotional}
+            onRunSignals={handleScriptSignals}
+          />
+        </div>
+      )}
 
       {indicatorDialogOpen && (
         <IndicatorDialog

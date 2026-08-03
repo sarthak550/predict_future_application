@@ -36,7 +36,8 @@ import {
 } from "../../components/paper-trading/workbench/overlays/figure-kit";
 
 import { runBacktest, intervalToProductType, type BacktestTrade } from "./backtest";
-import { maCross, finalizeSignals, STRATEGY_REGISTRY, type StrategyCandle, type StrategySignal } from "./strategies";
+import { maCross, finalizeSignals, resolveStrategyParams, STRATEGY_REGISTRY, type StrategyCandle, type StrategySignal } from "./strategies";
+import { EXAMPLE_SCRIPTS } from "./example-scripts";
 import { combineRatingWithCustoms, computeTechnicalRating, computeTechnicalDetail, evaluateCustomSignal, CUSTOMIZABLE_RULES, type DetailRow } from "./technicals";
 import { computeIndicatorSignal } from "./indicator-signals";
 import {
@@ -744,6 +745,93 @@ checkSignalCapTruncation();
 checkMalformedResultHonesty();
 checkMissingRunFunction();
 checkScriptSentinelNeverCollidesWithStrategyRegistry();
+
+// ── Scripting SS2 — the 8 example scripts + parity fixtures (§5) ───────────
+//
+// The sprint's core honesty gate: each of the 7 template-rewrite example
+// scripts must produce BYTE-IDENTICAL signals (index, side, price,
+// timestamp) to its real STRATEGY_REGISTRY counterpart's compute(), on the
+// SAME fixtureCandles series this file already defines above (reused
+// deliberately, per the brief's own "single source of fixture truth"
+// instruction — see example-scripts.ts's own module doc for the documented
+// consequence: most of these 7 comparisons resolve to two EMPTY arrays
+// under default params on only 10 bars, which is still a genuine
+// regression guard, verified negatively during this sprint's own build by
+// temporarily mutating one example script and confirming `ta:check` failed
+// before reverting it).
+
+function deepEqualStrategySignals(a: readonly StrategySignal[], b: readonly StrategySignal[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((s, i) => s.index === b[i].index && s.side === b[i].side && s.price === b[i].price && s.timestamp === b[i].timestamp);
+}
+
+function checkExampleScriptParity(): void {
+  for (const id of Object.keys(STRATEGY_REGISTRY)) {
+    const example = EXAMPLE_SCRIPTS.find((e) => e.id === id);
+    if (!example) {
+      assert(`exampleScripts: '${id}' has a matching example script in EXAMPLE_SCRIPTS`, false);
+      continue;
+    }
+    const def = STRATEGY_REGISTRY[id];
+    const outcome = runScriptSync(example.source, fixtureCandles);
+    if (!outcome.ok) {
+      assert(`exampleScripts: '${id}' example script runs without error`, false, outcome.error.message);
+      continue;
+    }
+    const scriptSignals = resolveSignalsAgainstBars(outcome.signals, fixtureCandles);
+    const templateSignals = def.compute(fixtureCandles, resolveStrategyParams(def, undefined));
+    assert(
+      `exampleScripts: '${id}' script signals match the real template's compute() output field-for-field (index/side/price/timestamp)`,
+      deepEqualStrategySignals(scriptSignals, templateSignals),
+      `script=${JSON.stringify(scriptSignals)} template=${JSON.stringify(templateSignals)}`
+    );
+  }
+}
+
+/**
+ * A longer, genuinely oscillating synthetic series (a clean multi-cycle
+ * sine wave, four full up/down swings over 160 bars) — deliberately NOT
+ * `fixtureCandles` (the "reuse the exact series" instruction in the brief
+ * is scoped to the 7 template-rewrite parity comparisons above, which diff
+ * against a real template; the kitchen-sink script has no template to diff
+ * against, and its own acceptance criterion explicitly needs "at least one
+ * BUY and one SELL," which a 10-bar fixture under SMA20/RSI14/ATR14 cannot
+ * produce — see example-scripts.ts's own module doc for the general
+ * fixture-length issue). Amplitude/period hand-tuned (and verified via a
+ * throwaway script, not guessed) so the SMA20/RSI14 crossover pattern the
+ * kitchen-sink script looks for produces a clean alternating BUY-SELL-BUY-
+ * SELL sequence after `helpers.finalize()`'s leading-SELL-drop rule, rather
+ * than a run that happens to start (and get entirely dropped) on a SELL.
+ */
+function buildKitchenSinkFixture(count: number): StrategyCandle[] {
+  const baseTs = Date.UTC(2026, 0, 1);
+  const dayMs = 24 * 60 * 60 * 1000;
+  const closes: number[] = [];
+  for (let i = 0; i < count; i++) {
+    closes.push(100 + Math.sin(i / 10) * 15);
+  }
+  return closes.map((c, i) => ({ timestamp: baseTs + i * dayMs, open: c, high: c + 1, low: c - 1, close: c, volume: 1000 }));
+}
+
+/** T6's kitchen-sink acceptance: runs cleanly and produces at least one BUY and one SELL — the Node half of that acceptance (the real-browser-worker half is the QA engineer's job, same "SS1 built the mechanism, live-browser QA proves it end-to-end" split every other Worker-dependent fixture in this file already follows). */
+function checkKitchenSinkExample(): void {
+  const example = EXAMPLE_SCRIPTS.find((e) => e.id === "kitchenSink");
+  assert("exampleScripts: 'kitchenSink' exists in EXAMPLE_SCRIPTS", !!example);
+  if (!example) return;
+
+  const longCandles = buildKitchenSinkFixture(160);
+  const outcome = runScriptSync(example.source, longCandles);
+  assert("exampleScripts: kitchenSink runs without error", outcome.ok === true, outcome.ok ? undefined : outcome.error.message);
+  if (!outcome.ok) return;
+
+  const resolved = resolveSignalsAgainstBars(outcome.signals, longCandles);
+  const hasBuy = resolved.some((s) => s.side === "BUY");
+  const hasSell = resolved.some((s) => s.side === "SELL");
+  assert("exampleScripts: kitchenSink produces at least one BUY and one SELL signal", hasBuy && hasSell, `signals=${JSON.stringify(resolved)}`);
+}
+
+checkExampleScriptParity();
+checkKitchenSinkExample();
 
 // ── Tool-values-gap-fixes brief (2026-08-04) — pure formula fixtures for
 // the workbench overlay tools' new/corrected value labels. Only the PURE

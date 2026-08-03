@@ -47,6 +47,21 @@
  * tab states") is unaffected: the compact line is the thing that's always
  * visible now, not the full paragraph — nothing about backtest results is
  * ever shown withOUT it.
+ *
+ * **User Strategy Scripting (SS2), D6 — `origin` discriminator.**
+ * `StrategyRunResult` now carries `origin: RunOrigin`, distinguishing a
+ * template run (`{kind: "template", strategyId}` — set by
+ * `chart-workbench.tsx`'s existing `handleRunStrategy`, one added field,
+ * otherwise unchanged) from a script run (`{kind: "script", scriptId,
+ * scriptName}` — set by `script-editor-drawer.tsx`'s own run handler, which
+ * calls this SAME `runBacktest()` read-only, never a second parallel
+ * backtest path). `StrategyStatsCard` is exported (was module-private) so
+ * BOTH call sites — `StrategyConfigPanel` below (template path, unchanged
+ * JSX) and the script drawer's own results display — import the identical
+ * component rather than forking a copy. The origin badge (`OriginBadge`)
+ * renders ABOVE the card at each call site, not inside it — `StrategyStatsCard`
+ * stays origin-agnostic; it receives the full `runResult` (which now
+ * carries `origin`) but never branches on it internally.
  */
 import { useState } from "react";
 import { Info } from "lucide-react";
@@ -54,6 +69,9 @@ import { Info } from "lucide-react";
 import { STRATEGY_LIST, clampStrategyParams, getStrategyDef, type StrategyDef, type StrategySignal } from "@/lib/ta/strategies";
 import { intervalToProductType, type BacktestStats } from "@/lib/ta/backtest";
 import type { PaperProductType } from "@predict-future/business-rules/papertrading/costs";
+
+/** SS2, D6 — which of the two signal producers a given run came from. A template run always carries the `STRATEGY_LIST` id that produced it; a script run carries the `UserStrategyScript` id/name (the id is `"new"` for a never-saved script — see `script-editor-drawer.tsx`). */
+export type RunOrigin = { kind: "template"; strategyId: string } | { kind: "script"; scriptId: string; scriptName: string };
 
 export interface StrategyRunResult {
   id: string;
@@ -63,6 +81,7 @@ export interface StrategyRunResult {
   ranInterval: string;
   ranCandleCount: number;
   ranProductType: PaperProductType;
+  origin: RunOrigin;
 }
 
 // ── localStorage — pf.workbench.strategy {v:1, id, params, notional} ────
@@ -239,19 +258,30 @@ export function StrategyConfigPanel({
       </button>
 
       {runResult && (
-        <StrategyStatsCard
-          runResult={runResult}
-          isStale={isStale}
-          liveInterval={interval}
-          liveCandleCount={candleCount}
-          isPremiumMode={isPremiumMode}
-        />
+        <div>
+          <OriginBadge origin={runResult.origin} />
+          <StrategyStatsCard
+            runResult={runResult}
+            isStale={isStale}
+            liveInterval={interval}
+            liveCandleCount={candleCount}
+            isPremiumMode={isPremiumMode}
+          />
+        </div>
       )}
     </div>
   );
 }
 
-function StrategyStatsCard({
+/** SS2, D6 — "Template" or "Script: {name}", rendered as a small pill ABOVE the shared `StrategyStatsCard` at each call site (this component, not `StrategyStatsCard` itself, branches on `origin`). */
+export function OriginBadge({ origin }: { origin: RunOrigin }) {
+  const label = origin.kind === "template" ? "Template" : `Script: ${origin.scriptName}`;
+  return (
+    <span className="mb-1.5 inline-block rounded-full bg-ink-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-ink-500">{label}</span>
+  );
+}
+
+export function StrategyStatsCard({
   runResult,
   isStale,
   liveInterval,
