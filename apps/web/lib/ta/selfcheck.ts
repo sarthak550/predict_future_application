@@ -29,7 +29,7 @@ import { computeOrderCosts } from "@predict-future/business-rules/papertrading/c
 
 import { runBacktest, intervalToProductType, type BacktestTrade } from "./backtest";
 import { maCross, finalizeSignals, type StrategyCandle, type StrategySignal } from "./strategies";
-import { computeTechnicalRating, computeTechnicalDetail, evaluateCustomSignal, CUSTOMIZABLE_RULES, type DetailRow } from "./technicals";
+import { combineRatingWithCustoms, computeTechnicalRating, computeTechnicalDetail, evaluateCustomSignal, CUSTOMIZABLE_RULES, type DetailRow } from "./technicals";
 import { computeIndicatorSignal } from "./indicator-signals";
 
 // ── Tiny assertion harness ───────────────────────────────────────────────
@@ -534,6 +534,22 @@ checkTechnicalDetailConsistency();
 checkCustomSignalFixtures();
 
 // eslint-disable-next-line no-console
+
+// ── combineRatingWithCustoms (founder 2026-08-04: customs join the FINAL rating) ──
+function checkCombineRatingWithCustoms(): void {
+  const up = buildMonotonicCandles(80, 100, 1);
+  const rating = computeTechnicalRating(up);
+  const noCustoms = combineRatingWithCustoms(rating, []);
+  assert("combine: zero customs leaves overall identical", noCustoms.overall === rating.overall);
+  assert("combine: zero customs zero tally", noCustoms.custom.buy === 0 && noCustoms.custom.sell === 0 && noCustoms.custom.neutral === 0);
+  const twentySells = Array.from({ length: 20 }, () => "sell" as const);
+  const withSells = combineRatingWithCustoms(rating, twentySells);
+  assert("combine: custom tally counts sells", withSells.custom.sell === 20 && withSells.custom.vote === "strongSell");
+  const rank = (r: string) => ["strongSell", "sell", "neutral", "buy", "strongBuy"].indexOf(r);
+  assert("combine: 20 custom sells never raise the overall", rank(withSells.overall) <= rank(rating.overall));
+}
+checkCombineRatingWithCustoms();
+
 console.log(`ta:check — ${passCount} passed, ${failCount} failed.`);
 if (failCount > 0) {
   process.exitCode = 1;

@@ -217,7 +217,7 @@ function CustomSection({
       </div>
       {open && (
         <div className="border-t border-ink-100 px-3 py-1">
-          <p className="py-1.5 text-[10px] italic text-ink-400">Custom signals don&apos;t affect the rating above.</p>
+          <p className="py-1.5 text-[10px] italic text-ink-400">Custom signals are included in the overall rating above.</p>
           {items.length === 0 ? (
             <p className="pb-1.5 text-xs text-ink-400">No custom signals yet — tap + above to build one, e.g. RSI(20) or Momentum(15).</p>
           ) : (

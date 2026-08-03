@@ -10,7 +10,7 @@
  * panel, not a separate top-bar affordance (keeps the top bar clean, per
  * the brief).
  */
-import type { Rating, RatingGroup, TechnicalRating } from "@/lib/ta/technicals";
+import type { CombinedRating, Rating, RatingGroup, TechnicalRating } from "@/lib/ta/technicals";
 
 const RATING_LABEL: Record<Rating, string> = {
   strongSell: "Strong Sell",
@@ -69,27 +69,38 @@ function GroupCounts({ label, group }: { label: string; group: RatingGroup }) {
   );
 }
 
-export function TechnicalsGauge({ rating }: { rating: TechnicalRating }) {
+export function TechnicalsGauge({
+  rating,
+  combined,
+}: {
+  rating: TechnicalRating;
+  /** Founder 2026-08-04: when the user has custom signal rows, the FINAL rating combines them with the standard groups — this carries the custom tally + combined overall (null/absent = standard-only, dial identical to before). */
+  combined?: CombinedRating | null;
+}) {
   if (rating.computedAtIndex < 0) return null; // no candles loaded yet — nothing honest to show.
 
-  const needleTip = pointAt(NEEDLE_ANGLE[rating.overall], NEEDLE_LENGTH);
+  const overall = combined?.overall ?? rating.overall;
+  const needleTip = pointAt(NEEDLE_ANGLE[overall], NEEDLE_LENGTH);
 
   return (
     <div className="mb-3 rounded-xl border border-ink-100 p-3">
-      <svg viewBox="0 0 200 108" className="mx-auto block w-full max-w-[220px]" role="img" aria-label={`Technicals rating: ${RATING_LABEL[rating.overall]}`}>
+      <svg viewBox="0 0 200 108" className="mx-auto block w-full max-w-[220px]" role="img" aria-label={`Technicals rating: ${RATING_LABEL[overall]}`}>
         {ZONE_BOUNDS.map(([start, end], i) => (
           <path key={i} d={zoneArcPath(start, end)} stroke={ZONE_COLORS[i]} strokeWidth={BAND_WIDTH} strokeLinecap="butt" fill="none" />
         ))}
         <line x1={CX} y1={CY} x2={needleTip.x} y2={needleTip.y} stroke="#1e293b" strokeWidth={2.5} strokeLinecap="round" />
         <circle cx={CX} cy={CY} r={4} fill="#1e293b" />
       </svg>
-      <p className={`-mt-2 text-center text-sm font-bold ${RATING_TEXT_CLASS[rating.overall]}`}>{RATING_LABEL[rating.overall]}</p>
+      <p className={`-mt-2 text-center text-sm font-bold ${RATING_TEXT_CLASS[overall]}`}>{RATING_LABEL[overall]}</p>
       <div className="mt-2 space-y-0.5">
         <GroupCounts label="MA" group={rating.ma} />
         <GroupCounts label="Oscillators" group={rating.oscillators} />
+        {combined && combined.custom.buy + combined.custom.sell + combined.custom.neutral > 0 && (
+          <GroupCounts label="Custom" group={combined.custom} />
+        )}
       </div>
       <p className="mt-2 text-[10px] leading-4 text-ink-400">
-        Rule-based readings of standard indicators on the loaded delayed bars — descriptions explain the convention, not a recommendation.
+        Rule-based readings on the loaded delayed bars — your custom signals are included in the overall rating when present. Descriptions explain the convention, not a recommendation.
       </p>
     </div>
   );

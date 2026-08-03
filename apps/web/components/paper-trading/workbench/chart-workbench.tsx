@@ -82,7 +82,7 @@ import {
 import { STRATEGY_LIST, getStrategyDef, clampStrategyParams, resolveStrategyParams, defaultParamValues } from "@/lib/ta/strategies";
 import { runBacktest, intervalToProductType } from "@/lib/ta/backtest";
 import { computeIndicatorSignal, type IndicatorSignal } from "@/lib/ta/indicator-signals";
-import { computeTechnicalRating, computeTechnicalDetail, evaluateCustomSignal, type DetailRow } from "@/lib/ta/technicals";
+import { combineRatingWithCustoms, computeTechnicalRating, computeTechnicalDetail, evaluateCustomSignal, type DetailRow } from "@/lib/ta/technicals";
 import { TechnicalsGauge } from "./technicals-gauge";
 import { SignalsTable } from "./signals-table";
 import { CustomSignalBuilder, loadStoredCustomSignals, saveStoredCustomSignals, type CustomSignalItem } from "./custom-signal-builder";
@@ -342,6 +342,19 @@ export function ChartWorkbench({
       map.set(item.id, evaluateCustomSignal(item.ruleId, item.params, candles));
     }
     return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candlesKey, customSignalsKey]);
+
+  // Founder 2026-08-04: the FINAL rating includes custom rows. Pure combine,
+  // keyed on the same primitives as its inputs; skipped (needs-N-bars) rows
+  // never vote (they have no signal).
+  const combinedRating = useMemo(() => {
+    const signals: Array<"buy" | "sell" | "neutral"> = [];
+    for (const row of customSignalRows.values()) {
+      if (row && !row.skipped) signals.push(row.signal);
+    }
+    if (signals.length === 0) return null;
+    return combineRatingWithCustoms(technicalRating, signals);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [candlesKey, customSignalsKey]);
 
@@ -781,7 +794,7 @@ export function ChartWorkbench({
               <div style={{ display: rightPanelTab === "ticket" ? "block" : "none" }}>{ticket}</div>
               {hasOpenedStrategyTab && (
                 <div style={{ display: rightPanelTab === "strategy" ? "block" : "none" }}>
-                  <TechnicalsGauge rating={technicalRating} />
+                  <TechnicalsGauge rating={technicalRating} combined={combinedRating} />
                   <SignalsTable
                     detail={technicalDetail}
                     rating={technicalRating}

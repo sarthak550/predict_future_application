@@ -131,6 +131,41 @@ function rateFromCounts(buy: number, sell: number, neutral: number): Rating {
   return "strongBuy";
 }
 
+/**
+ * Founder 2026-08-04: the FINAL signal includes the user's CUSTOM rows
+ * alongside the standard MA + Oscillator groups. Pure combiner: takes the
+ * standard rating plus the custom rows' signals and returns the custom
+ * tally + a combined overall (same rateFromCounts bucketing over the summed
+ * counts). Skipped custom rows (needs-N-bars) are excluded entirely — an
+ * unevaluable rule never votes. With zero custom rows the overall is
+ * byte-identical to the standard rating's own overall (fixture-guarded).
+ */
+export interface CombinedRating {
+  custom: RatingGroup;
+  overall: Rating;
+}
+
+export function combineRatingWithCustoms(
+  rating: TechnicalRating,
+  customSignals: ReadonlyArray<"buy" | "sell" | "neutral">
+): CombinedRating {
+  let buy = 0;
+  let sell = 0;
+  let neutral = 0;
+  for (const sig of customSignals) {
+    if (sig === "buy") buy++;
+    else if (sig === "sell") sell++;
+    else neutral++;
+  }
+  const custom = { buy, sell, neutral, vote: rateFromCounts(buy, sell, neutral) };
+  const overall = rateFromCounts(
+    rating.ma.buy + rating.oscillators.buy + buy,
+    rating.ma.sell + rating.oscillators.sell + sell,
+    rating.ma.neutral + rating.oscillators.neutral + neutral
+  );
+  return { custom, overall };
+}
+
 function tally(votes: readonly Vote[]): RatingGroup {
   const buy = votes.filter((v) => v === "buy").length;
   const sell = votes.filter((v) => v === "sell").length;
