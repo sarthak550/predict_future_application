@@ -115,7 +115,7 @@ import { registerWorkbenchOrderLineOverlay, type PfOrderLineExtendData } from ".
 import { registerTaOverlays, ALL_DRAWING_OVERLAYS } from "./overlays";
 import { resolvePfContent } from "./overlays/figure-kit";
 import { registerCustomIndicators } from "./custom-indicators";
-import { registerPfSignals, PF_SIGNALS_NAME, PF_SIGNALS_INSTANCE_ID } from "./custom-indicators/pf-signals";
+import { registerPfSignals, PF_SIGNALS_NAME, PF_SIGNALS_INSTANCE_ID, SCRIPT_SENTINEL, setPrecomputedScriptSignals } from "./custom-indicators/pf-signals";
 import {
   INDICATOR_TOOLTIP_FEATURES,
   INDICATOR_FEATURE_EYE_ID,
@@ -131,6 +131,42 @@ import {
 } from "./indicator-registry";
 import type { ChartDrawingPoint, ChartDrawingRow } from "./use-chart-drawings";
 import type { Candle } from "./use-workbench-candles";
+import type { StrategySignal } from "@/lib/ta/strategies";
+
+/**
+ * User Strategy Scripting (SS1), D9 — `signalsConfig`'s discriminated union.
+ * `"template"` is the pre-SS1 shape verbatim (a `STRATEGY_REGISTRY` id +
+ * params, recomputed live inside `PF_SIGNALS`'s own `calc()`). `"script"` is
+ * new: a script's ALREADY-RESOLVED `StrategySignal[]` (resolved on the main
+ * thread by `script-runner.ts`'s `resolveSignalsAgainstBars`, never
+ * recomputed inside `calc()`) plus a `runToken` — a fresh opaque string per
+ * run, which is ALSO the effect's `shouldUpdate` diff key below (never the
+ * `signals` array's own content, so identity is cheap to compare and never
+ * requires diffing a potentially-20,000-element array on every render).
+ * See `custom-indicators/pf-signals.ts`'s own module doc for the full
+ * `SCRIPT_SENTINEL` + precomputed-store mechanism this type feeds.
+ */
+export type PfSignalsConfig =
+  | { kind: "template"; id: string; params: number[] }
+  | { kind: "script"; runToken: string; signals: StrategySignal[] };
+
+/**
+ * Pre-SS1 shape (no `kind` discriminator) — kept ONLY for source
+ * compatibility with `chart-workbench.tsx`'s existing call site
+ * (`{id: strategyRunResult.id, params: strategyRunResult.params}`, no
+ * `kind`), which this sprint does NOT edit (another engineer owns that
+ * file right now — the editor UI wiring, including updating that call site
+ * to pass `{kind: "template", ...}` directly, is SS2's job). `normalizeSignalsConfig`
+ * below is the ONLY place this alias is consumed — everywhere else in this
+ * file operates on the real `PfSignalsConfig` discriminated union.
+ */
+type LegacyPfSignalsConfig = { id: string; params: number[] };
+
+function normalizeSignalsConfig(config: PfSignalsConfig | LegacyPfSignalsConfig | null | undefined): PfSignalsConfig | null {
+  if (!config) return null;
+  if ("kind" in config) return config;
+  return { kind: "template", id: config.id, params: config.params };
+}
 
 registerWorkbenchOrderLineOverlay();
 registerTaOverlays();
@@ -381,11 +417,12 @@ export function KlineChart({
   precision = 2,
   mainIndicators,
   subIndicators,
-  signalsConfig,
+  signalsConfig: signalsConfigInput,
   orderLines,
-  onSurfaceClick,
   onOrderLineDrag,
   onOrderLineCancel,
+  onAxisHoverChange,
+  onSurfaceContextMenu,
   suspendClick,
   drawings,
   activeTool,
@@ -417,14 +454,44 @@ export function KlineChart({
   mainIndicators: IndicatorInstance[];
   /** TA Suite S2 — indicator instances, each rendered in its own sub-pane; the caller (`indicator-dialog.tsx` via `chart-workbench.tsx`) enforces the `MAX_SUB_PANE_INSTANCES` cap, this wrapper just reflects whatever it's given. */
   subIndicators: IndicatorInstance[];
-  /** TA Suite S3, T2 — the active strategy's `PF_SIGNALS` config (`{id, params}`), or `null`/`undefined` to remove it. A SINGLE instance (`PF_SIGNALS_INSTANCE_ID`), unlike `mainIndicators`/`subIndicators`' multi-instance model — only one strategy's signals are ever shown at once. */
-  signalsConfig?: { id: string; params: number[] } | null;
+  /** TA Suite S3, T2 — the active strategy's `PF_SIGNALS` config, or `null`/`undefined` to remove it. A SINGLE instance (`PF_SIGNALS_INSTANCE_ID`), unlike `mainIndicators`/`subIndicators`' multi-instance model — only one strategy's (or script's) signals are ever shown at once. Widened in User Strategy Scripting (SS1) to `PfSignalsConfig` (see that type's own doc above) — the template shape (`{id, params}`) is now `{kind: "template", id, params}`, though the legacy no-`kind` shape is still accepted (`LegacyPfSignalsConfig`) for source compatibility with the one existing call site this sprint doesn't touch. */
+  signalsConfig?: PfSignalsConfig | LegacyPfSignalsConfig | null;
   orderLines: ChartOrderLine[];
-  /** `left`/`top` are CSS pixels relative to THIS component's own root element, which fills its `position: relative` parent (chart-workbench.tsx's center pane) with no offset — so they double as coordinates relative to that wrapper too, satisfying ChartOrderIntentPopover's anchor contract. */
-  onSurfaceClick?: (info: { price: number; left: number; top: number }) => void;
   onOrderLineDrag?: (id: string, newPrice: number) => void;
   onOrderLineCancel?: (id: string) => void;
-  /** True while a drawing tool is active (W3) or a drag just ended — suppresses click-to-trade so a draw-mode click or a drag's trailing click never also opens the order-intent popover. */
+  /**
+   * Interaction-model rework (2026-08-04) — founder complaint, verbatim:
+   * "I cant have buy/sell popup on every click, thats irritating." A plain
+   * click on the canvas NO LONGER opens the order-intent popover at all
+   * (the native `click` listener this used to drive, and the `onSurfaceClick`
+   * prop that carried it, are both gone outright — see git history for
+   * `handleClick`). Replaced by two deliberate summon points, mirroring
+   * TradingView's own pattern:
+   *   - `onAxisHoverChange` fires continuously while the pointer hovers the
+   *     chart's native price-axis gutter (klinecharts' own `yAxis`,
+   *     `chart.getSize(MAIN_PANE_ID, "yAxis")`), or `null` once it leaves —
+   *     `chart-workbench.tsx` renders a `ChartAxisPlusButton` at that price
+   *     while non-null, and its `onClick` calls the SAME `handleSurfaceClick`
+   *     this prop used to feed indirectly (now called directly — no prop
+   *     indirection needed since the button lives outside this component).
+   *   - `onSurfaceContextMenu` fires once on a right-click over the chart
+   *     (native `contextmenu`, browser default suppressed), opening
+   *     `chart-workbench.tsx`'s compact `ChartContextMenu`.
+   * Both share the exact `{price, left, top}` shape (CSS pixels relative to
+   * THIS component's own root element, which fills its `position: relative`
+   * parent — chart-workbench.tsx's center pane — with no offset, so they
+   * double as coordinates relative to that wrapper too) the old
+   * `onSurfaceClick` prop already established, satisfying
+   * `ChartOrderIntentPopover`'s/`ChartContextMenu`'s anchor contract
+   * unchanged. Both are no-ops (never fired, and for the context menu,
+   * never even `preventDefault`s the browser's own menu) when their
+   * callback prop is omitted — the options terminal's underlying-only
+   * maximized workbench (W2's "click-inert" decision) passes neither,
+   * keeping its normal browser right-click menu, zero behavior change.
+   */
+  onAxisHoverChange?: (info: { price: number; left: number; top: number } | null) => void;
+  onSurfaceContextMenu?: (info: { price: number; left: number; top: number }) => void;
+  /** True while a drawing tool is active (W3) OR a drawing is currently selected (2026-08-04 rework widens this) — suppresses the price-axis "+" affordance and the right-click trade menu so drawing interactions always win. Renamed in spirit only; the prop name is kept for minimal diff (it no longer has any plain click to suspend — see `onAxisHoverChange`'s own doc). */
   suspendClick?: boolean;
   /** W3, T4 — server-loaded rows to hydrate as overlays on open. Populated once by `use-chart-drawings.ts`'s `load()`; identity-keyed prop-sync effect below (safe per this file's own "one-way sync can't cycle" reasoning — see module doc). */
   drawings?: ChartDrawingRow[];
@@ -492,12 +559,16 @@ export function KlineChart({
   // ── Callback refs (render-loop law: every prop read by a KLineCharts-
   // internal handler goes through one of these, never a closure over the
   // prop itself). ─────────────────────────────────────────────────────────
-  const onSurfaceClickRef = useRef(onSurfaceClick);
-  onSurfaceClickRef.current = onSurfaceClick;
   const onOrderLineDragRef = useRef(onOrderLineDrag);
   onOrderLineDragRef.current = onOrderLineDrag;
   const onOrderLineCancelRef = useRef(onOrderLineCancel);
   onOrderLineCancelRef.current = onOrderLineCancel;
+  // Interaction-model rework (2026-08-04) — the price-axis "+" hover feed
+  // and the right-click compact menu's opener, same ref-mirror pattern.
+  const onAxisHoverChangeRef = useRef(onAxisHoverChange);
+  onAxisHoverChangeRef.current = onAxisHoverChange;
+  const onSurfaceContextMenuRef = useRef(onSurfaceContextMenu);
+  onSurfaceContextMenuRef.current = onSurfaceContextMenu;
   const suspendClickRef = useRef(suspendClick);
   suspendClickRef.current = suspendClick;
 
@@ -586,7 +657,7 @@ export function KlineChart({
       .map((p) => ({ timestamp: p.timestamp, value: p.value }));
   }
 
-  /** S1 — pixel anchor of an overlay's first point, relative to this component's own root (same contract `onSurfaceClick`'s `left`/`top` already use) — feeds `onDrawingSelected`/`onDrawingNeedsText`'s popover positioning. */
+  /** S1 — pixel anchor of an overlay's first point, relative to this component's own root (same contract `onAxisHoverChange`/`onSurfaceContextMenu`'s `left`/`top` already use) — feeds `onDrawingSelected`/`onDrawingNeedsText`'s popover positioning. */
   function firstPointPixelAnchor(overlayPoints: Array<{ dataIndex?: number; timestamp?: number; value?: number }>): { left: number; top: number } | null {
     const chart = chartRef.current;
     const first = overlayPoints[0];
@@ -604,6 +675,11 @@ export function KlineChart({
   // click-suppression pair price-chart.tsx uses, reimplemented here since
   // KLineCharts renders everything on one canvas (no separate DOM element
   // per line to `stopPropagation` on — see order-line-overlay.ts's own doc).
+  // `dragJustEndedRef` specifically used to suppress the plain-click handler
+  // that opened the order-intent popover; that handler no longer exists
+  // (2026-08-04 interaction-model rework), so this flag is now write-only/
+  // inert — left in place deliberately (this is drag-to-reprice's own code
+  // path, out of scope for that rework) rather than ripped out.
   const draggingIdRef = useRef<string | null>(null);
   const dragJustEndedRef = useRef(false);
   const dragStartPriceRef = useRef<Record<string, number>>({});
@@ -639,8 +715,12 @@ export function KlineChart({
 
   // Founder feedback (2026-08-04), Part 1 — set synchronously (never through
   // React state/an effect) the moment an on-chart legend feature (eye/gear/
-  // remove) fires, so `handleClick` below can bail out for the SAME physical
-  // click and never also open the order-intent popover underneath. Safe
+  // remove) fires. Historically this let the plain-click handler bail out
+  // for the SAME physical click; that click-to-trade path no longer exists
+  // (2026-08-04 interaction-model rework — see `onAxisHoverChange`'s own
+  // doc), so this flag is now inert (kept, harmless — see `dragJustEndedRef`'s
+  // own doc for why write-only suppression refs are left in place rather
+  // than ripped out of code this rework doesn't otherwise touch). Safe
   // specifically because klinecharts wires tooltip features to
   // `mouseDownEvent` (verified — `custom-indicators/tooltip-features.ts`'s
   // own doc), which always fires strictly BEFORE the browser's own
@@ -737,6 +817,7 @@ export function KlineChart({
     function handleMouseLeave() {
       hoveredXRef.current = undefined;
       scheduleCrosshairFlush();
+      onAxisHoverChangeRef.current?.(null); // Interaction-model rework (2026-08-04) — hides the price-axis "+" the instant the pointer leaves the chart.
     }
     chart?.subscribeAction("onCrosshairChange", handleCrosshairChange);
     el.addEventListener("mouseleave", handleMouseLeave);
@@ -784,26 +865,71 @@ export function KlineChart({
     }
     chart?.subscribeAction("onIndicatorTooltipFeatureClick", handleIndicatorFeatureClick);
 
-    function handleClick(e: MouseEvent) {
-      if (suppressNextClickRef.current) {
-        suppressNextClickRef.current = false;
+    // Interaction-model rework (2026-08-04) — TradingView's price-axis "+"
+    // affordance. A native `mousemove` listener (NOT klinecharts'
+    // `onCrosshairChange` action) because the axis gutter sits OUTSIDE the
+    // interactive candle pane klinecharts tracks crosshair position
+    // against — a raw DOM listener on the container is the only way to
+    // detect a pointer over the axis strip itself. `chart.getSize
+    // (MAIN_PANE_ID, "yAxis")` returns that strip's own `Bounding`
+    // (`{left, right, top, bottom, width, height}`) in the SAME container-
+    // relative coordinate space `el.getBoundingClientRect()` already
+    // establishes (verified against the installed package's own
+    // `dist/index.d.ts`: `getSize(paneId?, position?: "root"|"main"|
+    // "yAxis")`, and the default `yAxis.position` is `"right"` — verified
+    // against `dist/index.esm.js`'s own default style object). Gated on
+    // `axisBounding.top`/`.bottom` too, not just `.left` — hovering a SUB-
+    // PANE's own y-axis (an indicator in its own pane below the candles)
+    // must NOT summon a spot-price trade button there.
+    function handleMouseMove(e: MouseEvent) {
+      const chart = chartRef.current;
+      const callback = onAxisHoverChangeRef.current;
+      if (!callback) return;
+      if (!chart || !el || suspendClickRef.current || draggingIdRef.current) {
+        callback(null);
         return;
       }
-      if (dragJustEndedRef.current) {
-        dragJustEndedRef.current = false;
-        return;
-      }
-      if (suspendClickRef.current) return;
-      if (!onSurfaceClickRef.current || !chartRef.current || !el) return;
       const rect = el.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
-      const converted = chartRef.current.convertFromPixel([{ x, y }], { paneId: MAIN_PANE_ID });
+      const axisBounding = chart.getSize(MAIN_PANE_ID, "yAxis");
+      if (!axisBounding || x < axisBounding.left || y < axisBounding.top || y > axisBounding.bottom) {
+        callback(null);
+        return;
+      }
+      const converted = chart.convertFromPixel([{ x, y }], { paneId: MAIN_PANE_ID });
+      const point = Array.isArray(converted) ? converted[0] : converted;
+      if (!point || typeof point.value !== "number" || !Number.isFinite(point.value)) {
+        callback(null);
+        return;
+      }
+      callback({ price: snapToTick(point.value), left: x, top: y });
+    }
+    el.addEventListener("mousemove", handleMouseMove);
+
+    // Interaction-model rework (2026-08-04) — right-click opens a compact
+    // "Buy at ₹X / Sell at ₹X" menu (TradingView's own pattern), deriving
+    // the price via the SAME `convertFromPixel` conversion the old
+    // plain-click handler used. The browser's native context menu is
+    // suppressed ONLY when trading is actually wired up on this chart
+    // (`onSurfaceContextMenu` present) — the options terminal's underlying-
+    // only maximized workbench (W2's "click-inert" decision) passes
+    // neither this nor `onAxisHoverChange`, so it keeps its normal browser
+    // right-click menu, zero behavior change.
+    function handleContextMenu(e: MouseEvent) {
+      const chart = chartRef.current;
+      const callback = onSurfaceContextMenuRef.current;
+      if (!callback || !chart || !el || suspendClickRef.current || draggingIdRef.current) return;
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const converted = chart.convertFromPixel([{ x, y }], { paneId: MAIN_PANE_ID });
       const point = Array.isArray(converted) ? converted[0] : converted;
       if (!point || typeof point.value !== "number" || !Number.isFinite(point.value)) return;
-      onSurfaceClickRef.current({ price: snapToTick(point.value), left: x, top: y });
+      callback({ price: snapToTick(point.value), left: x, top: y });
     }
-    el.addEventListener("click", handleClick);
+    el.addEventListener("contextmenu", handleContextMenu);
 
     // Draw-first-edit-later safety net (see `justFinishedDrawRef`'s own
     // doc) — the NEXT genuine pointer interaction on the chart, whatever it
@@ -837,7 +963,8 @@ export function KlineChart({
     document.addEventListener("keydown", handleKeyDown);
 
     return () => {
-      el.removeEventListener("click", handleClick);
+      el.removeEventListener("mousemove", handleMouseMove);
+      el.removeEventListener("contextmenu", handleContextMenu);
       el.removeEventListener("mousedown", handleMouseDownClearJustFinished);
       el.removeEventListener("mouseleave", handleMouseLeave);
       document.removeEventListener("keydown", handleKeyDown);
@@ -931,7 +1058,19 @@ export function KlineChart({
   // relies on). "Clear signals" (chart-workbench.tsx) is just this prop
   // going back to `null` — it only ever calls `removeIndicator`, never
   // `removeOverlay`, so it structurally cannot touch an S1 drawing. ───────
-  const signalsKey = signalsConfig ? JSON.stringify([signalsConfig.id, signalsConfig.params]) : null;
+  // Normalizes the legacy no-`kind` shape (still passed by
+  // `chart-workbench.tsx`'s existing call site, untouched this sprint) into
+  // the real `PfSignalsConfig` discriminated union — see
+  // `normalizeSignalsConfig`'s own doc above. Every line from here on
+  // operates on the normalized `signalsConfig` local, so the effect body
+  // below (including the pre-SS1 template branch) never has to know the
+  // legacy shape exists.
+  const signalsConfig = normalizeSignalsConfig(signalsConfigInput);
+  const signalsKey = signalsConfig
+    ? signalsConfig.kind === "template"
+      ? JSON.stringify(["template", signalsConfig.id, signalsConfig.params])
+      : JSON.stringify(["script", signalsConfig.runToken])
+    : null;
   const activeSignalsKeyRef = useRef<string | null>(null);
   useEffect(() => {
     const chart = chartRef.current;
@@ -942,6 +1081,24 @@ export function KlineChart({
         chart.removeIndicator({ id: PF_SIGNALS_INSTANCE_ID });
         activeSignalsKeyRef.current = null;
       }
+      return;
+    }
+
+    // User Strategy Scripting (SS1), D9 — script branch, handled and
+    // returned BEFORE the pre-SS1 template branch below (untouched,
+    // byte-identical). Pushes the already-resolved signals into
+    // pf-signals.ts's single-entry precomputed store FIRST, then keys
+    // calcParams on SCRIPT_SENTINEL + runToken alone (never the signals
+    // array's own content).
+    if (signalsConfig.kind === "script") {
+      setPrecomputedScriptSignals(signalsConfig.runToken, signalsConfig.signals);
+      const scriptCalcParams: (string | number)[] = [SCRIPT_SENTINEL, signalsConfig.runToken];
+      if (activeSignalsKeyRef.current === null) {
+        chart.createIndicator({ id: PF_SIGNALS_INSTANCE_ID, name: PF_SIGNALS_NAME, calcParams: scriptCalcParams, paneId: MAIN_PANE_ID }, true);
+      } else {
+        chart.overrideIndicator({ id: PF_SIGNALS_INSTANCE_ID, name: PF_SIGNALS_NAME, calcParams: scriptCalcParams });
+      }
+      activeSignalsKeyRef.current = signalsKey;
       return;
     }
 

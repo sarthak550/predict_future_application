@@ -63,12 +63,30 @@
  * without minimizing first — deliberately generic (label + onClick only),
  * so this file stays instrument-agnostic. Futures has only one chart mode
  * (index spot), so its call site omits `chartModeSwitcher` entirely.
+ *
+ * **Interaction-model rework (2026-08-04) — founder complaint, verbatim:
+ * "I cant have buy/sell popup on every click, thats irritating."** A plain
+ * click on the canvas no longer opens `ChartOrderIntentPopover` (T4's
+ * original click-to-trade wiring is removed outright — see kline-chart.tsx's
+ * own `onAxisHoverChange`/`onSurfaceContextMenu` doc). Replaced by
+ * TradingView's own two-summon-point pattern: a price-axis "+" button
+ * (`ChartAxisPlusButton`, positioned by the continuous `axisHover` state
+ * KlineChart's `onAxisHoverChange` feeds) opens the SAME popover, and a
+ * right-click opens a compact `ChartContextMenu` ("Buy at ₹X / Sell at ₹X")
+ * that fires `onOrderIntentConfirm` directly. Both are suppressed
+ * (`suppressTradeAffordances`) while a drawing tool is armed OR a drawing is
+ * selected — drawing interactions always win. A one-time `ChartTradeHint`
+ * (localStorage-dismissed, shared across all four chart surfaces) tells
+ * returning users where trading moved.
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { ArrowLeftRight, Loader2, Minimize2, PanelRightClose, PanelRightOpen } from "lucide-react";
 
 import { ChartOrderIntentPopover } from "@/components/finance/chart-order-intent-popover";
+import { ChartAxisPlusButton } from "@/components/finance/chart-axis-plus-button";
+import { ChartContextMenu } from "@/components/finance/chart-context-menu";
+import { ChartTradeHint, useTradeHintDismissed } from "@/components/finance/chart-trade-hint";
 import type { ChartOrderLine, OrderSide, OrderVariant } from "@/components/finance/chart-order-lines";
 import { KlineChart } from "./kline-chart";
 import { TimeframeSelector } from "./timeframe-selector";
@@ -378,6 +396,18 @@ export function ChartWorkbench({
 
   const [ticketCollapsed, setTicketCollapsed] = useState(false);
   const [intentPopover, setIntentPopover] = useState<{ price: number; left: number; top: number } | null>(null);
+  // Interaction-model rework (2026-08-04) — founder complaint, verbatim:
+  // "I cant have buy/sell popup on every click, thats irritating." Plain
+  // clicks on the canvas no longer open `intentPopover` at all (see
+  // kline-chart.tsx's own `onAxisHoverChange`/`onSurfaceContextMenu` doc for
+  // the full rework). `axisHover` mirrors KlineChart's continuous hover feed
+  // (null while the pointer isn't over the price axis); `contextMenu` is the
+  // right-click compact menu's own state, mutually exclusive with both
+  // `intentPopover` and `axisHover`'s rendered button (see
+  // `handleSurfaceClick`/`handleSurfaceContextMenu` below).
+  const [axisHover, setAxisHover] = useState<{ price: number; left: number; top: number } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ price: number; left: number; top: number } | null>(null);
+  const [hintDismissed, dismissHint] = useTradeHintDismissed();
 
   // Founder-feedback pass (2026-08-04) — resizable right panel. `panelRef`
   // is the imperative write target DURING a drag (`PanelResizeHandle`'s
@@ -731,13 +761,15 @@ export function ChartWorkbench({
 
   // W3, T5; S1 widens with a new top tier — Escape priority chain: text
   // popover (handles its own Escape internally — this listener just has to
-  // step aside) > order-intent popover > active drawing tool > workbench
-  // close.
+  // step aside) > order-intent popover > right-click trade menu (2026-08-04
+  // rework, same "handles its own Escape" deferral) > active drawing tool >
+  // workbench close.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== "Escape") return;
       if (textPopover) return;
       if (intentPopover) return; // ChartOrderIntentPopover's own listener handles it first.
+      if (contextMenu) return; // ChartContextMenu's own listener handles it first.
       if (activeTool) {
         cancelActiveDrawing();
         return;
@@ -747,7 +779,7 @@ export function ChartWorkbench({
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [textPopover, intentPopover, activeTool, onClose]);
+  }, [textPopover, intentPopover, contextMenu, activeTool, onClose]);
 
   const onQuoteChangeRef = useRef(onQuoteChange);
   onQuoteChangeRef.current = onQuoteChange;
@@ -761,12 +793,38 @@ export function ChartWorkbench({
 
   // W3, T4 — drawing tools suppress click-to-trade for their entire session
   // (from tool selection through draw completion/cancel), same contract W2
-  // reserved this flag for.
+  // reserved this flag for. Interaction-model rework (2026-08-04) widens
+  // this with `selectedDrawing !== null` — the sprint brief's own item 4:
+  // "while a drawing tool is armed or a drawing is selected, the hover-plus
+  // stays hidden." A selected drawing (the floating `DrawingStyleToolbar`
+  // is showing) means the user is actively editing that shape; a trade
+  // affordance popping up nearby would compete with it.
   const isDrawingActive = activeTool !== null;
+  const suppressTradeAffordances = isDrawingActive || selectedDrawing !== null;
 
+  // Interaction-model rework (2026-08-04) — opens the SAME order-intent
+  // popover Sprint C built. Called directly from the price-axis "+"
+  // button's own `onClick` below — no longer routed through KlineChart at
+  // all (the button lives OUTSIDE the canvas, in this component, driven by
+  // the `axisHover` state KlineChart's `onAxisHoverChange` feeds). The
+  // right-click menu deliberately does NOT go through this function — see
+  // `handleSurfaceContextMenu` below, which fires `onOrderIntentConfirm`
+  // directly as a LIMIT order (a right-click is already an explicit "trade
+  // here," it doesn't need the popover's LIMIT/STOP inference on top).
   function handleSurfaceClick(info: { price: number; left: number; top: number }) {
     if (!onOrderIntentConfirm) return;
+    setContextMenu(null);
+    setAxisHover(null);
     setIntentPopover(info);
+  }
+
+  // Interaction-model rework (2026-08-04) — right-click's compact menu
+  // state. Mutually exclusive with `intentPopover`/`axisHover`.
+  function handleSurfaceContextMenu(info: { price: number; left: number; top: number }) {
+    if (!onOrderIntentConfirm) return;
+    setIntentPopover(null);
+    setAxisHover(null);
+    setContextMenu(info);
   }
 
   const currentPrice = candles.length > 0 ? candles[candles.length - 1].close : (isPremiumMode ? feed.livePremium : null);
@@ -892,10 +950,24 @@ export function ChartWorkbench({
               subIndicators={indicators.sub}
               signalsConfig={signalsConfig}
               orderLines={orderLines}
-              onSurfaceClick={handleSurfaceClick}
               onOrderLineDrag={onOrderLineDrag}
               onOrderLineCancel={onOrderLineCancel}
-              suspendClick={isDrawingActive}
+              // Gated on `onOrderIntentConfirm`, NOT passed unconditionally
+              // — the options terminal's underlying-only maximized workbench
+              // (W2's "click-inert" decision, EMPTY_ORDER_LINES + no
+              // onOrderIntentConfirm) must keep its normal browser
+              // right-click menu. If these were always-truthy function
+              // references, kline-chart.tsx's `handleContextMenu` would
+              // still `preventDefault()` the native menu there even though
+              // `handleSurfaceContextMenu` itself no-ops internally — a
+              // silent dead right-click, exactly the "zero behavior change
+              // when the capability isn't wired up" contract this whole
+              // program enforces everywhere else (see price-chart.tsx's/
+              // premium-chart.tsx's own `onContextMenu={onOrderIntentConfirm
+              // ? handleContextMenu : undefined}` for the identical pattern).
+              onAxisHoverChange={onOrderIntentConfirm ? setAxisHover : undefined}
+              onSurfaceContextMenu={onOrderIntentConfirm ? handleSurfaceContextMenu : undefined}
+              suspendClick={suppressTradeAffordances}
               drawings={drawingsHook.drawings}
               activeTool={activeTool}
               pendingToolStyles={pendingToolStyles}
@@ -921,6 +993,13 @@ export function ChartWorkbench({
               indicatorStyleCommand={indicatorStyleCommand}
               onIndicatorFiguresChange={setIndicatorFigures}
             />
+          )}
+
+          {/* Interaction-model rework (2026-08-04) — one-time discoverability hint, terminal-only (gated on onOrderIntentConfirm — the options underlying-only maximized workbench never shows it). */}
+          {onOrderIntentConfirm && (
+            <div className="absolute left-3 right-3 top-3 z-10">
+              <ChartTradeHint dismissed={hintDismissed} onDismiss={dismissHint} />
+            </div>
           )}
 
           {selectedDrawing && !textPopover && (
@@ -958,6 +1037,29 @@ export function ChartWorkbench({
                 setIntentPopover(null);
               }}
               onDismiss={() => setIntentPopover(null)}
+            />
+          )}
+
+          {/* Interaction-model rework (2026-08-04) — the price-axis "+" affordance, hidden while the intent popover or right-click menu is already open (`axisHover` render-gated, not cleared — see kline-chart.tsx's own `onAxisHoverChange` doc for why it keeps updating underneath). */}
+          {axisHover && !intentPopover && !contextMenu && onOrderIntentConfirm && (
+            <ChartAxisPlusButton top={axisHover.top} onClick={() => handleSurfaceClick(axisHover)} />
+          )}
+
+          {/* Interaction-model rework (2026-08-04) — right-click's compact "Buy at ₹X / Sell at ₹X" menu. */}
+          {contextMenu && onOrderIntentConfirm && (
+            <ChartContextMenu
+              price={contextMenu.price}
+              left={contextMenu.left}
+              top={contextMenu.top}
+              onBuy={() => {
+                onOrderIntentConfirmRef.current?.({ price: contextMenu.price, side: "BUY", variant: "LIMIT" });
+                setContextMenu(null);
+              }}
+              onSell={() => {
+                onOrderIntentConfirmRef.current?.({ price: contextMenu.price, side: "SELL", variant: "LIMIT" });
+                setContextMenu(null);
+              }}
+              onDismiss={() => setContextMenu(null)}
             />
           )}
         </div>

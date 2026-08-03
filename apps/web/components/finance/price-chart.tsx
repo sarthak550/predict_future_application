@@ -31,6 +31,9 @@ import {
   type OrderVariant
 } from "@/components/finance/chart-order-lines";
 import { ChartOrderIntentPopover } from "@/components/finance/chart-order-intent-popover";
+import { ChartAxisPlusButton } from "@/components/finance/chart-axis-plus-button";
+import { ChartContextMenu } from "@/components/finance/chart-context-menu";
+import { ChartTradeHint, useTradeHintDismissed } from "@/components/finance/chart-trade-hint";
 
 export type { ChartOrderLine } from "@/components/finance/chart-order-lines";
 
@@ -135,17 +138,22 @@ export function PriceChart({
   /**
    * Chart Trading + SL/TP (Sprint C, C2) — additive, optional. REPLACES
    * Sprint B's `onPriceClick(price)` (which fired immediately on click with
-   * a hardcoded LIMIT assumption). A click now opens an at-cursor popover
-   * (chart-order-intent-popover.tsx) offering the two side/variant
-   * combinations that are actually valid at the clicked price (see
-   * `inferOrderIntentOptions` in chart-order-lines.ts for the full
-   * reasoning); THIS callback fires only once the user confirms a specific
-   * choice in that popover, never on the raw click itself. Never fires on
-   * the loading/error/not-enough-data early-return states (no geometry
-   * exists there to invert against), and the click handler that opens the
-   * popover is never attached to the SVG when this prop is omitted — zero
-   * behavior change for every caller that doesn't pass it (the three
-   * non-terminal PriceChart consumers).
+   * a hardcoded LIMIT assumption).
+   *
+   * Interaction-model rework (2026-08-04) — founder complaint, verbatim:
+   * "I cant have buy/sell popup on every click, thats irritating." A PLAIN
+   * click on the chart no longer opens anything at all (the old `onClick`
+   * on the `<svg>` below is gone outright, not just gated). This callback
+   * now fires from exactly two deliberate summon points instead, mirroring
+   * TradingView's own pattern: (1) hovering the price-axis band shows a
+   * `ChartAxisPlusButton` at the crosshair price — clicking it opens the
+   * SAME `ChartOrderIntentPopover` this sprint already built, prefilled
+   * with that price; (2) right-clicking the chart opens a compact
+   * `ChartContextMenu` ("Buy at ₹X / Sell at ₹X") that calls this callback
+   * directly with a LIMIT order, no intermediate popover. Both paths — and
+   * this callback itself — are still no-ops (nothing attached, nothing
+   * rendered) when this prop is omitted, zero behavior change for the
+   * three non-terminal PriceChart consumers.
    */
   onOrderIntentConfirm?: (input: { price: number; side: OrderSide; variant: OrderVariant }) => void;
   /**
@@ -248,10 +256,19 @@ export function PriceChart({
   const dragJustEndedRef = useRef(false);
 
   // Sprint C, C2 — the at-cursor order-intent popover's own state: null when
-  // closed. Opened/repositioned by a chart click (never by anything else),
-  // closed by a confirm, Escape, or an outside pointerdown (see
+  // closed. Opened/repositioned by the price-axis "+" button (2026-08-04
+  // rework — see that prop's own doc; NEVER by a plain chart click any
+  // more), closed by a confirm, Escape, or an outside pointerdown (see
   // ChartOrderIntentPopover's own dismiss wiring).
   const [intentPopover, setIntentPopover] = useState<{ price: number; left: number; top: number } | null>(null);
+  // Interaction-model rework (2026-08-04) — the price-axis "+" affordance's
+  // own hover state (mouse-only; there is no hover on touch, so touch users
+  // reach trading via the right-click/long-press context menu below
+  // instead) and the right-click compact menu's state. See this file's own
+  // `onOrderIntentConfirm` doc for the full rationale.
+  const [axisHover, setAxisHover] = useState<{ top: number; price: number } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ price: number; left: number; top: number } | null>(null);
+  const [hintDismissed, dismissHint] = useTradeHintDismissed();
 
   // Lazy-fetch: only hits the network the first time "1D" is selected, never
   // on mount and never for the EOD timeframes. Extracted into a `silent`-
@@ -462,29 +479,67 @@ export function PriceChart({
     return priceAtFraction(frac, H, PAD.top, PAD.bottom, geometry.min, geometry.max);
   };
 
-  // Chart Trading + SL/TP (Sprint C, C2) — a chart click OPENS the
-  // order-intent popover (never fires onOrderIntentConfirm directly — that
-  // only happens once the user picks an action inside the popover). Never
-  // attached to the SVG at all when `onOrderIntentConfirm` isn't supplied
-  // (see the `onClick` prop below) — the three non-terminal PriceChart
-  // consumers never pass it, so this handler simply doesn't exist in their
-  // render tree. Guarded by `dragJustEndedRef` so the native `click` event
-  // that follows a drag's pointerup never also opens a popover at the drop
-  // point (decision: "click suppressed after drag-end").
-  const handleChartClick = (clientX: number, clientY: number) => {
-    if (dragJustEndedRef.current) {
-      dragJustEndedRef.current = false;
+  // Interaction-model rework (2026-08-04) — replaces the old "a plain click
+  // opens the popover" handler entirely (removed outright, not just gated —
+  // see this file's own `onOrderIntentConfirm` doc). Both the price-axis
+  // "+" button and the right-click menu funnel through this ONE opener so
+  // there's a single place that owns the popover's snap-to-tick + mutual-
+  // exclusion with the OTHER new affordance (never both open at once).
+  const openIntentPopoverAt = (price: number, left: number, top: number) => {
+    if (!onOrderIntentConfirm) return;
+    setContextMenu(null);
+    setAxisHover(null);
+    setIntentPopover({ price: snapToTick(price), left, top });
+  };
+
+  // Interaction-model rework (2026-08-04) — tracks the pointer against the
+  // chart's own right-edge "price axis" band, screen-pixel-sized (NOT SVG
+  // viewBox units — same discipline as DRAG_HIT_STROKE_WIDTH's own doc,
+  // since a fixed viewBox-unit band would shrink/grow with the container).
+  // Mouse-only: there's no hover on touch, so touch users reach trading via
+  // the long-press-triggered context menu below instead (most mobile
+  // browsers fire `contextmenu` on a long-press, giving touch users the
+  // SAME summon point as a desktop right-click).
+  const updateAxisHover = (clientX: number, clientY: number) => {
+    if (!onOrderIntentConfirm || dragState || intentPopover || contextMenu) {
+      setAxisHover(null);
       return;
     }
-    if (!onOrderIntentConfirm) return;
+    const rect = svgRef.current?.getBoundingClientRect();
+    if (!rect || !rect.width) {
+      setAxisHover(null);
+      return;
+    }
+    const axisBandWidth = Math.max(48, rect.width * 0.12);
+    if (rect.right - clientX > axisBandWidth) {
+      setAxisHover(null);
+      return;
+    }
+    const price = priceAtClientY(clientY);
     const wrapperRect = wrapperRef.current?.getBoundingClientRect();
-    const raw = priceAtClientY(clientY);
+    if (price == null || !wrapperRect) {
+      setAxisHover(null);
+      return;
+    }
+    setAxisHover({ top: clientY - wrapperRect.top, price: snapToTick(price) });
+  };
+
+  // Interaction-model rework (2026-08-04) — right-click opens a compact
+  // "Buy at ₹X / Sell at ₹X" menu (TradingView's own pattern), deriving the
+  // price from the SAME pixel->price inverse the old click handler used.
+  // Suppresses the browser's native context menu ONLY when this chart
+  // actually has trading wired up (`onOrderIntentConfirm` present) — the
+  // three non-terminal PriceChart consumers keep their normal browser menu,
+  // zero behavior change (the `onContextMenu` prop below isn't even
+  // attached when this prop is omitted).
+  const handleContextMenu = (e: React.MouseEvent<SVGSVGElement>) => {
+    e.preventDefault();
+    const wrapperRect = wrapperRef.current?.getBoundingClientRect();
+    const raw = priceAtClientY(e.clientY);
     if (!wrapperRect || raw == null) return;
-    setIntentPopover({
-      price: snapToTick(raw),
-      left: clientX - wrapperRect.left,
-      top: clientY - wrapperRect.top
-    });
+    setIntentPopover(null);
+    setAxisHover(null);
+    setContextMenu({ price: snapToTick(raw), left: e.clientX - wrapperRect.left, top: e.clientY - wrapperRect.top });
   };
 
   // Sprint C, C1 — pointer-capture drag handlers for a `draggable` order
@@ -513,12 +568,17 @@ export function PriceChart({
     const { id, price: originalPrice } = dragState;
     const finalPrice = snapToTick(dragState.price);
     setDragState(null);
+    // `dragJustEndedRef` used to also suppress the native `click` that
+    // follows a drag's pointerup from opening the order-intent popover;
+    // that click path no longer exists at all (2026-08-04 interaction-model
+    // rework — see this file's own `onOrderIntentConfirm` doc), so the flag
+    // is now inert. Left set (harmless) rather than ripped out here — this
+    // is drag-to-reprice's own code path, deliberately untouched by that
+    // rework.
     dragJustEndedRef.current = true;
     // A tap-without-movement (pointerdown immediately followed by pointerup
     // at the same spot) snaps back to the SAME price — skip firing the
-    // callback (and the resulting PATCH) for a no-op reprice; the tap is
-    // still swallowed (dragJustEndedRef above) so it never also opens the
-    // order-intent popover underneath the line.
+    // callback (and the resulting PATCH) for a no-op reprice.
     if (finalPrice === snapToTick(originalPrice)) return;
     onOrderLineDragRef.current?.(id, finalPrice);
   };
@@ -553,17 +613,30 @@ export function PriceChart({
         <span className="text-xs text-ink-400">{active ? active.label : `${first.label} → ${last.label}`}</span>
       </div>
 
+      {/* Interaction-model rework (2026-08-04) — one-time discoverability hint, terminal-only (gated on onOrderIntentConfirm). */}
+      {onOrderIntentConfirm && (
+        <div className="mb-2">
+          <ChartTradeHint dismissed={hintDismissed} onDismiss={dismissHint} />
+        </div>
+      )}
+
       {/* Chart */}
       <svg
         ref={svgRef}
         viewBox={`0 0 ${W} ${H}`}
         className="w-full cursor-crosshair touch-none select-none"
-        onMouseMove={(e) => onPointer(e.clientX)}
-        onMouseLeave={() => setHoverIdx(null)}
+        onMouseMove={(e) => {
+          onPointer(e.clientX);
+          updateAxisHover(e.clientX, e.clientY);
+        }}
+        onMouseLeave={() => {
+          setHoverIdx(null);
+          setAxisHover(null);
+        }}
         onTouchStart={(e) => onPointer(e.touches[0].clientX)}
         onTouchMove={(e) => onPointer(e.touches[0].clientX)}
         onTouchEnd={() => setHoverIdx(null)}
-        onClick={onOrderIntentConfirm ? (e) => handleChartClick(e.clientX, e.clientY) : undefined}
+        onContextMenu={onOrderIntentConfirm ? handleContextMenu : undefined}
         role="img"
         aria-label={`Price chart, ${timeframe}: ${formatRupees(first.y)} to ${formatRupees(last.y)}`}
       >
@@ -692,7 +765,12 @@ export function PriceChart({
         )}
       </svg>
 
-      {/* Chart Trading + SL/TP (Sprint C, C2) — the order-intent popover, a plain absolutely-positioned sibling of the `<svg>` (never a portal — see chart-order-intent-popover.tsx's own doc). */}
+      {/* Interaction-model rework (2026-08-04) — the price-axis "+" affordance, shown only while hovering the axis band and nothing else is already open. */}
+      {axisHover && !intentPopover && !contextMenu && onOrderIntentConfirm && (
+        <ChartAxisPlusButton top={axisHover.top} onClick={() => openIntentPopoverAt(axisHover.price, (wrapperRef.current?.getBoundingClientRect().width ?? 0) - 24, axisHover.top)} />
+      )}
+
+      {/* Chart Trading + SL/TP (Sprint C, C2) — the order-intent popover, a plain absolutely-positioned sibling of the `<svg>` (never a portal — see chart-order-intent-popover.tsx's own doc). Opened by the "+" button above or the right-click menu below — never by a plain click any more (2026-08-04 rework). */}
       {intentPopover && onOrderIntentConfirm && (
         <ChartOrderIntentPopover
           price={intentPopover.price}
@@ -704,6 +782,24 @@ export function PriceChart({
             setIntentPopover(null);
           }}
           onDismiss={() => setIntentPopover(null)}
+        />
+      )}
+
+      {/* Interaction-model rework (2026-08-04) — right-click's compact "Buy at ₹X / Sell at ₹X" menu, firing onOrderIntentConfirm directly as a LIMIT order (no intermediate popover — a right-click is already an explicit "trade here"). */}
+      {contextMenu && onOrderIntentConfirm && (
+        <ChartContextMenu
+          price={contextMenu.price}
+          left={contextMenu.left}
+          top={contextMenu.top}
+          onBuy={() => {
+            onOrderIntentConfirmRef.current?.({ price: contextMenu.price, side: "BUY", variant: "LIMIT" });
+            setContextMenu(null);
+          }}
+          onSell={() => {
+            onOrderIntentConfirmRef.current?.({ price: contextMenu.price, side: "SELL", variant: "LIMIT" });
+            setContextMenu(null);
+          }}
+          onDismiss={() => setContextMenu(null)}
         />
       )}
 

@@ -43,6 +43,9 @@ import {
   type OrderVariant
 } from "@/components/finance/chart-order-lines";
 import { ChartOrderIntentPopover } from "@/components/finance/chart-order-intent-popover";
+import { ChartAxisPlusButton } from "@/components/finance/chart-axis-plus-button";
+import { ChartContextMenu } from "@/components/finance/chart-context-menu";
+import { ChartTradeHint, useTradeHintDismissed } from "@/components/finance/chart-trade-hint";
 
 const W = 640;
 const H = 200;
@@ -89,7 +92,7 @@ export function PremiumChart({
   /** The contract's current premium, straight off the options terminal's own already-running ~30s chain poll (owned by the parent — this component does NOT poll on its own). A changed value appends one in-session tick; the SAME value re-rendering is a no-op (no duplicate ticks on every unrelated parent re-render). */
   livePremium: number | null;
   orderLines?: ChartOrderLine[];
-  /** Chart Trading + SL/TP (Sprint C, C2) — replaces Sprint B's `onPriceClick(price)`; see price-chart.tsx's identical prop for the full contract (a click opens the at-cursor popover, this fires only once the user confirms a side/variant choice). */
+  /** Chart Trading + SL/TP (Sprint C, C2) — replaces Sprint B's `onPriceClick(price)`. Interaction-model rework (2026-08-04, founder complaint "I cant have buy/sell popup on every click, thats irritating") — see price-chart.tsx's identical prop for the full contract: a plain click never fires this any more; it fires only from the price-axis "+" button (via the popover) or the right-click compact menu. */
   onOrderIntentConfirm?: (input: { price: number; side: OrderSide; variant: OrderVariant }) => void;
   /** Chart Trading + SL/TP (Sprint C, C1) — pointer-capture drag-to-reprice on a `draggable` line, same contract as price-chart.tsx's identical prop (fires once on pointerup, tick-snapped). New this sprint — the options terminal's premium chart is where a repriced OPTION pending order's line actually lives (equity/futures pending lines live on price-chart.tsx's own spot chart). */
   onOrderLineDrag?: (id: string, newPrice: number) => void;
@@ -108,6 +111,10 @@ export function PremiumChart({
   const [dragState, setDragState] = useState<{ id: string; price: number } | null>(null);
   const dragJustEndedRef = useRef(false);
   const [intentPopover, setIntentPopover] = useState<{ price: number; left: number; top: number } | null>(null);
+  // Interaction-model rework (2026-08-04) — same axis-hover/right-click state as price-chart.tsx (see that file's own doc).
+  const [axisHover, setAxisHover] = useState<{ top: number; price: number } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ price: number; left: number; top: number } | null>(null);
+  const [hintDismissed, dismissHint] = useTradeHintDismissed();
   const onOrderLineDragRef = useRef(onOrderLineDrag);
   onOrderLineDragRef.current = onOrderLineDrag;
   const onOrderIntentConfirmRef = useRef(onOrderIntentConfirm);
@@ -221,20 +228,50 @@ export function PremiumChart({
     return priceAtFraction(frac, H, PAD.top, PAD.bottom, geometry.min, geometry.max);
   };
 
-  // Sprint C, C2 — opens the order-intent popover; see price-chart.tsx's
-  // identical handler for the full "click suppressed after drag-end" and
-  // popover-anchoring reasoning (this is a byte-for-byte mirror, the only
-  // difference is "premium" vs "spot" in the surrounding copy).
-  const handleChartClick = (clientX: number, clientY: number) => {
-    if (dragJustEndedRef.current) {
-      dragJustEndedRef.current = false;
+  // Interaction-model rework (2026-08-04) — byte-for-byte mirror of
+  // price-chart.tsx's identical handlers (see that file's own doc for the
+  // full founder-complaint rationale): a plain click no longer opens
+  // anything; the price-axis "+" button and the right-click menu are the
+  // only two summon points now.
+  const openIntentPopoverAt = (price: number, left: number, top: number) => {
+    if (!onOrderIntentConfirm) return;
+    setContextMenu(null);
+    setAxisHover(null);
+    setIntentPopover({ price: snapToTick(price), left, top });
+  };
+
+  const updateAxisHover = (clientX: number, clientY: number) => {
+    if (!onOrderIntentConfirm || dragState || intentPopover || contextMenu) {
+      setAxisHover(null);
       return;
     }
-    if (!onOrderIntentConfirm) return;
+    const rect = svgRef.current?.getBoundingClientRect();
+    if (!rect || !rect.width) {
+      setAxisHover(null);
+      return;
+    }
+    const axisBandWidth = Math.max(48, rect.width * 0.12);
+    if (rect.right - clientX > axisBandWidth) {
+      setAxisHover(null);
+      return;
+    }
+    const price = priceAtClientY(clientY);
     const wrapperRect = wrapperRef.current?.getBoundingClientRect();
-    const raw = priceAtClientY(clientY);
+    if (price == null || !wrapperRect) {
+      setAxisHover(null);
+      return;
+    }
+    setAxisHover({ top: clientY - wrapperRect.top, price: snapToTick(price) });
+  };
+
+  const handleContextMenu = (e: React.MouseEvent<SVGSVGElement>) => {
+    e.preventDefault();
+    const wrapperRect = wrapperRef.current?.getBoundingClientRect();
+    const raw = priceAtClientY(e.clientY);
     if (!wrapperRect || raw == null) return;
-    setIntentPopover({ price: snapToTick(raw), left: clientX - wrapperRect.left, top: clientY - wrapperRect.top });
+    setIntentPopover(null);
+    setAxisHover(null);
+    setContextMenu({ price: snapToTick(raw), left: e.clientX - wrapperRect.left, top: e.clientY - wrapperRect.top });
   };
 
   // Sprint C, C1 — pointer-capture drag handlers, identical contract to
@@ -288,16 +325,29 @@ export function PremiumChart({
         <span className="text-xs text-ink-400">{active ? active.label : `${first.label} → ${last.label}`}</span>
       </div>
 
+      {/* Interaction-model rework (2026-08-04) — one-time discoverability hint, terminal-only (gated on onOrderIntentConfirm). */}
+      {onOrderIntentConfirm && (
+        <div className="mb-2">
+          <ChartTradeHint dismissed={hintDismissed} onDismiss={dismissHint} />
+        </div>
+      )}
+
       <svg
         ref={svgRef}
         viewBox={`0 0 ${W} ${H}`}
         className="w-full cursor-crosshair touch-none select-none"
-        onMouseMove={(e) => onPointer(e.clientX)}
-        onMouseLeave={() => setHoverIdx(null)}
+        onMouseMove={(e) => {
+          onPointer(e.clientX);
+          updateAxisHover(e.clientX, e.clientY);
+        }}
+        onMouseLeave={() => {
+          setHoverIdx(null);
+          setAxisHover(null);
+        }}
         onTouchStart={(e) => onPointer(e.touches[0].clientX)}
         onTouchMove={(e) => onPointer(e.touches[0].clientX)}
         onTouchEnd={() => setHoverIdx(null)}
-        onClick={onOrderIntentConfirm ? (e) => handleChartClick(e.clientX, e.clientY) : undefined}
+        onContextMenu={onOrderIntentConfirm ? handleContextMenu : undefined}
         role="img"
         aria-label={`Premium chart: ${formatRupees(first.y)} to ${formatRupees(last.y)}`}
       >
@@ -407,6 +457,10 @@ export function PremiumChart({
         )}
       </svg>
 
+      {axisHover && !intentPopover && !contextMenu && onOrderIntentConfirm && (
+        <ChartAxisPlusButton top={axisHover.top} onClick={() => openIntentPopoverAt(axisHover.price, (wrapperRef.current?.getBoundingClientRect().width ?? 0) - 24, axisHover.top)} />
+      )}
+
       {intentPopover && onOrderIntentConfirm && (
         <ChartOrderIntentPopover
           price={intentPopover.price}
@@ -418,6 +472,23 @@ export function PremiumChart({
             setIntentPopover(null);
           }}
           onDismiss={() => setIntentPopover(null)}
+        />
+      )}
+
+      {contextMenu && onOrderIntentConfirm && (
+        <ChartContextMenu
+          price={contextMenu.price}
+          left={contextMenu.left}
+          top={contextMenu.top}
+          onBuy={() => {
+            onOrderIntentConfirmRef.current?.({ price: contextMenu.price, side: "BUY", variant: "LIMIT" });
+            setContextMenu(null);
+          }}
+          onSell={() => {
+            onOrderIntentConfirmRef.current?.({ price: contextMenu.price, side: "SELL", variant: "LIMIT" });
+            setContextMenu(null);
+          }}
+          onDismiss={() => setContextMenu(null)}
         />
       )}
 
