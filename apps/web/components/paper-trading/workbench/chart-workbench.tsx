@@ -64,12 +64,16 @@ import {
   saveStoredSelection,
   sanitizeSelectionForMode,
   resolveParams,
+  buildIndicatorLineStyles,
   type IndicatorInstance,
-  type IndicatorSelection
+  type IndicatorSelection,
+  type IndicatorLineFigure,
+  type LineStyleOverride
 } from "./indicator-registry";
 import { WorkbenchToolbar } from "./workbench-toolbar";
 import { DrawingStyleToolbar } from "./drawing-style-toolbar";
 import { DrawingTextPopover } from "./drawing-text-popover";
+import { PanelResizeHandle, PANEL_DEFAULT_WIDTH, clampPanelWidth } from "./panel-resize-handle";
 import { useChartDrawings } from "./use-chart-drawings";
 import { useWorkbenchCandles, WORKBENCH_INTERVALS, PREMIUM_INTERVALS, type CandleInterval, type WorkbenchFeed } from "./use-workbench-candles";
 import {
@@ -123,6 +127,36 @@ function formatIstDateShort(iso: string): string {
   return new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", timeZone: "Asia/Kolkata" }).format(new Date(iso));
 }
 
+// Founder-feedback pass (2026-08-04) — resizable right panel width,
+// localStorage-persisted (same "restore once, after mount" posture as
+// `indicators`/`strategyId`/`customSignals` below — this file's established
+// convention for every localStorage-backed preference, so a stored value
+// never causes an SSR/first-paint mismatch even though this whole component
+// only ever mounts client-side, see module doc). Validated + clamped on
+// read so a hand-edited or stale-schema localStorage value can never hand
+// klinecharts' container a width outside `[PANEL_MIN_WIDTH,
+// PANEL_MAX_WIDTH]`.
+const PANEL_WIDTH_STORAGE_KEY = "pf.workbench.panelWidth";
+
+function loadStoredPanelWidth(): number {
+  try {
+    const raw = window.localStorage.getItem(PANEL_WIDTH_STORAGE_KEY);
+    if (!raw) return PANEL_DEFAULT_WIDTH;
+    const parsed = Number(raw);
+    return clampPanelWidth(parsed);
+  } catch {
+    return PANEL_DEFAULT_WIDTH; // private mode / storage disabled.
+  }
+}
+
+function saveStoredPanelWidth(width: number): void {
+  try {
+    window.localStorage.setItem(PANEL_WIDTH_STORAGE_KEY, String(width));
+  } catch {
+    // Preference just won't survive the refresh.
+  }
+}
+
 function mergeStylesPatch(current: Record<string, unknown> | null | undefined, patch: Record<string, unknown>): Record<string, unknown> {
   const base = (current ?? {}) as Record<string, Record<string, unknown> | undefined>;
   const result: Record<string, unknown> = { ...base };
@@ -168,7 +202,24 @@ export function ChartWorkbench({
   // (spot/premium) and starting interval immediately on restore.
   const [indicators, setIndicators] = useState<IndicatorSelection>(EMPTY_SELECTION);
   const [indicatorDialogOpen, setIndicatorDialogOpen] = useState(false);
-  const [indicatorSettings, setIndicatorSettings] = useState<{ instance: IndicatorInstance; left: number; top: number } | null>(null);
+  // Founder bug fix (2026-08-04, per-line style pass) — holds only the
+  // OPENED instance's id + anchor, never a snapshot of the instance object
+  // itself: the Style section's swatch clicks update `indicators` (React
+  // state, see `applyIndicatorLineStyle` below) while the popover stays
+  // open for further clicks, so the rendered `instance` prop must always be
+  // looked up fresh from `indicators` (`settingsInstance` below) — a
+  // captured snapshot would show a stale "active" swatch ring after the
+  // first click.
+  const [indicatorSettings, setIndicatorSettings] = useState<{ instanceId: string; left: number; top: number } | null>(null);
+  const settingsInstance = indicatorSettings
+    ? ([...indicators.main, ...indicators.sub].find((i) => i.instanceId === indicatorSettings.instanceId) ?? null)
+    : null;
+  // Founder bug fix (2026-08-04, per-line style pass) — `instanceId -> line
+  // figure[]` map, kept fresh by `KlineChart`'s `onIndicatorFiguresChange`
+  // (fires whenever its own indicator-sync effect runs — mount, add/remove,
+  // or a params edit; see kline-chart.tsx's own doc for why this is always
+  // re-read from the live chart rather than a hand-built catalogue).
+  const [indicatorFigures, setIndicatorFigures] = useState<Map<string, IndicatorLineFigure[]>>(() => new Map());
 
   useEffect(() => {
     const stored = loadStoredSelection();
@@ -206,40 +257,121 @@ export function ChartWorkbench({
       main: indicators.main.filter((i) => i.instanceId !== instanceId),
       sub: indicators.sub.filter((i) => i.instanceId !== instanceId)
     });
-    if (indicatorSettings?.instance.instanceId === instanceId) setIndicatorSettings(null);
+    if (indicatorSettings?.instanceId === instanceId) setIndicatorSettings(null);
   }
 
   function handleOpenIndicatorSettings(instance: IndicatorInstance, anchor: { left: number; top: number }) {
-    setIndicatorSettings({ instance, ...anchor });
+    setIndicatorSettings({ instanceId: instance.instanceId, ...anchor });
   }
 
   function handleApplyIndicatorSettings(params: number[]) {
     if (!indicatorSettings) return;
-    const targetId = indicatorSettings.instance.instanceId;
+    const targetId = indicatorSettings.instanceId;
     const updateList = (list: IndicatorInstance[]) => list.map((i) => (i.instanceId === targetId ? { ...i, params } : i));
     persistIndicators({ main: updateList(indicators.main), sub: updateList(indicators.sub) });
   }
 
-  // Founder feedback (2026-08-04), Part 1 — the settings popover's STYLE
-  // section: a nonce-driven command channel straight to `KlineChart`'s
-  // `overrideIndicator({styles})` call, same idiom as the S1 drawing style
-  // editor's `drawingStyleCommand`. Deliberately NOT persisted to React
-  // state/localStorage (line color/width is chart-session-only, ephemeral —
-  // consistent with the eye-toggle's own visibility state, which lives
-  // entirely inside klinecharts, never round-tripped into `IndicatorInstance`).
-  const [indicatorStyleCommand, setIndicatorStyleCommand] = useState<{ id: string; styles: Record<string, unknown>; nonce: number } | null>(null);
+  // Founder bug fix (2026-08-04, per-line style pass) — the settings
+  // popover's Style section: a nonce-driven command channel straight to
+  // `KlineChart`'s `overrideIndicator({styles})` call, same idiom as the S1
+  // drawing style editor's `drawingStyleCommand`. UNLIKE the original
+  // founder-feedback-pass version, per-line overrides ARE now persisted —
+  // into `indicators` (React state) and localStorage via the normal
+  // `persistIndicators` path — because a per-line override is a deliberate
+  // user customization (not the ephemeral eye-toggle visibility bit), and
+  // the whole point of this fix is that it survives a reload/params edit.
+  const [indicatorStyleCommand, setIndicatorStyleCommand] = useState<{ id: string; styles: { lines: ReturnType<typeof buildIndicatorLineStyles> }; nonce: number } | null>(
+    null
+  );
   const indicatorStyleNonceRef = useRef(0);
-  function handleApplyIndicatorStyle(patch: { color?: string; size?: number }) {
-    if (!indicatorSettings) return;
+
+  /**
+   * Shared by both the per-line color picker and the shared-width control
+   * below: updates every listed line INDEX's stored override with `patch`,
+   * persists the whole selection (localStorage), then sends ONE dense
+   * `styles.lines[]` array (`buildIndicatorLineStyles` — see its own doc for
+   * why this must be dense, not sparse) through the instant-apply command
+   * channel. A single state/command transaction for however many indices
+   * are touched, so picking a shared width across N lines doesn't fire N
+   * separate re-renders/overrideIndicator calls.
+   */
+  function applyIndicatorLineStyle(lineIndices: number[], patch: LineStyleOverride) {
+    if (!indicatorSettings || lineIndices.length === 0) return;
+    const targetId = indicatorSettings.instanceId;
+    const figures = indicatorFigures.get(targetId) ?? [];
+    if (figures.length === 0) return;
+
+    let updated: IndicatorInstance | undefined;
+    const updateList = (list: IndicatorInstance[]) =>
+      list.map((i) => {
+        if (i.instanceId !== targetId) return i;
+        const nextLines = [...(i.styles?.lines ?? [])];
+        for (const idx of lineIndices) nextLines[idx] = { ...(nextLines[idx] ?? {}), ...patch };
+        updated = { ...i, styles: { lines: nextLines } };
+        return updated;
+      });
+    const nextMain = updateList(indicators.main);
+    const nextSub = updateList(indicators.sub);
+    if (!updated) return;
+    persistIndicators({ main: nextMain, sub: nextSub });
+
     indicatorStyleNonceRef.current += 1;
-    const line: Record<string, unknown> = {};
-    if (patch.color !== undefined) line.color = patch.color;
-    if (patch.size !== undefined) line.size = patch.size;
-    setIndicatorStyleCommand({ id: indicatorSettings.instance.instanceId, styles: { lines: [line] }, nonce: indicatorStyleNonceRef.current });
+    setIndicatorStyleCommand({
+      id: targetId,
+      styles: { lines: buildIndicatorLineStyles(updated.styles?.lines, figures.length) },
+      nonce: indicatorStyleNonceRef.current
+    });
+  }
+
+  /** One color swatch row PER line figure — see `IndicatorSettingsPopover`'s Style section. */
+  function handleApplyIndicatorLineColor(lineIndex: number, color: string) {
+    applyIndicatorLineStyle([lineIndex], { color });
+  }
+
+  /**
+   * A SINGLE shared width control for the whole instance rather than N
+   * independent per-line width rows — a deliberate scope call (the brief
+   * left this to CTO judgment): per-line width would double the Style
+   * section's row count (color row + width row per line) for indicators
+   * like `CR` (5 lines) or `MA`(4 lines) with little real-world value —
+   * traders overwhelmingly want to tell lines APART by color, not by
+   * varying line thickness. Applies `size` to every current line figure's
+   * override in one transaction via `applyIndicatorLineStyle` above.
+   */
+  function handleApplyIndicatorWidth(size: number) {
+    if (!indicatorSettings) return;
+    const figures = indicatorFigures.get(indicatorSettings.instanceId) ?? [];
+    applyIndicatorLineStyle(
+      figures.map((f) => f.index),
+      { size }
+    );
   }
 
   const [ticketCollapsed, setTicketCollapsed] = useState(false);
   const [intentPopover, setIntentPopover] = useState<{ price: number; left: number; top: number } | null>(null);
+
+  // Founder-feedback pass (2026-08-04) — resizable right panel. `panelRef`
+  // is the imperative write target DURING a drag (`PanelResizeHandle`'s
+  // `onResize`, rAF-throttled, never through `setState` — render-loop law);
+  // `panelWidth` (React state) is only committed at drag-end and drives the
+  // panel's `style.width` on every NORMAL render, so the two are always back
+  // in sync the instant a drag finishes (no visual snap).
+  const [panelWidth, setPanelWidth] = useState(PANEL_DEFAULT_WIDTH);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    setPanelWidth(loadStoredPanelWidth());
+  }, []);
+  function handlePanelResize(width: number) {
+    if (panelRef.current) panelRef.current.style.width = `${width}px`;
+  }
+  function handlePanelResizeEnd(width: number) {
+    setPanelWidth(width);
+    saveStoredPanelWidth(width);
+  }
+  function handlePanelReset() {
+    setPanelWidth(PANEL_DEFAULT_WIDTH);
+    saveStoredPanelWidth(PANEL_DEFAULT_WIDTH);
+  }
 
   const { candles, status, errorMessage, sourceLabel, quote, premiumMeta, lastUpdatedAt, pollIntervalMs } = useWorkbenchCandles(feed, chartInterval);
 
@@ -726,13 +858,12 @@ export function ChartWorkbench({
               onIndicatorOpenSettings={handleOpenIndicatorSettings}
               onIndicatorRemove={handleRemoveIndicator}
               indicatorStyleCommand={indicatorStyleCommand}
+              onIndicatorFiguresChange={setIndicatorFigures}
             />
           )}
 
           {selectedDrawing && !textPopover && (
             <DrawingStyleToolbar
-              left={selectedDrawing.left}
-              top={selectedDrawing.top}
               activeColor={activeColor}
               activeWidth={activeWidth}
               canEditText={TEXT_FAMILY_OVERLAYS.has(selectedDrawing.overlayName)}
@@ -740,6 +871,7 @@ export function ChartWorkbench({
               onPickWidth={(width) => applyStylePatch({ line: { size: width } })}
               onEditText={TEXT_FAMILY_OVERLAYS.has(selectedDrawing.overlayName) ? handleEditText : undefined}
               onDelete={handleStyleDelete}
+              onClose={() => setSelectedDrawing(null)}
             />
           )}
 
@@ -770,7 +902,16 @@ export function ChartWorkbench({
         </div>
 
         {!ticketCollapsed && (
-          <div className="flex w-[360px] shrink-0 flex-col border-l border-ink-100">
+          <PanelResizeHandle
+            getCurrentWidth={() => panelWidth}
+            onResize={handlePanelResize}
+            onResizeEnd={handlePanelResizeEnd}
+            onDoubleClickReset={handlePanelReset}
+          />
+        )}
+
+        {!ticketCollapsed && (
+          <div ref={panelRef} className="flex shrink-0 flex-col" style={{ width: panelWidth }}>
             {/* TA Suite S3, T3 — [Ticket | Strategy] segmented control (D5). Switching tabs NEVER unmounts either
                 side (the single-mount rule) — both wrappers below are always in the DOM, toggled by CSS
                 `display` only, so an in-progress order-ticket draft survives a trip through the Strategy tab. */}
@@ -851,13 +992,15 @@ export function ChartWorkbench({
           onClose={() => setIndicatorDialogOpen(false)}
         />
       )}
-      {indicatorSettings && (
+      {indicatorSettings && settingsInstance && (
         <IndicatorSettingsPopover
-          instance={indicatorSettings.instance}
+          instance={settingsInstance}
+          figures={indicatorFigures.get(indicatorSettings.instanceId) ?? []}
           left={indicatorSettings.left}
           top={indicatorSettings.top}
           onApply={handleApplyIndicatorSettings}
-          onApplyStyle={handleApplyIndicatorStyle}
+          onApplyLineColor={handleApplyIndicatorLineColor}
+          onApplyWidth={handleApplyIndicatorWidth}
           onClose={() => setIndicatorSettings(null)}
         />
       )}

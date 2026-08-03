@@ -34,7 +34,23 @@
  * plan states is present verbatim; the connective filler is flagged in the
  * S3 final report as a deviation needing founder sign-off on exact wording,
  * not silently invented.
+ *
+ * **Founder-feedback pass (2026-08-04) — compact by default.** The full
+ * paragraph above was eating most of the Strategy tab's vertical space.
+ * `StrategyDisclaimerFooter` now ALWAYS shows a single-line compact summary
+ * ("Hypothetical results — not investment advice · costs estimated ·
+ * hindsight flatters performance") with an ⓘ toggle that expands the exact
+ * SAME `buildDisclaimerText(...)` paragraph, verbatim and unchanged, inline
+ * below it — collapsed by default, component-local state (never persisted;
+ * a fresh workbench open always starts collapsed). The honesty law this
+ * footer's own doc above already establishes ("must remain visible in BOTH
+ * tab states") is unaffected: the compact line is the thing that's always
+ * visible now, not the full paragraph — nothing about backtest results is
+ * ever shown withOUT it.
  */
+import { useState } from "react";
+import { Info } from "lucide-react";
+
 import { STRATEGY_LIST, clampStrategyParams, getStrategyDef, type StrategyDef, type StrategySignal } from "@/lib/ta/strategies";
 import { intervalToProductType, type BacktestStats } from "@/lib/ta/backtest";
 import type { PaperProductType } from "@predict-future/business-rules/papertrading/costs";
@@ -358,14 +374,34 @@ export function StrategyDisclaimerFooter({
   hasActiveSignals: boolean;
   onClear: () => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const n = runResult?.ranCandleCount ?? liveCandleCount;
   const interval = runResult?.ranInterval ?? liveInterval;
 
   return (
     <div className="shrink-0 space-y-2 border-t border-ink-100 bg-white p-3">
-      <p className="rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-[11px] leading-5 text-amber-800">
-        {buildDisclaimerText(n, interval, isPremiumMode)}
-      </p>
+      <div className="rounded-lg border border-amber-200 bg-amber-50 p-2.5">
+        <div className="flex items-start gap-1.5">
+          <p className="min-w-0 flex-1 text-[11px] font-medium leading-4 text-amber-800">
+            Hypothetical results — not investment advice · costs estimated · hindsight flatters performance
+          </p>
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            aria-expanded={expanded}
+            aria-label={expanded ? "Hide full disclaimer" : "Show full disclaimer"}
+            title={expanded ? "Hide full disclaimer" : "Show full disclaimer"}
+            className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-amber-700 hover:bg-amber-100"
+          >
+            <Info className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
+        </div>
+        {expanded && (
+          <p className="mt-1.5 border-t border-amber-200 pt-1.5 text-[11px] leading-5 text-amber-800">
+            {buildDisclaimerText(n, interval, isPremiumMode)}
+          </p>
+        )}
+      </div>
       <button
         type="button"
         onClick={onClear}

@@ -63,8 +63,6 @@ export const KLINECHARTS_DEFAULT_LINE = "#1677FF";
 /** Matching default line WIDTH (`getDefaultOverlayStyle().line.size = 1`, not this file's usual `1.4`) — same backward-compatibility rationale as `KLINECHARTS_DEFAULT_LINE` above. */
 export const KLINECHARTS_DEFAULT_LINE_WIDTH = 1;
 
-/** The style editor's (T7) 6 color swatches — `drawing-style-toolbar.tsx` maps each to a `line`/`polygon`/`text` style patch. */
-export const SWATCH_COLORS = [INK_600, SKY, TEAL, AMBER, VIOLET, ROSE] as const;
 /** The style editor's 3 line-width choices. */
 export const LINE_WIDTHS = [1, 2, 3] as const;
 

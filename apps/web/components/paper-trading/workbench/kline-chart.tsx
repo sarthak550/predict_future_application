@@ -107,8 +107,7 @@ import {
   type DeepPartial,
   type NeighborData,
   type OverlayEventCallback,
-  type OverlayStyle,
-  type IndicatorStyle
+  type OverlayStyle
 } from "klinecharts";
 
 import { snapToTick, type ChartOrderLine } from "@/components/finance/chart-order-lines";
@@ -123,7 +122,13 @@ import {
   INDICATOR_FEATURE_GEAR_ID,
   INDICATOR_FEATURE_REMOVE_ID
 } from "./custom-indicators/tooltip-features";
-import { resolveParams, type IndicatorInstance } from "./indicator-registry";
+import {
+  resolveParams,
+  buildIndicatorLineStyles,
+  type IndicatorInstance,
+  type IndicatorLineFigure,
+  type ResolvedLineStyle
+} from "./indicator-registry";
 import type { ChartDrawingPoint, ChartDrawingRow } from "./use-chart-drawings";
 import type { Candle } from "./use-workbench-candles";
 
@@ -258,11 +263,38 @@ const MAIN_PANE_ID = "candle_pane";
  * JSON.stringify(current.calcParams)` check — a `calcParams` change alone
  * is exactly what that path recalculates on).
  */
+
+/**
+ * Founder bug fix (2026-08-04, per-line style pass) — reads a live
+ * instance's LINE-type figures straight off `chart.getIndicators({id})`,
+ * never a hand-built catalogue (see `IndicatorLineFigure`'s own doc in
+ * `indicator-registry.ts`). Always re-read fresh rather than cached: a
+ * `regenerateFigures` indicator (e.g. built-in `MA`, whose figure list is
+ * rebuilt from `calcParams` on every `overrideIndicator` — verified against
+ * `dist/index.esm.js:4122`) can change its figure list on a params edit, so
+ * trusting a stale count would silently mis-target a color/width override
+ * after the user edits a period.
+ */
+function readLineFigures(chart: Chart, instanceId: string): IndicatorLineFigure[] {
+  const [live] = chart.getIndicators({ id: instanceId });
+  if (!live) return [];
+  const out: IndicatorLineFigure[] = [];
+  let index = 0;
+  for (const figure of live.figures) {
+    if (figure.type !== "line") continue;
+    const trimmedTitle = figure.title?.trim().replace(/:$/, "").trim();
+    out.push({ key: figure.key, label: trimmedTitle || figure.key, index });
+    index += 1;
+  }
+  return out;
+}
+
 function syncIndicatorInstances(
   chart: Chart,
   instances: IndicatorInstance[],
   activeRef: MutableRefObject<Map<string, { name: string; paramsKey: string }>>,
-  opts: { paneId?: string; isStack: boolean }
+  opts: { paneId?: string; isStack: boolean },
+  figuresOut: Map<string, IndicatorLineFigure[]>
 ): void {
   const active = activeRef.current;
   const nextIds = new Set(instances.map((i) => i.instanceId));
@@ -278,6 +310,7 @@ function syncIndicatorInstances(
     const params = resolveParams(instance);
     const paramsKey = JSON.stringify(params);
     const existing = active.get(instance.instanceId);
+    let justSynced = false;
     if (!existing) {
       chart.createIndicator(
         {
@@ -294,9 +327,32 @@ function syncIndicatorInstances(
         opts.isStack
       );
       active.set(instance.instanceId, { name: instance.name, paramsKey });
+      justSynced = true;
     } else if (existing.paramsKey !== paramsKey) {
       chart.overrideIndicator({ id: instance.instanceId, name: instance.name, calcParams: params });
       active.set(instance.instanceId, { name: instance.name, paramsKey });
+      justSynced = true;
+    }
+
+    // Founder bug fix (2026-08-04, per-line style pass) — always re-read
+    // figures (see `readLineFigures`'s own doc) so `figuresOut` (pushed to
+    // `chart-workbench.tsx` for the settings popover) is correct for EVERY
+    // currently-active instance on every sync pass, not just the ones that
+    // just changed.
+    const lineFigures = readLineFigures(chart, instance.instanceId);
+    figuresOut.set(instance.instanceId, lineFigures);
+
+    // Re-apply this instance's persisted per-line overrides right after a
+    // create/param-change — an already-synced, untouched instance already
+    // carries them from its own prior pass (klinecharts keeps `styles` on
+    // the live instance across unrelated `overrideIndicator` calls), so
+    // re-submitting here would be a harmless but wasteful no-op.
+    if (justSynced && lineFigures.length > 0 && instance.styles?.lines?.some((s) => s != null)) {
+      chart.overrideIndicator({
+        id: instance.instanceId,
+        name: instance.name,
+        styles: { lines: buildIndicatorLineStyles(instance.styles.lines, lineFigures.length) }
+      });
     }
   }
 }
@@ -350,7 +406,8 @@ export function KlineChart({
   onCrosshairDataIndexChange,
   onIndicatorOpenSettings,
   onIndicatorRemove,
-  indicatorStyleCommand
+  indicatorStyleCommand,
+  onIndicatorFiguresChange
 }: {
   candles: Candle[];
   interval: string;
@@ -406,8 +463,27 @@ export function KlineChart({
   onIndicatorOpenSettings?: (instance: IndicatorInstance, anchor: { left: number; top: number }) => void;
   /** Founder feedback (2026-08-04), Part 1 — fired by the on-chart legend's × icon; same `instanceId` shape `indicator-active-strip.tsx`'s own remove button already calls — MUST go through `chart-workbench.tsx`'s React state (never a raw `chart.removeIndicator` call from in here), or the next indicator-sync effect pass would just recreate what this just removed. */
   onIndicatorRemove?: (instanceId: string) => void;
-  /** Founder feedback (2026-08-04), Part 1 — the settings popover's new STYLE section: bump `nonce` with a NEW `{id, styles}` to `overrideIndicator({id, styles})`. Deliberately UNIFORM across every line-type figure of that instance (a single-element `styles.lines` array — verified against `eachFigures`'s `lineStyles[lineCount % lineStyleCount]` modulo resolution: submitting exactly one style object recolors/resizes EVERY line figure of the instance, not just the first — see `indicator-settings-popover.tsx`'s own doc for why independent per-sub-line control was scoped out this pass). */
-  indicatorStyleCommand?: { id: string; styles: Record<string, unknown>; nonce: number } | null;
+  /**
+   * Founder bug fix (2026-08-04, per-line style pass) — bump `nonce` with a
+   * NEW `{id, styles}` to instantly `overrideIndicator({id, styles})`. The
+   * `styles.lines` array is always DENSE and pre-merged by the caller
+   * (`chart-workbench.tsx`'s `buildIndicatorLineStyles`, per-line-aware) —
+   * this file applies it verbatim, no merge logic of its own. Supersedes
+   * the founder-feedback pass's original single-element-array "uniform
+   * recolor" version (that WAS the bug: modulo-indexed onto every line).
+   */
+  indicatorStyleCommand?: { id: string; styles: { lines: ResolvedLineStyle[] }; nonce: number } | null;
+  /**
+   * Founder bug fix (2026-08-04, per-line style pass) — fires with a FRESH
+   * `instanceId -> line-figure[]` map every time the indicator sync effect
+   * runs (mount, add/remove, or a params edit that changes `resolveParams`)
+   * — see `readLineFigures`'s own doc for why this is always re-read from
+   * the live `chart.getIndicators` result, never cached. `chart-workbench.tsx`
+   * stores this in state and passes the relevant slice to
+   * `IndicatorSettingsPopover` so its Style section can render one row PER
+   * actual line figure, discovered at runtime — no hand-built catalogue.
+   */
+  onIndicatorFiguresChange?: (figures: Map<string, IndicatorLineFigure[]>) => void;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<Chart | null>(null);
@@ -456,6 +532,8 @@ export function KlineChart({
   onIndicatorOpenSettingsRef.current = onIndicatorOpenSettings;
   const onIndicatorRemoveRef = useRef(onIndicatorRemove);
   onIndicatorRemoveRef.current = onIndicatorRemove;
+  const onIndicatorFiguresChangeRef = useRef(onIndicatorFiguresChange);
+  onIndicatorFiguresChangeRef.current = onIndicatorFiguresChange;
   /** Every current instance, both panes combined — kept fresh every render (a plain assignment, not an effect: it's only ever read from inside an event handler closure, never used as a dependency) so the `onIndicatorTooltipFeatureClick` handler can resolve a clicked `indicator.id` back to the full `IndicatorInstance` object `onIndicatorOpenSettings` expects, without needing its own stale-closure guard. */
   const allIndicatorInstancesRef = useRef<IndicatorInstance[]>([]);
   allIndicatorInstancesRef.current = [...mainIndicators, ...subIndicators];
@@ -529,6 +607,35 @@ export function KlineChart({
   const draggingIdRef = useRef<string | null>(null);
   const dragJustEndedRef = useRef(false);
   const dragStartPriceRef = useRef<Record<string, number>>({});
+
+  // Founder-feedback pass (2026-08-04) — draw-first-edit-later: klinecharts
+  // auto-selects a drawing the INSTANT it finishes (verified directly
+  // against `dist/index.esm.js`'s `mouseClickEvent`/`mouseDoubleClickEvent`
+  // handlers, ~line 8347-8403: the branch that completes a progress overlay
+  // calls `progressOverlayComplete()` + fires `overlay.onDrawEnd` and THEN,
+  // synchronously in the SAME click, falls through to
+  // `_figureMouseClickEvent(overlay, 'point', index, {...})(event)` — which
+  // unconditionally calls `chartStore.setClickOverlayInfo(...)`, and THAT is
+  // what fires `overlay.onSelected`, confirmed at `StoreImp.prototype
+  // .setClickOverlayInfo`, line 14382). So every finished drawing's very
+  // first `onSelected` is klinecharts' own auto-select, not a real user
+  // click on an existing shape — that auto-select must never open the style
+  // toolbar (see `chart-workbench.tsx`'s D-whatever "draw first, edit
+  // later"). `justFinishedDrawRef` is armed as the FIRST statement inside
+  // `onDrawEnd` below and consumed (checked + cleared) by the very next
+  // `onSelected` call for the SAME gesture — a one-shot suppression, same
+  // "set in an earlier event, read in a later one within the same gesture"
+  // idiom `dragJustEndedRef` above already uses. A `mousedown` safety net
+  // (installed further down, mirroring `dragJustEndedRef`'s own click-listener
+  // consumption) additionally force-clears it on the NEXT genuine pointer
+  // interaction — continuous-drag tools (`mouseUpEvent`'s
+  // `isContinuousDrawingMode()` branch, dist line 8435-8447) fire `onDrawEnd`
+  // WITHOUT a same-tick `onSelected` at all (no `_figureMouseClickEvent`
+  // fallthrough on that path), so the one-shot consumption inside `onSelected`
+  // can't be relied on alone for those tools — the mousedown net is what
+  // guarantees the suppression can never leak into a later, genuinely new
+  // user click.
+  const justFinishedDrawRef = useRef(false);
 
   // Founder feedback (2026-08-04), Part 1 — set synchronously (never through
   // React state/an effect) the moment an on-chart legend feature (eye/gear/
@@ -698,6 +805,18 @@ export function KlineChart({
     }
     el.addEventListener("click", handleClick);
 
+    // Draw-first-edit-later safety net (see `justFinishedDrawRef`'s own
+    // doc) — the NEXT genuine pointer interaction on the chart, whatever it
+    // turns out to be (starting a new draw, panning, a real selection
+    // click), always force-clears a still-armed suppression flag. Covers
+    // continuous-drag tools, whose `onDrawEnd` fires with no same-tick
+    // `onSelected` to consume it (dist `mouseUpEvent`'s continuous-drawing
+    // branch, no `_figureMouseClickEvent` fallthrough).
+    function handleMouseDownClearJustFinished() {
+      justFinishedDrawRef.current = false;
+    }
+    el.addEventListener("mousedown", handleMouseDownClearJustFinished);
+
     // W3, T4 — Backspace/Delete removes the currently-SELECTED drawing (a
     // real, on-canvas anchor-based click-to-select via each drawing
     // instance's own onSelected/onDeselected — see the drawings-hydration
@@ -719,6 +838,7 @@ export function KlineChart({
 
     return () => {
       el.removeEventListener("click", handleClick);
+      el.removeEventListener("mousedown", handleMouseDownClearJustFinished);
       el.removeEventListener("mouseleave", handleMouseLeave);
       document.removeEventListener("keydown", handleKeyDown);
       chart?.unsubscribeAction("onCrosshairChange", handleCrosshairChange);
@@ -793,8 +913,10 @@ export function KlineChart({
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;
-    syncIndicatorInstances(chart, mainIndicators, activeMainInstancesRef, { paneId: MAIN_PANE_ID, isStack: true });
-    syncIndicatorInstances(chart, subIndicators, activeSubInstancesRef, { isStack: false });
+    const figuresOut = new Map<string, IndicatorLineFigure[]>();
+    syncIndicatorInstances(chart, mainIndicators, activeMainInstancesRef, { paneId: MAIN_PANE_ID, isStack: true }, figuresOut);
+    syncIndicatorInstances(chart, subIndicators, activeSubInstancesRef, { isStack: false }, figuresOut);
+    onIndicatorFiguresChangeRef.current?.(figuresOut);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mainInstanceKey, subInstanceKey]);
 
@@ -958,6 +1080,16 @@ export function KlineChart({
       },
       onSelected: (event) => {
         selectedDrawingOverlayIdRef.current = event.overlay.id;
+        // Draw-first-edit-later (see `justFinishedDrawRef`'s own doc above):
+        // a just-finished draw's OWN auto-select is consumed here, one-shot,
+        // and never opens the style toolbar — klinecharts still tracks the
+        // shape as selected internally (Backspace-to-delete etc. keep
+        // working), only the app-level `onDrawingSelected` callback is
+        // skipped for this one event.
+        if (justFinishedDrawRef.current) {
+          justFinishedDrawRef.current = false;
+          return;
+        }
         const persistedId = overlayIdToPersistedIdRef.current.get(event.overlay.id) ?? null;
         const anchor = firstPointPixelAnchor(event.overlay.points);
         if (anchor) onDrawingSelectedRef.current?.({ overlayId: event.overlay.id, persistedId, overlayName: event.overlay.name, left: anchor.left, top: anchor.top });
@@ -1057,6 +1189,7 @@ export function KlineChart({
     const handlers = buildDrawingEventHandlers();
     const initialStyles = pendingToolStylesRef.current ?? undefined;
     const onDrawEnd: OverlayEventCallback<unknown> = (event) => {
+      justFinishedDrawRef.current = true; // armed BEFORE anything else — see this ref's own doc for the verified same-tick onDrawEnd -> onSelected order it's guarding against.
       const id = event.overlay.id;
       pendingDrawOverlayIdRef.current = null;
       activeToolRef.current = null;
@@ -1153,11 +1286,14 @@ export function KlineChart({
     chartRef.current?.removeOverlay({ id: removeDrawingCommand.id });
   }, [removeDrawingCommand]);
 
-  // ── Founder feedback (2026-08-04), Part 1 — the indicator settings ─────
-  // popover's STYLE section: nonce-driven `overrideIndicator({id, styles})`,
-  // same idiom as `drawingStyleCommand` above. See this prop's own doc for
-  // why a single-element `styles.lines` array is deliberately applied
-  // UNIFORMLY to every line-type figure of the instance.
+  // ── Founder bug fix (2026-08-04, per-line style pass) — the indicator ──
+  // settings popover's Style section: nonce-driven `overrideIndicator({id,
+  // styles})`, same idiom as `drawingStyleCommand` above. `styles.lines` is
+  // always a DENSE, pre-merged array built by the caller
+  // (`buildIndicatorLineStyles`) — this effect is a thin passthrough, no
+  // merge logic here (the old version's "uniform single-element array" bug
+  // lived in THIS file; the fix moves the merge to the caller, which is the
+  // only side that knows the instance's full per-line override history).
   const lastIndicatorStyleNonceRef = useRef(indicatorStyleCommand?.nonce ?? 0);
   useEffect(() => {
     if (!indicatorStyleCommand || indicatorStyleCommand.nonce === lastIndicatorStyleNonceRef.current) return;
@@ -1169,7 +1305,7 @@ export function KlineChart({
     // prop's payload with a redundant `name` the caller would have to keep in sync itself.
     const [live] = chart.getIndicators({ id: indicatorStyleCommand.id });
     if (!live) return;
-    chart.overrideIndicator({ id: indicatorStyleCommand.id, name: live.name, styles: indicatorStyleCommand.styles as DeepPartial<IndicatorStyle> });
+    chart.overrideIndicator({ id: indicatorStyleCommand.id, name: live.name, styles: indicatorStyleCommand.styles });
   }, [indicatorStyleCommand]);
 
   return <div ref={containerRef} className="h-full w-full min-h-[420px]" />;

@@ -79,11 +79,124 @@ export interface IndicatorMeta {
   intervalDisabled?: (interval: string) => boolean;
 }
 
+/**
+ * Founder bug fix (2026-08-04, per-line style pass) — a single line's color/
+ * width override. `undefined` fields mean "not overridden, use klinecharts'
+ * own default for this line index" — see `buildIndicatorLineStyles` below
+ * for how a sparse array of these gets turned into the DENSE array
+ * `overrideIndicator({styles:{lines}})` actually requires.
+ */
+export interface LineStyleOverride {
+  color?: string;
+  size?: number;
+}
+
 /** One added indicator on the chart. `instanceId` is the identity used for every klinecharts call (`id` filter) AND every React key — `name` alone is deliberately NOT unique (two MA instances share a name, differ by `params`). `params` omitted = use `INDICATOR_REGISTRY[name].defaultParams`. */
 export interface IndicatorInstance {
   instanceId: string;
   name: string;
   params?: number[];
+  /**
+   * Founder bug fix (2026-08-04) — per-LINE style overrides, index-aligned
+   * to the instance's live `figures` filtered to `type === 'line'` (see
+   * `IndicatorLineFigure.index` below — that's the same index space).
+   * `lines[i]` is `null`/`undefined`/missing when line `i` has never been
+   * customized. Replaces the old founder-feedback-pass STYLE section, which
+   * (documented as a known scope gap at the time) applied ONE color/width to
+   * EVERY line in the instance via `overrideIndicator`'s modulo-indexed
+   * single-element-array trick — the exact bug this fixes ("choosing a
+   * color makes all the lines the same colour").
+   */
+  styles?: { lines?: Array<LineStyleOverride | null> };
+}
+
+/**
+ * Runtime-discovered metadata for one LINE-type figure of a live indicator
+ * instance — sourced from `chart.getIndicators({id})[0].figures`, never a
+ * hand-built catalogue (klinecharts' own `figures[].title` already carries
+ * the correct per-indicator label — "MA1"/"UP"/"DIF"/"K", etc. — for every
+ * built-in AND every custom indicator in this registry).
+ */
+export interface IndicatorLineFigure {
+  key: string;
+  /** `figure.title` trimmed of its trailing on-chart-legend `": "` suffix (falls back to `key` if a figure somehow has no title). */
+  label: string;
+  /**
+   * Index within `figures[]` FILTERED to `type === 'line'`, in declaration
+   * order — exactly the index klinecharts' own `eachFigures` (`dist/
+   * index.esm.js:3066`) increments as `lineCount` to resolve
+   * `styles.lines[lineCount % lineStyleCount]`. Writing a style override to
+   * `styles.lines[index]` is therefore guaranteed to land on THIS figure and
+   * no other, verified directly against that resolution loop (not assumed).
+   */
+  index: number;
+}
+
+/**
+ * klinecharts@10.0.1's own default per-line style palette, verified
+ * character-for-character against `node_modules/klinecharts/dist/
+ * index.esm.js`'s `getDefaultIndicatorStyle()` (~line 11405):
+ * `lines: ['#FF9600','#935EBD','#1677FF','#E11D74','#01C5C4'].map(color =>
+ * ({style:'solid', smooth:false, size:1, dashedValue:[2,2], color}))`.
+ * `#1677FF` is `Color.BLUE` in that same file (`~line 11215`), inlined here
+ * since klinecharts exposes no runtime accessor for its own theme defaults.
+ * Mirrored (not imported) so `buildIndicatorLineStyles` can submit a
+ * COMPLETE `styles.lines[]` array on every override — required because
+ * `overrideIndicator`'s style resolution is all-or-nothing per line index
+ * (`formatValue(indicator.styles, 'lines', defaultStyles.lines)` returns
+ * `indicator.styles.lines` in FULL the moment it's set at all, never
+ * per-index-merged with klinecharts' own built-in default — verified via
+ * the same `eachFigures`/`formatValue` read above). Never overridden by this
+ * app's own `WORKBENCH_THEME` (`kline-chart.tsx` only sets
+ * `indicator.tooltip.features` there), so this palette IS what every
+ * never-customized line renders with today.
+ */
+export const DEFAULT_INDICATOR_LINE_COLORS = ["#FF9600", "#935EBD", "#1677FF", "#E11D74", "#01C5C4"] as const;
+
+export interface ResolvedLineStyle {
+  style: "solid";
+  smooth: false;
+  size: number;
+  dashedValue: [number, number];
+  color: string;
+}
+
+function defaultIndicatorLineStyle(index: number): ResolvedLineStyle {
+  return {
+    style: "solid",
+    smooth: false,
+    size: 1,
+    dashedValue: [2, 2],
+    color: DEFAULT_INDICATOR_LINE_COLORS[index % DEFAULT_INDICATOR_LINE_COLORS.length]
+  };
+}
+
+/**
+ * Builds the DENSE, `lineCount`-length `styles.lines[]` array a single
+ * `overrideIndicator` call needs to change ONE line's color/width without
+ * silently resetting every other line to klinecharts' own default (or, if a
+ * PRIOR override call had already customized a different line, without
+ * dropping that customization) — every index gets a real style object
+ * (klinecharts' default for that index, patched by this instance's own
+ * stored override if one exists for that index), never `null`/`undefined`,
+ * since `formatValue`'s all-or-nothing resolution (see
+ * `DEFAULT_INDICATOR_LINE_COLORS`'s own doc) means a sparse/partial array
+ * would leave the UNSET trailing indices with no style object to modulo
+ * back onto — a `lines.length < lineCount` array is fine (modulo wraps),
+ * but a `lines.length` that's merely sparse (holes) is not, since JS array
+ * holes stringify to `null` through klinecharts' own `clone()`.
+ */
+export function buildIndicatorLineStyles(overrides: Array<LineStyleOverride | null | undefined> | undefined, lineCount: number): ResolvedLineStyle[] {
+  return Array.from({ length: lineCount }, (_, i) => {
+    const base = defaultIndicatorLineStyle(i);
+    const override = overrides?.[i];
+    if (!override) return base;
+    return {
+      ...base,
+      ...(override.color !== undefined ? { color: override.color } : {}),
+      ...(override.size !== undefined ? { size: override.size } : {})
+    };
+  });
 }
 
 export interface IndicatorSelection {
@@ -642,8 +755,34 @@ const STORAGE_VERSION = 2;
 
 interface StoredSelectionV2 {
   v: 2;
-  main: Array<{ name: string; params?: number[] }>;
-  sub: Array<{ name: string; params?: number[] }>;
+  main: Array<{ name: string; params?: number[]; styles?: { lines?: Array<LineStyleOverride | null> } }>;
+  sub: Array<{ name: string; params?: number[]; styles?: { lines?: Array<LineStyleOverride | null> } }>;
+}
+
+/**
+ * Founder bug fix (2026-08-04) — additive v2 field, not a new storage
+ * version: an older `pf.workbench.indicators` blob written before this pass
+ * simply lacks `styles` on every row, which `toInstances` below already
+ * treats as "no overrides" (the same `undefined`-is-fine contract
+ * `IndicatorInstance.styles` itself documents) — no version bump, no
+ * separate migration branch needed. Defensive against a corrupted/
+ * hand-edited blob: a non-array `lines`, or a non-object/malformed entry,
+ * is dropped rather than trusted raw (same posture as `clampParams` for the
+ * sibling `params` field).
+ */
+function sanitizeStoredLineStyles(raw: unknown): Array<LineStyleOverride | null> | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const lines = (raw as { lines?: unknown }).lines;
+  if (!Array.isArray(lines)) return undefined;
+  const sanitized: Array<LineStyleOverride | null> = lines.map((entry) => {
+    if (!entry || typeof entry !== "object") return null;
+    const e = entry as Record<string, unknown>;
+    const override: LineStyleOverride = {};
+    if (typeof e.color === "string") override.color = e.color;
+    if (typeof e.size === "number" && Number.isFinite(e.size)) override.size = e.size;
+    return override.color !== undefined || override.size !== undefined ? override : null;
+  });
+  return sanitized.some((e) => e !== null) ? sanitized : undefined;
 }
 
 function isV1Shape(v: unknown): v is { main: string[]; sub: string[] } {
@@ -699,14 +838,18 @@ function isV2Shape(v: unknown): v is StoredSelectionV2 {
  */
 export function migrateStoredSelection(raw: unknown): IndicatorSelection | null {
   if (isV2Shape(raw)) {
-    const toInstances = (rows: Array<{ name: string; params?: number[] }>): IndicatorInstance[] =>
+    const toInstances = (rows: StoredSelectionV2["main"]): IndicatorInstance[] =>
       rows
         .filter((r) => typeof r?.name === "string" && r.name in INDICATOR_REGISTRY)
-        .map((r) => ({
-          instanceId: createInstanceId(r.name),
-          name: r.name,
-          params: Array.isArray(r.params) && r.params.every((p) => typeof p === "number") ? clampParams(r.name, r.params) : undefined
-        }));
+        .map((r) => {
+          const lines = sanitizeStoredLineStyles(r.styles);
+          return {
+            instanceId: createInstanceId(r.name),
+            name: r.name,
+            params: Array.isArray(r.params) && r.params.every((p) => typeof p === "number") ? clampParams(r.name, r.params) : undefined,
+            ...(lines ? { styles: { lines } } : {})
+          };
+        });
     return reclassifyByPane({ main: toInstances(raw.main), sub: toInstances(raw.sub) });
   }
   if (isV1Shape(raw)) {
@@ -717,12 +860,22 @@ export function migrateStoredSelection(raw: unknown): IndicatorSelection | null 
   return null;
 }
 
+function serializeInstance(i: IndicatorInstance): StoredSelectionV2["main"][number] {
+  const lines = i.styles?.lines;
+  const hasOverride = Array.isArray(lines) && lines.some((e) => e !== null && e !== undefined);
+  return {
+    name: i.name,
+    ...(i.params ? { params: i.params } : {}),
+    ...(hasOverride ? { styles: { lines } } : {})
+  };
+}
+
 /** Always writes v2 going forward — v1 is read-only-compatible, never re-written. */
 export function serializeSelection(selection: IndicatorSelection): string {
   const stored: StoredSelectionV2 = {
     v: STORAGE_VERSION,
-    main: selection.main.map((i) => ({ name: i.name, ...(i.params ? { params: i.params } : {}) })),
-    sub: selection.sub.map((i) => ({ name: i.name, ...(i.params ? { params: i.params } : {}) }))
+    main: selection.main.map(serializeInstance),
+    sub: selection.sub.map(serializeInstance)
   };
   return JSON.stringify(stored);
 }

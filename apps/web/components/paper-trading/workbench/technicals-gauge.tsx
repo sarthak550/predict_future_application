@@ -2,14 +2,32 @@
 
 /**
  * Founder-feedback pass (2026-08-03) PART B — TradingView's "Technicals
- * Rating" dial, honestly labeled. Purely presentational (no internal
- * state) — `rating` is `lib/ta/technicals.ts`'s `computeTechnicalRating()`
- * output, computed by `chart-workbench.tsx` in a `useMemo` keyed on the
- * loaded candles' own last timestamp (see that file's own doc). Renders in
- * the Strategy tab, above the strategy select — this IS analysis, the same
- * panel, not a separate top-bar affordance (keeps the top bar clean, per
- * the brief).
+ * Rating" dial, honestly labeled. `rating` is `lib/ta/technicals.ts`'s
+ * `computeTechnicalRating()` output, computed by `chart-workbench.tsx` in a
+ * `useMemo` keyed on the loaded candles' own last timestamp (see that
+ * file's own doc). Renders in the Strategy tab, above the strategy select —
+ * this IS analysis, the same panel, not a separate top-bar affordance
+ * (keeps the top bar clean, per the brief).
+ *
+ * **Founder-feedback pass (2026-08-04) — compact honesty line.** The
+ * caption below the dial ("Rule-based readings on the loaded delayed
+ * bars…") is one sentence pair, `text-[10px] leading-4`, inside this
+ * card's own `w-[336px]`-ish content box (the right panel is `360px` wide
+ * minus its own `p-3` and this card's own `p-3` — no dev server this
+ * session to pixel-measure it directly, so this is a deliberate width/
+ * char-count estimate, not a live DOM measurement: ~180 characters at
+ * roughly 58-62 chars/line for a 10px sans-serif in ~310px lands right at
+ * the brief's "3+ lines" bar). Given the same brief's OWN instruction to
+ * apply the disclaimer-footer treatment "ONLY if it wraps to 3+ lines,"
+ * this line gets it too — same collapsed-by-default, ⓘ-toggle,
+ * component-local-state pattern as `strategy-panel.tsx`'s
+ * `StrategyDisclaimerFooter`, so this component is no longer purely
+ * presentational/state-free (the doc line above used to say so — no longer
+ * true as of this pass).
  */
+import { useState } from "react";
+import { Info } from "lucide-react";
+
 import type { CombinedRating, Rating, RatingGroup, TechnicalRating } from "@/lib/ta/technicals";
 
 const RATING_LABEL: Record<Rating, string> = {
@@ -77,6 +95,8 @@ export function TechnicalsGauge({
   /** Founder 2026-08-04: when the user has custom signal rows, the FINAL rating combines them with the standard groups — this carries the custom tally + combined overall (null/absent = standard-only, dial identical to before). */
   combined?: CombinedRating | null;
 }) {
+  const [expanded, setExpanded] = useState(false);
+
   if (rating.computedAtIndex < 0) return null; // no candles loaded yet — nothing honest to show.
 
   const overall = combined?.overall ?? rating.overall;
@@ -99,9 +119,28 @@ export function TechnicalsGauge({
           <GroupCounts label="Custom" group={combined.custom} />
         )}
       </div>
-      <p className="mt-2 text-[10px] leading-4 text-ink-400">
-        Rule-based readings on the loaded delayed bars — your custom signals are included in the overall rating when present. Descriptions explain the convention, not a recommendation.
-      </p>
+      <div className="mt-2">
+        <div className="flex items-start gap-1">
+          <p className="min-w-0 flex-1 text-[10px] leading-4 text-ink-400">
+            Rule-based on delayed bars · includes custom signals · not a recommendation
+          </p>
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            aria-expanded={expanded}
+            aria-label={expanded ? "Hide full explanation" : "Show full explanation"}
+            title={expanded ? "Hide full explanation" : "Show full explanation"}
+            className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-ink-400 hover:bg-ink-100 hover:text-ink-600"
+          >
+            <Info className="h-3 w-3" aria-hidden="true" />
+          </button>
+        </div>
+        {expanded && (
+          <p className="mt-1 border-t border-ink-100 pt-1 text-[10px] leading-4 text-ink-400">
+            Rule-based readings on the loaded delayed bars — your custom signals are included in the overall rating when present. Descriptions explain the convention, not a recommendation.
+          </p>
+        )}
+      </div>
     </div>
   );
 }
