@@ -478,9 +478,21 @@ async function runSummarizerBatch(
   return { summarized };
 }
 
+function aiSummariesEnabled(): boolean {
+  // Finance pivot (founder 2026-08-04): AI display-summaries for the Feed are
+  // an optional spend, OFF in prod via NEWS_AI_SUMMARIES=false — opinion
+  // extraction (the moat) is a SEPARATE pipeline and is never gated by this.
+  const v = (process.env.NEWS_AI_SUMMARIES ?? "").trim().toLowerCase();
+  return !(v === "0" || v === "false" || v === "no" || v === "off");
+}
+
 export async function generateSummariesInBackground(
   items: NormalizedNewsItem[]
 ): Promise<void> {
+  if (!aiSummariesEnabled()) {
+    console.info("[news:summarizer] NEWS_AI_SUMMARIES=false -- skipping (finance pivot)");
+    return;
+  }
   if (!process.env.GROQ_API_KEY && !process.env.GEMINI_API_KEY) {
     console.debug("[news:summarizer] No AI key configured -- skipping background summarization");
     return;
@@ -519,6 +531,9 @@ export async function generateSummariesInBackground(
  * the new-batch pass so the per-cron retry budget is consumed there.
  */
 export async function resummarizeRecentStragglers(): Promise<void> {
+  if (!aiSummariesEnabled()) {
+    return;
+  }
   if (!process.env.GROQ_API_KEY && !process.env.GEMINI_API_KEY) {
     return;
   }
