@@ -82,9 +82,10 @@ import {
 import { STRATEGY_LIST, getStrategyDef, clampStrategyParams, resolveStrategyParams, defaultParamValues } from "@/lib/ta/strategies";
 import { runBacktest, intervalToProductType } from "@/lib/ta/backtest";
 import { computeIndicatorSignal, type IndicatorSignal } from "@/lib/ta/indicator-signals";
-import { computeTechnicalRating, computeTechnicalDetail } from "@/lib/ta/technicals";
+import { computeTechnicalRating, computeTechnicalDetail, evaluateCustomSignal, type DetailRow } from "@/lib/ta/technicals";
 import { TechnicalsGauge } from "./technicals-gauge";
 import { SignalsTable } from "./signals-table";
+import { CustomSignalBuilder, loadStoredCustomSignals, saveStoredCustomSignals, type CustomSignalItem } from "./custom-signal-builder";
 import { HeartbeatChip } from "./heartbeat-chip";
 
 export type { WorkbenchFeed } from "./use-workbench-candles";
@@ -287,6 +288,62 @@ export function ChartWorkbench({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [candlesKey]
   );
+
+  // Founder-feedback pass — the Signals table's THIRD "Custom" section:
+  // "custom strategy… a '+' button for user to build and customise the
+  // parameters and allowing to name these strategies." This component owns
+  // the persisted `CustomSignalItem[]` array (restored-after-mount, same
+  // localStorage posture as `indicators`/`strategyId` above) AND the
+  // builder popover's open/closed state — `signals-table.tsx` stays purely
+  // presentational, same "+"/gear split `indicator-active-strip.tsx`
+  // already uses for `IndicatorDialog`/`IndicatorSettingsPopover`.
+  const [customSignals, setCustomSignals] = useState<CustomSignalItem[]>([]);
+  const [customSignalBuilder, setCustomSignalBuilder] = useState<{ editingItem: CustomSignalItem | null; anchor: { left: number; top: number } } | null>(
+    null
+  );
+
+  useEffect(() => {
+    setCustomSignals(loadStoredCustomSignals());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function persistCustomSignals(next: CustomSignalItem[]) {
+    setCustomSignals(next);
+    saveStoredCustomSignals(next);
+  }
+
+  function handleAddCustomSignal(anchor: { left: number; top: number }) {
+    setCustomSignalBuilder({ editingItem: null, anchor });
+  }
+
+  function handleEditCustomSignal(item: CustomSignalItem, anchor: { left: number; top: number }) {
+    setCustomSignalBuilder({ editingItem: item, anchor });
+  }
+
+  function handleRemoveCustomSignal(id: string) {
+    persistCustomSignals(customSignals.filter((i) => i.id !== id));
+  }
+
+  function handleSaveCustomSignal(item: CustomSignalItem) {
+    const exists = customSignals.some((i) => i.id === item.id);
+    persistCustomSignals(exists ? customSignals.map((i) => (i.id === item.id ? item : i)) : [...customSignals, item]);
+    setCustomSignalBuilder(null);
+  }
+
+  // Same memo-key discipline as `technicalDetail` above (candles) plus a
+  // stringified snapshot of the custom items themselves (recomputes exactly
+  // when a signal is added/edited/removed, not on every render — render-loop
+  // law, keyed on primitives only, never the `customSignals` array reference
+  // directly).
+  const customSignalsKey = customSignals.map((i) => `${i.id}:${i.ruleId}:${i.params.join(",")}`).join("|");
+  const customSignalRows = useMemo(() => {
+    const map = new Map<string, DetailRow | undefined>();
+    for (const item of customSignals) {
+      map.set(item.id, evaluateCustomSignal(item.ruleId, item.params, candles));
+    }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candlesKey, customSignalsKey]);
 
   // TA Suite S3 — right-panel tabs (D5: [Ticket | Strategy] segmented,
   // ticket stays MOUNTED and CSS-hidden, never conditionally rendered — the
@@ -725,7 +782,15 @@ export function ChartWorkbench({
               {hasOpenedStrategyTab && (
                 <div style={{ display: rightPanelTab === "strategy" ? "block" : "none" }}>
                   <TechnicalsGauge rating={technicalRating} />
-                  <SignalsTable detail={technicalDetail} rating={technicalRating} />
+                  <SignalsTable
+                    detail={technicalDetail}
+                    rating={technicalRating}
+                    customItems={customSignals}
+                    customRows={customSignalRows}
+                    onAddCustomSignal={handleAddCustomSignal}
+                    onEditCustomSignal={handleEditCustomSignal}
+                    onRemoveCustomSignal={handleRemoveCustomSignal}
+                  />
                   <StrategyConfigPanel
                     strategyId={strategyId}
                     onStrategyIdChange={handleStrategyIdChange}
@@ -776,6 +841,14 @@ export function ChartWorkbench({
           onApply={handleApplyIndicatorSettings}
           onApplyStyle={handleApplyIndicatorStyle}
           onClose={() => setIndicatorSettings(null)}
+        />
+      )}
+      {customSignalBuilder && (
+        <CustomSignalBuilder
+          anchorRect={customSignalBuilder.anchor}
+          editingItem={customSignalBuilder.editingItem}
+          onSave={handleSaveCustomSignal}
+          onClose={() => setCustomSignalBuilder(null)}
         />
       )}
     </div>

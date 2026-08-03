@@ -29,7 +29,7 @@ import { computeOrderCosts } from "@predict-future/business-rules/papertrading/c
 
 import { runBacktest, intervalToProductType, type BacktestTrade } from "./backtest";
 import { maCross, finalizeSignals, type StrategyCandle, type StrategySignal } from "./strategies";
-import { computeTechnicalRating, computeTechnicalDetail, type DetailRow } from "./technicals";
+import { computeTechnicalRating, computeTechnicalDetail, evaluateCustomSignal, CUSTOMIZABLE_RULES, type DetailRow } from "./technicals";
 import { computeIndicatorSignal } from "./indicator-signals";
 
 // ── Tiny assertion harness ───────────────────────────────────────────────
@@ -431,6 +431,95 @@ function checkTechnicalDetailConsistency(): void {
   assert("technicalDetail: empty candles -> computedAtIndex -1, empty rows", emptyDetail.computedAtIndex === -1 && emptyDetail.ma.length === 0 && emptyDetail.oscillators.length === 0);
 }
 
+// ── Fixture 6: `evaluateCustomSignal` — founder-feedback pass, the Custom
+// section's drift guard. `CUSTOMIZABLE_RULES` re-parameterizes the SAME
+// generic `evaluate*Rule()` functions `computeTechnicalDetail`'s own
+// `OSCILLATOR_RULES`/`MA_RULES` call (see `technicals.ts`'s own "Custom
+// section" doc note) — a custom instance built at a rule's OWN default
+// params must therefore produce a `DetailRow` IDENTICAL, field for field, to
+// that rule's standard row on the same candles. Also verifies the honesty
+// law (a too-short window skips, never fabricates) and the defensive
+// contract (unknown ruleId / out-of-range params never crash or corrupt). ──
+
+function checkCustomSignalFixtures(): void {
+  const up = buildMonotonicCandles(80, 1000, 2);
+  const upDetail = computeTechnicalDetail(up);
+
+  // RSI(14) at the rule's own default params must exactly equal the standard table's own RSI(14) row.
+  const standardRsiRow = upDetail.oscillators.find((r) => r.id === "RSI");
+  const customRsiRow = evaluateCustomSignal("RSI", [14], up);
+  assert("customSignal: evaluateCustomSignal('RSI',[14]) returns a row", customRsiRow !== undefined, "got undefined");
+  assert(
+    "customSignal: evaluateCustomSignal('RSI',[14]) exactly equals the standard table's RSI(14) row",
+    JSON.stringify(customRsiRow) === JSON.stringify(standardRsiRow),
+    JSON.stringify({ customRsiRow, standardRsiRow })
+  );
+
+  // EMA(20) at its own default params must equal the standard table's own EMA(20) row on every field
+  // EXCEPT `id` (same cross-check on the MA side, not just oscillators — `evaluateMaRule` is shared by
+  // both call sites) — `id` legitimately differs by design: `MA_RULES`' per-period rows use `"EMA20"`
+  // (one row per fixed period), while `CUSTOMIZABLE_RULES`' id is the family-level `"EMA"` (one entry,
+  // any period) — see `evaluateCustomSignal`'s own doc for why `id` is deliberately rule-family-scoped,
+  // not instance-scoped.
+  const standardEma20Row = upDetail.ma.find((r) => r.id === "EMA20");
+  const customEma20Row = evaluateCustomSignal("EMA", [20], up);
+  assert(
+    "customSignal: evaluateCustomSignal('EMA',[20]) matches the standard table's EMA(20) row on label/value/signal/reason",
+    JSON.stringify({ ...customEma20Row, id: undefined }) === JSON.stringify({ ...standardEma20Row, id: undefined }),
+    JSON.stringify({ customEma20Row, standardEma20Row })
+  );
+
+  // A non-default period genuinely changes the reading — RSI(20) must NOT equal RSI(14) on the same
+  // candles (proves params actually flow through, not just default-only wiring), and the label/reading
+  // text must carry the CUSTOM period, per the founder's own example ("RSI(20)... is 64.1").
+  const rsi20Row = evaluateCustomSignal("RSI", [20], up);
+  assert("customSignal: RSI(20) row exists", rsi20Row !== undefined && !rsi20Row.skipped, JSON.stringify(rsi20Row));
+  assert("customSignal: RSI(20) label carries the custom period", rsi20Row?.label === "RSI(20)", rsi20Row?.label);
+  if (rsi20Row && !rsi20Row.skipped) {
+    assert("customSignal: RSI(20) reading text carries the custom period", rsi20Row.reason.reading.startsWith("RSI(20) is"), rsi20Row.reason.reading);
+  }
+  assert(
+    "customSignal: RSI(20) is a genuinely different reading from RSI(14) on the same candles (params actually flow through)",
+    JSON.stringify(rsi20Row) !== JSON.stringify(customRsiRow),
+    "RSI(20) and RSI(14) produced identical rows — params likely not wired"
+  );
+
+  // Momentum(15) — the founder's own second named example — must exist, be evaluable, and carry its own period.
+  const mtm15Row = evaluateCustomSignal("MTM", [15], up);
+  assert("customSignal: Momentum(15) row exists and is evaluated (80 bars is well past its minBars)", mtm15Row !== undefined && !mtm15Row.skipped, JSON.stringify(mtm15Row));
+
+  // Honesty law: a period that exceeds the loaded window must SKIP, never fabricate a signal.
+  const rsi200Row = evaluateCustomSignal("RSI", [200], up); // only 80 bars loaded.
+  assert("customSignal: RSI(200) on an 80-bar window is honestly skipped, never fabricated", rsi200Row?.skipped === true, JSON.stringify(rsi200Row));
+
+  // Out-of-range params clamp defensively rather than crashing or reaching math.ts with a garbage period.
+  const clampedRow = evaluateCustomSignal("RSI", [-5], up); // below RSI's declared min of 2.
+  assert("customSignal: an out-of-range param is clamped, not passed through raw (no crash, a real row comes back)", clampedRow !== undefined, "threw or returned undefined");
+
+  // Unknown ruleId (a stale localStorage entry from a since-removed rule) is dropped, not rendered broken.
+  const unknownRow = evaluateCustomSignal("NOT_A_REAL_RULE", [14], up);
+  assert("customSignal: an unknown ruleId returns undefined (dropped, not rendered broken)", unknownRow === undefined, JSON.stringify(unknownRow));
+
+  // Empty candles: nothing honest to show yet.
+  const emptyRow = evaluateCustomSignal("RSI", [14], []);
+  assert("customSignal: empty candles returns undefined", emptyRow === undefined, JSON.stringify(emptyRow));
+
+  // Catalog sanity: every id unique, every param spec has default within [min,max] (a self-inconsistent
+  // catalog entry would silently clamp its OWN default, which should never happen).
+  const ids = CUSTOMIZABLE_RULES.map((r) => r.id);
+  assert("customSignal: CUSTOMIZABLE_RULES has 13 entries (SMA/EMA + 11 oscillator families)", ids.length === 13, `got ${ids.length}`);
+  assert("customSignal: every CUSTOMIZABLE_RULES id is unique", new Set(ids).size === ids.length, JSON.stringify(ids));
+  for (const def of CUSTOMIZABLE_RULES) {
+    for (const spec of def.params) {
+      assert(
+        `customSignal: ${def.id}'s param '${spec.key}' default is within its own [min,max]`,
+        spec.default >= spec.min && spec.default <= spec.max,
+        JSON.stringify(spec)
+      );
+    }
+  }
+}
+
 // ── Run everything ────────────────────────────────────────────────────────
 
 const signals = checkMaCrossSignals();
@@ -442,6 +531,7 @@ checkFinalizeSignalsDropsLeadingSell();
 checkTechnicalRatingFixtures();
 checkIndicatorSignalFixtures();
 checkTechnicalDetailConsistency();
+checkCustomSignalFixtures();
 
 // eslint-disable-next-line no-console
 console.log(`ta:check — ${passCount} passed, ${failCount} failed.`);

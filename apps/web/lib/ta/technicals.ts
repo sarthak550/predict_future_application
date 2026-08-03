@@ -242,256 +242,242 @@ const MA_RULES: readonly Rule[] = MA_PERIODS.flatMap((period) =>
 // each `minBars` hand-derived from its own `math.ts` warm-up (traced against
 // the actual `i >= …` gates in each function, not guessed — see each
 // comment below for the trace), same discipline as this program's other
-// hand-verified fixtures. ───────────────────────────────────────────────
+// hand-verified fixtures.
+//
+// **Founder-feedback pass — the Custom section.** Every rule below is now
+// a THIN WRAPPER around a generic, parameterizable `evaluate*Rule()`
+// function that takes its period(s) as arguments instead of a hardcoded
+// literal — `CUSTOMIZABLE_RULES` (further down this file) calls the EXACT
+// SAME generic functions with user-chosen params. This is a
+// zero-behavior-change refactor for every rule below (each wrapper passes
+// the identical literal the old inline body used — confirmed by `ta:check`
+// staying green on every existing assertion) — see `evaluateCustomSignal`'s
+// own doc for why this "one evaluator, two callers" design is what makes a
+// custom RSI(14) row PROVABLY identical to this rule's own RSI(14) row,
+// not just "should be the same by convention." ───────────────────────────
 
-/** RSI(14): Buy below 30, Sell above 70. `rsi()` seeds its first defined value at `i === period` (0-based) — `minBars = period + 1`. */
-const RSI_RULE: Rule = {
-  id: "RSI",
-  label: "RSI(14)",
-  minBars: 15,
-  evaluate: (candles, closes) => {
-    const lastIndex = candles.length - 1;
-    const value = rsi(closes, 14)[lastIndex];
-    if (value === undefined) return undefined;
-    const vote: Vote = value < 30 ? "buy" : value > 70 ? "sell" : "neutral";
-    const zone = vote === "buy" ? "low" : vote === "sell" ? "high" : "mid";
-    return { vote, valueText: fmtNum(value), reason: obOsReason("RSI", "RSI(14)", value, 30, 70, zone) };
-  }
-};
+/** RSI: Buy below 30, Sell above 70. `rsi()` seeds its first defined value at `i === period` (0-based) — `minBars = period + 1`. */
+function evaluateRsiRule(closes: readonly number[], period: number): RuleResult | undefined {
+  const lastIndex = closes.length - 1;
+  const value = rsi(closes, period)[lastIndex];
+  if (value === undefined) return undefined;
+  const vote: Vote = value < 30 ? "buy" : value > 70 ? "sell" : "neutral";
+  const zone = vote === "buy" ? "low" : vote === "sell" ? "high" : "mid";
+  const label = `RSI(${period})`;
+  return { vote, valueText: fmtNum(value), reason: obOsReason("RSI", label, value, 30, 70, zone) };
+}
 
-/** Stochastic %K(14,3,3): Buy K<20 & K>D; Sell K>80 & K<D. `rawK` seeds at `i=period-1`(13); `kSmooth`(3) needs 3 defined rawK -> first at 15; `dSmooth`(3) needs 3 defined k -> first at 17 (0-based) — `minBars = 18`. */
-const STOCH_RULE: Rule = {
-  id: "STOCH",
-  label: "Stochastic %K(14,3,3)",
-  minBars: 18,
-  evaluate: (candles) => {
-    const lastIndex = candles.length - 1;
-    const point = stochasticOscillator(candles, 14, 3, 3)[lastIndex];
-    if (point?.k === undefined || point?.d === undefined) return undefined;
-    const { k, d } = point;
-    const vote: Vote = k < 20 && k > d ? "buy" : k > 80 && k < d ? "sell" : "neutral";
-    return {
-      vote,
-      valueText: `K ${fmtNum(k)} · D ${fmtNum(d)}`,
-      reason: {
-        rule: "Stochastic convention: Buy when %K is below 20 and crosses above %D; Sell when %K is above 80 and crosses below %D.",
-        reading:
-          vote === "buy"
-            ? `%K is ${fmtNum(k)}, below 20, and above %D (${fmtNum(d)}).`
-            : vote === "sell"
-              ? `%K is ${fmtNum(k)}, above 80, and below %D (${fmtNum(d)}).`
-              : `%K is ${fmtNum(k)} and %D is ${fmtNum(d)} — outside the crossover condition.`,
-        meaning:
-          vote === "buy"
-            ? "price has fallen to the bottom of its recent trading range and the faster line has just turned up through the slower one — conventionally read as an early rebound signal."
-            : vote === "sell"
-              ? "price has risen to the top of its recent trading range and the faster line has just turned down through the slower one — conventionally read as an early reversal signal."
-              : "the fast/slow stochastic lines aren't in the specific oversold-crossing-up or overbought-crossing-down configuration this convention requires."
-      }
-    };
-  }
-};
+const RSI_RULE: Rule = { id: "RSI", label: "RSI(14)", minBars: 15, evaluate: (_candles, closes) => evaluateRsiRule(closes, 14) };
 
-/** CCI(20): Buy below -100, Sell above 100 — deliberately simplified to a bare threshold cross (see rule text). `cci()` seeds at `i=period-1`(19) — `minBars=20`. */
-const CCI_RULE: Rule = {
-  id: "CCI",
-  label: "CCI(20)",
-  minBars: 20,
-  evaluate: (candles) => {
-    const lastIndex = candles.length - 1;
-    const value = cci(candles, 20)[lastIndex];
-    if (value === undefined) return undefined;
-    const vote: Vote = value < -100 ? "buy" : value > 100 ? "sell" : "neutral";
-    const zone = vote === "buy" ? "low" : vote === "sell" ? "high" : "mid";
-    const base = obOsReason("CCI", "CCI(20)", value, -100, 100, zone);
-    return {
-      vote,
-      valueText: fmtNum(value),
-      reason: { ...base, rule: `${base.rule} (Simplified to a bare threshold cross here — the fuller convention also checks the value rising/falling through the line.)` }
-    };
-  }
-};
+/** Stochastic %K: Buy K<20 & K>D; Sell K>80 & K<D. `rawK` seeds at `i=period-1`; `kSmooth` needs `kSmooth` defined rawK values; `dSmooth` needs `dSmooth` defined k values — `minBars = period + kSmooth + dSmooth - 2` (14,3,3 -> 18, matching the original hand trace: rawK first at 13, kSmooth first at 15, dSmooth first at 17, 0-based). */
+function evaluateStochRule(candles: readonly StrategyCandle[], period: number, kSmooth: number, dSmooth: number): RuleResult | undefined {
+  const lastIndex = candles.length - 1;
+  const point = stochasticOscillator(candles, period, kSmooth, dSmooth)[lastIndex];
+  if (point?.k === undefined || point?.d === undefined) return undefined;
+  const { k, d } = point;
+  const vote: Vote = k < 20 && k > d ? "buy" : k > 80 && k < d ? "sell" : "neutral";
+  return {
+    vote,
+    valueText: `K ${fmtNum(k)} · D ${fmtNum(d)}`,
+    reason: {
+      rule: "Stochastic convention: Buy when %K is below 20 and crosses above %D; Sell when %K is above 80 and crosses below %D.",
+      reading:
+        vote === "buy"
+          ? `%K is ${fmtNum(k)}, below 20, and above %D (${fmtNum(d)}).`
+          : vote === "sell"
+            ? `%K is ${fmtNum(k)}, above 80, and below %D (${fmtNum(d)}).`
+            : `%K is ${fmtNum(k)} and %D is ${fmtNum(d)} — outside the crossover condition.`,
+      meaning:
+        vote === "buy"
+          ? "price has fallen to the bottom of its recent trading range and the faster line has just turned up through the slower one — conventionally read as an early rebound signal."
+          : vote === "sell"
+            ? "price has risen to the top of its recent trading range and the faster line has just turned down through the slower one — conventionally read as an early reversal signal."
+            : "the fast/slow stochastic lines aren't in the specific oversold-crossing-up or overbought-crossing-down configuration this convention requires."
+    }
+  };
+}
 
-/** ADX(14)+DI: trend established when ADX>20; Buy +DI>-DI, Sell -DI>+DI in that trend. `adx` seeds at `i = period*2-2` (26, 0-based) — `minBars=27`. */
-const ADX_RULE: Rule = {
-  id: "ADX",
-  label: "ADX(14)",
-  minBars: 27,
-  evaluate: (candles) => {
-    const lastIndex = candles.length - 1;
-    const point = dmi(candles, 14, 14)[lastIndex];
-    if (point?.adx === undefined || point?.pdi === undefined || point?.mdi === undefined) return undefined;
-    const trending = point.adx > 20;
-    const vote: Vote = trending && point.pdi > point.mdi ? "buy" : trending && point.mdi > point.pdi ? "sell" : "neutral";
-    return {
-      vote,
-      valueText: `ADX ${fmtNum(point.adx)} · +DI ${fmtNum(point.pdi)} · -DI ${fmtNum(point.mdi)}`,
-      reason: {
-        rule: "ADX/DMI convention: a trend is considered established when ADX is above 20; Buy when +DI leads -DI in that trend, Sell when -DI leads +DI.",
-        reading: !trending
-          ? `ADX is ${fmtNum(point.adx)}, at or below the 20 trend threshold — no established trend to read a direction from.`
-          : vote === "buy"
-            ? `ADX is ${fmtNum(point.adx)} (trend established) and +DI (${fmtNum(point.pdi)}) is above -DI (${fmtNum(point.mdi)}).`
-            : `ADX is ${fmtNum(point.adx)} (trend established) and -DI (${fmtNum(point.mdi)}) is above +DI (${fmtNum(point.pdi)}).`,
-        meaning:
-          vote === "buy"
-            ? "directional buying pressure dominates within a confirmed trend — conventionally read as trend-following bullish."
-            : vote === "sell"
-              ? "directional selling pressure dominates within a confirmed trend — conventionally read as trend-following bearish."
-              : "the trend-strength reading hasn't cleared the level this convention uses to call a trend 'established', so a directional read isn't considered reliable yet."
-      }
-    };
-  }
-};
+const STOCH_RULE: Rule = { id: "STOCH", label: "Stochastic %K(14,3,3)", minBars: 18, evaluate: (candles) => evaluateStochRule(candles, 14, 3, 3) };
 
-/** AO(5,34), saucer-simplified to a single-bar rising/falling test (see rule text). `awesomeOscillator` seeds at `i=maxPeriod-1`(33); the rule also needs the PREVIOUS bar defined — `minBars=34`. */
-const AO_RULE: Rule = {
-  id: "AO",
-  label: "Awesome Oscillator(5,34)",
-  minBars: 34,
-  evaluate: (candles) => {
-    const lastIndex = candles.length - 1;
-    const series = awesomeOscillator(candles, 5, 34);
-    const now = series[lastIndex];
-    const prev = lastIndex > 0 ? series[lastIndex - 1] : undefined;
-    if (now === undefined || prev === undefined) return undefined;
-    const vote: Vote = now > 0 && now > prev ? "buy" : now < 0 && now < prev ? "sell" : "neutral";
-    return {
-      vote,
-      valueText: fmtNum(now),
-      reason: {
-        rule: "Awesome Oscillator convention (simplified here to a single-bar read): above zero and rising is read bullish; below zero and falling is read bearish.",
-        reading:
-          vote === "buy"
-            ? `AO is ${fmtNum(now)}, above zero and higher than the previous bar (${fmtNum(prev)}).`
-            : vote === "sell"
-              ? `AO is ${fmtNum(now)}, below zero and lower than the previous bar (${fmtNum(prev)}).`
-              : `AO is ${fmtNum(now)} — not in the rising-above-zero or falling-below-zero configuration.`,
-        meaning:
-          vote === "buy"
-            ? "momentum measured over a short vs. long window is positive and building — conventionally read as bullish acceleration."
-            : vote === "sell"
-              ? "momentum measured over a short vs. long window is negative and building — conventionally read as bearish acceleration."
-              : "momentum isn't clearly accelerating in either direction by this convention."
-      }
-    };
-  }
-};
+/** CCI: Buy below -100, Sell above 100 — deliberately simplified to a bare threshold cross (see rule text). `cci()` seeds at `i=period-1` — `minBars=period`. */
+function evaluateCciRule(candles: readonly StrategyCandle[], period: number): RuleResult | undefined {
+  const lastIndex = candles.length - 1;
+  const value = cci(candles, period)[lastIndex];
+  if (value === undefined) return undefined;
+  const vote: Vote = value < -100 ? "buy" : value > 100 ? "sell" : "neutral";
+  const zone = vote === "buy" ? "low" : vote === "sell" ? "high" : "mid";
+  const label = `CCI(${period})`;
+  const base = obOsReason("CCI", label, value, -100, 100, zone);
+  return {
+    vote,
+    valueText: fmtNum(value),
+    reason: { ...base, rule: `${base.rule} (Simplified to a bare threshold cross here — the fuller convention also checks the value rising/falling through the line.)` }
+  };
+}
 
-/** Momentum MTM(10): rising is read bullish, falling bearish. `momentum()` seeds `mtm` at `i=period`(10); the rule also needs the PREVIOUS bar's mtm — `minBars=12`. */
-const MTM_RULE: Rule = {
-  id: "MTM",
-  label: "Momentum(10)",
-  minBars: 12,
-  evaluate: (candles, closes) => {
-    const lastIndex = candles.length - 1;
-    const series = momentum(closes, 10, 1);
-    const now = series[lastIndex]?.mtm;
-    const prev = lastIndex > 0 ? series[lastIndex - 1]?.mtm : undefined;
-    if (now === undefined || prev === undefined) return undefined;
-    const vote: Vote = now > prev ? "buy" : now < prev ? "sell" : "neutral";
-    return {
-      vote,
-      valueText: fmtNum(now),
-      reason: {
-        rule: "Momentum convention: a rising reading is read as bullish, a falling reading as bearish.",
-        reading:
-          vote === "buy"
-            ? `MTM(10) is ${fmtNum(now)}, above the previous bar's reading (${fmtNum(prev)}).`
-            : vote === "sell"
-              ? `MTM(10) is ${fmtNum(now)}, below the previous bar's reading (${fmtNum(prev)}).`
-              : `MTM(10) is unchanged from the previous bar (${fmtNum(now)}).`,
-        meaning:
-          vote === "buy"
-            ? "the pace of price change is increasing — conventionally read as strengthening upward momentum."
-            : vote === "sell"
-              ? "the pace of price change is decreasing — conventionally read as strengthening downward momentum."
-              : "the pace of price change hasn't moved since the last bar."
-      }
-    };
-  }
-};
+const CCI_RULE: Rule = { id: "CCI", label: "CCI(20)", minBars: 20, evaluate: (candles) => evaluateCciRule(candles, 20) };
 
-/** MACD(12,26,9): DIF>DEA buy, else sell (binary, no neutral). `dea` first seeds `signalPeriod`(9) defined-dif bars after `dif` itself seeds at `i=slowPeriod-1`(25) — `minBars=25+9=34`. */
-const MACD_RULE: Rule = {
-  id: "MACD",
-  label: "MACD(12,26,9)",
-  minBars: 34,
-  evaluate: (candles, closes) => {
-    const lastIndex = candles.length - 1;
-    const point = macd(closes, 12, 26, 9)[lastIndex];
-    if (point?.dif === undefined || point?.dea === undefined) return undefined;
-    const vote: Vote = point.dif > point.dea ? "buy" : "sell";
-    return { vote, valueText: `DIF ${fmtNum(point.dif)} · DEA ${fmtNum(point.dea)}`, reason: macdReason(point.dif, point.dea, vote === "buy" ? "above" : "below") };
-  }
-};
+/** ADX+DI: trend established when ADX>20; Buy +DI>-DI, Sell -DI>+DI in that trend. `adx` seeds at `i = period*2-2` (0-based) — `minBars=period*2-1`. */
+function evaluateAdxRule(candles: readonly StrategyCandle[], period: number): RuleResult | undefined {
+  const lastIndex = candles.length - 1;
+  const point = dmi(candles, period, period)[lastIndex];
+  if (point?.adx === undefined || point?.pdi === undefined || point?.mdi === undefined) return undefined;
+  const trending = point.adx > 20;
+  const vote: Vote = trending && point.pdi > point.mdi ? "buy" : trending && point.mdi > point.pdi ? "sell" : "neutral";
+  return {
+    vote,
+    valueText: `ADX ${fmtNum(point.adx)} · +DI ${fmtNum(point.pdi)} · -DI ${fmtNum(point.mdi)}`,
+    reason: {
+      rule: "ADX/DMI convention: a trend is considered established when ADX is above 20; Buy when +DI leads -DI in that trend, Sell when -DI leads +DI.",
+      reading: !trending
+        ? `ADX is ${fmtNum(point.adx)}, at or below the 20 trend threshold — no established trend to read a direction from.`
+        : vote === "buy"
+          ? `ADX is ${fmtNum(point.adx)} (trend established) and +DI (${fmtNum(point.pdi)}) is above -DI (${fmtNum(point.mdi)}).`
+          : `ADX is ${fmtNum(point.adx)} (trend established) and -DI (${fmtNum(point.mdi)}) is above +DI (${fmtNum(point.pdi)}).`,
+      meaning:
+        vote === "buy"
+          ? "directional buying pressure dominates within a confirmed trend — conventionally read as trend-following bullish."
+          : vote === "sell"
+            ? "directional selling pressure dominates within a confirmed trend — conventionally read as trend-following bearish."
+            : "the trend-strength reading hasn't cleared the level this convention uses to call a trend 'established', so a directional read isn't considered reliable yet."
+    }
+  };
+}
 
-/** StochRSI(14): Buy K<20, Sell K>80. Raw seeds at `i=rsiPeriod+stochPeriod-2`(26); `kSmooth`(3) -> first at 28; `dSmooth`(3) -> not needed for this rule (K-only) — `minBars` uses K's own seed, `28+1=29`… kept at 32 as a documented, slightly conservative estimate matching the `d`-line seed too, since `stochRsi()` returns both together and this rule reads `k` only but the underlying array construction seeds K one pass ahead of D; verified empirically against the fixture below, not load-bearing beyond the display text (see `Rule.minBars` doc). */
-const STOCHRSI_RULE: Rule = {
-  id: "STOCHRSI",
-  label: "Stochastic RSI(14)",
-  minBars: 32,
-  evaluate: (candles, closes) => {
-    const lastIndex = candles.length - 1;
-    const point = stochRsi(closes, 14, 14, 3, 3)[lastIndex];
-    if (point?.k === undefined) return undefined;
-    const k = point.k;
-    const vote: Vote = k < 20 ? "buy" : k > 80 ? "sell" : "neutral";
-    const zone = vote === "buy" ? "low" : vote === "sell" ? "high" : "mid";
-    return { vote, valueText: `K ${fmtNum(k)}`, reason: obOsReason("Stochastic RSI", "K", k, 20, 80, zone) };
-  }
-};
+const ADX_RULE: Rule = { id: "ADX", label: "ADX(14)", minBars: 27, evaluate: (candles) => evaluateAdxRule(candles, 14) };
 
-/** Williams %R(14): Buy below -80, Sell above -20. `williamsR()` seeds at `i=period-1`(13) — `minBars=14`. */
-const WR_RULE: Rule = {
-  id: "WR",
-  label: "Williams %R(14)",
-  minBars: 14,
-  evaluate: (candles) => {
-    const lastIndex = candles.length - 1;
-    const value = williamsR(candles, 14)[lastIndex];
-    if (value === undefined) return undefined;
-    const vote: Vote = value < -80 ? "buy" : value > -20 ? "sell" : "neutral";
-    const zone = vote === "buy" ? "low" : vote === "sell" ? "high" : "mid";
-    return { vote, valueText: fmtNum(value), reason: obOsReason("Williams %R", "WR(14)", value, -80, -20, zone) };
-  }
-};
+/** AO, saucer-simplified to a single-bar rising/falling test (see rule text). `awesomeOscillator` seeds at `i=maxPeriod-1`; the rule also needs the PREVIOUS bar defined — `minBars` uses `max(fast,slow)` as a documented, non-load-bearing display estimate (see `Rule.minBars` doc). */
+function evaluateAoRule(candles: readonly StrategyCandle[], fastPeriod: number, slowPeriod: number): RuleResult | undefined {
+  const lastIndex = candles.length - 1;
+  const series = awesomeOscillator(candles, fastPeriod, slowPeriod);
+  const now = series[lastIndex];
+  const prev = lastIndex > 0 ? series[lastIndex - 1] : undefined;
+  if (now === undefined || prev === undefined) return undefined;
+  const vote: Vote = now > 0 && now > prev ? "buy" : now < 0 && now < prev ? "sell" : "neutral";
+  return {
+    vote,
+    valueText: fmtNum(now),
+    reason: {
+      rule: "Awesome Oscillator convention (simplified here to a single-bar read): above zero and rising is read bullish; below zero and falling is read bearish.",
+      reading:
+        vote === "buy"
+          ? `AO is ${fmtNum(now)}, above zero and higher than the previous bar (${fmtNum(prev)}).`
+          : vote === "sell"
+            ? `AO is ${fmtNum(now)}, below zero and lower than the previous bar (${fmtNum(prev)}).`
+            : `AO is ${fmtNum(now)} — not in the rising-above-zero or falling-below-zero configuration.`,
+      meaning:
+        vote === "buy"
+          ? "momentum measured over a short vs. long window is positive and building — conventionally read as bullish acceleration."
+          : vote === "sell"
+            ? "momentum measured over a short vs. long window is negative and building — conventionally read as bearish acceleration."
+            : "momentum isn't clearly accelerating in either direction by this convention."
+    }
+  };
+}
 
-/** Elder Ray Bull/Bear Power(13), simplified to a single-bar rising/falling test (see rule text). `ema(13)` seeds at `i=12`; the rule also needs the PREVIOUS bar — `minBars=14`. */
-const BBP_RULE: Rule = {
-  id: "BBP",
-  label: "Bull/Bear Power(13)",
-  minBars: 14,
-  evaluate: (candles) => {
-    const lastIndex = candles.length - 1;
-    const series = bullBearPower(candles, 13);
-    const now = series[lastIndex];
-    const prev = lastIndex > 0 ? series[lastIndex - 1] : undefined;
-    if (now?.bull === undefined || now?.bear === undefined || prev?.bull === undefined || prev?.bear === undefined) return undefined;
-    const bullSignal = now.bull > 0 && now.bull > prev.bull;
-    const bearSignal = now.bear < 0 && now.bear < prev.bear;
-    const vote: Vote = bullSignal && !bearSignal ? "buy" : bearSignal && !bullSignal ? "sell" : "neutral";
-    return {
-      vote,
-      valueText: `Bull ${fmtNum(now.bull)} · Bear ${fmtNum(now.bear)}`,
-      reason: {
-        rule: "Elder Ray convention (simplified here to a single-bar read): Bull Power above zero and rising is read bullish; Bear Power below zero and falling is read bearish.",
-        reading:
-          vote === "buy"
-            ? `Bull Power is ${fmtNum(now.bull)}, above zero and higher than the previous bar (Bear Power ${fmtNum(now.bear)}).`
-            : vote === "sell"
-              ? `Bear Power is ${fmtNum(now.bear)}, below zero and lower than the previous bar (Bull Power ${fmtNum(now.bull)}).`
-              : `Bull Power is ${fmtNum(now.bull)}, Bear Power is ${fmtNum(now.bear)} — neither is in its own rising/falling extreme.`,
-        meaning:
-          vote === "buy"
-            ? "buyers are pushing highs further above the trend average and that pressure is building — conventionally read as bullish."
-            : vote === "sell"
-              ? "sellers are pushing lows further below the trend average and that pressure is building — conventionally read as bearish."
-              : "neither buying nor selling pressure is building by this convention's specific test."
-      }
-    };
-  }
-};
+const AO_RULE: Rule = { id: "AO", label: "Awesome Oscillator(5,34)", minBars: 34, evaluate: (candles) => evaluateAoRule(candles, 5, 34) };
+
+/** Momentum MTM: rising is read bullish, falling bearish. `momentum()` seeds `mtm` at `i=period`; the rule also needs the PREVIOUS bar's mtm — `minBars=period+2`. */
+function evaluateMtmRule(closes: readonly number[], period: number): RuleResult | undefined {
+  const lastIndex = closes.length - 1;
+  const series = momentum(closes, period, 1);
+  const now = series[lastIndex]?.mtm;
+  const prev = lastIndex > 0 ? series[lastIndex - 1]?.mtm : undefined;
+  if (now === undefined || prev === undefined) return undefined;
+  const vote: Vote = now > prev ? "buy" : now < prev ? "sell" : "neutral";
+  const label = `MTM(${period})`;
+  return {
+    vote,
+    valueText: fmtNum(now),
+    reason: {
+      rule: "Momentum convention: a rising reading is read as bullish, a falling reading as bearish.",
+      reading:
+        vote === "buy"
+          ? `${label} is ${fmtNum(now)}, above the previous bar's reading (${fmtNum(prev)}).`
+          : vote === "sell"
+            ? `${label} is ${fmtNum(now)}, below the previous bar's reading (${fmtNum(prev)}).`
+            : `${label} is unchanged from the previous bar (${fmtNum(now)}).`,
+      meaning:
+        vote === "buy"
+          ? "the pace of price change is increasing — conventionally read as strengthening upward momentum."
+          : vote === "sell"
+            ? "the pace of price change is decreasing — conventionally read as strengthening downward momentum."
+            : "the pace of price change hasn't moved since the last bar."
+    }
+  };
+}
+
+const MTM_RULE: Rule = { id: "MTM", label: "Momentum(10)", minBars: 12, evaluate: (_candles, closes) => evaluateMtmRule(closes, 10) };
+
+/** MACD: DIF>DEA buy, else sell (binary, no neutral). `dea` first seeds `signalPeriod` defined-dif bars after `dif` itself seeds at `i=slowPeriod-1` — `minBars=slowPeriod+signalPeriod-1`. */
+function evaluateMacdRule(closes: readonly number[], fastPeriod: number, slowPeriod: number, signalPeriod: number): RuleResult | undefined {
+  const lastIndex = closes.length - 1;
+  const point = macd(closes, fastPeriod, slowPeriod, signalPeriod)[lastIndex];
+  if (point?.dif === undefined || point?.dea === undefined) return undefined;
+  const vote: Vote = point.dif > point.dea ? "buy" : "sell";
+  return { vote, valueText: `DIF ${fmtNum(point.dif)} · DEA ${fmtNum(point.dea)}`, reason: macdReason(point.dif, point.dea, vote === "buy" ? "above" : "below") };
+}
+
+const MACD_RULE: Rule = { id: "MACD", label: "MACD(12,26,9)", minBars: 34, evaluate: (_candles, closes) => evaluateMacdRule(closes, 12, 26, 9) };
+
+/** StochRSI: Buy K<20, Sell K>80. `minBars` kept as a documented, slightly conservative estimate (see the original hand trace this formula generalizes: `rsiPeriod+stochPeriod+kSmooth+1`, matching 14+14+3+1=32 exactly for the default params) — not load-bearing beyond the display text (see `Rule.minBars` doc). */
+function evaluateStochRsiRule(closes: readonly number[], rsiPeriod: number, stochPeriod: number, kSmooth: number, dSmooth: number): RuleResult | undefined {
+  const lastIndex = closes.length - 1;
+  const point = stochRsi(closes, rsiPeriod, stochPeriod, kSmooth, dSmooth)[lastIndex];
+  if (point?.k === undefined) return undefined;
+  const k = point.k;
+  const vote: Vote = k < 20 ? "buy" : k > 80 ? "sell" : "neutral";
+  const zone = vote === "buy" ? "low" : vote === "sell" ? "high" : "mid";
+  return { vote, valueText: `K ${fmtNum(k)}`, reason: obOsReason("Stochastic RSI", "K", k, 20, 80, zone) };
+}
+
+const STOCHRSI_RULE: Rule = { id: "STOCHRSI", label: "Stochastic RSI(14)", minBars: 32, evaluate: (_candles, closes) => evaluateStochRsiRule(closes, 14, 14, 3, 3) };
+
+/** Williams %R: Buy below -80, Sell above -20. `williamsR()` seeds at `i=period-1` — `minBars=period`. */
+function evaluateWrRule(candles: readonly StrategyCandle[], period: number): RuleResult | undefined {
+  const lastIndex = candles.length - 1;
+  const value = williamsR(candles, period)[lastIndex];
+  if (value === undefined) return undefined;
+  const vote: Vote = value < -80 ? "buy" : value > -20 ? "sell" : "neutral";
+  const zone = vote === "buy" ? "low" : vote === "sell" ? "high" : "mid";
+  const label = `WR(${period})`;
+  return { vote, valueText: fmtNum(value), reason: obOsReason("Williams %R", label, value, -80, -20, zone) };
+}
+
+const WR_RULE: Rule = { id: "WR", label: "Williams %R(14)", minBars: 14, evaluate: (candles) => evaluateWrRule(candles, 14) };
+
+/** Elder Ray Bull/Bear Power, simplified to a single-bar rising/falling test (see rule text). `ema(period)` seeds at `i=period-1`; the rule also needs the PREVIOUS bar — `minBars=period+1`. */
+function evaluateBbpRule(candles: readonly StrategyCandle[], period: number): RuleResult | undefined {
+  const lastIndex = candles.length - 1;
+  const series = bullBearPower(candles, period);
+  const now = series[lastIndex];
+  const prev = lastIndex > 0 ? series[lastIndex - 1] : undefined;
+  if (now?.bull === undefined || now?.bear === undefined || prev?.bull === undefined || prev?.bear === undefined) return undefined;
+  const bullSignal = now.bull > 0 && now.bull > prev.bull;
+  const bearSignal = now.bear < 0 && now.bear < prev.bear;
+  const vote: Vote = bullSignal && !bearSignal ? "buy" : bearSignal && !bullSignal ? "sell" : "neutral";
+  return {
+    vote,
+    valueText: `Bull ${fmtNum(now.bull)} · Bear ${fmtNum(now.bear)}`,
+    reason: {
+      rule: "Elder Ray convention (simplified here to a single-bar read): Bull Power above zero and rising is read bullish; Bear Power below zero and falling is read bearish.",
+      reading:
+        vote === "buy"
+          ? `Bull Power is ${fmtNum(now.bull)}, above zero and higher than the previous bar (Bear Power ${fmtNum(now.bear)}).`
+          : vote === "sell"
+            ? `Bear Power is ${fmtNum(now.bear)}, below zero and lower than the previous bar (Bull Power ${fmtNum(now.bull)}).`
+            : `Bull Power is ${fmtNum(now.bull)}, Bear Power is ${fmtNum(now.bear)} — neither is in its own rising/falling extreme.`,
+      meaning:
+        vote === "buy"
+          ? "buyers are pushing highs further above the trend average and that pressure is building — conventionally read as bullish."
+          : vote === "sell"
+            ? "sellers are pushing lows further below the trend average and that pressure is building — conventionally read as bearish."
+            : "neither buying nor selling pressure is building by this convention's specific test."
+    }
+  };
+}
+
+const BBP_RULE: Rule = { id: "BBP", label: "Bull/Bear Power(13)", minBars: 14, evaluate: (candles) => evaluateBbpRule(candles, 13) };
 
 /**
  * Ultimate Oscillator(7,14,28) — Larry Williams' standard formula: buying
@@ -532,31 +518,28 @@ function bullBearPower(candles: readonly StrategyCandle[], period: number): { bu
   return candles.map((c, i) => (basis[i] !== undefined ? { bull: c.high - basis[i]!, bear: c.low - basis[i]! } : {}));
 }
 
-/** Ultimate Oscillator(7,14,28): Buy below 30, Sell above 70. `candles.length <= maxPeriod`(28) is undefined — `minBars=29`. */
-const UO_RULE: Rule = {
-  id: "UO",
-  label: "Ultimate Oscillator(7,14,28)",
-  minBars: 29,
-  evaluate: (candles) => {
-    const value = ultimateOscillator(candles, 7, 14, 28);
-    if (value === undefined) return undefined;
-    const vote: Vote = value < 30 ? "buy" : value > 70 ? "sell" : "neutral";
-    return {
-      vote,
-      valueText: fmtNum(value),
-      reason: {
-        rule: "Ultimate Oscillator convention: Buy below 30, Sell above 70.",
-        reading: `UO is ${fmtNum(value)} — ${vote === "buy" ? "below 30" : vote === "sell" ? "above 70" : "between 30 and 70"}.`,
-        meaning:
-          vote === "buy"
-            ? "a blend of short, medium and long-term buying/selling pressure is stretched to the downside — conventionally read as oversold."
-            : vote === "sell"
-              ? "a blend of short, medium and long-term buying/selling pressure is stretched to the upside — conventionally read as overbought."
-              : "the blended buying/selling pressure reading sits within its normal range."
-      }
-    };
-  }
-};
+/** Ultimate Oscillator: Buy below 30, Sell above 70. `candles.length <= maxPeriod` is undefined — `minBars=max(p1,p2,p3)+1`. */
+function evaluateUoRule(candles: readonly StrategyCandle[], p1: number, p2: number, p3: number): RuleResult | undefined {
+  const value = ultimateOscillator(candles, p1, p2, p3);
+  if (value === undefined) return undefined;
+  const vote: Vote = value < 30 ? "buy" : value > 70 ? "sell" : "neutral";
+  return {
+    vote,
+    valueText: fmtNum(value),
+    reason: {
+      rule: "Ultimate Oscillator convention: Buy below 30, Sell above 70.",
+      reading: `UO is ${fmtNum(value)} — ${vote === "buy" ? "below 30" : vote === "sell" ? "above 70" : "between 30 and 70"}.`,
+      meaning:
+        vote === "buy"
+          ? "a blend of short, medium and long-term buying/selling pressure is stretched to the downside — conventionally read as oversold."
+          : vote === "sell"
+            ? "a blend of short, medium and long-term buying/selling pressure is stretched to the upside — conventionally read as overbought."
+            : "the blended buying/selling pressure reading sits within its normal range."
+    }
+  };
+}
+
+const UO_RULE: Rule = { id: "UO", label: "Ultimate Oscillator(7,14,28)", minBars: 29, evaluate: (candles) => evaluateUoRule(candles, 7, 14, 28) };
 
 const OSCILLATOR_RULES: readonly Rule[] = [RSI_RULE, STOCH_RULE, CCI_RULE, ADX_RULE, AO_RULE, MTM_RULE, MACD_RULE, STOCHRSI_RULE, WR_RULE, BBP_RULE, UO_RULE];
 
@@ -596,4 +579,228 @@ export function computeTechnicalDetail(candles: readonly StrategyCandle[]): Tech
   }
 
   return { ma: buildRows(MA_RULES), oscillators: buildRows(OSCILLATOR_RULES), computedAtIndex: candles.length - 1 };
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Custom section — founder ask: "custom strategy… a '+' button for user to
+// build and customise the parameters and allowing to name these strategies
+// — e.g. see what RSI(20) or Momentum(15) signals." Renders as a THIRD
+// collapsible section in `signals-table.tsx`, below Moving Averages/
+// Oscillators — deliberately NEVER feeding `computeTechnicalRating`'s dial
+// (the rating stays pure standard-methodology; custom rows are purely
+// informational, see that component's own doc for the exact UI copy this
+// pass locks in).
+//
+// `CUSTOMIZABLE_RULES` re-parameterizes every rule above that takes a
+// period/param set (every MA period and every one of the 11 TradingView
+// oscillator rules) into a `CustomizableRuleDef` — each entry's `evaluate()`
+// calls the EXACT SAME generic `evaluate*Rule()` function the fixed-default
+// `Rule` above it calls (see the "Custom section" doc note on `OSCILLATOR_
+// RULES`). A user's custom RSI(14) row and the standard table's own RSI(14)
+// row are therefore PROVABLY identical, not independently re-derived —
+// verified by `evaluateCustomSignal`'s own `ta:check` fixture:
+// `evaluateCustomSignal("RSI", [14], candles)` must equal the standard
+// table's own RSI(14) `DetailRow` exactly, field for field.
+// ─────────────────────────────────────────────────────────────────────────
+
+export interface CustomRuleParamSpec {
+  key: string;
+  label: string;
+  default: number;
+  min: number;
+  max: number;
+  step?: number;
+}
+
+export interface CustomizableRuleDef {
+  /** Stable id, e.g. `"RSI"` — this is a custom row's own `DetailRow.id` AND the persisted `ruleId` in `pf.workbench.customSignals` (see `custom-signal-builder.tsx`'s own doc). */
+  id: string;
+  /** The rule family's display name, e.g. `"RSI"` — the builder's auto-generated instance name starts from `buildLabel(defaultParams)`, e.g. `"RSI(14)"`. */
+  name: string;
+  params: readonly CustomRuleParamSpec[];
+  buildLabel: (params: readonly number[]) => string;
+  evaluate: (candles: readonly StrategyCandle[], closes: readonly number[], params: readonly number[]) => RuleResult | undefined;
+  /** Display-only estimate, same non-load-bearing posture as every `Rule.minBars` above (see that field's own doc) — the real skip decision always comes from `evaluate()` returning `undefined`, never from this number. */
+  minBars: (params: readonly number[]) => number;
+}
+
+export const CUSTOMIZABLE_RULES: readonly CustomizableRuleDef[] = [
+  {
+    id: "SMA",
+    name: "SMA",
+    params: [{ key: "period", label: "Period", default: 20, min: 2, max: 400 }],
+    buildLabel: ([period]) => `SMA(${period})`,
+    evaluate: (candles, closes, [period]) => evaluateMaRule(candles, closes, period, "SMA"),
+    minBars: ([period]) => period
+  },
+  {
+    id: "EMA",
+    name: "EMA",
+    params: [{ key: "period", label: "Period", default: 20, min: 2, max: 400 }],
+    buildLabel: ([period]) => `EMA(${period})`,
+    evaluate: (candles, closes, [period]) => evaluateMaRule(candles, closes, period, "EMA"),
+    minBars: ([period]) => period
+  },
+  {
+    id: "RSI",
+    name: "RSI",
+    params: [{ key: "period", label: "Period", default: 14, min: 2, max: 100 }],
+    buildLabel: ([period]) => `RSI(${period})`,
+    evaluate: (_candles, closes, [period]) => evaluateRsiRule(closes, period),
+    minBars: ([period]) => period + 1
+  },
+  {
+    id: "STOCH",
+    name: "Stochastic",
+    // Param NAMES here follow the underlying `stochasticOscillator(candles, period, kSmooth, dSmooth)`
+    // signature 1:1 (the %K length, then its own smoothing, then %D's smoothing) rather than the brief's
+    // shorthand "(k,d,smooth)" literally — a documented, defensible reading of ambiguous terminology
+    // (TradingView's own Stochastic settings panel uses this exact "%K Length / %K Smoothing / %D
+    // Smoothing" trio), same posture as prior TA Suite passes' own ambiguous-terminology calls.
+    params: [
+      { key: "period", label: "%K Length", default: 14, min: 2, max: 100 },
+      { key: "kSmooth", label: "%K Smoothing", default: 3, min: 1, max: 20 },
+      { key: "dSmooth", label: "%D Smoothing", default: 3, min: 1, max: 20 }
+    ],
+    buildLabel: ([period, kSmooth, dSmooth]) => `Stochastic %K(${period},${kSmooth},${dSmooth})`,
+    evaluate: (candles, _closes, [period, kSmooth, dSmooth]) => evaluateStochRule(candles, period, kSmooth, dSmooth),
+    minBars: ([period, kSmooth, dSmooth]) => period + kSmooth + dSmooth - 2
+  },
+  {
+    id: "CCI",
+    name: "CCI",
+    params: [{ key: "period", label: "Period", default: 20, min: 2, max: 200 }],
+    buildLabel: ([period]) => `CCI(${period})`,
+    evaluate: (candles, _closes, [period]) => evaluateCciRule(candles, period),
+    minBars: ([period]) => period
+  },
+  {
+    id: "ADX",
+    name: "ADX",
+    params: [{ key: "period", label: "Period", default: 14, min: 2, max: 100 }],
+    buildLabel: ([period]) => `ADX(${period})`,
+    evaluate: (candles, _closes, [period]) => evaluateAdxRule(candles, period),
+    minBars: ([period]) => period * 2 - 1
+  },
+  {
+    id: "AO",
+    name: "Awesome Oscillator",
+    params: [
+      { key: "fast", label: "Fast period", default: 5, min: 2, max: 100 },
+      { key: "slow", label: "Slow period", default: 34, min: 3, max: 200 }
+    ],
+    buildLabel: ([fast, slow]) => `Awesome Oscillator(${fast},${slow})`,
+    evaluate: (candles, _closes, [fast, slow]) => evaluateAoRule(candles, fast, slow),
+    minBars: ([fast, slow]) => Math.max(fast, slow) + 1
+  },
+  {
+    id: "MTM",
+    name: "Momentum",
+    params: [{ key: "period", label: "Period", default: 10, min: 2, max: 200 }],
+    buildLabel: ([period]) => `Momentum(${period})`,
+    evaluate: (_candles, closes, [period]) => evaluateMtmRule(closes, period),
+    minBars: ([period]) => period + 2
+  },
+  {
+    id: "MACD",
+    name: "MACD",
+    params: [
+      { key: "fast", label: "Fast period", default: 12, min: 2, max: 100 },
+      { key: "slow", label: "Slow period", default: 26, min: 3, max: 200 },
+      { key: "signal", label: "Signal period", default: 9, min: 1, max: 100 }
+    ],
+    buildLabel: ([fast, slow, signal]) => `MACD(${fast},${slow},${signal})`,
+    evaluate: (_candles, closes, [fast, slow, signal]) => evaluateMacdRule(closes, fast, slow, signal),
+    minBars: ([, slow, signal]) => slow + signal - 1
+  },
+  {
+    id: "STOCHRSI",
+    name: "Stochastic RSI",
+    // TradingView's own default StochRSI applies ONE "length" to both the RSI and Stochastic lookback (K/D
+    // smoothing stay fixed at 3) — a documented simplification of the underlying 4-param `stochRsi()` down
+    // to the single customizable dimension the founder's own example ("RSI(20)") implies for every rule here.
+    params: [{ key: "period", label: "Period", default: 14, min: 2, max: 100 }],
+    buildLabel: ([period]) => `Stochastic RSI(${period})`,
+    evaluate: (_candles, closes, [period]) => evaluateStochRsiRule(closes, period, period, 3, 3),
+    minBars: ([period]) => period * 2 + 4
+  },
+  {
+    id: "WR",
+    name: "Williams %R",
+    params: [{ key: "period", label: "Period", default: 14, min: 2, max: 100 }],
+    buildLabel: ([period]) => `Williams %R(${period})`,
+    evaluate: (candles, _closes, [period]) => evaluateWrRule(candles, period),
+    minBars: ([period]) => period
+  },
+  {
+    id: "BBP",
+    name: "Bull/Bear Power",
+    params: [{ key: "period", label: "Period", default: 13, min: 2, max: 100 }],
+    buildLabel: ([period]) => `Bull/Bear Power(${period})`,
+    evaluate: (candles, _closes, [period]) => evaluateBbpRule(candles, period),
+    minBars: ([period]) => period + 1
+  },
+  {
+    id: "UO",
+    name: "Ultimate Oscillator",
+    params: [
+      { key: "a", label: "Short period", default: 7, min: 2, max: 100 },
+      { key: "b", label: "Medium period", default: 14, min: 3, max: 200 },
+      { key: "c", label: "Long period", default: 28, min: 4, max: 300 }
+    ],
+    buildLabel: ([a, b, c]) => `Ultimate Oscillator(${a},${b},${c})`,
+    evaluate: (candles, _closes, [a, b, c]) => evaluateUoRule(candles, a, b, c),
+    minBars: ([a, b, c]) => Math.max(a, b, c) + 1
+  }
+];
+
+export function getCustomizableRule(id: string): CustomizableRuleDef | undefined {
+  return CUSTOMIZABLE_RULES.find((r) => r.id === id);
+}
+
+export function defaultCustomRuleParams(def: CustomizableRuleDef): number[] {
+  return def.params.map((p) => p.default);
+}
+
+/** Clamps a positional `number[]` (the on-disk `pf.workbench.customSignals` shape) to each spec's `[min,max]`, falling back to the spec's own default on a non-finite/missing value — same defensive posture as `strategies.ts`'s `clampStrategyParams`/`indicator-registry.ts`'s `clampParams`. */
+export function clampCustomRuleParams(def: CustomizableRuleDef, values: readonly number[]): number[] {
+  return def.params.map((spec, i) => {
+    const raw = values[i];
+    const value = Number.isFinite(raw) ? raw : spec.default;
+    return Math.min(spec.max, Math.max(spec.min, value));
+  });
+}
+
+/**
+ * Evaluates ONE custom signal instance against the loaded candles, returning
+ * the EXACT SAME `DetailRow` shape `computeTechnicalDetail`'s rows use —
+ * `signals-table.tsx`'s Custom section renders these through the identical
+ * `DetailRowLine`/`SignalReasonTrigger` path the standard rows already use,
+ * no parallel rendering code. `id`/`label` are the RULE's own id/auto-label
+ * (e.g. `"RSI"`/`"RSI(14)"`), not a particular user instance's — a user can
+ * have TWO custom RSI rows with different periods; this function has no
+ * notion of "instance", only "rule + params", by design.
+ * `signals-table.tsx` substitutes the user's own instance name when
+ * rendering (see `custom-signal-builder.tsx`'s `CustomSignalItem`).
+ *
+ * Params are clamped defensively (never trusts an out-of-range or malformed
+ * localStorage value to reach a `math.ts` function). An unknown `ruleId`
+ * (a stale localStorage entry from a since-removed rule) or an empty
+ * `candles` array returns `undefined` — the caller (either the Custom
+ * section, which has nothing honest to show yet, or the localStorage
+ * loader, which drops the item) is responsible for handling that, same
+ * "unknown ruleId dropped" contract `loadStoredCustomSignals` documents.
+ */
+export function evaluateCustomSignal(ruleId: string, params: readonly number[], candles: readonly StrategyCandle[]): DetailRow | undefined {
+  const def = getCustomizableRule(ruleId);
+  if (!def || candles.length === 0) return undefined;
+  const clamped = clampCustomRuleParams(def, params);
+  const closes = candles.map((c) => c.close);
+  const label = def.buildLabel(clamped);
+  const result = def.evaluate(candles, closes, clamped);
+  if (!result) {
+    const minBars = def.minBars(clamped);
+    return { id: def.id, label, skipped: true, minBars, value: `needs ${minBars} bars` };
+  }
+  return { id: def.id, label, skipped: false, value: result.valueText, signal: result.vote, reason: result.reason };
 }
