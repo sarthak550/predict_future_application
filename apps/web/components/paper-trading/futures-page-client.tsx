@@ -22,6 +22,22 @@
  * is now the order-intent popover (C2), and pending-order lines are now
  * draggable (C1) — see paper-trading-dashboard.tsx's identical Sprint C doc
  * for the full optimistic-UI/anti-snap-back contract, mirrored here.
+ *
+ * Founder feature (Contract table in maximized workbench, 2026-08-09) — a
+ * follow-up to options-page-client.tsx's option-chain-in-workbench feature
+ * (2026-08-04): `contractTableElement` (below) is the SAME single-mount
+ * `FuturesContractTable` instance whether it renders in `TerminalShell`'s
+ * ladder slot or inside the maximized workbench's new "Contracts" tab
+ * (`chain`/`chainLabel` props on `ChartWorkbench` — see that file's own
+ * doc). Unlike options, futures has only ONE chart (the underlying index
+ * spot — there's no separate "contract premium" view), so there's no
+ * `chartModeSwitcher` pill here: switching CONTRACTS (near/next/far, same
+ * underlying) is ticket-only and never touches the chart, exactly as
+ * before. Switching the UNDERLYING itself (e.g. NIFTY -> BANKNIFTY) from
+ * inside the embedded table DOES change the workbench's `feed`/`chartKey`
+ * live on the same still-mounted `ChartWorkbench` instance — see the
+ * `useWorkbenchAutoRestore` no-op below for why that's now a deliberate
+ * in-workbench browse rather than a "stale workbench, close it" case.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -120,8 +136,7 @@ function FuturesPageClientInner() {
   const [spot, setSpot] = useState<number | null>(null);
 
   // Charting Workbench (W2) — see paper-trading-dashboard.tsx's identical
-  // doc for the ticket single-mount reasoning. Closed on an underlying
-  // change so a stale workbench for the PREVIOUS underlying never lingers.
+  // doc for the ticket single-mount reasoning.
   //
   // Founder bug fix (2026-08-06) — refresh-persistence via `?workbench=1`,
   // same `useWorkbenchAutoRestore` mechanism as paper-trading-dashboard.tsx
@@ -143,7 +158,24 @@ function FuturesPageClientInner() {
     underlying,
     workbenchParam === "1",
     () => setWorkbenchOpenState(true),
-    () => setWorkbenchOpen(false)
+    () => {
+      // Founder feature (Contract table in maximized workbench, 2026-08-09) —
+      // mirrors options-page-client.tsx's identical no-op (see that file's
+      // doc for the full reasoning). `FuturesContractTable` is null'd out of
+      // `TerminalShell`'s ladder slot while the workbench is open (see
+      // `contractTableElement` below) and reappears ONLY inside the
+      // workbench's own Contracts tab — so the only way `underlying` can
+      // still change while this workbench is open is the embedded table's
+      // own underlying-selector buttons, a deliberate in-workbench browse,
+      // never a reason to auto-close. A real page-level navigation away from
+      // this terminal unmounts `FuturesPageClientInner` entirely (see
+      // `remountKey` above), so this no-op can never mask a genuinely stale
+      // workbench. (Before this feature, switching `underlying` while the
+      // workbench was open could ONLY happen via the still-visible-behind-
+      // the-modal ladder outside the workbench, which really was a "stale
+      // workbench for the previous underlying" case — that path no longer
+      // exists now that the ladder is null'd out instead.)
+    }
   );
 
   const [lastOrder, setLastOrder] = useState<PlacedFuturesOrderPayload | null>(null);
@@ -453,6 +485,32 @@ function FuturesPageClientInner() {
     />
   );
 
+  // Founder feature (Contract table in maximized workbench, 2026-08-09) —
+  // ONE `FuturesContractTable` element instance, reused verbatim whether it
+  // renders in `TerminalShell`'s own ladder slot or inside a maximized
+  // workbench's new Contracts tab (the exact single-mount conditional-swap
+  // idiom `ticketElement` above already uses, and the same idiom options-
+  // page-client.tsx's `chainElement` established). Same props the ladder
+  // slot always passed — `onUnderlyingChange`/`onSelectContract`/
+  // `onQuoteData` work identically from inside the workbench, since none of
+  // those callbacks are aware of WHERE the table is currently mounted.
+  const contractTableElement = (
+    <FuturesContractTable
+      underlying={underlying}
+      onUnderlyingChange={(u) => {
+        setUnderlying(u);
+        setSelectedContract(null);
+        setPresetOrderType(undefined);
+        setPresetLimitPrice(undefined);
+        setPresetTriggerPrice(undefined);
+      }}
+      onSelectContract={handleSelectContract}
+      onQuoteData={handleQuoteData}
+      spot={spot}
+      getHeldLots={(u, expiry) => getHeldPosition(u, expiry)}
+    />
+  );
+
   return (
     <div className="space-y-6">
       {error && <p className="text-sm text-rose-600">{error}</p>}
@@ -504,22 +562,7 @@ function FuturesPageClientInner() {
             </div>
           </div>
         }
-        ladder={
-          <FuturesContractTable
-            underlying={underlying}
-            onUnderlyingChange={(u) => {
-              setUnderlying(u);
-              setSelectedContract(null);
-              setPresetOrderType(undefined);
-              setPresetLimitPrice(undefined);
-              setPresetTriggerPrice(undefined);
-            }}
-            onSelectContract={handleSelectContract}
-            onQuoteData={handleQuoteData}
-            spot={spot}
-            getHeldLots={(u, expiry) => getHeldPosition(u, expiry)}
-          />
-        }
+        ladder={workbenchOpen ? null : contractTableElement}
         ticket={workbenchOpen ? null : ticketElement}
         positions={<PositionsStrip positions={positionChips} />}
       />
@@ -535,6 +578,8 @@ function FuturesPageClientInner() {
           onOrderLineDrag={handleOrderLineDrag}
           onOrderLineCancel={handleOrderLineCancel}
           ticket={ticketElement}
+          chain={contractTableElement}
+          chainLabel="Contracts"
         />
       )}
 

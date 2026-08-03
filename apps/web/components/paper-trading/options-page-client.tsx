@@ -215,7 +215,7 @@ function OptionsPageClientInner() {
       setWorkbenchOpenState(true);
     },
     () => {
-      // Founder feature (Chain tab in maximized workbench, 2026-08-08) — the
+      // Founder feature (Chain tab in maximized workbench, 2026-08-04) — the
       // chain browser is null'd out of TerminalShell's ladder slot while ANY
       // workbench is open (see `chainElement` below), so the only way
       // `chartUnderlying` can still change while THIS workbench is open is
@@ -269,7 +269,7 @@ function OptionsPageClientInner() {
       setPremiumWorkbenchOpenState(true);
     },
     () => {
-      // Founder feature (Chain tab in maximized workbench, 2026-08-08) — the
+      // Founder feature (Chain tab in maximized workbench, 2026-08-04) — the
       // chain browser is null'd out of TerminalShell's ladder slot while ANY
       // workbench is open (see `chainElement` below), so a real contractKey
       // change can now ONLY originate from the embedded Chain tab's own
@@ -329,7 +329,7 @@ function OptionsPageClientInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chartMode]);
 
-  // Founder feature (Chain tab in maximized workbench, 2026-08-08) — a tiny
+  // Founder feature (Chain tab in maximized workbench, 2026-08-04) — a tiny
   // chart-mode switcher rendered INSIDE the workbench top bar (via
   // ChartWorkbench's generic `chartModeSwitcher` prop), so a strike picked
   // from the embedded Chain tab can jump straight to the OTHER chart
@@ -693,7 +693,7 @@ function OptionsPageClientInner() {
     />
   );
 
-  // Founder feature (Chain tab in maximized workbench, 2026-08-08) — ONE
+  // Founder feature (Chain tab in maximized workbench, 2026-08-04) — ONE
   // `OptionChainBrowser` element instance, reused verbatim whether it renders
   // in `TerminalShell`'s own ladder slot or inside a maximized workbench's
   // new Chain tab (the exact single-mount conditional-swap idiom

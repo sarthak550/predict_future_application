@@ -165,8 +165,16 @@ export function FuturesContractTable({
               parity) on the nearest expiry only. Other contract months aren&apos;t priceable until the live feed returns.
             </p>
           )}
+          {/* Founder feature (Contract table in maximized workbench, 2026-08-09) —
+              `min-w` forces horizontal scroll instead of column-squish once this
+              renders inside the workbench's resizable right panel (300-560px, see
+              panel-resize-handle.tsx), same "scroll fallback, never clipped" fix
+              option-chain-browser.tsx already applied for its own embedded-tab
+              use. Harmless at the wide TerminalShell ladder-slot width too — the
+              wrapper's own overflow-x-auto only engages once the table is
+              actually wider than its container. */}
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full min-w-[640px] text-sm">
               <thead>
                 <tr className="text-left text-xs uppercase tracking-wide text-ink-400">
                   <th className="pb-2 font-medium">Contract</th>
