@@ -387,8 +387,27 @@ function pivotsLast(candles: readonly StrategyCandle[]): { pp?: number } {
  * `params` must already be RESOLVED (`indicator-registry.ts`'s
  * `resolveParams(instance)` — defaults applied, clamped), same convention
  * `IndicatorActiveStrip`'s own `formatInstanceLabel` already uses.
+ *
+ * **Founder feedback (2026-08-04) — crosshair-follow.** `atIndex`
+ * (optional) is the crosshair-hovered bar's index into `allCandles`; when
+ * provided (and not already the latest bar), the ENTIRE function computes
+ * as though `allCandles` had been truncated to end at that bar — a
+ * deliberate, minimal-risk design: every one of the ~40 `switch` cases below
+ * already reads `last(...)`/`candles[candles.length - 1]`-style "latest
+ * bar" values off a LOCAL `candles` binding, so truncating once at the top
+ * (shadowing the parameter with the truncated slice under the SAME name)
+ * makes every existing case correct for an arbitrary hover position with
+ * ZERO changes to the ~40 cases themselves — no re-verification risk against
+ * the 76 `ta:check` fixtures, which never pass `atIndex` and therefore see
+ * byte-identical behavior to before this pass.
  */
-export function computeIndicatorSignal(name: string, params: readonly number[], candles: readonly StrategyCandle[]): IndicatorSignal {
+export function computeIndicatorSignal(
+  name: string,
+  params: readonly number[],
+  allCandles: readonly StrategyCandle[],
+  atIndex?: number
+): IndicatorSignal {
+  const candles = atIndex !== undefined && atIndex >= 0 && atIndex < allCandles.length - 1 ? allCandles.slice(0, atIndex + 1) : allCandles;
   if (candles.length === 0) return NO_SIGNAL;
   const closes = candles.map((c) => c.close);
   const close = lastClose(candles);

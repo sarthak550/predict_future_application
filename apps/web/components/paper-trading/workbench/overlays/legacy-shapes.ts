@@ -12,7 +12,24 @@
  * built-in multi-point template.
  */
 import { registerOverlay, type Coordinate, type OverlayFigure, type OverlayCreateFiguresCallbackParams } from "klinecharts";
-import { labelFigure, solidLine, dashedLine, fillPolygon, resolveLineColor, resolvePolygonColor, resolvePolygonBorderColor, INK_400, INK_600, SKY_FILL, TEAL_FILL, TEAL_BORDER } from "./figure-kit";
+import {
+  labelFigure,
+  solidLine,
+  dashedLine,
+  fillPolygon,
+  resolveLineColor,
+  resolvePolygonColor,
+  resolvePolygonBorderColor,
+  midpoint,
+  formatRatioLabel,
+  INK_400,
+  INK_600,
+  SKY_FILL,
+  TEAL_FILL,
+  TEAL_BORDER,
+  AMBER,
+  VIOLET
+} from "./figure-kit";
 
 export function registerLegacyShapeOverlays(): void {
   // ── rect — 2 anchors (opposite corners), totalStep 3. ────────────────
@@ -81,6 +98,13 @@ export function registerLegacyShapeOverlays(): void {
 
   // ── abcd — 4 anchors (A,B,C,D), totalStep 5. Solid A-B/B-C, dashed ────
   // A-C/B-D diagonals (no C-D leg — founder-locked spec).
+  //
+  // **Founder feedback (2026-08-04) — value-space ratio labels**: TradingView
+  // shows the BC/AB retracement ratio at BC's own midpoint and the CD/BC
+  // ratio at CD's midpoint (3-decimal, e.g. `0.618`) — matches `cypher`'s own
+  // established `formatRatioLabel`/value-space convention (see this file's
+  // sibling `patterns.ts`), computed off `overlay.points[i].value` (real
+  // anchor prices), never pixel distance.
   registerOverlay({
     name: "abcd",
     totalStep: 5,
@@ -91,12 +115,19 @@ export function registerLegacyShapeOverlays(): void {
       if (coordinates.length < 2) return [];
       const color = resolveLineColor(overlay.styles, INK_600);
       const [a, b, c, d] = coordinates;
+      const values = overlay.points.map((p) => p.value ?? 0);
       const figures: OverlayFigure[] = [solidLine([a, b], color), labelFigure(a, "A"), labelFigure(b, "B")];
       if (coordinates.length >= 3) {
+        const abLen = Math.abs((values[1] ?? 0) - (values[0] ?? 0)) || 1;
+        const bcLen = Math.abs((values[2] ?? 0) - (values[1] ?? 0));
         figures.push(solidLine([b, c], color), dashedLine([a, c]), labelFigure(c, "C"));
+        figures.push(labelFigure(midpoint(b, c), formatRatioLabel(bcLen / abLen), { background: AMBER, dy: 10 }));
       }
       if (coordinates.length >= 4) {
+        const bcLen = Math.abs((values[2] ?? 0) - (values[1] ?? 0)) || 1;
+        const cdLen = Math.abs((values[3] ?? 0) - (values[2] ?? 0));
         figures.push(dashedLine([b, d]), labelFigure(d, "D"));
+        figures.push(labelFigure(midpoint(c, d), formatRatioLabel(cdLen / bcLen), { background: AMBER, dy: 10 }));
       }
       return figures;
     },
@@ -104,6 +135,13 @@ export function registerLegacyShapeOverlays(): void {
 
   // ── xabcd — 5 anchors (X,A,B,C,D), totalStep 6. Solid legs X-A/A-B/ ───
   // B-C/C-D, translucent X-A-B and B-C-D triangle fills, dashed X-B/B-D.
+  //
+  // **Founder feedback (2026-08-04) — value-space ratio labels**: B =
+  // AB/XA retracement (at AB's midpoint), C = BC/AB (at BC's midpoint),
+  // D = CD/BC (at CD's midpoint), plus the overall XAD completion ratio
+  // (|AD|/|XA| — how far D sits beyond/short of the XA leg, the standard
+  // harmonic-pattern "completion" read) labeled near D. All value-space,
+  // 3-decimal, same `formatRatioLabel` convention as `abcd` above.
   registerOverlay({
     name: "xabcd",
     totalStep: 6,
@@ -115,15 +153,27 @@ export function registerLegacyShapeOverlays(): void {
       const color = resolveLineColor(overlay.styles, INK_600);
       const fill = resolvePolygonColor(overlay.styles, TEAL_FILL);
       const [x, a, b, c, d] = coordinates;
+      const values = overlay.points.map((p) => p.value ?? 0);
+      const xaLen = Math.abs((values[1] ?? 0) - (values[0] ?? 0)) || 1;
       const figures: OverlayFigure[] = [solidLine([x, a], color), labelFigure(x, "X"), labelFigure(a, "A")];
       if (coordinates.length >= 3) {
+        const abLen = Math.abs((values[2] ?? 0) - (values[1] ?? 0));
         figures.push(solidLine([a, b], color), labelFigure(b, "B"), fillPolygon([x, a, b], fill, TEAL_BORDER), dashedLine([x, b]));
+        figures.push(labelFigure(midpoint(a, b), `B ${formatRatioLabel(abLen / xaLen)}`, { background: VIOLET, dy: 10 }));
       }
       if (coordinates.length >= 4) {
+        const abLen = Math.abs((values[2] ?? 0) - (values[1] ?? 0)) || 1;
+        const bcLen = Math.abs((values[3] ?? 0) - (values[2] ?? 0));
         figures.push(solidLine([b, c], color), labelFigure(c, "C"));
+        figures.push(labelFigure(midpoint(b, c), `C ${formatRatioLabel(bcLen / abLen)}`, { background: VIOLET, dy: 10 }));
       }
       if (coordinates.length >= 5) {
+        const bcLen = Math.abs((values[3] ?? 0) - (values[2] ?? 0)) || 1;
+        const cdLen = Math.abs((values[4] ?? 0) - (values[3] ?? 0));
+        const adLen = Math.abs((values[4] ?? 0) - (values[1] ?? 0));
         figures.push(solidLine([c, d], color), labelFigure(d, "D"), fillPolygon([b, c, d], fill, TEAL_BORDER), dashedLine([b, d]));
+        figures.push(labelFigure(midpoint(c, d), `D ${formatRatioLabel(cdLen / bcLen)}`, { background: VIOLET, dy: 10 }));
+        figures.push(labelFigure(d, `XAD ${formatRatioLabel(adLen / xaLen)}`, { background: VIOLET, dy: 28 }));
       }
       return figures;
     },

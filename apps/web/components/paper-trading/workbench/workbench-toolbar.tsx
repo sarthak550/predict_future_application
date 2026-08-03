@@ -111,6 +111,8 @@ export function WorkbenchToolbar({
   const [favorites, setFavorites] = useState<Set<string>>(new Set());
   const [recents, setRecents] = useState<string[]>([]);
   const railRef = useRef<HTMLDivElement | null>(null);
+  /** Founder-feedback pass (2026-08-04) — the trigger button's own bounding rect, captured at click time, threaded to `ToolFlyout` for its viewport-fit clamp (see that file's own doc). */
+  const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
 
   useEffect(() => {
     setFavorites(new Set(readStoredNames(FAVORITES_KEY)));
@@ -171,13 +173,15 @@ export function WorkbenchToolbar({
     setOpenFamily(null);
   }
 
-  function handleFamilyClick(family: FamilyId) {
+  function handleFamilyClick(family: FamilyId, rect: DOMRect) {
     if (activeTool) onCancelActiveTool();
+    setAnchorRect(rect);
     setOpenFamily((prev) => (prev === family ? null : family));
   }
 
-  function handleSearchClick() {
+  function handleSearchClick(rect: DOMRect) {
     if (activeTool) onCancelActiveTool();
+    setAnchorRect(rect);
     setOpenFamily((prev) => (prev === "search" ? null : "search"));
   }
 
@@ -212,7 +216,7 @@ export function WorkbenchToolbar({
           title="Search all tools"
           aria-label="Search all tools"
           aria-pressed={openFamily === "search"}
-          onClick={handleSearchClick}
+          onClick={(e) => handleSearchClick(e.currentTarget.getBoundingClientRect())}
           className={`flex h-11 w-11 items-center justify-center rounded-lg transition-colors ${
             openFamily === "search" ? "bg-sky-600 text-white" : "text-ink-500 hover:bg-ink-100 hover:text-ink-900"
           }`}
@@ -220,7 +224,16 @@ export function WorkbenchToolbar({
           <Search className="h-4 w-4" aria-hidden="true" />
         </button>
         {openFamily === "search" && (
-          <ToolFlyout family="search" activeTool={activeTool} favorites={favorites} premiumMode={premiumMode} onToggleFavorite={toggleFavorite} onSelectTool={pick} onClose={() => setOpenFamily(null)} />
+          <ToolFlyout
+            family="search"
+            activeTool={activeTool}
+            favorites={favorites}
+            premiumMode={premiumMode}
+            anchorRect={anchorRect}
+            onToggleFavorite={toggleFavorite}
+            onSelectTool={pick}
+            onClose={() => setOpenFamily(null)}
+          />
         )}
       </div>
 
@@ -276,7 +289,7 @@ export function WorkbenchToolbar({
               title={lastUsed ? `${fam.label} — last used: ${TOOL_REGISTRY[lastUsed].label}` : fam.label}
               aria-label={fam.label}
               aria-pressed={isOpen}
-              onClick={() => handleFamilyClick(fam.id)}
+              onClick={(e) => handleFamilyClick(fam.id, e.currentTarget.getBoundingClientRect())}
               className={`flex h-11 w-11 items-center justify-center rounded-lg transition-colors ${
                 isOpen ? "bg-sky-600 text-white" : "text-ink-500 hover:bg-ink-100 hover:text-ink-900"
               }`}
@@ -289,6 +302,7 @@ export function WorkbenchToolbar({
                 activeTool={activeTool}
                 favorites={favorites}
                 premiumMode={premiumMode}
+                anchorRect={anchorRect}
                 onToggleFavorite={toggleFavorite}
                 onSelectTool={pick}
                 onSelectEmoji={fam.id === "emoji" ? pickEmoji : undefined}

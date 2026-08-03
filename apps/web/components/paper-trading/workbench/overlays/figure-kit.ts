@@ -58,6 +58,11 @@ export function formatPercentLabel(v: number): string {
   return `${sign}${Math.abs(v * 100).toFixed(1)}%`;
 }
 
+/** TradingView-style 3-decimal ratio label (`0.618`, `1.272`) — for harmonic-pattern retracement/extension ratios computed in VALUE space (`abcd`/`xabcd` — see `legacy-shapes.ts`). Distinct from `formatPercentLabel` (which shows a signed %) — a raw ratio has no natural sign and TradingView never shows one. */
+export function formatRatioLabel(v: number): string {
+  return Number.isFinite(v) ? v.toFixed(3) : "—";
+}
+
 // ── Style-override resolution ───────────────────────────────────────────
 type StylesRecord = Record<string, unknown> | null | undefined;
 

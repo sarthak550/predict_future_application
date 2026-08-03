@@ -7,7 +7,7 @@
  * neckline / converging trendlines respectively, not a plain zigzag.
  */
 import { registerOverlay, type Coordinate, type OverlayFigure, type OverlayCreateFiguresCallbackParams } from "klinecharts";
-import { solidLine, dashedLine, extendToRightEdge, fillPolygon, resolveLineColor, resolvePolygonColor, labelFigure, formatPercentLabel, INK_600, SKY, SKY_FILL, AMBER } from "./figure-kit";
+import { solidLine, dashedLine, extendToRightEdge, fillPolygon, resolveLineColor, resolvePolygonColor, labelFigure, formatPercentLabel, formatRupeesLabel, INK_600, SKY, SKY_FILL, AMBER } from "./figure-kit";
 
 function circledLabel(point: Coordinate, text: string, color: string): OverlayFigure {
   return labelFigure(point, text, { background: color, dy: 16 });
@@ -93,6 +93,32 @@ export function registerPatternOverlays(): void {
         const rightTrough = coordinates[4];
         const necklineFar = extendToRightEdge(leftTrough, rightTrough, bounding.width);
         figures.push(dashedLine([leftTrough, necklineFar], color, 1.6));
+
+        // Founder feedback (2026-08-04) — measured-move target: the classic,
+        // cheap-and-honest H&S read. Mirrors the head's own excess above (or
+        // below, for an inverse pattern — sign-correct by construction)
+        // the FITTED neckline — interpolated at the head's own x, in the
+        // same pixel-fraction space the neckline geometry above already
+        // uses — by that same distance on the opposite side. Value-space,
+        // never invented.
+        const values = overlay.points.map((p) => p.value ?? 0);
+        const headPx = coordinates[3];
+        const headValue = values[3] ?? 0;
+        const leftTroughValue = values[2] ?? 0;
+        const rightTroughValue = values[4] ?? 0;
+        const dx = rightTrough.x - leftTrough.x;
+        const fraction = Math.abs(dx) < 1e-6 ? 0 : (headPx.x - leftTrough.x) / dx;
+        const necklineValueAtHead = leftTroughValue + (rightTroughValue - leftTroughValue) * fraction;
+        const necklineYAtHead = leftTrough.y + (rightTrough.y - leftTrough.y) * fraction;
+        const targetValue = necklineValueAtHead - (headValue - necklineValueAtHead);
+        const isTopping = headValue >= necklineValueAtHead;
+        figures.push(
+          labelFigure(
+            { x: headPx.x, y: necklineYAtHead + (isTopping ? 26 : -26) },
+            `Target ${formatRupeesLabel(targetValue)}`,
+            { background: AMBER }
+          )
+        );
       }
       return figures;
     },

@@ -23,8 +23,26 @@
  * `VWAP` indicator): the row is unclickable, visually dimmed, and carries a
  * `title` tooltip explaining why — never silently hidden, so a user doesn't
  * wonder where the tool went.
+ *
+ * Founder-feedback pass (2026-08-04) — **viewport fit**: bottom-family
+ * flyouts (Measure, Annotations, Emoji, the rail's own last few entries)
+ * could render with their bottom edge past the viewport, since the flyout is
+ * `position: absolute` anchored at `top: 0` of its OWN trigger button — a
+ * button near the bottom of the 44px rail leaves little room below it for a
+ * flyout that can run up to `70vh` tall. Fixed with two independent layers
+ * (both requested explicitly, neither alone is sufficient): (1) `anchorRect`
+ * (the trigger button's own `getBoundingClientRect()`, captured by
+ * `workbench-toolbar.tsx` at click time) drives a `useLayoutEffect` that
+ * measures the flyout's OWN rendered height and shifts `top` UP just enough
+ * to keep its bottom edge within the viewport (the workbench is `fixed
+ * inset-0` fullscreen, so viewport height IS the workbench container's own
+ * height — no separate container ref needed), clamped so the shift never
+ * pushes the flyout's own top above an 8px viewport margin; (2) the
+ * pre-existing `max-h-[70vh] overflow-y-auto` (unchanged) still catches the
+ * case where the flyout is simply taller than the viewport itself even after
+ * shifting all the way up — internal scroll, never off-screen clipping.
  */
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Search, Star, X } from "lucide-react";
 
 import { TOOL_FAMILIES, toolsInFamily, TOOL_REGISTRY, type FamilyId, type ToolRegistryName } from "./tool-registry";
@@ -37,6 +55,7 @@ export function ToolFlyout({
   activeTool,
   favorites,
   premiumMode,
+  anchorRect,
   onToggleFavorite,
   onSelectTool,
   onSelectEmoji,
@@ -47,6 +66,8 @@ export function ToolFlyout({
   favorites: Set<string>;
   /** True while charting option-premium pseudo-candles — disables any `premiumDisabled` tool row. See module doc. */
   premiumMode?: boolean;
+  /** The trigger button's own `getBoundingClientRect()`, captured by the caller at click time — drives the viewport-fit clamp. `null`/omitted falls back to the un-clamped `top-0` anchor (should never actually happen given every call site now supplies it, but keeps this component safe to use standalone). See module doc. */
+  anchorRect?: { top: number; bottom: number } | null;
   onToggleFavorite: (name: ToolRegistryName) => void;
   onSelectTool: (name: ToolRegistryName) => void;
   /** Only meaningful for the `emoji` family — see module doc. */
@@ -55,6 +76,33 @@ export function ToolFlyout({
 }) {
   const [query, setQuery] = useState("");
   const trimmed = query.trim().toLowerCase();
+
+  // Founder-feedback pass (2026-08-04) — viewport-fit shift. Runs once per
+  // open (`anchorRect` is a freshly-captured object each click, so this
+  // effect naturally re-fires per open) — measures the just-rendered
+  // flyout's own height and shifts `top` up only as much as needed to keep
+  // the bottom edge on-screen, never above an 8px top margin.
+  const flyoutRef = useRef<HTMLDivElement | null>(null);
+  const [topShift, setTopShift] = useState(0);
+  useLayoutEffect(() => {
+    const el = flyoutRef.current;
+    if (!el || !anchorRect) {
+      setTopShift(0);
+      return;
+    }
+    const rect = el.getBoundingClientRect();
+    const viewportBottom = window.innerHeight - 8;
+    const overflow = anchorRect.top + rect.height - viewportBottom;
+    if (overflow <= 0) {
+      setTopShift(0);
+      return;
+    }
+    const maxShiftUp = Math.max(0, anchorRect.top - 8);
+    setTopShift(-Math.min(overflow, maxShiftUp));
+    // Re-measure whenever the anchor changes (a new open) or the visible
+    // row count changes (search query narrows/widens the list, which
+    // changes the flyout's own rendered height).
+  }, [anchorRect, trimmed, family]);
 
   const groups = useMemo((): Array<{
     label: string;
@@ -79,7 +127,11 @@ export function ToolFlyout({
   }, [trimmed, family]);
 
   return (
-    <div className="absolute left-full top-0 z-10 ml-1 w-64 max-h-[70vh] overflow-y-auto rounded-xl border border-ink-200 bg-white shadow-lg">
+    <div
+      ref={flyoutRef}
+      className="absolute left-full z-10 ml-1 w-64 max-h-[70vh] overflow-y-auto rounded-xl border border-ink-200 bg-white shadow-lg"
+      style={{ top: topShift }}
+    >
       <div className="sticky top-0 flex items-center gap-1.5 border-b border-ink-100 bg-white px-2 py-2">
         <Search className="h-3.5 w-3.5 shrink-0 text-ink-400" aria-hidden="true" />
         <input

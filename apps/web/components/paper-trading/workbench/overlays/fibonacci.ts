@@ -229,13 +229,20 @@ export function registerFibonacciOverlays(): void {
   // ── fibChannel — 3pt (A, B, C), totalStep 4. Base line A→B, a parallel ──
   // line through C, and fib-fraction level lines in between, all extended
   // to the right bounding edge; translucent fill between the 0 and 1 lines.
+  // **Founder feedback (2026-08-04)**: the level geometry itself stays in
+  // PIXEL space (a parallel vertical offset from the A→B base line, unchanged
+  // — verified working since S1), but each level's label now ALSO shows the
+  // real ₹ price at that line (`yAxis.convertFromPixel(y)`, the exact
+  // inverse of the `convertToPixel` calls every other fib tool's VALUE-space
+  // math already uses) — matching `fibExtension`'s own `levelLine` price
+  // display, per the audit's own "verify fibChannel shows ₹ values" finding.
   registerOverlay({
     name: "fibChannel",
     totalStep: 4,
     needDefaultPointFigure: true,
     needDefaultXAxisFigure: true,
     needDefaultYAxisFigure: true,
-    createPointFigures: ({ coordinates, bounding, overlay }: OverlayCreateFiguresCallbackParams<unknown>): OverlayFigure[] => {
+    createPointFigures: ({ coordinates, bounding, overlay, yAxis }: OverlayCreateFiguresCallbackParams<unknown>): OverlayFigure[] => {
       if (coordinates.length < 2) return [];
       if (coordinates.length === 2) return [dashedLine(coordinates)];
       const color = resolveLineColor(overlay.styles, VIOLET);
@@ -268,7 +275,9 @@ export function registerFibonacciOverlays(): void {
       for (const { level, a, b } of levelCoords) {
         const extended = extendToRightEdge(a, b, rightX);
         figures.push(level === 0 || level === 1 ? solidLine([a, extended], color, 1.3) : dashedLine([a, extended], color, 1));
-        figures.push(labelFigure(a, formatPercentLabel(level), { align: "left", background: color }));
+        const price = yAxis ? yAxis.convertFromPixel(a.y) : undefined;
+        const text = price === undefined ? formatPercentLabel(level) : `${formatPercentLabel(level)} · ${formatRupeesLabel(price)}`;
+        figures.push(labelFigure(a, text, { align: "left", background: color }));
       }
       return figures;
     },

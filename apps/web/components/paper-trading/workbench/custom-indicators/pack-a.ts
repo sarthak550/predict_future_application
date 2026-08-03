@@ -48,6 +48,7 @@ import type { IndicatorTemplate } from "klinecharts";
 import { registerIndicator } from "klinecharts";
 
 import { ema, wilderAtr, supertrend as computeSupertrend, sessionVwap, ichimokuLines, rollingHigh, rollingLow } from "@/lib/ta/math";
+import { INDICATOR_TOOLTIP_FEATURES } from "./tooltip-features";
 
 interface OhlcCandle {
   timestamp: number;
@@ -118,7 +119,15 @@ export const ichimoku: IndicatorTemplate<IchimokuPoint, number> = {
     return {
       name: "ICHIMOKU",
       calcParamsText: `(${indicator.calcParams.join(",")})`,
-      features: [],
+      // Founder feedback (2026-08-04) — this indicator is the ONE custom
+      // template with its own `createTooltipDataSource` (every other
+      // indicator relies on the global `chart.setStyles({indicator:
+      // {tooltip:{features}}})` default in `kline-chart.tsx`) — a custom
+      // return with its OWN `features` array wins over that global default
+      // (verified against `getIndicatorTooltipData`'s `isValid(customFeatures)`
+      // check), so it must explicitly re-supply the same eye/gear/remove set
+      // or ICHIMOKU would silently lose them.
+      features: INDICATOR_TOOLTIP_FEATURES,
       legends: [
         { title: "Conversion: ", value: fmt(p.tenkan) },
         { title: "Base: ", value: fmt(p.kijun) },

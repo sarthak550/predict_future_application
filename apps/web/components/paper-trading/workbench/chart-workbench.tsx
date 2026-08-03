@@ -217,6 +217,24 @@ export function ChartWorkbench({
     persistIndicators({ main: updateList(indicators.main), sub: updateList(indicators.sub) });
   }
 
+  // Founder feedback (2026-08-04), Part 1 — the settings popover's STYLE
+  // section: a nonce-driven command channel straight to `KlineChart`'s
+  // `overrideIndicator({styles})` call, same idiom as the S1 drawing style
+  // editor's `drawingStyleCommand`. Deliberately NOT persisted to React
+  // state/localStorage (line color/width is chart-session-only, ephemeral —
+  // consistent with the eye-toggle's own visibility state, which lives
+  // entirely inside klinecharts, never round-tripped into `IndicatorInstance`).
+  const [indicatorStyleCommand, setIndicatorStyleCommand] = useState<{ id: string; styles: Record<string, unknown>; nonce: number } | null>(null);
+  const indicatorStyleNonceRef = useRef(0);
+  function handleApplyIndicatorStyle(patch: { color?: string; size?: number }) {
+    if (!indicatorSettings) return;
+    indicatorStyleNonceRef.current += 1;
+    const line: Record<string, unknown> = {};
+    if (patch.color !== undefined) line.color = patch.color;
+    if (patch.size !== undefined) line.size = patch.size;
+    setIndicatorStyleCommand({ id: indicatorSettings.instance.instanceId, styles: { lines: [line] }, nonce: indicatorStyleNonceRef.current });
+  }
+
   const [ticketCollapsed, setTicketCollapsed] = useState(false);
   const [intentPopover, setIntentPopover] = useState<{ price: number; left: number; top: number } | null>(null);
 
@@ -233,14 +251,23 @@ export function ChartWorkbench({
   const candlesKey = candles.length > 0 ? `${candles.length}:${candles[candles.length - 1].timestamp}` : "empty";
   const instancesKey = [...indicators.main, ...indicators.sub].map((i) => `${i.instanceId}:${i.name}:${(i.params ?? []).join(",")}`).join("|");
 
+  // Founder feedback (2026-08-04), Part 1 — the detached strip now
+  // crosshair-follows too (the on-chart legend gets this natively — see
+  // `kline-chart.tsx`'s own doc; this strip has no such native mechanism).
+  // `hoveredDataIndex` is `null` when the crosshair isn't over the chart —
+  // `computeIndicatorSignal`'s own `atIndex` contract already treats
+  // `undefined` as "use the latest bar," so `?? undefined` below is the
+  // correct null->undefined bridge, not a workaround.
+  const [hoveredDataIndex, setHoveredDataIndex] = useState<number | null>(null);
+
   const instanceSignals = useMemo(() => {
     const map = new Map<string, IndicatorSignal>();
     for (const instance of [...indicators.main, ...indicators.sub]) {
-      map.set(instance.instanceId, computeIndicatorSignal(instance.name, resolveParams(instance), candles));
+      map.set(instance.instanceId, computeIndicatorSignal(instance.name, resolveParams(instance), candles, hoveredDataIndex ?? undefined));
     }
     return map;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [instancesKey, candlesKey]);
+  }, [instancesKey, candlesKey, hoveredDataIndex]);
 
   const technicalRating = useMemo(
     () => computeTechnicalRating(candles),
@@ -598,6 +625,10 @@ export function ChartWorkbench({
               onAllDrawingsCleared={drawingsHook.clearAll}
               drawingStyleCommand={drawingStyleCommand}
               removeDrawingCommand={removeDrawingCommand}
+              onCrosshairDataIndexChange={setHoveredDataIndex}
+              onIndicatorOpenSettings={handleOpenIndicatorSettings}
+              onIndicatorRemove={handleRemoveIndicator}
+              indicatorStyleCommand={indicatorStyleCommand}
             />
           )}
 
@@ -720,6 +751,7 @@ export function ChartWorkbench({
           left={indicatorSettings.left}
           top={indicatorSettings.top}
           onApply={handleApplyIndicatorSettings}
+          onApplyStyle={handleApplyIndicatorStyle}
           onClose={() => setIndicatorSettings(null)}
         />
       )}

@@ -50,6 +50,51 @@
  * — instead of being read off `extendData`. Every other overlay type
  * simply doesn't set `extendData` at all any more (it was only ever used
  * for this one purpose).
+ *
+ * **Founder feedback (2026-08-04) — Part 1, the on-chart indicator legend +
+ * crosshair-follow.** Two separate, independently-verified mechanisms (both
+ * against `dist/index.d.ts`/`dist/index.esm.js`, see `custom-indicators/
+ * tooltip-features.ts`'s own doc for the feature-click path):
+ *   1. klinecharts' OWN per-pane top-left indicator tooltip (name(params) +
+ *      one colored legend row per `figures[]` entry that has a `title`,
+ *      reading `result[crosshair.dataIndex]`) is a DEFAULT, already-working
+ *      mechanism -- `styles.indicator.tooltip.showRule` defaults to
+ *      `"always"` and an unset crosshair resolves to the LAST bar
+ *      (`StoreImp.prototype.setCrosshair`'s own `{}` branch), so every
+ *      custom indicator whose figures already declare `title` (all of them
+ *      except `PF_SIGNALS`, which is deliberately non-interactive/legend-
+ *      less -- see that file) gets TradingView's on-chart legend for FREE,
+ *      with zero extra code. This file's only additions are the
+ *      interactive eye/gear/remove ICONS (`WORKBENCH_THEME`'s new
+ *      `indicator.tooltip.features` below -- `TooltipFeatureStyle[]` is a
+ *      REAL click path, not render-only, confirmed by reading
+ *      `IndicatorTooltipView.prototype.drawStandardTooltipFeatures`'s own
+ *      `_featureClickEvent` -> `executeAction('onIndicatorTooltipFeatureClick',
+ *      ...)` call) and the click handler that answers them, below.
+ *   2. The DETACHED strip (`indicator-active-strip.tsx`, rendered by
+ *      `chart-workbench.tsx`) has no such native mechanism -- it's a plain
+ *      DOM row outside the canvas -- so THIS file subscribes to
+ *      `chart.subscribeAction('onCrosshairChange', ...)` itself and lifts
+ *      the hovered `dataIndex` out via the new `onCrosshairDataIndexChange`
+ *      prop, rAF-throttled. A verified, load-bearing gotcha: the payload
+ *      that action callback receives is NOT the fully-resolved crosshair --
+ *      `StoreImp.prototype.setCrosshair` calls `this.executeAction
+ *      ('onCrosshairChange', crosshair)` using its OWN raw input parameter
+ *      (`{x, y, paneId}`, exactly what `Event.prototype.mouseMoveEvent`
+ *      passes in for the main pane), never the internally-resolved
+ *      `this._crosshair` (which DOES carry `dataIndex`/`kLineData` but is
+ *      not reachable from the public `Chart`/`Store` API at all -- no
+ *      `getCrosshair` method exists on either public interface). This file
+ *      re-derives `dataIndex` itself via `chart.convertFromPixel([{x}],
+ *      {paneId})` (verified: `ChartImp.prototype.convertFromPixel` DOES
+ *      populate `point.dataIndex` via `xAxis.convertFromPixel` = the same
+ *      `coordinateToDataIndex` the internal resolution path uses -- an
+ *      exact, public-API equivalent). A SEPARATE, real gotcha: klinecharts'
+ *      own `mouseleave` clear (`setCrosshair()` with no args) does NOT fire
+ *      the action at all (`isString(this._crosshair.paneId)` gate fails on
+ *      the cleared `{}` crosshair) -- so this file adds its OWN `mouseleave`
+ *      listener on the container to null out the hover state, independent
+ *      of klinecharts' internal action system.
  */
 import { useCallback, useEffect, useRef, type MutableRefObject } from "react";
 import {
@@ -62,7 +107,8 @@ import {
   type DeepPartial,
   type NeighborData,
   type OverlayEventCallback,
-  type OverlayStyle
+  type OverlayStyle,
+  type IndicatorStyle
 } from "klinecharts";
 
 import { snapToTick, type ChartOrderLine } from "@/components/finance/chart-order-lines";
@@ -71,6 +117,12 @@ import { registerTaOverlays, ALL_DRAWING_OVERLAYS } from "./overlays";
 import { resolvePfContent } from "./overlays/figure-kit";
 import { registerCustomIndicators } from "./custom-indicators";
 import { registerPfSignals, PF_SIGNALS_NAME, PF_SIGNALS_INSTANCE_ID } from "./custom-indicators/pf-signals";
+import {
+  INDICATOR_TOOLTIP_FEATURES,
+  INDICATOR_FEATURE_EYE_ID,
+  INDICATOR_FEATURE_GEAR_ID,
+  INDICATOR_FEATURE_REMOVE_ID
+} from "./custom-indicators/tooltip-features";
 import { resolveParams, type IndicatorInstance } from "./indicator-registry";
 import type { ChartDrawingPoint, ChartDrawingRow } from "./use-chart-drawings";
 import type { Candle } from "./use-workbench-candles";
@@ -157,6 +209,15 @@ const WORKBENCH_THEME: DeepPartial<Styles> = {
   crosshair: {
     horizontal: { line: { color: "#94a3b8" }, text: { backgroundColor: "#94a3b8" } },
     vertical: { line: { color: "#94a3b8" }, text: { backgroundColor: "#94a3b8" } }
+  },
+  // Founder feedback (2026-08-04) — the GLOBAL default `tooltipData.features`
+  // for every indicator tooltip that doesn't supply its own (see module doc
+  // + `custom-indicators/tooltip-features.ts`'s own doc for the full
+  // verification) — covers all 27 built-ins + 13 of 14 customs uniformly.
+  // `ICHIMOKU` (the one custom with its own `createTooltipDataSource`)
+  // re-exports the same array explicitly (`custom-indicators/pack-a.ts`).
+  indicator: {
+    tooltip: { features: INDICATOR_TOOLTIP_FEATURES }
   }
 };
 
@@ -272,7 +333,11 @@ export function KlineChart({
   clearAllDrawingsNonce,
   onAllDrawingsCleared,
   drawingStyleCommand,
-  removeDrawingCommand
+  removeDrawingCommand,
+  onCrosshairDataIndexChange,
+  onIndicatorOpenSettings,
+  onIndicatorRemove,
+  indicatorStyleCommand
 }: {
   candles: Candle[];
   interval: string;
@@ -322,6 +387,14 @@ export function KlineChart({
   drawingStyleCommand?: { id: string; styles: Record<string, unknown>; nonce: number } | null;
   /** S1, T5/T7 — bump `nonce` with a NEW `{id}` to remove a specific overlay by id (the D10 empty-text-popover-dismissal delete, and the style editor's own Delete button) — reuses the exact same NOT-suspended `removeOverlay` path as the Backspace hotkey, so it reaches `onDrawingRemoved` → the server DELETE identically. */
   removeDrawingCommand?: { id: string; nonce: number } | null;
+  /** Founder feedback (2026-08-04), Part 1 — fires with the crosshair-hovered bar's `dataIndex` (rAF-throttled), or `null` when the crosshair isn't over the chart (mouse left the container) — the detached `indicator-active-strip.tsx`'s own crosshair-follow signal, since it has no native equivalent to the on-chart tooltip's built-in one (see module doc). `null` means "use the latest bar," matching klinecharts' own default. */
+  onCrosshairDataIndexChange?: (dataIndex: number | null) => void;
+  /** Founder feedback (2026-08-04), Part 1 — fired by the on-chart legend's gear icon (native `onIndicatorTooltipFeatureClick`, see module doc). Same `(instance, anchor)` shape `indicator-active-strip.tsx`'s own gear button already calls — `chart-workbench.tsx` wires both to the identical handler. `instance` is looked up from `mainIndicators`/`subIndicators` by the clicked feature's `indicator.id`; `anchor` is the clicked pane's own top-left (`chart.getSize(paneId)`) plus a small fixed offset — the native click payload carries no pixel coordinate (verified: `featureInfo = {paneId, feature, indicator}` only), so this is a documented, honest approximation of "near where you clicked," not pixel-exact. */
+  onIndicatorOpenSettings?: (instance: IndicatorInstance, anchor: { left: number; top: number }) => void;
+  /** Founder feedback (2026-08-04), Part 1 — fired by the on-chart legend's × icon; same `instanceId` shape `indicator-active-strip.tsx`'s own remove button already calls — MUST go through `chart-workbench.tsx`'s React state (never a raw `chart.removeIndicator` call from in here), or the next indicator-sync effect pass would just recreate what this just removed. */
+  onIndicatorRemove?: (instanceId: string) => void;
+  /** Founder feedback (2026-08-04), Part 1 — the settings popover's new STYLE section: bump `nonce` with a NEW `{id, styles}` to `overrideIndicator({id, styles})`. Deliberately UNIFORM across every line-type figure of that instance (a single-element `styles.lines` array — verified against `eachFigures`'s `lineStyles[lineCount % lineStyleCount]` modulo resolution: submitting exactly one style object recolors/resizes EVERY line figure of the instance, not just the first — see `indicator-settings-popover.tsx`'s own doc for why independent per-sub-line control was scoped out this pass). */
+  indicatorStyleCommand?: { id: string; styles: Record<string, unknown>; nonce: number } | null;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<Chart | null>(null);
@@ -360,6 +433,19 @@ export function KlineChart({
   pendingToolStylesRef.current = pendingToolStyles;
   const magnetModeRef = useRef(magnetMode);
   magnetModeRef.current = magnetMode;
+
+  // Founder feedback (2026-08-04), Part 1 — callback refs for the new
+  // crosshair-follow/on-chart-legend-feature-click props, same mirror
+  // pattern as every ref above.
+  const onCrosshairDataIndexChangeRef = useRef(onCrosshairDataIndexChange);
+  onCrosshairDataIndexChangeRef.current = onCrosshairDataIndexChange;
+  const onIndicatorOpenSettingsRef = useRef(onIndicatorOpenSettings);
+  onIndicatorOpenSettingsRef.current = onIndicatorOpenSettings;
+  const onIndicatorRemoveRef = useRef(onIndicatorRemove);
+  onIndicatorRemoveRef.current = onIndicatorRemove;
+  /** Every current instance, both panes combined — kept fresh every render (a plain assignment, not an effect: it's only ever read from inside an event handler closure, never used as a dependency) so the `onIndicatorTooltipFeatureClick` handler can resolve a clicked `indicator.id` back to the full `IndicatorInstance` object `onIndicatorOpenSettings` expects, without needing its own stale-closure guard. */
+  const allIndicatorInstancesRef = useRef<IndicatorInstance[]>([]);
+  allIndicatorInstancesRef.current = [...mainIndicators, ...subIndicators];
 
   // W3, T4 — drawing overlay bookkeeping, all separate from `overlaySnapshotRef`
   // (order lines) below: DISJOINT id namespaces (`dw_*` for hydrated/
@@ -431,6 +517,28 @@ export function KlineChart({
   const dragJustEndedRef = useRef(false);
   const dragStartPriceRef = useRef<Record<string, number>>({});
 
+  // Founder feedback (2026-08-04), Part 1 — set synchronously (never through
+  // React state/an effect) the moment an on-chart legend feature (eye/gear/
+  // remove) fires, so `handleClick` below can bail out for the SAME physical
+  // click and never also open the order-intent popover underneath. Safe
+  // specifically because klinecharts wires tooltip features to
+  // `mouseDownEvent` (verified — `custom-indicators/tooltip-features.ts`'s
+  // own doc), which always fires strictly BEFORE the browser's own
+  // synthesized `click` event on the same element — the same "set a ref
+  // during an earlier event in the same gesture, read it in a later one"
+  // idiom `dragJustEndedRef` already uses one line above.
+  const suppressNextClickRef = useRef(false);
+
+  // Founder feedback (2026-08-04), Part 1 — crosshair-follow state for the
+  // DETACHED strip (see module doc for why the on-chart legend needs none of
+  // this — it's a klinecharts-native default). `hoveredXRef`/
+  // `hoveredPaneIdRef` hold the latest raw pixel position from
+  // `onCrosshairChange`; `crosshairRafRef` throttles the dataIndex
+  // conversion + prop callback to at most once per animation frame.
+  const hoveredXRef = useRef<number | undefined>(undefined);
+  const hoveredPaneIdRef = useRef<string | undefined>(undefined);
+  const crosshairRafRef = useRef<number | null>(null);
+
   // DataLoader bridge state (see module doc above).
   const candlesRef = useRef<Candle[]>(candles);
   candlesRef.current = candles;
@@ -469,7 +577,98 @@ export function KlineChart({
       chart.setPeriod(intervalToPeriod(interval));
     }
 
+    // Founder feedback (2026-08-04), Part 1 — crosshair-follow for the
+    // detached strip. rAF-throttled: `onCrosshairChange` can fire on every
+    // pointermove, but we only ever need the LATEST position by the next
+    // paint (matches the house render-loop law's "throttle high-frequency
+    // chart events via rAF" convention already used elsewhere in this
+    // program's chart-adjacent code). See module doc for the verified
+    // payload-shape gotcha (`{x, y, paneId}`, never `dataIndex` — re-derived
+    // below via `convertFromPixel`).
+    function flushCrosshair() {
+      crosshairRafRef.current = null;
+      const chart = chartRef.current;
+      const callback = onCrosshairDataIndexChangeRef.current;
+      if (!chart || !callback) return;
+      const x = hoveredXRef.current;
+      if (x === undefined) {
+        callback(null);
+        return;
+      }
+      const converted = chart.convertFromPixel([{ x }], { paneId: hoveredPaneIdRef.current ?? MAIN_PANE_ID });
+      const point = Array.isArray(converted) ? converted[0] : converted;
+      const dataIndex = typeof point?.dataIndex === "number" ? Math.round(point.dataIndex) : undefined;
+      callback(dataIndex !== undefined && dataIndex >= 0 && dataIndex < candlesRef.current.length ? dataIndex : null);
+    }
+    function scheduleCrosshairFlush() {
+      if (crosshairRafRef.current !== null) return;
+      crosshairRafRef.current = requestAnimationFrame(flushCrosshair);
+    }
+    function handleCrosshairChange(raw: unknown) {
+      const r = raw as { x?: number; paneId?: string } | null | undefined;
+      if (r && typeof r.x === "number") {
+        hoveredXRef.current = r.x;
+        hoveredPaneIdRef.current = r.paneId;
+      } else {
+        hoveredXRef.current = undefined;
+      }
+      scheduleCrosshairFlush();
+    }
+    function handleMouseLeave() {
+      hoveredXRef.current = undefined;
+      scheduleCrosshairFlush();
+    }
+    chart?.subscribeAction("onCrosshairChange", handleCrosshairChange);
+    el.addEventListener("mouseleave", handleMouseLeave);
+
+    // Founder feedback (2026-08-04), Part 1 — the on-chart legend's eye/
+    // gear/remove icon clicks (see `custom-indicators/tooltip-features.ts`'s
+    // own doc for the verified `onIndicatorTooltipFeatureClick` payload
+    // shape: `{paneId, feature, indicator}`, no pixel coordinate).
+    interface IndicatorFeatureClickInfo {
+      paneId?: string;
+      feature?: { id?: string };
+      indicator?: { id?: string; visible?: boolean };
+    }
+    function handleIndicatorFeatureClick(raw: unknown) {
+      const info = raw as IndicatorFeatureClickInfo | null | undefined;
+      const featureId = info?.feature?.id;
+      const instanceId = info?.indicator?.id;
+      if (!featureId || !instanceId) return;
+      suppressNextClickRef.current = true; // see this ref's own doc above — always precedes the browser's own 'click' for this same gesture.
+      const chart = chartRef.current;
+      if (!chart) return;
+
+      switch (featureId) {
+        case INDICATOR_FEATURE_EYE_ID: {
+          const [live] = chart.getIndicators({ id: instanceId });
+          // `name` is a REQUIRED field on `overrideIndicator`'s own `IndicatorCreate` type
+          // (`ExcludePickPartial<..., "name">` — verified against dist/index.d.ts) even
+          // though only `visible` is actually changing here.
+          if (live) chart.overrideIndicator({ id: instanceId, name: live.name, visible: !live.visible });
+          break;
+        }
+        case INDICATOR_FEATURE_GEAR_ID: {
+          const instance = allIndicatorInstancesRef.current.find((i) => i.instanceId === instanceId);
+          if (!instance) break;
+          const bounding = info?.paneId ? chart.getSize(info.paneId) : null;
+          const anchor = bounding ? { left: bounding.left + 8, top: bounding.top + 28 } : { left: 60, top: 60 };
+          onIndicatorOpenSettingsRef.current?.(instance, anchor);
+          break;
+        }
+        case INDICATOR_FEATURE_REMOVE_ID: {
+          onIndicatorRemoveRef.current?.(instanceId); // MUST go through React state, not a raw chart.removeIndicator — see prop doc.
+          break;
+        }
+      }
+    }
+    chart?.subscribeAction("onIndicatorTooltipFeatureClick", handleIndicatorFeatureClick);
+
     function handleClick(e: MouseEvent) {
+      if (suppressNextClickRef.current) {
+        suppressNextClickRef.current = false;
+        return;
+      }
       if (dragJustEndedRef.current) {
         dragJustEndedRef.current = false;
         return;
@@ -507,7 +706,14 @@ export function KlineChart({
 
     return () => {
       el.removeEventListener("click", handleClick);
+      el.removeEventListener("mouseleave", handleMouseLeave);
       document.removeEventListener("keydown", handleKeyDown);
+      chart?.unsubscribeAction("onCrosshairChange", handleCrosshairChange);
+      chart?.unsubscribeAction("onIndicatorTooltipFeatureClick", handleIndicatorFeatureClick);
+      if (crosshairRafRef.current !== null) {
+        cancelAnimationFrame(crosshairRafRef.current);
+        crosshairRafRef.current = null;
+      }
       dispose(el);
       chartRef.current = null;
       initCountRef.current = 0;
@@ -933,6 +1139,25 @@ export function KlineChart({
     lastRemoveNonceRef.current = removeDrawingCommand.nonce;
     chartRef.current?.removeOverlay({ id: removeDrawingCommand.id });
   }, [removeDrawingCommand]);
+
+  // ── Founder feedback (2026-08-04), Part 1 — the indicator settings ─────
+  // popover's STYLE section: nonce-driven `overrideIndicator({id, styles})`,
+  // same idiom as `drawingStyleCommand` above. See this prop's own doc for
+  // why a single-element `styles.lines` array is deliberately applied
+  // UNIFORMLY to every line-type figure of the instance.
+  const lastIndicatorStyleNonceRef = useRef(indicatorStyleCommand?.nonce ?? 0);
+  useEffect(() => {
+    if (!indicatorStyleCommand || indicatorStyleCommand.nonce === lastIndicatorStyleNonceRef.current) return;
+    lastIndicatorStyleNonceRef.current = indicatorStyleCommand.nonce;
+    const chart = chartRef.current;
+    if (!chart) return;
+    // `name` is a REQUIRED field on `overrideIndicator`'s own type (same gotcha as the
+    // eye-toggle handler above) — read live off the instance rather than widening this
+    // prop's payload with a redundant `name` the caller would have to keep in sync itself.
+    const [live] = chart.getIndicators({ id: indicatorStyleCommand.id });
+    if (!live) return;
+    chart.overrideIndicator({ id: indicatorStyleCommand.id, name: live.name, styles: indicatorStyleCommand.styles as DeepPartial<IndicatorStyle> });
+  }, [indicatorStyleCommand]);
 
   return <div ref={containerRef} className="h-full w-full min-h-[420px]" />;
 }

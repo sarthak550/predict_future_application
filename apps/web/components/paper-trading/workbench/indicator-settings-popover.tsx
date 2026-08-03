@@ -10,27 +10,59 @@
  * applied) and again defensively inside `clampParams` at the call site in
  * `kline-chart.tsx`, so a malformed value can never reach klinecharts even
  * if this component's own clamp were ever bypassed.
+ *
+ * **Founder feedback (2026-08-04), Part 1 — the STYLE section.** Reuses the
+ * exact same 6-swatch/3-width `DrawingStyleToolbar` constants
+ * (`SWATCH_COLORS`/`LINE_WIDTHS` from `overlays/figure-kit.ts`) and instant-
+ * apply UX for visual consistency with the drawings style editor. Applied
+ * UNIFORMLY to every line-type figure of the instance, not independently
+ * per sub-line — a deliberate, documented scope decision, not an oversight:
+ * `overrideIndicator({styles:{lines:[...]}})`'s real merge semantics
+ * (verified against `dist/index.esm.js`'s `eachFigures`, ~line 3066) REPLACE
+ * the whole `lines[]` array wholesale (`formatValue(styles, 'lines',
+ * defaultStyles.lines)` — `styles?.lines ?? defaultStyles.lines`, no
+ * per-index deep-merge with the built-in default), and each line-type
+ * figure resolves its style via `lineStyles[lineCount % lineStyleCount]` —
+ * a MODULO, not a direct index. Submitting a single-element `lines` array
+ * therefore makes `lineCount % 1 === 0` for every line figure, so EVERY
+ * line in the instance resolves to that SAME one style object — the exact
+ * mechanic this section exploits for a correct, general "uniform recolor"
+ * with zero per-indicator figure-count metadata needed (an independent
+ * per-sub-line color picker would need a verified line-count for all 27
+ * built-ins + 14 customs — a larger follow-up, not done this pass). One
+ * real, flagged interaction: `SUPERTREND`'s own line figure has a `styles`
+ * callback that UNCONDITIONALLY returns a trend-based `color` (green/red
+ * flip) — per the SAME merge order, the figure's own returned style wins
+ * per-key over this override, so a picked COLOR is a silent no-op for
+ * SUPERTREND specifically (by design — the flip color IS the indicator's
+ * signal) while WIDTH still applies (`ss` only ever returns `color`).
  */
 import { useState } from "react";
 import { RotateCcw, X } from "lucide-react";
 
 import { clampParams, getIndicatorMeta, resolveParams, type IndicatorInstance } from "./indicator-registry";
+import { SWATCH_COLORS, LINE_WIDTHS } from "./overlays/figure-kit";
 
 export function IndicatorSettingsPopover({
   instance,
   left,
   top,
   onApply,
+  onApplyStyle,
   onClose
 }: {
   instance: IndicatorInstance;
   left: number;
   top: number;
   onApply: (params: number[]) => void;
+  /** Founder feedback (2026-08-04) — the STYLE section's instant-apply callback; see module doc for the uniform-across-lines scope. */
+  onApplyStyle?: (styles: { color?: string; size?: number }) => void;
   onClose: () => void;
 }) {
   const meta = getIndicatorMeta(instance.name);
   const [draft, setDraft] = useState<number[]>(() => resolveParams(instance));
+  const [activeColor, setActiveColor] = useState<string | null>(null);
+  const [activeWidth, setActiveWidth] = useState<number | null>(null);
 
   if (!meta) return null;
 
@@ -79,6 +111,51 @@ export function IndicatorSettingsPopover({
                 />
               </label>
             ))}
+          </div>
+        )}
+
+        {onApplyStyle && (
+          <div className="mt-3 border-t border-ink-100 pt-3">
+            <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-ink-400">Style</p>
+            <div className="flex items-center gap-1">
+              {SWATCH_COLORS.map((color) => (
+                <button
+                  key={color}
+                  type="button"
+                  title={color}
+                  aria-label={`Color ${color}`}
+                  aria-pressed={activeColor === color}
+                  onClick={() => {
+                    setActiveColor(color);
+                    // Sent as the FULL merged {color, size} pair (not just the just-clicked field) — `overrideIndicator`'s
+                    // `styles.lines` REPLACES the whole array wholesale (see module doc), so a color-only patch here would
+                    // silently drop a previously-applied width, and vice versa below.
+                    onApplyStyle({ color, size: activeWidth ?? undefined });
+                  }}
+                  className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${activeColor === color ? "ring-2 ring-offset-1 ring-sky-500" : "hover:bg-ink-50"}`}
+                >
+                  <span className="h-3.5 w-3.5 rounded-full" style={{ backgroundColor: color }} />
+                </button>
+              ))}
+            </div>
+            <div className="mt-1.5 flex items-center gap-1">
+              {LINE_WIDTHS.map((width) => (
+                <button
+                  key={width}
+                  type="button"
+                  title={`Width ${width}`}
+                  aria-label={`Line width ${width}`}
+                  aria-pressed={activeWidth === width}
+                  onClick={() => {
+                    setActiveWidth(width);
+                    onApplyStyle({ color: activeColor ?? undefined, size: width });
+                  }}
+                  className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${activeWidth === width ? "ring-2 ring-offset-1 ring-sky-500" : "hover:bg-ink-50"}`}
+                >
+                  <span className="w-3.5 rounded-full bg-ink-700" style={{ height: Math.max(1.5, width) }} />
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
