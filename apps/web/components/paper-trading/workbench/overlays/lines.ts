@@ -44,10 +44,17 @@ import {
   fillPolygon,
   labelFigure,
   formatRupeesLabel,
-  formatPercentLabel,
+  buildDeltaStatsText,
+  buildChannelWidthText,
   resolveLineColor,
   pixelXToDataIndex,
+  pixelYToPrice,
+  linearYAtX,
+  isStatsPillVisible,
+  trackOverlaySelection,
   midpoint,
+  EMERALD,
+  ROSE,
   SKY,
   SKY_FILL,
   VIOLET,
@@ -81,6 +88,18 @@ function linearRegression(ys: number[]): { slope: number; intercept: number; sig
 
 export function registerLineOverlays(): void {
   // ── infoLine — 2pt: Δ₹, %, and bar count in one mid-line label. ────────
+  // ALWAYS visible (not draw/select-gated like `built-in-stats.ts`'s
+  // `segment`/`rayLine`/`straightLine`) — a deliberate design split, not an
+  // inconsistency: `infoLine` is this workbench's own dedicated MEASURE
+  // tool (same category as `priceRange`/`dateRange`/`datePriceRange` in
+  // `measure.ts`, which are likewise always-on per the founder-feedback
+  // legends pass's own measure-tool audit), not a re-skin of TradingView's
+  // plain "Trend Line" — its whole purpose is to leave a persistent
+  // readout on the chart. `buildDeltaStatsText` here is the SAME shared
+  // helper (`figure-kit.ts`) `built-in-stats.ts`'s `segment`/`rayLine`/
+  // `straightLine` now reuse verbatim, so the STRING FORMAT is identical
+  // across every 2-anchor line tool in the workbench, only the visibility
+  // rule differs by tool category.
   registerOverlay({
     name: "infoLine",
     totalStep: 3,
@@ -93,18 +112,11 @@ export function registerLineOverlays(): void {
       const [p0, p1] = coordinates;
       const v0 = overlay.points[0]?.value ?? 0;
       const v1 = overlay.points[1]?.value ?? 0;
-      const delta = v1 - v0;
-      const pct = v0 !== 0 ? delta / v0 : 0;
       const dataIndex0 = pixelXToDataIndex(xAxis, p0.x);
       const dataIndex1 = pixelXToDataIndex(xAxis, p1.x);
-      const bars = Math.round(Math.abs(dataIndex1 - dataIndex0));
+      const { text, positive } = buildDeltaStatsText(v0, v1, dataIndex0, dataIndex1);
       const mid = midpoint(p0, p1);
-      return [
-        solidLine([p0, p1], color, 1.4),
-        labelFigure(mid, `${formatRupeesLabel(delta)} (${formatPercentLabel(pct)}) · ${bars} bar${bars === 1 ? "" : "s"}`, {
-          background: delta >= 0 ? "#059669" : "#e11d48",
-        }),
-      ];
+      return [solidLine([p0, p1], color, 1.4), labelFigure(mid, text, { background: positive ? EMERALD : ROSE })];
     },
   });
 
@@ -209,14 +221,21 @@ export function registerLineOverlays(): void {
   });
 
   // ── flatTopBottom — 3pt: trendline p0→p1 + horizontal at p2.value ──────
-  // spanning the same x-range, filled between.
+  // spanning the same x-range, filled between. Width stats (2026-08-05
+  // founder-feedback pass): the vertical price gap between the trendline
+  // (interpolated at the FLAT anchor's own x, via `linearYAtX` — the same
+  // ported-from-dist helper `built-in-stats.ts`'s `priceChannelLine` uses)
+  // and the flat line's own real value — draw-OR-selected, same rule as
+  // `priceChannelLine`/`parallelStraightLine` (no native klinecharts
+  // equivalent exists for a computed channel width, so no double-label risk).
   registerOverlay({
     name: "flatTopBottom",
     totalStep: 4,
     needDefaultPointFigure: true,
     needDefaultXAxisFigure: true,
     needDefaultYAxisFigure: true,
-    createPointFigures: ({ coordinates, overlay }: OverlayCreateFiguresCallbackParams<unknown>): OverlayFigure[] => {
+    ...trackOverlaySelection,
+    createPointFigures: ({ coordinates, overlay, yAxis }: OverlayCreateFiguresCallbackParams<unknown>): OverlayFigure[] => {
       if (coordinates.length < 2) return [dashedLine(coordinates)];
       const color = resolveLineColor(overlay.styles, INK_600);
       const fill = SKY_FILL;
@@ -226,22 +245,34 @@ export function registerLineOverlays(): void {
       const x1 = Math.max(p0.x, p1.x);
       const flatLeft: Coordinate = { x: x0, y: p2.y };
       const flatRight: Coordinate = { x: x1, y: p2.y };
-      return [
+      const figures: OverlayFigure[] = [
         fillPolygon([p0, p1, flatRight, flatLeft], fill, color, 1),
         solidLine([p0, p1], color, 1.4),
         solidLine([flatLeft, flatRight], color, 1.4),
       ];
+      if (p0.x !== p1.x && yAxis && isStatsPillVisible(overlay)) {
+        const trendYAtFlatX = linearYAtX(p0, p1, p2.x);
+        const trendPrice = pixelYToPrice(yAxis, trendYAtFlatX);
+        const flatPrice = overlay.points[2]?.value ?? pixelYToPrice(yAxis, p2.y);
+        figures.push(labelFigure(midpoint(p2, { x: p2.x, y: trendYAtFlatX }), buildChannelWidthText(trendPrice, flatPrice), { background: VIOLET }));
+      }
+      return figures;
     },
   });
 
   // ── disjointChannel — 4pt: two independent segments p0→p1, p2→p3, ──────
-  // filled between.
+  // filled between. Width stats (2026-08-05 founder-feedback pass): since
+  // the two segments are, per the tool's own name, independent (generally
+  // non-parallel), a single representative reading is reported at the
+  // START anchors (p0's real value vs p2's) rather than a continuously-
+  // varying width — a documented simplification, not an oversight.
   registerOverlay({
     name: "disjointChannel",
     totalStep: 5,
     needDefaultPointFigure: true,
     needDefaultXAxisFigure: true,
     needDefaultYAxisFigure: true,
+    ...trackOverlaySelection,
     createPointFigures: ({ coordinates, overlay }: OverlayCreateFiguresCallbackParams<unknown>): OverlayFigure[] => {
       if (coordinates.length < 2) return [dashedLine(coordinates)];
       const color = resolveLineColor(overlay.styles, INK_600);
@@ -251,6 +282,11 @@ export function registerLineOverlays(): void {
       if (!p2 || !p3) return figures; // second segment not yet fully placed — show only the first.
       figures.push(solidLine([p2, p3], color, 1.4));
       figures.push(fillPolygon([p0, p1, p3, p2], fill, color, 1));
+      if (isStatsPillVisible(overlay)) {
+        const v0 = overlay.points[0]?.value ?? 0;
+        const v2 = overlay.points[2]?.value ?? 0;
+        figures.push(labelFigure(midpoint(p0, p2), buildChannelWidthText(v0, v2), { background: VIOLET }));
+      }
       return figures;
     },
   });

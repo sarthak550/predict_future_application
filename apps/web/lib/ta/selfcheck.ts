@@ -29,7 +29,7 @@ import { computeOrderCosts } from "@predict-future/business-rules/papertrading/c
 
 import { runBacktest, intervalToProductType, type BacktestTrade } from "./backtest";
 import { maCross, finalizeSignals, type StrategyCandle, type StrategySignal } from "./strategies";
-import { computeTechnicalRating } from "./technicals";
+import { computeTechnicalRating, computeTechnicalDetail, type DetailRow } from "./technicals";
 import { computeIndicatorSignal } from "./indicator-signals";
 
 // ── Tiny assertion harness ───────────────────────────────────────────────
@@ -353,6 +353,84 @@ function checkIndicatorSignalFixtures(): void {
   assert("indicatorSignal: BOLL(5,2) spike stateText", bollSignal.stateText === "At/above upper band", `${bollSignal.stateText}`);
 }
 
+// ── Fixture 5: `computeTechnicalDetail` — founder-feedback pass (2026-08-06)
+// "single source, no drift" regression guard. `computeTechnicalRating` and
+// `computeTechnicalDetail` now read the SAME rule table's `evaluate()` calls
+// (see `technicals.ts`'s module doc) — on the SAME candle series, the
+// detail table's row tallies must exactly equal the rating's own group
+// counts. Also verifies the "never fabricate" skip-with-honesty rule: a
+// window too short for a period is reported `skipped`, never a signal. ────
+
+function tallyRows(rows: readonly DetailRow[]): { buy: number; sell: number; neutral: number } {
+  let buy = 0;
+  let sell = 0;
+  let neutral = 0;
+  for (const row of rows) {
+    if (row.skipped) continue;
+    if (row.signal === "buy") buy++;
+    else if (row.signal === "sell") sell++;
+    else neutral++;
+  }
+  return { buy, sell, neutral };
+}
+
+function checkTechnicalDetailConsistency(): void {
+  // Uptrend (80 bars) — same fixture `checkTechnicalRatingFixtures` already hand-verified above.
+  const up = buildMonotonicCandles(80, 1000, 2);
+  const upRating = computeTechnicalRating(up);
+  const upDetail = computeTechnicalDetail(up);
+
+  const upMaTally = tallyRows(upDetail.ma);
+  assert(
+    "technicalDetail: uptrend MA row tally matches rating.ma exactly (single source, no drift)",
+    upMaTally.buy === upRating.ma.buy && upMaTally.sell === upRating.ma.sell && upMaTally.neutral === upRating.ma.neutral,
+    JSON.stringify({ upMaTally, ratingMa: upRating.ma })
+  );
+  const upOscTally = tallyRows(upDetail.oscillators);
+  assert(
+    "technicalDetail: uptrend oscillator row tally matches rating.oscillators exactly",
+    upOscTally.buy === upRating.oscillators.buy && upOscTally.sell === upRating.oscillators.sell && upOscTally.neutral === upRating.oscillators.neutral,
+    JSON.stringify({ upOscTally, ratingOsc: upRating.oscillators })
+  );
+
+  // Skip-with-honesty: 80 bars loaded covers periods 10/20/30/50 but not 100/200 (SMA+EMA each -> 4 rows) —
+  // those 4 rows must be reported `skipped`, never a fabricated signal.
+  const skippedMaRows = upDetail.ma.filter((r) => r.skipped);
+  assert("technicalDetail: MA(100)/MA(200) SMA+EMA (4 rows) are skipped at 80 bars, never fabricated", skippedMaRows.length === 4, `got ${skippedMaRows.length}`);
+  assert(
+    "technicalDetail: every skipped MA row's own minBars exceeds the loaded window",
+    skippedMaRows.every((r) => r.skipped && r.minBars > 80),
+    JSON.stringify(skippedMaRows)
+  );
+  assert("technicalDetail: evaluated + skipped MA rows total 12 (6 periods × SMA/EMA)", upDetail.ma.length === 12, `got ${upDetail.ma.length}`);
+  assert("technicalDetail: oscillators group has all 11 TradingView rows", upDetail.oscillators.length === 11, `got ${upDetail.oscillators.length}`);
+
+  // Every evaluated row (never a skipped one) carries a real, non-empty three-part reason.
+  const evaluatedRows = [...upDetail.ma, ...upDetail.oscillators].filter((r) => !r.skipped);
+  assert(
+    "technicalDetail: every evaluated row has a non-empty reason.rule/reading/meaning",
+    evaluatedRows.every((r) => !r.skipped && r.reason.rule.length > 0 && r.reason.reading.length > 0 && r.reason.meaning.length > 0),
+    "some evaluated row has an empty reason field"
+  );
+
+  // Flat series (250 bars) — covers every MA period, zero skipped MA rows; cross-checked against the SAME
+  // `checkTechnicalRatingFixtures` flat fixture's own unanimous-neutral assertion.
+  const flat = buildConstantCandles(250, 1000);
+  const flatDetail = computeTechnicalDetail(flat);
+  const flatRating = computeTechnicalRating(flat);
+  assert("technicalDetail: flat 250-bar series has zero skipped MA rows (all 6 periods covered)", flatDetail.ma.every((r) => !r.skipped), JSON.stringify(flatDetail.ma.filter((r) => r.skipped)));
+  const flatMaTally = tallyRows(flatDetail.ma);
+  assert(
+    "technicalDetail: flat MA row tally matches rating.ma exactly",
+    flatMaTally.buy === flatRating.ma.buy && flatMaTally.sell === flatRating.ma.sell && flatMaTally.neutral === flatRating.ma.neutral,
+    JSON.stringify({ flatMaTally, ratingMa: flatRating.ma })
+  );
+
+  // Empty input — honest empty detail, matching computeTechnicalRating's own -1 sentinel.
+  const emptyDetail = computeTechnicalDetail([]);
+  assert("technicalDetail: empty candles -> computedAtIndex -1, empty rows", emptyDetail.computedAtIndex === -1 && emptyDetail.ma.length === 0 && emptyDetail.oscillators.length === 0);
+}
+
 // ── Run everything ────────────────────────────────────────────────────────
 
 const signals = checkMaCrossSignals();
@@ -363,6 +441,7 @@ checkQtyMinOneGuard();
 checkFinalizeSignalsDropsLeadingSell();
 checkTechnicalRatingFixtures();
 checkIndicatorSignalFixtures();
+checkTechnicalDetailConsistency();
 
 // eslint-disable-next-line no-console
 console.log(`ta:check — ${passCount} passed, ${failCount} failed.`);

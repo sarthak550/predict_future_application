@@ -16,7 +16,25 @@
  * the figure's own `(x,y)`, uppercase or lowercase alike.
  */
 import { registerOverlay, type Coordinate, type OverlayFigure, type OverlayCreateFiguresCallbackParams } from "klinecharts";
-import { solidLine, dashedLine, fillPolygon, circleFigure, pathFigure, resolveLineColor, resolvePolygonColor, INK_600, SKY_FILL } from "./figure-kit";
+import {
+  solidLine,
+  dashedLine,
+  fillPolygon,
+  circleFigure,
+  pathFigure,
+  labelFigure,
+  midpoint,
+  resolveLineColor,
+  resolvePolygonColor,
+  buildDeltaStatsText,
+  pixelXToDataIndex,
+  isStatsPillVisible,
+  trackOverlaySelection,
+  EMERALD,
+  ROSE,
+  INK_600,
+  SKY_FILL,
+} from "./figure-kit";
 
 export function registerShapeOverlays(): void {
   // ── ellipse — 3pt: P0 center, P1 major-axis endpoint (radius + ─────────
@@ -172,14 +190,17 @@ export function registerShapeOverlays(): void {
   // (`legacy-shapes.ts`) per the brief's own explicit contrast. `atan2`
   // direction + a perpendicular unit vector, same quadrant-safe technique
   // `arrow` itself established, just building a single closed polygon
-  // instead of a line + separate barb triangle.
+  // instead of a line + separate barb triangle. Stats pill (2026-08-05
+  // founder-feedback pass) — same Δ/%/bar-count content + draw-OR-selected
+  // visibility as `arrow`/`segment`/`rayLine`/`straightLine`.
   registerOverlay({
     name: "arrowMarker",
     totalStep: 3,
     needDefaultPointFigure: true,
     needDefaultXAxisFigure: true,
     needDefaultYAxisFigure: true,
-    createPointFigures: ({ coordinates, overlay }: OverlayCreateFiguresCallbackParams<unknown>): OverlayFigure[] => {
+    ...trackOverlaySelection,
+    createPointFigures: ({ coordinates, overlay, xAxis }: OverlayCreateFiguresCallbackParams<unknown>): OverlayFigure[] => {
       if (coordinates.length < 2) return [];
       const color = resolveLineColor(overlay.styles, INK_600);
       const [p0, p1] = coordinates;
@@ -205,7 +226,16 @@ export function registerShapeOverlays(): void {
         offset(shaftEnd, shaftHalfWidth, -1),
         offset(p0, shaftHalfWidth, -1),
       ];
-      return [fillPolygon(polygon, color, color, 1)];
+      const figures: OverlayFigure[] = [fillPolygon(polygon, color, color, 1)];
+      if (isStatsPillVisible(overlay)) {
+        const v0 = overlay.points[0]?.value ?? 0;
+        const v1 = overlay.points[1]?.value ?? 0;
+        const dataIndex0 = pixelXToDataIndex(xAxis, p0.x);
+        const dataIndex1 = pixelXToDataIndex(xAxis, p1.x);
+        const { text, positive } = buildDeltaStatsText(v0, v1, dataIndex0, dataIndex1);
+        figures.push(labelFigure(midpoint(p0, p1), text, { background: positive ? EMERALD : ROSE }));
+      }
+      return figures;
     },
   });
 

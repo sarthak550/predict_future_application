@@ -31,6 +31,43 @@
  * lines their chart figures already match) rather than round-tripped
  * through a promotion — a minor, deliberate duplication in the same spirit
  * as `custom-indicators/pack-a.ts`'s own pre-existing local `istDateKey`.
+ *
+ * **Founder-feedback pass (2026-08-06) — educational hover reasons.** "if
+ * user hovers over that they should get a message that tells the reason for
+ * that signal, as the purpose of paper trading is learning as well." Every
+ * case that can produce a non-null `state` now ALSO returns a three-part
+ * `reason` (`{rule, reading, meaning}`, `lib/ta/technicals.ts`'s
+ * `DetailReason` type) — rendered by `indicator-active-strip.tsx`'s
+ * `SignalReasonTrigger` hover/tap card. Two sourcing strategies, chosen
+ * per-indicator, never guessed:
+ *  - **Shared builders** (`priceVsLineReason`/`obOsReason`/`macdReason`,
+ *    imported from `technicals.ts`) for every indicator whose STATE LOGIC
+ *    here is the exact same convention `technicals.ts`'s own rating rule
+ *    table uses (MA/EMA/SMA/BBI/WMA/VWMA/HMA's price-vs-line read; RSI/
+ *    STOCHRSI/WR/CCI's oversold/overbought threshold read; MACD's DIF-vs-DEA
+ *    read) — text is byte-identical to the Signals table's own row for the
+ *    same convention, at whatever period the user has actually configured
+ *    (these builders are period-agnostic; only the VOTE/zone, computed
+ *    independently by each case's own pre-existing `priceVsLine`/`obOsState`
+ *    call, is passed in — this file's own state-determination logic is
+ *    UNTOUCHED, only the wording is shared, so neither module's boundary
+ *    semantics can silently drift out of sync with the other's).
+ *  - **KDJ/MFI** also route through `obOsReason` (same mechanical
+ *    oversold/overbought threshold shape, even though neither indicator is
+ *    part of `technicals.ts`'s own 11-oscillator TradingView set) — sharing
+ *    the wording BUILDER (not the specific indicator) avoids a third,
+ *    independently-worded copy of the same convention.
+ *  - **Bespoke, local text** for every indicator with NO equivalent in
+ *    `technicals.ts`'s rating rule table: `SAR`, `DMI` (ADX's strong/weak-
+ *    trend read is a different vocabulary than the rating's buy/sell/neutral
+ *    ADX rule — deliberately not shared), `BOLL`/`KELTNER`/`DONCHIAN`
+ *    (bands), `VWAP` (mechanically a price-vs-line read like MA, but given
+ *    its own session-anchored wording rather than generic "moving average"
+ *    text — VWAP means something distinct enough to traders to be worth
+ *    saying so), `AROON`, `ICHIMOKU` (the cloud), `SUPERTREND`.
+ *  - Every OTHER indicator (DMA/TRIX/ROC/BIAS/PSY/AO/BRAR/CR/EMV/VOL/OBV/
+ *    PVT/VR/AVP/PIVOTS/ATRX/CMF) stays `state: null, reason: null` — the
+ *    pre-existing honesty law, untouched by this pass.
  */
 import {
   ema,
@@ -60,6 +97,7 @@ import {
   type OhlcvLike
 } from "./math";
 import type { StrategyCandle } from "./strategies";
+import { priceVsLineReason, obOsReason, macdReason, type DetailReason } from "./technicals";
 
 export type SignalState = "bullish" | "bearish" | "neutral" | "overbought" | "oversold" | "strong" | "weak" | null;
 
@@ -69,9 +107,11 @@ export interface IndicatorSignal {
   state: SignalState;
   /** Plain-language reading, e.g. `"Overbought"`, `"Bullish cross"`, `null` when `state` is `null` (the honesty law — see module doc). */
   stateText: string | null;
+  /** Three-part educational reading (`{rule, reading, meaning}`) — `null` exactly when `state` is `null` (see module doc's "founder-feedback pass" section for sourcing). */
+  reason: DetailReason | null;
 }
 
-const NO_SIGNAL: IndicatorSignal = { valueText: "—", state: null, stateText: null };
+const NO_SIGNAL: IndicatorSignal = { valueText: "—", state: null, stateText: null, reason: null };
 
 function fmt(v: number | undefined, digits = 2): string {
   return v === undefined || !Number.isFinite(v) ? "—" : v.toFixed(digits);
@@ -110,6 +150,57 @@ function obOsState(value: number | undefined, oversoldAt: number, overboughtAt: 
   if (value <= oversoldAt) return { state: "oversold", stateText: `Oversold (${label})` };
   if (value >= overboughtAt) return { state: "overbought", stateText: `Overbought (${label})` };
   return { state: "neutral", stateText: null };
+}
+
+// ── Founder-feedback pass (2026-08-06) reason-adding wrappers — call the
+// PRE-EXISTING state helpers above completely unchanged (zero regression
+// risk to `state`/`stateText`), then compute `reason` from the SAME
+// close/line or value/thresholds using the SAME `<`/`>`/`<=`/`>=` boundary
+// each helper itself just used, via `technicals.ts`'s shared builders. See
+// module doc. ────────────────────────────────────────────────────────────
+
+/** `priceVsLine` + a shared, period-agnostic reason (MA/EMA/SMA/BBI/WMA/VWMA/HMA — see module doc; VWAP deliberately does NOT use this, it gets its own bespoke wording). */
+function priceVsLineWithReason(close: number | undefined, line: number | undefined, label: string): Pick<IndicatorSignal, "state" | "stateText" | "reason"> {
+  const base = priceVsLine(close, line, label);
+  if (close === undefined || line === undefined) return { ...base, reason: null };
+  const zone = close > line ? "above" : close < line ? "below" : "at";
+  return { ...base, reason: priceVsLineReason(label, close, line, zone) };
+}
+
+/** `obOsState` + a shared, period-agnostic reason (RSI/STOCHRSI/WR/CCI overlap `technicals.ts`'s own oscillator rules; KDJ/MFI share only the wording BUILDER, not an equivalent rating rule — see module doc). Mirrors `obOsState`'s own `<=`/`>=` boundary exactly. */
+function obOsWithReason(indicatorName: string, label: string, value: number | undefined, oversoldAt: number, overboughtAt: number, displayLabel: string): Pick<IndicatorSignal, "state" | "stateText" | "reason"> {
+  const base = obOsState(value, oversoldAt, overboughtAt, displayLabel);
+  if (value === undefined) return { ...base, reason: null };
+  const zone = value <= oversoldAt ? "low" : value >= overboughtAt ? "high" : "mid";
+  return { ...base, reason: obOsReason(indicatorName, label, value, oversoldAt, overboughtAt, zone) };
+}
+
+/** `priceVsBand` + a bespoke reason (BOLL/KELTNER/DONCHIAN — "bands" has no equivalent in `technicals.ts`'s own rating rule table, per module doc, so this text is local and NOT shared). Mirrors `priceVsBand`'s own `>=`/`<=` boundary exactly. */
+function priceVsBandWithReason(
+  close: number | undefined,
+  upper: number | undefined,
+  lower: number | undefined,
+  label: string
+): Pick<IndicatorSignal, "state" | "stateText" | "reason"> {
+  const base = priceVsBand(close, upper, lower);
+  if (close === undefined || upper === undefined || lower === undefined) return { ...base, reason: null };
+  const zone = close >= upper ? "upper" : close <= lower ? "lower" : "inside";
+  const reason: DetailReason = {
+    rule: `${label} convention: price at/above the upper band reads bullish (strength/breakout); at/below the lower band reads bearish (weakness/breakdown); inside the bands reads neutral.`,
+    reading:
+      zone === "upper"
+        ? `Price (${fmt(close)}) is at/above the upper band (${fmt(upper)}).`
+        : zone === "lower"
+          ? `Price (${fmt(close)}) is at/below the lower band (${fmt(lower)}).`
+          : `Price (${fmt(close)}) is between the lower (${fmt(lower)}) and upper (${fmt(upper)}) bands.`,
+    meaning:
+      zone === "upper"
+        ? "the price has pushed to the high edge of its recent volatility envelope — conventionally read as strength, though also sometimes as an overextended move depending on context."
+        : zone === "lower"
+          ? "the price has pushed to the low edge of its recent volatility envelope — conventionally read as weakness, though also sometimes as an oversold move depending on context."
+          : "the price is trading within its normal recent volatility envelope — no edge condition to read."
+  };
+  return { ...base, reason };
 }
 
 // ── Local, value-only formulas (no state convention — see module doc for
@@ -417,34 +508,42 @@ export function computeIndicatorSignal(
     case "MA": {
       const lines = params.map((p) => last(sma(closes, p)));
       const valueText = params.map((p, i) => `MA(${p}) ${fmt(lines[i])}`).join(" · ");
-      return { valueText, ...priceVsLine(close, lines[0], `MA(${params[0]})`) };
+      return { valueText, ...priceVsLineWithReason(close, lines[0], `MA(${params[0]})`) };
     }
     case "EMA": {
       const lines = params.map((p) => last(ema(closes, p)));
       const valueText = params.map((p, i) => `EMA(${p}) ${fmt(lines[i])}`).join(" · ");
-      return { valueText, ...priceVsLine(close, lines[0], `EMA(${params[0]})`) };
+      return { valueText, ...priceVsLineWithReason(close, lines[0], `EMA(${params[0]})`) };
     }
     case "SMA": {
       const [period, weight] = params;
       const line = last(klineWeightedSma(closes, period, weight));
-      return { valueText: fmt(line), ...priceVsLine(close, line, "SMA") };
+      return { valueText: fmt(line), ...priceVsLineWithReason(close, line, "SMA") };
     }
     case "BBI": {
       const value = bbiLast(closes, params);
-      return { valueText: fmt(value), ...priceVsLine(close, value, "BBI") };
+      return { valueText: fmt(value), ...priceVsLineWithReason(close, value, "BBI") };
     }
     case "SAR": {
       const [startPct, stepPct, maxPct] = params;
       const value = last(parabolicSar(candles, startPct, stepPct, maxPct));
       if (close === undefined || value === undefined) return NO_SIGNAL;
-      return close > value
-        ? { valueText: fmt(value), state: "bullish", stateText: "Price above SAR (uptrend)" }
-        : { valueText: fmt(value), state: "bearish", stateText: "Price below SAR (downtrend)" };
+      const above = close > value;
+      const reason: DetailReason = {
+        rule: "Parabolic SAR convention: price trading above the SAR dot reads an uptrend (bullish); below it reads a downtrend (bearish) — the dot trails price and flips side when price crosses it.",
+        reading: `SAR is ${fmt(value)}; price (${fmt(close)}) is ${above ? "above" : "below"} it.`,
+        meaning: above
+          ? "the trailing stop-and-reverse dot sits below price — conventionally read as confirmation of an active uptrend."
+          : "the trailing stop-and-reverse dot sits above price — conventionally read as confirmation of an active downtrend."
+      };
+      return above
+        ? { valueText: fmt(value), state: "bullish", stateText: "Price above SAR (uptrend)", reason }
+        : { valueText: fmt(value), state: "bearish", stateText: "Price below SAR (downtrend)", reason };
     }
     case "DMA": {
       const [fast, slow, signal] = params;
       const { dma, ama } = dmaLast(closes, fast, slow, signal);
-      return { valueText: `DMA ${fmt(dma)} · AMA ${fmt(ama)}`, state: null, stateText: null };
+      return { valueText: `DMA ${fmt(dma)} · AMA ${fmt(ama)}`, state: null, stateText: null, reason: null };
     }
     case "DMI": {
       const [period, adxPeriod] = params;
@@ -452,16 +551,25 @@ export function computeIndicatorSignal(
       if (!point || point.adx === undefined) return NO_SIGNAL;
       const strength: SignalState = point.adx >= 25 ? "strong" : "weak";
       const direction = (point.pdi ?? 0) > (point.mdi ?? 0) ? "+DI leading" : (point.mdi ?? 0) > (point.pdi ?? 0) ? "-DI leading" : "flat";
+      const reason: DetailReason = {
+        rule: "ADX convention: readings at/above 25 read as a strong/established trend; below 25 as a weak or absent trend. The +DI/-DI pair (not ADX itself) shows which direction currently dominates.",
+        reading: `ADX is ${pct(point.adx)} — ${strength === "strong" ? "at/above the 25 strong-trend line" : "below the 25 strong-trend line"}, with ${direction} (+DI ${pct(point.pdi)} · -DI ${pct(point.mdi)}).`,
+        meaning:
+          strength === "strong"
+            ? "trend strength is elevated enough that this convention treats a direction as reliably established — the leading DI line names which side."
+            : "trend strength hasn't cleared the level this convention treats as 'established' — a directional read here is considered less reliable."
+      };
       return {
         valueText: `ADX ${pct(point.adx)} · +DI ${pct(point.pdi)} · -DI ${pct(point.mdi)}`,
         state: strength,
-        stateText: `${strength === "strong" ? "Strong" : "Weak"} trend · ${direction}`
+        stateText: `${strength === "strong" ? "Strong" : "Weak"} trend · ${direction}`,
+        reason
       };
     }
     case "TRIX": {
       const [period, signal] = params;
       const { trix, maTrix } = trixLast(closes, period, signal);
-      return { valueText: `TRIX ${pct(trix)} · Signal ${pct(maTrix)}`, state: null, stateText: null };
+      return { valueText: `TRIX ${pct(trix)} · Signal ${pct(maTrix)}`, state: null, stateText: null, reason: null };
     }
 
     // ── Bands ──
@@ -471,7 +579,7 @@ export function computeIndicatorSignal(
       const sd = last(stdev(closes, period));
       const upper = mid !== undefined && sd !== undefined ? mid + mult * sd : undefined;
       const lower = mid !== undefined && sd !== undefined ? mid - mult * sd : undefined;
-      return { valueText: `Mid ${fmt(mid)} · Upper ${fmt(upper)} · Lower ${fmt(lower)}`, ...priceVsBand(close, upper, lower) };
+      return { valueText: `Mid ${fmt(mid)} · Upper ${fmt(upper)} · Lower ${fmt(lower)}`, ...priceVsBandWithReason(close, upper, lower, "Bollinger Bands") };
     }
 
     // ── Momentum ──
@@ -483,13 +591,15 @@ export function computeIndicatorSignal(
       return {
         valueText: `DIF ${fmt(point.dif)} · DEA ${fmt(point.dea)} · Hist ${fmt(point.macd)}`,
         state: bullish ? "bullish" : "bearish",
-        stateText: bullish ? "Bullish cross (DIF above DEA)" : "Bearish cross (DIF below DEA)"
+        stateText: bullish ? "Bullish cross (DIF above DEA)" : "Bearish cross (DIF below DEA)",
+        reason: macdReason(point.dif, point.dea, bullish ? "above" : "below")
       };
     }
     case "RSI": {
       const lines = params.map((p) => last(rsi(closes, p)));
       const valueText = params.map((p, i) => `RSI(${p}) ${pct(lines[i])}`).join(" · ");
-      return { valueText, ...obOsState(lines[0], 30, 70, `RSI(${params[0]}) ${pct(lines[0])}`) };
+      const label = `RSI(${params[0]})`;
+      return { valueText, ...obOsWithReason("RSI", label, lines[0], 30, 70, `${label} ${pct(lines[0])}`) };
     }
     case "KDJ": {
       const [period, kSmooth, dSmooth] = params;
@@ -498,47 +608,48 @@ export function computeIndicatorSignal(
       const valueText = `K ${pct(k)} · D ${pct(point?.d)} · J ${pct(point?.j)}`;
       // The brief's own convention list ellipsis omits KDJ's exact threshold pair — 80/20 on the K line, the
       // same convention this program also applies to STOCHRSI/MFI (a standard, widely-used KDJ reading).
-      return { valueText, ...obOsState(k, 20, 80, `K ${pct(k)}`) };
+      return { valueText, ...obOsWithReason("KDJ", "K", k, 20, 80, `K ${pct(k)}`) };
     }
     case "WR": {
       const lines = params.map((p) => last(williamsR(candles, p)));
       const valueText = params.map((p, i) => `WR${p} ${pct(lines[i])}`).join(" · ");
-      return { valueText, ...obOsState(lines[0], -80, -20, `WR ${pct(lines[0])}`) };
+      const label = `WR(${params[0]})`;
+      return { valueText, ...obOsWithReason("Williams %R", label, lines[0], -80, -20, `WR ${pct(lines[0])}`) };
     }
     case "ROC": {
       const [period, signal] = params;
       const { roc, maRoc } = rocLast(closes, period, signal);
-      return { valueText: `ROC ${pct(roc)} · Signal ${pct(maRoc)}`, state: null, stateText: null };
+      return { valueText: `ROC ${pct(roc)} · Signal ${pct(maRoc)}`, state: null, stateText: null, reason: null };
     }
     case "MTM": {
       const [period, signal] = params;
       const point = last(momentum(closes, period, signal));
-      return { valueText: `MTM ${fmt(point?.mtm)} · Signal ${fmt(point?.maMtm)}`, state: null, stateText: null };
+      return { valueText: `MTM ${fmt(point?.mtm)} · Signal ${fmt(point?.maMtm)}`, state: null, stateText: null, reason: null };
     }
     case "BIAS": {
       const lines = params.map((p) => last(biasSeries(closes, p)));
       const valueText = params.map((p, i) => `BIAS(${p}) ${pct(lines[i])}`).join(" · ");
-      return { valueText, state: null, stateText: null };
+      return { valueText, state: null, stateText: null, reason: null };
     }
     case "PSY": {
       const [period, signal] = params;
       const point = last(psySeries(closes, period, signal));
-      return { valueText: `PSY ${pct(point?.psy)} · Signal ${pct(point?.maPsy)}`, state: null, stateText: null };
+      return { valueText: `PSY ${pct(point?.psy)} · Signal ${pct(point?.maPsy)}`, state: null, stateText: null, reason: null };
     }
     case "AO": {
       const [fast, slow] = params;
       const value = last(awesomeOscillator(candles, fast, slow));
-      return { valueText: fmt(value), state: null, stateText: null };
+      return { valueText: fmt(value), state: null, stateText: null, reason: null };
     }
     case "BRAR": {
       const [period] = params;
       const point = last(brarSeries(candles, period));
-      return { valueText: `AR ${pct(point?.ar)} · BR ${pct(point?.br)}`, state: null, stateText: null };
+      return { valueText: `AR ${pct(point?.ar)} · BR ${pct(point?.br)}`, state: null, stateText: null, reason: null };
     }
     case "CR": {
       const [period] = params;
       const value = last(crCoreLine(candles, period));
-      return { valueText: `CR ${pct(value)}`, state: null, stateText: null };
+      return { valueText: `CR ${pct(value)}`, state: null, stateText: null, reason: null };
     }
 
     // ── Volatility ──
@@ -548,12 +659,12 @@ export function computeIndicatorSignal(
       // Brief's own "simplify honestly" instruction: TradingView's real CCI rating rule also checks the value is
       // RISING/FALLING through the threshold, not just past it — deliberately simplified here to a bare
       // threshold cross (documented, not silently narrowed).
-      return { valueText: fmt(value), ...obOsState(value, -100, 100, `CCI ${fmt(value)}`) };
+      return { valueText: fmt(value), ...obOsWithReason("CCI", `CCI(${period})`, value, -100, 100, `CCI ${fmt(value)}`) };
     }
     case "EMV": {
       const [period] = params;
       const { emv, maEmv } = emvLast(candles, period);
-      return { valueText: `EMV ${fmt(emv)} · Signal ${fmt(maEmv)}`, state: null, stateText: null };
+      return { valueText: `EMV ${fmt(emv)} · Signal ${fmt(maEmv)}`, state: null, stateText: null, reason: null };
     }
 
     // ── Volume ──
@@ -562,25 +673,25 @@ export function computeIndicatorSignal(
       const mas = params.map((p) => last(sma(volumes, p)));
       const lastVol = last(volumes);
       const valueText = `Vol ${fmt(lastVol, 0)}` + params.map((p, i) => ` · MA${i + 1} ${fmt(mas[i], 0)}`).join("");
-      return { valueText, state: null, stateText: null };
+      return { valueText, state: null, stateText: null, reason: null };
     }
     case "OBV": {
       const [signal] = params;
       const { obv, maObv } = obvLast(candles, signal);
-      return { valueText: `OBV ${fmt(obv, 0)} · Signal ${fmt(maObv, 0)}`, state: null, stateText: null };
+      return { valueText: `OBV ${fmt(obv, 0)} · Signal ${fmt(maObv, 0)}`, state: null, stateText: null, reason: null };
     }
     case "PVT": {
       const value = pvtLast(candles);
-      return { valueText: fmt(value, 0), state: null, stateText: null };
+      return { valueText: fmt(value, 0), state: null, stateText: null, reason: null };
     }
     case "VR": {
       const [period] = params;
       const value = vrValue(candles, period);
-      return { valueText: pct(value), state: null, stateText: null };
+      return { valueText: pct(value), state: null, stateText: null, reason: null };
     }
     case "AVP": {
       const value = avpLast(candles);
-      return { valueText: fmt(value), state: null, stateText: null };
+      return { valueText: fmt(value), state: null, stateText: null, reason: null };
     }
 
     // ── Custom ──
@@ -596,24 +707,78 @@ export function computeIndicatorSignal(
       const senkouA = cloudPoint?.senkouA;
       const senkouB = cloudPoint?.senkouB;
       if (close === undefined || senkouA === undefined || senkouB === undefined) {
-        return { valueText, state: null, stateText: null };
+        return { valueText, state: null, stateText: null, reason: null };
       }
       const cloudTop = Math.max(senkouA, senkouB);
       const cloudBottom = Math.min(senkouA, senkouB);
-      if (close > cloudTop) return { valueText, state: "bullish", stateText: "Price above the cloud" };
-      if (close < cloudBottom) return { valueText, state: "bearish", stateText: "Price below the cloud" };
-      return { valueText, state: "neutral", stateText: "Price inside the cloud" };
+      const ruleText =
+        "Ichimoku cloud convention: price trading above the cloud (Senkou A/B) reads bullish; below the cloud reads bearish; inside the cloud reads neutral (a period of consolidation/indecision).";
+      if (close > cloudTop) {
+        return {
+          valueText,
+          state: "bullish",
+          stateText: "Price above the cloud",
+          reason: {
+            rule: ruleText,
+            reading: `Price (${fmt(close)}) is above the cloud (top ${fmt(cloudTop)}).`,
+            meaning: "price is trading above the forward-projected support/resistance zone the cloud represents — conventionally read as a bullish backdrop."
+          }
+        };
+      }
+      if (close < cloudBottom) {
+        return {
+          valueText,
+          state: "bearish",
+          stateText: "Price below the cloud",
+          reason: {
+            rule: ruleText,
+            reading: `Price (${fmt(close)}) is below the cloud (bottom ${fmt(cloudBottom)}).`,
+            meaning: "price is trading below the forward-projected support/resistance zone the cloud represents — conventionally read as a bearish backdrop."
+          }
+        };
+      }
+      return {
+        valueText,
+        state: "neutral",
+        stateText: "Price inside the cloud",
+        reason: {
+          rule: ruleText,
+          reading: `Price (${fmt(close)}) is inside the cloud (${fmt(cloudBottom)}–${fmt(cloudTop)}).`,
+          meaning: "price is trading inside the forward-projected support/resistance zone the cloud represents — conventionally read as consolidation, without a clear directional backdrop."
+        }
+      };
     }
     case "SUPERTREND": {
       const [period, mult] = params;
       const point = last(supertrend(candles, period, mult));
       if (!point || point.trend === undefined || point.value === undefined) return NO_SIGNAL;
       const up = point.trend === 1;
-      return { valueText: fmt(point.value), state: up ? "bullish" : "bearish", stateText: up ? "Uptrend" : "Downtrend" };
+      const reason: DetailReason = {
+        rule: "SuperTrend convention: price trading above the SuperTrend line (uptrend coloring) reads bullish; below it (downtrend coloring) reads bearish — the line flips side and color when the trend reverses.",
+        reading: up ? `SuperTrend is ${fmt(point.value)}; price is above it (uptrend).` : `SuperTrend is ${fmt(point.value)}; price is below it (downtrend).`,
+        meaning: up
+          ? "the trailing volatility-based stop line sits below price — conventionally read as confirmation of an active uptrend."
+          : "the trailing volatility-based stop line sits above price — conventionally read as confirmation of an active downtrend."
+      };
+      return { valueText: fmt(point.value), state: up ? "bullish" : "bearish", stateText: up ? "Uptrend" : "Downtrend", reason };
     }
     case "VWAP": {
       const value = last(sessionVwap(candles));
-      return { valueText: fmt(value), ...priceVsLine(close, value, "VWAP") };
+      const { state, stateText } = priceVsLine(close, value, "VWAP");
+      const reason: DetailReason | null =
+        close !== undefined && value !== undefined
+          ? {
+              rule: "VWAP convention: price trading above the session's volume-weighted average price reads bullish; below it, bearish.",
+              reading: `VWAP is ${fmt(value)}; price (${fmt(close)}) is ${close > value ? "above" : close < value ? "below" : "at"} it.`,
+              meaning:
+                close > value
+                  ? "the price is trading above the average price paid so far this session, weighted by volume — a level intraday desks watch as a fair-value reference; trading above it is conventionally read as bullish."
+                  : close < value
+                    ? "the price is trading below the average price paid so far this session, weighted by volume — a level intraday desks watch as a fair-value reference; trading below it is conventionally read as bearish."
+                    : "the price sits exactly at the session's volume-weighted average — no directional lean by this convention."
+            }
+          : null;
+      return { valueText: fmt(value), state, stateText, reason };
     }
     case "KELTNER": {
       const [period, mult] = params;
@@ -621,54 +786,54 @@ export function computeIndicatorSignal(
       const atr = last(wilderAtr(candles, period));
       const upper = middle !== undefined && atr !== undefined ? middle + mult * atr : undefined;
       const lower = middle !== undefined && atr !== undefined ? middle - mult * atr : undefined;
-      return { valueText: `Mid ${fmt(middle)} · Upper ${fmt(upper)} · Lower ${fmt(lower)}`, ...priceVsBand(close, upper, lower) };
+      return { valueText: `Mid ${fmt(middle)} · Upper ${fmt(upper)} · Lower ${fmt(lower)}`, ...priceVsBandWithReason(close, upper, lower, "Keltner Channel") };
     }
     case "DONCHIAN": {
       const [period] = params;
       const upper = last(rollingHigh(candles, period));
       const lower = last(rollingLow(candles, period));
       const middle = upper !== undefined && lower !== undefined ? (upper + lower) / 2 : undefined;
-      return { valueText: `Mid ${fmt(middle)} · Upper ${fmt(upper)} · Lower ${fmt(lower)}`, ...priceVsBand(close, upper, lower) };
+      return { valueText: `Mid ${fmt(middle)} · Upper ${fmt(upper)} · Lower ${fmt(lower)}`, ...priceVsBandWithReason(close, upper, lower, "Donchian Channel") };
     }
     case "PIVOTS": {
       const { pp } = pivotsLast(candles);
-      return { valueText: `PP ${fmt(pp)}`, state: null, stateText: null };
+      return { valueText: `PP ${fmt(pp)}`, state: null, stateText: null, reason: null };
     }
     case "ATRX": {
       const [period] = params;
       const value = last(wilderAtr(candles, period));
-      return { valueText: fmt(value), state: null, stateText: null };
+      return { valueText: fmt(value), state: null, stateText: null, reason: null };
     }
     case "STOCHRSI": {
       const [rsiPeriod, stochPeriod, kSmooth, dSmooth] = params;
       const point = last(stochRsi(closes, rsiPeriod, stochPeriod, kSmooth, dSmooth));
       const k = point?.k;
-      return { valueText: `K ${pct(k)} · D ${pct(point?.d)}`, ...obOsState(k, 20, 80, `K ${pct(k)}`) };
+      return { valueText: `K ${pct(k)} · D ${pct(point?.d)}`, ...obOsWithReason("Stochastic RSI", "K", k, 20, 80, `K ${pct(k)}`) };
     }
     case "WMA": {
       const [period] = params;
       const value = last(wma(closes, period));
-      return { valueText: fmt(value), ...priceVsLine(close, value, "WMA") };
+      return { valueText: fmt(value), ...priceVsLineWithReason(close, value, `WMA(${period})`) };
     }
     case "VWMA": {
       const [period] = params;
       const value = last(vwma(closes, candles.map((c) => c.volume ?? 0), period));
-      return { valueText: fmt(value), ...priceVsLine(close, value, "VWMA") };
+      return { valueText: fmt(value), ...priceVsLineWithReason(close, value, `VWMA(${period})`) };
     }
     case "HMA": {
       const [period] = params;
       const value = last(hma(closes, period));
-      return { valueText: fmt(value), ...priceVsLine(close, value, "HMA") };
+      return { valueText: fmt(value), ...priceVsLineWithReason(close, value, `HMA(${period})`) };
     }
     case "MFI": {
       const [period] = params;
       const value = last(moneyFlowIndex(candles, period));
-      return { valueText: pct(value), ...obOsState(value, 20, 80, `MFI ${pct(value)}`) };
+      return { valueText: pct(value), ...obOsWithReason("MFI", `MFI(${period})`, value, 20, 80, `MFI ${pct(value)}`) };
     }
     case "CMF": {
       const [period] = params;
       const value = cmfLast(candles, period);
-      return { valueText: fmt(value, 4), state: null, stateText: null };
+      return { valueText: fmt(value, 4), state: null, stateText: null, reason: null };
     }
     case "AROON": {
       const [period] = params;
@@ -676,10 +841,43 @@ export function computeIndicatorSignal(
       const up = point?.up;
       const down = point?.down;
       const valueText = `Up ${pct(up, 0)} · Down ${pct(down, 0)}`;
-      if (up === undefined || down === undefined) return { valueText, state: null, stateText: null };
-      if (up > down) return { valueText, state: "bullish", stateText: `Up dominant (${pct(up, 0)} vs ${pct(down, 0)})` };
-      if (down > up) return { valueText, state: "bearish", stateText: `Down dominant (${pct(down, 0)} vs ${pct(up, 0)})` };
-      return { valueText, state: "neutral", stateText: "Up/Down even" };
+      if (up === undefined || down === undefined) return { valueText, state: null, stateText: null, reason: null };
+      const ruleText =
+        "Aroon convention: Up dominant (higher than Down) reads bullish — a recent high occurred more recently than a recent low; Down dominant reads bearish; equal reads neutral.";
+      if (up > down) {
+        return {
+          valueText,
+          state: "bullish",
+          stateText: `Up dominant (${pct(up, 0)} vs ${pct(down, 0)})`,
+          reason: {
+            rule: ruleText,
+            reading: `Aroon Up is ${pct(up, 0)}, above Aroon Down (${pct(down, 0)}).`,
+            meaning: "the most recent high occurred more recently than the most recent low within the lookback window — conventionally read as the uptrend being the fresher, dominant move."
+          }
+        };
+      }
+      if (down > up) {
+        return {
+          valueText,
+          state: "bearish",
+          stateText: `Down dominant (${pct(down, 0)} vs ${pct(up, 0)})`,
+          reason: {
+            rule: ruleText,
+            reading: `Aroon Down is ${pct(down, 0)}, above Aroon Up (${pct(up, 0)}).`,
+            meaning: "the most recent low occurred more recently than the most recent high within the lookback window — conventionally read as the downtrend being the fresher, dominant move."
+          }
+        };
+      }
+      return {
+        valueText,
+        state: "neutral",
+        stateText: "Up/Down even",
+        reason: {
+          rule: ruleText,
+          reading: `Aroon Up and Aroon Down are both ${pct(up, 0)}.`,
+          meaning: "the most recent high and low are equally fresh within the lookback window — no dominant recent direction to read."
+        }
+      };
     }
 
     default:

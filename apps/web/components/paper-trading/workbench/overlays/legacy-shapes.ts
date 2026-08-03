@@ -22,6 +22,12 @@ import {
   resolvePolygonBorderColor,
   midpoint,
   formatRatioLabel,
+  buildDeltaStatsText,
+  pixelXToDataIndex,
+  isStatsPillVisible,
+  trackOverlaySelection,
+  EMERALD,
+  ROSE,
   INK_400,
   INK_600,
   SKY_FILL,
@@ -62,14 +68,18 @@ export function registerLegacyShapeOverlays(): void {
   });
 
   // ── arrow — 2 anchors (start, end), totalStep 3. atan2 barb, ─────────
-  // quadrant-safe by construction.
+  // quadrant-safe by construction. Stats pill (2026-08-05 founder-feedback
+  // pass) — same Δ/%/bar-count content + draw-OR-selected visibility as
+  // `built-in-stats.ts`'s `segment`/`rayLine`/`straightLine` (arrow is the
+  // same "plain 2-anchor line" family, just with a directional head).
   registerOverlay({
     name: "arrow",
     totalStep: 3,
     needDefaultPointFigure: true,
     needDefaultXAxisFigure: true,
     needDefaultYAxisFigure: true,
-    createPointFigures: ({ coordinates, overlay }: OverlayCreateFiguresCallbackParams<unknown>): OverlayFigure[] => {
+    ...trackOverlaySelection,
+    createPointFigures: ({ coordinates, overlay, xAxis }: OverlayCreateFiguresCallbackParams<unknown>): OverlayFigure[] => {
       if (coordinates.length < 2) return [];
       const [p0, p1] = coordinates;
       const color = resolveLineColor(overlay.styles, INK_600);
@@ -85,7 +95,7 @@ export function registerLegacyShapeOverlays(): void {
         x: p1.x + barbLength * Math.cos(backAngle + barbAngle),
         y: p1.y + barbLength * Math.sin(backAngle + barbAngle),
       };
-      return [
+      const figures: OverlayFigure[] = [
         solidLine([p0, p1], color),
         {
           type: "polygon",
@@ -93,6 +103,15 @@ export function registerLegacyShapeOverlays(): void {
           styles: { style: "stroke_fill", color, borderColor: color, borderSize: 1, borderStyle: "solid" },
         },
       ];
+      if (isStatsPillVisible(overlay)) {
+        const v0 = overlay.points[0]?.value ?? 0;
+        const v1 = overlay.points[1]?.value ?? 0;
+        const dataIndex0 = pixelXToDataIndex(xAxis, p0.x);
+        const dataIndex1 = pixelXToDataIndex(xAxis, p1.x);
+        const { text, positive } = buildDeltaStatsText(v0, v1, dataIndex0, dataIndex1);
+        figures.push(labelFigure(midpoint(p0, p1), text, { background: positive ? EMERALD : ROSE }));
+      }
+      return figures;
     },
   });
 

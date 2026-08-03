@@ -82,8 +82,10 @@ import {
 import { STRATEGY_LIST, getStrategyDef, clampStrategyParams, resolveStrategyParams, defaultParamValues } from "@/lib/ta/strategies";
 import { runBacktest, intervalToProductType } from "@/lib/ta/backtest";
 import { computeIndicatorSignal, type IndicatorSignal } from "@/lib/ta/indicator-signals";
-import { computeTechnicalRating } from "@/lib/ta/technicals";
+import { computeTechnicalRating, computeTechnicalDetail } from "@/lib/ta/technicals";
 import { TechnicalsGauge } from "./technicals-gauge";
+import { SignalsTable } from "./signals-table";
+import { HeartbeatChip } from "./heartbeat-chip";
 
 export type { WorkbenchFeed } from "./use-workbench-candles";
 
@@ -238,7 +240,7 @@ export function ChartWorkbench({
   const [ticketCollapsed, setTicketCollapsed] = useState(false);
   const [intentPopover, setIntentPopover] = useState<{ price: number; left: number; top: number } | null>(null);
 
-  const { candles, status, errorMessage, sourceLabel, quote, premiumMeta } = useWorkbenchCandles(feed, chartInterval);
+  const { candles, status, errorMessage, sourceLabel, quote, premiumMeta, lastUpdatedAt, pollIntervalMs } = useWorkbenchCandles(feed, chartInterval);
 
   // Founder-feedback pass (2026-08-03) — PART A (per-indicator signal chips) + PART B (Technicals Rating gauge).
   // Both `computeIndicatorSignal`/`computeTechnicalRating` are pure functions over `candles` — recomputed here
@@ -271,6 +273,17 @@ export function ChartWorkbench({
 
   const technicalRating = useMemo(
     () => computeTechnicalRating(candles),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [candlesKey]
+  );
+
+  // Founder-feedback pass (2026-08-06) — the Signals table (TradingView's
+  // Technicals DETAIL view). Same memo-key discipline as `technicalRating`
+  // above (recomputed only when the loaded candle window actually changes)
+  // — both now read the SAME `lib/ta/technicals.ts` rule table, see that
+  // module's own "single source, no drift" doc.
+  const technicalDetail = useMemo(
+    () => computeTechnicalDetail(candles),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [candlesKey]
   );
@@ -537,6 +550,15 @@ export function ChartWorkbench({
             Delayed data · {sourceLabel.replace("Delayed market data ", "").replace(/[()]/g, "") || "Yahoo"}
           </span>
         )}
+        <HeartbeatChip
+          lastUpdatedAt={lastUpdatedAt}
+          pollIntervalMs={pollIntervalMs}
+          cadenceNote={
+            isPremiumMode
+              ? "Premium mode: live session ticks fold in as they arrive; full history re-polls every 60s (snapshots are captured every 5 minutes)."
+              : undefined
+          }
+        />
         <TimeframeSelector intervals={isPremiumMode ? PREMIUM_INTERVALS : WORKBENCH_INTERVALS} value={chartInterval} onChange={setChartInterval} />
         <IndicatorActiveStrip
           instances={[...indicators.main, ...indicators.sub]}
@@ -703,6 +725,7 @@ export function ChartWorkbench({
               {hasOpenedStrategyTab && (
                 <div style={{ display: rightPanelTab === "strategy" ? "block" : "none" }}>
                   <TechnicalsGauge rating={technicalRating} />
+                  <SignalsTable detail={technicalDetail} rating={technicalRating} />
                   <StrategyConfigPanel
                     strategyId={strategyId}
                     onStrategyIdChange={handleStrategyIdChange}

@@ -16,14 +16,45 @@
  * has none either (it uses `lucide-react` SVG components everywhere else,
  * which can't be handed to a canvas-drawn tooltip feature). `TooltipFeatureStyle`
  * supports `type: "path"` — a SVG path string drawn via `dist/index.esm.js`'s
- * own hand-written mini path parser (`drawPath`, ~line 5753 — confirmed to
- * support `M/L/H/V/C/S/Q/T/A/Z`, upper AND lower case, and MULTIPLE `M`
- * subpaths within one path string via repeated `ctx.moveTo` inside a single
- * `ctx.beginPath()`/`ctx.stroke()` pair — exactly what the gear glyph below
- * needs for its 6 disconnected spokes). Hand-authored 12×12 glyphs, `style:
- * "stroke"` throughout (a single fill-or-stroke choice applies to the WHOLE
- * path string, confirmed by reading `drawPath`'s single trailing
- * `ctx.fill()`/`ctx.stroke()` call — there is no per-subpath style).
+ * own hand-written mini path parser (`drawPath`, ~line 5753). MULTIPLE `M`
+ * subpaths within one path string work fine (repeated `ctx.moveTo` inside a
+ * single `ctx.beginPath()`/`ctx.stroke()` pair — used by the gear glyph's 6
+ * disconnected spokes). `style: "stroke"` throughout (a single fill-or-stroke
+ * choice applies to the WHOLE path string — `drawPath` has one trailing
+ * `ctx.fill()`/`ctx.stroke()` call, no per-subpath style).
+ *
+ * **A REAL klinecharts@10.0.1 bug, found and worked around (founder bug
+ * report, 2026-08-04 — a thick diagonal line smeared across the legend):**
+ * `drawPath`'s per-command loop declares its pen-position bookkeeping
+ * (`currentX`/`currentY`/`startX`/`startY`) WITH `var` INSIDE the
+ * `commands.forEach` callback — a FRESH `0` every command, never carried
+ * over from a preceding command's own assignment. Harmless for `M`/`L`/`C`/
+ * `Q`/`Z` (each computes an absolute target from `args + offset` and calls
+ * `ctx.moveTo`/`lineTo`/`bezierCurveTo`/`quadraticCurveTo` — the ACTUAL pen
+ * position the canvas draws from is the browser's own internal path
+ * pointer, never klinecharts' JS variable). Fatal for `A` (arc):
+ * `drawEllipticalArc(ctx, x1, y1, args, offsetX, offsetY, isRelative)`
+ * (confirmed reading its own body) uses `x1`/`y1` RAW/unoffset as the arc's
+ * start point (`ellipticalArcToBeziers(x1, y1, ...)`) — only the END point
+ * gets `+offsetX`/`+offsetY`. Since `currentX`/`currentY` are reset to `0`
+ * on the SAME iteration an absolute `A` command runs (it never assigns them
+ * itself before use), every `A` in our old EYE/GEAR paths started its arc
+ * at canvas-absolute `(0,0)` — the chart's own top-left corner — and swept
+ * to the correctly-offset endpoint near the real icon, a multi-hundred-
+ * pixel bezier diagonal exactly matching the founder's screenshot. The `×`
+ * icon (M/L only) was never exposed to this bug, matching the report's own
+ * "the × appears to render fine" observation. Also broken for the identical
+ * reason (not used here, noted for future glyph authors): `S`/`T` (smooth
+ * curve variants, which pass `currentX`/`currentY` as explicit
+ * `bezierCurveTo`/`quadraticCurveTo` arguments), `H`/`V` (need the OTHER
+ * axis's carried-over value), and every lowercase RELATIVE command (`l`/`c`/
+ * `q`/`a`/etc., which do `currentX += args[0]` against a value that's
+ * always `0`). **Fix: only `M`/`L`/`Q`/`C`/`Z` (absolute, non-`A`) are safe
+ * — the eye's pupil and the gear's ring below are now built from straight
+ * line segments (a diamond, an octagon) instead of `A` arcs.** This is a
+ * genuine upstream library bug, not a usage error on our side — confirmed
+ * by reading `dist/index.esm.js` directly, not assumed; worked around
+ * rather than patched (house law: never edit `node_modules`).
  *
  * **Global, not per-instance**: these are wired via `chart.setStyles
  * ({indicator:{tooltip:{features}}})` in `kline-chart.tsx` (the DEFAULT
@@ -52,9 +83,16 @@
  */
 import type { TooltipFeatureStyle } from "klinecharts";
 
-const EYE_PATH = "M1,6 Q6,1.5 11,6 Q6,10.5 1,6 Z M6,4.3 A1.7,1.7 0 1,0 6,7.7 A1.7,1.7 0 1,0 6,4.3 Z";
+// Almond outline (Q — safe) unchanged; pupil is now a small DIAMOND (M/L/Z —
+// safe) instead of two `A` arcs. Center (6,6), half-diagonal 1.6: top
+// (6,4.4), right (7.6,6), bottom (6,7.6), left (4.4,6).
+const EYE_PATH = "M1,6 Q6,1.5 11,6 Q6,10.5 1,6 Z M6,4.4 L7.6,6 L6,7.6 L4.4,6 Z";
+// Ring is now a regular OCTAGON (M/L/Z — safe) instead of two `A` arcs,
+// center (6,6) radius 2.2 (8 vertices at 45° steps, hand-computed:
+// cos45=sin45=0.7071 -> 2.2*0.7071=1.556). The 6 spokes (M/L only, already
+// safe, unchanged) go from an inner radius ~2.3 to an outer radius ~3.7.
 const GEAR_PATH =
-  "M6,3.8 A2.2,2.2 0 1,0 6,8.2 A2.2,2.2 0 1,0 6,3.8 Z" +
+  "M8.2,6 L7.56,7.56 L6,8.2 L4.44,7.56 L3.8,6 L4.44,4.44 L6,3.8 L7.56,4.44 Z" +
   " M8.3,6 L9.7,6 M7.15,7.99 L7.85,9.2 M4.85,7.99 L4.15,9.2 M3.7,6 L2.3,6 M4.85,4.01 L4.15,2.8 M7.15,4.01 L7.85,2.8";
 const REMOVE_PATH = "M2.5,2.5 L9.5,9.5 M9.5,2.5 L2.5,9.5";
 
@@ -69,7 +107,7 @@ function pathFeature(id: string, path: string): TooltipFeatureStyle {
     type: "path",
     content: { path, style: "stroke", lineWidth: 1.3 },
     position: "right",
-    size: 11,
+    size: 12, // matches the glyphs' own 0-12 coordinate space exactly (was 11 — a minor pre-existing scale mismatch, tightened while already touching this file).
     color: "#94a3b8", // ink-400
     activeColor: "#0f172a", // ink-900, on hover
     backgroundColor: "transparent",

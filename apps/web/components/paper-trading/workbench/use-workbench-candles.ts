@@ -25,6 +25,31 @@
  * already implements for its own SVG view, reproduced here so the
  * workbench's rightmost bar updates live instead of only appearing once its
  * 15/30-min window closes.
+ *
+ * **Founder-feedback pass (2026-08-06) — candle liveness audit.** "why does
+ * not the candles move live during market timings" — the market has been
+ * CLOSED since this workbench shipped, so the live path had never actually
+ * run end-to-end. Full trace (client poll -> this hook's `candles` array ->
+ * `kline-chart.tsx`'s data effect -> klinecharts' `subscribeBar` push ->
+ * repaint) verified CORRECT at every link, including reading klinecharts
+ * v10's own `dist/index.esm.js` `StoreImp.prototype._addData`/
+ * `_processDataLoad` — `setPeriod`/`setSymbol` both route through
+ * `resetData()`, which unsubscribes then re-subscribes the live-bar channel
+ * on every call, and the single-bar `_addData` branch correctly append-or-
+ * replaces by timestamp and always repaints. No gap found in that chain —
+ * see `kline-chart.tsx`'s own data effect doc for the client-side half. The
+ * one real, actionable change: `pollMsForInterval` below TIGHTENS the
+ * equity/index poll cadence for 1m/5m charts from the previous flat 60s to
+ * 30s (daily and 15m/30m/60m unchanged) — halving the worst-case gap
+ * between a real Yahoo-side print and it reaching the browser on the
+ * intervals traders watch most closely. Effective end-to-end freshness is
+ * still bounded by Yahoo's own delayed-data latency (unknown, not
+ * controlled here) PLUS `apps/api`'s 60s server-side TTL cache
+ * (`lib/marketMoves/candles.ts`) PLUS this client poll — documented in the
+ * heartbeat chip's own tooltip (`heartbeat-chip.tsx`) so the freshness bound
+ * is visible to whoever's watching, not just asserted in a comment.
+ * `lastUpdatedAt` (new) is set on every SUCCESSFUL fetch (both branches
+ * below) and drives that chip.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -106,6 +131,19 @@ function bucketMsForInterval(interval: CandleInterval): number {
 /** Honest-data chip label — a single, reused source string rather than each caller inventing its own wording (see the founder plan's "honest-data chip" requirement). */
 const SOURCE_LABEL = "Delayed market data (Yahoo)";
 
+/**
+ * Founder-feedback pass (2026-08-06) — client poll cadence for the
+ * equity/index branch, tightened for the two intervals traders watch bar-
+ * by-bar. `apps/api`'s own server-side cache TTL (`lib/marketMoves/
+ * candles.ts`) stays 60s regardless — this only changes how often the
+ * BROWSER asks. Exported so `heartbeat-chip.tsx` can compute the SAME
+ * "stale after 3x this" threshold the poll itself actually uses (single
+ * source, no drift between the poll timer and the staleness check).
+ */
+export function pollMsForInterval(interval: CandleInterval): number {
+  return interval === "1m" || interval === "5m" ? 30_000 : 60_000;
+}
+
 export function useWorkbenchCandles(
   feed: WorkbenchFeed,
   interval: CandleInterval
@@ -119,9 +157,14 @@ export function useWorkbenchCandles(
   quote: WorkbenchQuote | null;
   /** null for equity/index feeds; populated for optionPremium — see PremiumMeta doc. */
   premiumMeta: PremiumMeta | null;
+  /** Founder-feedback pass (2026-08-06) — epoch ms of the last SUCCESSFUL candles fetch (either branch), `null` before the first one resolves. Drives `heartbeat-chip.tsx`. Deliberately set only at a real network-fetch success point, never on a pure client-side re-aggregation (e.g. premium mode's interval/bucket-width switch) — see module doc. */
+  lastUpdatedAt: number | null;
+  /** Founder-feedback pass (2026-08-06) — the cadence THIS hook is actually polling at right now, for the heartbeat chip's own "stale after 3x this" math and its cadence-note copy. Equity/index: `pollMsForInterval(interval)`; premium mode keeps its own fixed 60s (5-minute server-side snapshot cadence — see module doc). */
+  pollIntervalMs: number;
 } {
   const [state, setState] = useState<CandleFetchState>({ status: "loading" });
   const [quote, setQuote] = useState<WorkbenchQuote | null>(null);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
 
   const isPremium = feed.kind === "optionPremium";
   const url = feedUrl(feed, interval);
@@ -156,6 +199,7 @@ export function useWorkbenchCandles(
           }
           const prevClose = typeof body.prevClose === "number" ? body.prevClose : null;
           setState({ status: "ready", candles, prevClose, premiumMeta: null });
+          setLastUpdatedAt(Date.now());
         })
         .catch(() => {
           // Same "silent poll never regresses a working chart" posture as
@@ -174,7 +218,8 @@ export function useWorkbenchCandles(
     fetchOnceRef.current({ silent: false });
   }, [url, isPremium]);
 
-  useVisiblePolling(() => fetchOnceRef.current({ silent: true }), 60_000, !isPremium && url != null);
+  const equityPollMs = pollMsForInterval(interval);
+  useVisiblePolling(() => fetchOnceRef.current({ silent: true }), equityPollMs, !isPremium && url != null);
 
   // ── optionPremium branch (W3, T5). ──────────────────────────────────────
   // Raw snapshot points are fetched once per CONTRACT identity (never on an
@@ -208,6 +253,7 @@ export function useWorkbenchCandles(
             : [];
           setRawPoints(points);
           setPremiumLoadState("ready");
+          setLastUpdatedAt(Date.now());
         })
         .catch(() => {
           if (!opts.silent) setPremiumLoadState("error");
@@ -286,7 +332,9 @@ export function useWorkbenchCandles(
     sourceLabel: SOURCE_LABEL,
     title: feedTitle(feed),
     quote,
-    premiumMeta: state.status === "ready" ? state.premiumMeta : null
+    premiumMeta: state.status === "ready" ? state.premiumMeta : null,
+    lastUpdatedAt,
+    pollIntervalMs: isPremium ? 60_000 : equityPollMs
   };
 }
 

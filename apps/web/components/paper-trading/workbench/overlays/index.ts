@@ -25,6 +25,16 @@
  * `annotations.ts` are all EXTENDED in place (same register function names,
  * more overlays registered inside each), so this file's own wiring only
  * needs the 2 new imports/calls below.
+ *
+ * Founder-feedback pass (2026-08-05, "ratios in trend lines") adds
+ * `built-in-stats.ts` — SAME-NAME overrides of 11 klinecharts BUILT-IN
+ * overlays (`segment`/`rayLine`/`straightLine`/`horizontal*`/`vertical*`/
+ * `priceChannelLine`/`parallelStraightLine`), registered LAST so its
+ * `registerOverlay` calls run after klinecharts' own built-in registration
+ * (which happens at module-init time, always earlier regardless — see that
+ * file's own doc for the full override-vs-wrapper verification). No new
+ * `DrawingOverlayName`s — these 11 names already existed in
+ * `BUILT_IN_DRAWING_OVERLAYS` (`catalog.ts`), unchanged.
  */
 import "./ta-consistency"; // type-only guard — see that file's doc.
 import { registerLegacyShapeOverlays } from "./legacy-shapes";
@@ -37,6 +47,7 @@ import { registerMeasureOverlays } from "./measure";
 import { registerAnnotationOverlays } from "./annotations";
 import { registerLineOverlays } from "./lines";
 import { registerCycleOverlays } from "./cycles";
+import { registerBuiltInStatsOverlays } from "./built-in-stats";
 
 export * from "./catalog";
 
@@ -55,4 +66,5 @@ export function registerTaOverlays(): void {
   registerAnnotationOverlays();
   registerLineOverlays();
   registerCycleOverlays();
+  registerBuiltInStatsOverlays();
 }

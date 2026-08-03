@@ -24,6 +24,7 @@ import { Plus, Settings2, X } from "lucide-react";
 
 import { formatInstanceLabel, type IndicatorInstance } from "./indicator-registry";
 import type { IndicatorSignal, SignalState } from "@/lib/ta/indicator-signals";
+import { SignalReasonTrigger } from "./signal-reason-trigger";
 
 /** State-colored subtle chips, per the brief's exact palette (`emerald bullish/up, rose bearish/down, amber OB/OS, ink neutral`) — `strong`/`weak` (ADX's own trend-strength read, not covered by that 4-color list) get a sensible ink-family extension: `strong` inverted/bold for emphasis, `weak` muted. */
 const STATE_CHIP_CLASS: Record<Exclude<SignalState, null>, string> = {
@@ -59,11 +60,18 @@ export function IndicatorActiveStrip({
             <div className="flex flex-col leading-tight">
               <div className="flex items-center gap-1.5">
                 <span>{formatInstanceLabel(instance)}</span>
-                {signal?.state && (
-                  <span className={`rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${STATE_CHIP_CLASS[signal.state]}`}>
-                    {signal.stateText ?? signal.state}
-                  </span>
-                )}
+                {signal?.state &&
+                  (signal.reason ? (
+                    <SignalReasonTrigger reason={signal.reason}>
+                      <span className={`rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${STATE_CHIP_CLASS[signal.state]}`}>
+                        {signal.stateText ?? signal.state}
+                      </span>
+                    </SignalReasonTrigger>
+                  ) : (
+                    <span className={`rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${STATE_CHIP_CLASS[signal.state]}`}>
+                      {signal.stateText ?? signal.state}
+                    </span>
+                  ))}
               </div>
               {signal && signal.valueText !== "—" && <span className="tabular-nums text-[10px] font-normal text-ink-500">{signal.valueText}</span>}
             </div>

@@ -89,7 +89,7 @@ export function TechnicalsGauge({ rating }: { rating: TechnicalRating }) {
         <GroupCounts label="Oscillators" group={rating.oscillators} />
       </div>
       <p className="mt-2 text-[10px] leading-4 text-ink-400">
-        Rule-based summary of standard indicator readings on the loaded delayed bars — not a recommendation.
+        Rule-based readings of standard indicators on the loaded delayed bars — descriptions explain the convention, not a recommendation.
       </p>
     </div>
   );
