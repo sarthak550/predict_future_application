@@ -55,7 +55,11 @@ export function IndicatorDialog({
 
   const visibleRows = useMemo(() => {
     const base = trimmed.length > 0 ? allRows.filter((m) => m.name.toLowerCase().includes(trimmed) || (m.displayLabel ?? "").toLowerCase().includes(trimmed) || m.description.toLowerCase().includes(trimmed)) : allRows.filter((m) => m.category === category);
-    return [...base].sort((a, b) => a.name.localeCompare(b.name));
+    // Naming audit (2026-08-04): sort by what's actually ON SCREEN (`displayLabel ?? name` — the same fallback
+    // the row itself renders), not the raw registry key. Sorting by key alone put e.g. "Stochastic (KDJ)" under
+    // "K" instead of "S" — findable only if you already knew its internal key, defeating the point of giving it
+    // a decodable display name at all.
+    return [...base].sort((a, b) => (a.displayLabel ?? a.name).localeCompare(b.displayLabel ?? b.name));
   }, [allRows, trimmed, category]);
 
   return (

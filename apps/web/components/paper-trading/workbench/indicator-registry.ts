@@ -142,6 +142,7 @@ const BUILTIN_REGISTRY: Record<string, IndicatorMeta> = {
   },
   BBI: {
     name: "BBI",
+    displayLabel: "Bull Bear Index (BBI)",
     category: "Trend",
     pane: "main",
     defaultParams: [3, 6, 12, 24],
@@ -151,6 +152,7 @@ const BUILTIN_REGISTRY: Record<string, IndicatorMeta> = {
   },
   SAR: {
     name: "SAR",
+    displayLabel: "Parabolic SAR",
     category: "Trend",
     pane: "main",
     defaultParams: [2, 2, 20],
@@ -160,6 +162,7 @@ const BUILTIN_REGISTRY: Record<string, IndicatorMeta> = {
   },
   DMA: {
     name: "DMA",
+    displayLabel: "MA Difference (DMA)",
     category: "Trend",
     pane: "sub",
     defaultParams: [10, 50, 10],
@@ -169,6 +172,8 @@ const BUILTIN_REGISTRY: Record<string, IndicatorMeta> = {
   },
   DMI: {
     name: "DMI",
+    /** Founder naming audit 2026-08-04: the Signals table's "ADX(14) [DMI]" rule row votes on this SAME indicator's ADX/+DI/-DI lines — this displayLabel is the family anchor a learner recognizes that row against. See `lib/ta/technicals.ts`'s `ADX_RULE` doc. */
+    displayLabel: "DMI / ADX",
     category: "Trend",
     pane: "sub",
     defaultParams: [14, 6],
@@ -188,6 +193,7 @@ const BUILTIN_REGISTRY: Record<string, IndicatorMeta> = {
   // Bands
   BOLL: {
     name: "BOLL",
+    displayLabel: "Bollinger Bands",
     category: "Bands",
     pane: "main",
     defaultParams: [20, 2],
@@ -216,6 +222,12 @@ const BUILTIN_REGISTRY: Record<string, IndicatorMeta> = {
   },
   KDJ: {
     name: "KDJ",
+    /** Founder naming audit 2026-08-04: "Stochastic" collided across 3 places under different math — this is the
+     * klinecharts-NATIVE Stochastic, computed via RSV + recursive weighted smoothing + a J line (`math.ts`'s
+     * `stochasticKdj`, verified byte-for-byte against klinecharts' own `kdj.calc`). It is a DIFFERENT formula from
+     * `lib/ta/technicals.ts`'s "Stochastic Osc %K(...) (Classic)" rating rule (SMA-smoothed %K/%D, no J line) and
+     * from the custom-signal builder's matching entry — see that module's own doc for the full disambiguation. */
+    displayLabel: "Stochastic (KDJ)",
     category: "Momentum",
     pane: "sub",
     defaultParams: [9, 3, 3],
@@ -225,6 +237,7 @@ const BUILTIN_REGISTRY: Record<string, IndicatorMeta> = {
   },
   WR: {
     name: "WR",
+    displayLabel: "Williams %R (WR)",
     category: "Momentum",
     pane: "sub",
     defaultParams: [6, 10, 14],
@@ -243,6 +256,7 @@ const BUILTIN_REGISTRY: Record<string, IndicatorMeta> = {
   },
   MTM: {
     name: "MTM",
+    displayLabel: "Momentum (MTM)",
     category: "Momentum",
     pane: "sub",
     defaultParams: [12, 6],
@@ -261,6 +275,7 @@ const BUILTIN_REGISTRY: Record<string, IndicatorMeta> = {
   },
   PSY: {
     name: "PSY",
+    displayLabel: "Psychological Line",
     category: "Momentum",
     pane: "sub",
     defaultParams: [12, 6],
@@ -270,6 +285,7 @@ const BUILTIN_REGISTRY: Record<string, IndicatorMeta> = {
   },
   AO: {
     name: "AO",
+    displayLabel: "Awesome Oscillator (AO)",
     category: "Momentum",
     pane: "sub",
     defaultParams: [5, 34],
@@ -279,6 +295,7 @@ const BUILTIN_REGISTRY: Record<string, IndicatorMeta> = {
   },
   BRAR: {
     name: "BRAR",
+    displayLabel: "BR/AR Sentiment",
     category: "Momentum",
     pane: "sub",
     defaultParams: [26],
@@ -288,6 +305,7 @@ const BUILTIN_REGISTRY: Record<string, IndicatorMeta> = {
   },
   CR: {
     name: "CR",
+    displayLabel: "CR Energy",
     category: "Momentum",
     pane: "sub",
     defaultParams: [26, 10, 20, 40, 60],
@@ -298,6 +316,7 @@ const BUILTIN_REGISTRY: Record<string, IndicatorMeta> = {
   // Volatility
   CCI: {
     name: "CCI",
+    displayLabel: "Commodity Channel (CCI)",
     category: "Volatility",
     pane: "sub",
     defaultParams: [20],
@@ -307,6 +326,7 @@ const BUILTIN_REGISTRY: Record<string, IndicatorMeta> = {
   },
   EMV: {
     name: "EMV",
+    displayLabel: "Ease of Movement",
     category: "Volatility",
     pane: "sub",
     defaultParams: [14, 9],
@@ -328,6 +348,7 @@ const BUILTIN_REGISTRY: Record<string, IndicatorMeta> = {
   },
   OBV: {
     name: "OBV",
+    displayLabel: "On-Balance Volume",
     category: "Volume",
     pane: "sub",
     defaultParams: [30],
@@ -338,6 +359,7 @@ const BUILTIN_REGISTRY: Record<string, IndicatorMeta> = {
   },
   PVT: {
     name: "PVT",
+    displayLabel: "Price-Volume Trend",
     category: "Volume",
     pane: "sub",
     defaultParams: [],
@@ -348,6 +370,7 @@ const BUILTIN_REGISTRY: Record<string, IndicatorMeta> = {
   },
   VR: {
     name: "VR",
+    displayLabel: "Volume Ratio (VR)",
     category: "Volume",
     pane: "sub",
     defaultParams: [26, 6],
@@ -358,6 +381,7 @@ const BUILTIN_REGISTRY: Record<string, IndicatorMeta> = {
   },
   AVP: {
     name: "AVP",
+    displayLabel: "Avg Price (AVP)",
     category: "Volume",
     pane: "main",
     defaultParams: [],
@@ -393,6 +417,7 @@ const BUILTIN_REGISTRY: Record<string, IndicatorMeta> = {
 const CUSTOM_REGISTRY: Record<string, IndicatorMeta> = {
   ICHIMOKU: {
     name: "ICHIMOKU",
+    displayLabel: "Ichimoku Cloud",
     category: "Custom",
     pane: "main",
     defaultParams: [9, 26, 52],
@@ -402,6 +427,7 @@ const CUSTOM_REGISTRY: Record<string, IndicatorMeta> = {
   },
   SUPERTREND: {
     name: "SUPERTREND",
+    displayLabel: "SuperTrend",
     category: "Custom",
     pane: "main",
     defaultParams: [10, 3],
@@ -411,6 +437,7 @@ const CUSTOM_REGISTRY: Record<string, IndicatorMeta> = {
   },
   VWAP: {
     name: "VWAP",
+    displayLabel: "VWAP (Session)",
     category: "Custom",
     pane: "main",
     defaultParams: [],
@@ -422,6 +449,7 @@ const CUSTOM_REGISTRY: Record<string, IndicatorMeta> = {
   },
   KELTNER: {
     name: "KELTNER",
+    displayLabel: "Keltner Channels",
     category: "Custom",
     pane: "main",
     defaultParams: [20, 2],
@@ -431,6 +459,7 @@ const CUSTOM_REGISTRY: Record<string, IndicatorMeta> = {
   },
   DONCHIAN: {
     name: "DONCHIAN",
+    displayLabel: "Donchian Channels",
     category: "Custom",
     pane: "main",
     defaultParams: [20],
@@ -440,6 +469,7 @@ const CUSTOM_REGISTRY: Record<string, IndicatorMeta> = {
   },
   PIVOTS: {
     name: "PIVOTS",
+    displayLabel: "Pivot Points",
     category: "Custom",
     pane: "main",
     defaultParams: [],
@@ -449,6 +479,7 @@ const CUSTOM_REGISTRY: Record<string, IndicatorMeta> = {
   },
   ATRX: {
     name: "ATRX",
+    displayLabel: "ATR",
     category: "Custom",
     pane: "sub",
     defaultParams: [14],
@@ -458,6 +489,10 @@ const CUSTOM_REGISTRY: Record<string, IndicatorMeta> = {
   },
   STOCHRSI: {
     name: "STOCHRSI",
+    /** Founder naming audit 2026-08-04: part of the "Stochastic" family disambiguation — this is Stochastic
+     * applied to RSI values instead of price, a third distinct member alongside "Stochastic (KDJ)" and the
+     * Signals table's "Stochastic Osc %K(...) (Classic)" rule. See `KDJ`'s own displayLabel doc above. */
+    displayLabel: "Stochastic RSI",
     category: "Custom",
     pane: "sub",
     defaultParams: [14, 14, 3, 3],
@@ -467,6 +502,7 @@ const CUSTOM_REGISTRY: Record<string, IndicatorMeta> = {
   },
   WMA: {
     name: "WMA",
+    displayLabel: "Weighted MA (WMA)",
     category: "Custom",
     pane: "main",
     defaultParams: [20],
@@ -476,6 +512,7 @@ const CUSTOM_REGISTRY: Record<string, IndicatorMeta> = {
   },
   VWMA: {
     name: "VWMA",
+    displayLabel: "Vol-Weighted MA (VWMA)",
     category: "Custom",
     pane: "main",
     defaultParams: [20],
@@ -486,6 +523,7 @@ const CUSTOM_REGISTRY: Record<string, IndicatorMeta> = {
   },
   HMA: {
     name: "HMA",
+    displayLabel: "Hull MA (HMA)",
     category: "Custom",
     pane: "main",
     defaultParams: [9],
@@ -495,6 +533,7 @@ const CUSTOM_REGISTRY: Record<string, IndicatorMeta> = {
   },
   MFI: {
     name: "MFI",
+    displayLabel: "Money Flow (MFI)",
     category: "Custom",
     pane: "sub",
     defaultParams: [14],
@@ -505,6 +544,7 @@ const CUSTOM_REGISTRY: Record<string, IndicatorMeta> = {
   },
   CMF: {
     name: "CMF",
+    displayLabel: "Chaikin Money Flow",
     category: "Custom",
     pane: "sub",
     defaultParams: [20],
@@ -572,10 +612,27 @@ export function resolveParams(instance: IndicatorInstance): number[] {
   return meta?.defaultParams ?? [];
 }
 
-/** A short label for the active-indicator strip row, e.g. `MA (5,10,30)` or `VWAP` for a param-less indicator. */
+/**
+ * A short label for the active-indicator strip row, e.g. `MA (5,10,30)` or
+ * `VWAP (Session)` for a param-less indicator.
+ *
+ * **Naming audit fix (2026-08-04)**: this used to interpolate the raw
+ * registry `name` (`instance.name`) — e.g. `KDJ (9,3,3)` or `SMA (12,2)` —
+ * even though every OTHER label in the workbench (the dialog row, the
+ * settings-popover title, both `aria-label`s on this same strip row's own
+ * gear/remove buttons) already went through `indicatorDisplayName()`. A
+ * user would see the settings popover titled "Stochastic (KDJ) settings"
+ * but the row it opened from still said bare "KDJ" — same bug class as the
+ * SMA/SMMA collision `kline-chart.tsx`'s on-chart legend override already
+ * fixed, just in a different component. Now routes through the same
+ * `indicatorDisplayName()` every other surface uses, so the strip's
+ * headline text can never drift from its own gear/remove `aria-label`s
+ * again.
+ */
 export function formatInstanceLabel(instance: IndicatorInstance): string {
   const params = resolveParams(instance);
-  return params.length > 0 ? `${instance.name} (${params.join(",")})` : instance.name;
+  const label = indicatorDisplayName(instance.name);
+  return params.length > 0 ? `${label} (${params.join(",")})` : label;
 }
 
 // ── localStorage v1 → v2 migration ───────────────────────────────────────

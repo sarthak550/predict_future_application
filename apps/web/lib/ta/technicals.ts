@@ -66,7 +66,7 @@
  * counts, not from combining the two dial positions).
  *
  * **Premium mode (`volume=0` pseudo-candles) — verified volume-free**: RSI,
- * Stochastic %K, CCI, ADX/DMI, AO, Momentum, MACD, StochRSI, Williams %R,
+ * Stochastic Osc %K (Classic), CCI, ADX/DMI, AO, Momentum, MACD, StochRSI, Williams %R,
  * Bull/Bear Power, Ultimate Oscillator, and the MA group's SMA/EMA legs are
  * ALL computed from `high`/`low`/`close` only — none of the eleven
  * TradingView oscillator rules, and neither MA leg, reads `volume`
@@ -304,7 +304,25 @@ function evaluateRsiRule(closes: readonly number[], period: number): RuleResult 
 
 const RSI_RULE: Rule = { id: "RSI", label: "RSI(14)", minBars: 15, evaluate: (_candles, closes) => evaluateRsiRule(closes, 14) };
 
-/** Stochastic %K: Buy K<20 & K>D; Sell K>80 & K<D. `rawK` seeds at `i=period-1`; `kSmooth` needs `kSmooth` defined rawK values; `dSmooth` needs `dSmooth` defined k values — `minBars = period + kSmooth + dSmooth - 2` (14,3,3 -> 18, matching the original hand trace: rawK first at 13, kSmooth first at 15, dSmooth first at 17, 0-based). */
+/**
+ * Classic Stochastic Oscillator %K/%D: Buy K<20 & K>D; Sell K>80 & K<D.
+ * `rawK` seeds at `i=period-1`; `kSmooth` needs `kSmooth` defined rawK
+ * values; `dSmooth` needs `dSmooth` defined k values — `minBars = period +
+ * kSmooth + dSmooth - 2` (14,3,3 -> 18, matching the original hand trace:
+ * rawK first at 13, kSmooth first at 15, dSmooth first at 17, 0-based).
+ *
+ * **Naming audit (2026-08-04) — NOT the same math as the `KDJ` chart
+ * indicator.** This calls `math.ts`'s `stochasticOscillator` (SMA-smoothed
+ * %K then SMA-smoothed %D off that, no third line) — a DIFFERENT, older
+ * formula from `stochasticKdj` (RSV + recursive weighted smoothing + a J
+ * line, klinecharts' own native `KDJ`, verified against its `kdj.calc`
+ * source). Both are legitimately called "Stochastic" in the wild; this
+ * program disambiguates them explicitly rather than papering over the
+ * difference — this rule's own label/rule text always say "Classic" and
+ * never bare "Stochastic", `indicator-registry.ts`'s `KDJ` entry always
+ * says "(KDJ)". See that entry's own doc comment for the third family
+ * member (`STOCHRSI`, Stochastic applied to RSI instead of price).
+ */
 function evaluateStochRule(candles: readonly StrategyCandle[], period: number, kSmooth: number, dSmooth: number): RuleResult | undefined {
   const lastIndex = candles.length - 1;
   const point = stochasticOscillator(candles, period, kSmooth, dSmooth)[lastIndex];
@@ -315,7 +333,8 @@ function evaluateStochRule(candles: readonly StrategyCandle[], period: number, k
     vote,
     valueText: `K ${fmtNum(k)} · D ${fmtNum(d)}`,
     reason: {
-      rule: "Stochastic convention: Buy when %K is below 20 and crosses above %D; Sell when %K is above 80 and crosses below %D.",
+      rule:
+        "Classic Stochastic Oscillator convention (%K/%D — a different formula from the KDJ indicator on your chart): Buy when %K is below 20 and crosses above %D; Sell when %K is above 80 and crosses below %D.",
       reading:
         vote === "buy"
           ? `%K is ${fmtNum(k)}, below 20, and above %D (${fmtNum(d)}).`
@@ -332,7 +351,7 @@ function evaluateStochRule(candles: readonly StrategyCandle[], period: number, k
   };
 }
 
-const STOCH_RULE: Rule = { id: "STOCH", label: "Stochastic %K(14,3,3)", minBars: 18, evaluate: (candles) => evaluateStochRule(candles, 14, 3, 3) };
+const STOCH_RULE: Rule = { id: "STOCH", label: "Stochastic Osc %K(14,3,3)", minBars: 18, evaluate: (candles) => evaluateStochRule(candles, 14, 3, 3) };
 
 /** CCI: Buy below -100, Sell above 100 — deliberately simplified to a bare threshold cross (see rule text). `cci()` seeds at `i=period-1` — `minBars=period`. */
 function evaluateCciRule(candles: readonly StrategyCandle[], period: number): RuleResult | undefined {
@@ -379,7 +398,10 @@ function evaluateAdxRule(candles: readonly StrategyCandle[], period: number): Ru
   };
 }
 
-const ADX_RULE: Rule = { id: "ADX", label: "ADX(14)", minBars: 27, evaluate: (candles) => evaluateAdxRule(candles, 14) };
+/** Naming audit (2026-08-04): `[DMI]` suffix names the chart indicator this rule's ADX/+DI/-DI lines actually come
+ * from — `indicator-registry.ts`'s `DMI` entry, displayed as "DMI / ADX" — so a learner can find the plotted lines
+ * behind this row's vote. */
+const ADX_RULE: Rule = { id: "ADX", label: "ADX(14) [DMI]", minBars: 27, evaluate: (candles) => evaluateAdxRule(candles, 14) };
 
 /** AO, saucer-simplified to a single-bar rising/falling test (see rule text). `awesomeOscillator` seeds at `i=maxPeriod-1`; the rule also needs the PREVIOUS bar defined — `minBars` uses `max(fast,slow)` as a documented, non-load-bearing display estimate (see `Rule.minBars` doc). */
 function evaluateAoRule(candles: readonly StrategyCandle[], fastPeriod: number, slowPeriod: number): RuleResult | undefined {
@@ -686,7 +708,11 @@ export const CUSTOMIZABLE_RULES: readonly CustomizableRuleDef[] = [
   },
   {
     id: "STOCH",
-    name: "Stochastic",
+    // Naming audit (2026-08-04): deliberately NOT bare "Stochastic" — this rule calls the CLASSIC %K/%D formula
+    // (`evaluateStochRule` -> `math.ts`'s `stochasticOscillator`), a different formula from the chart's "Stochastic
+    // (KDJ)" indicator (RSV + recursive weighted smoothing + a J line). Naming both bare "Stochastic" would let a
+    // learner pick this thinking it reproduces the KDJ line on their chart — it doesn't. See `STOCH_RULE`'s own doc.
+    name: "Stochastic Osc %K/%D (Classic)",
     // Param NAMES here follow the underlying `stochasticOscillator(candles, period, kSmooth, dSmooth)`
     // signature 1:1 (the %K length, then its own smoothing, then %D's smoothing) rather than the brief's
     // shorthand "(k,d,smooth)" literally — a documented, defensible reading of ambiguous terminology
@@ -697,13 +723,15 @@ export const CUSTOMIZABLE_RULES: readonly CustomizableRuleDef[] = [
       { key: "kSmooth", label: "%K Smoothing", default: 3, min: 1, max: 20 },
       { key: "dSmooth", label: "%D Smoothing", default: 3, min: 1, max: 20 }
     ],
-    buildLabel: ([period, kSmooth, dSmooth]) => `Stochastic %K(${period},${kSmooth},${dSmooth})`,
+    buildLabel: ([period, kSmooth, dSmooth]) => `Stochastic Osc %K(${period},${kSmooth},${dSmooth})`,
     evaluate: (candles, _closes, [period, kSmooth, dSmooth]) => evaluateStochRule(candles, period, kSmooth, dSmooth),
     minBars: ([period, kSmooth, dSmooth]) => period + kSmooth + dSmooth - 2
   },
   {
     id: "CCI",
-    name: "CCI",
+    // Naming audit (2026-08-04): matches `indicator-registry.ts`'s `CCI` displayLabel exactly — no math difference
+    // here (this rule and the chart indicator both read the same CCI formula), just decoding the acronym.
+    name: "Commodity Channel (CCI)",
     params: [{ key: "period", label: "Period", default: 20, min: 2, max: 200 }],
     buildLabel: ([period]) => `CCI(${period})`,
     evaluate: (candles, _closes, [period]) => evaluateCciRule(candles, period),
@@ -711,9 +739,11 @@ export const CUSTOMIZABLE_RULES: readonly CustomizableRuleDef[] = [
   },
   {
     id: "ADX",
-    name: "ADX",
+    // Naming audit (2026-08-04): matches `indicator-registry.ts`'s `DMI` displayLabel ("DMI / ADX") — ADX/+DI/-DI
+    // are lines WITHIN the chart's DMI indicator, not a separate indicator of their own; the name says so.
+    name: "DMI / ADX",
     params: [{ key: "period", label: "Period", default: 14, min: 2, max: 100 }],
-    buildLabel: ([period]) => `ADX(${period})`,
+    buildLabel: ([period]) => `ADX(${period}) [DMI]`,
     evaluate: (candles, _closes, [period]) => evaluateAdxRule(candles, period),
     minBars: ([period]) => period * 2 - 1
   },
@@ -730,7 +760,8 @@ export const CUSTOMIZABLE_RULES: readonly CustomizableRuleDef[] = [
   },
   {
     id: "MTM",
-    name: "Momentum",
+    // Naming audit (2026-08-04): matches `indicator-registry.ts`'s `MTM` displayLabel exactly.
+    name: "Momentum (MTM)",
     params: [{ key: "period", label: "Period", default: 10, min: 2, max: 200 }],
     buildLabel: ([period]) => `Momentum(${period})`,
     evaluate: (_candles, closes, [period]) => evaluateMtmRule(closes, period),
@@ -761,7 +792,8 @@ export const CUSTOMIZABLE_RULES: readonly CustomizableRuleDef[] = [
   },
   {
     id: "WR",
-    name: "Williams %R",
+    // Naming audit (2026-08-04): matches `indicator-registry.ts`'s `WR` displayLabel exactly.
+    name: "Williams %R (WR)",
     params: [{ key: "period", label: "Period", default: 14, min: 2, max: 100 }],
     buildLabel: ([period]) => `Williams %R(${period})`,
     evaluate: (candles, _closes, [period]) => evaluateWrRule(candles, period),
