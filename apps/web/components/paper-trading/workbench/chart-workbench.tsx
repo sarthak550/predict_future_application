@@ -43,10 +43,26 @@
  *     active drawing tool > workbench close (the text popover handles its
  *     own Escape internally, so this file's own listener just has to not
  *     ALSO close the workbench while it's open).
+ *
+ * **Founder feature (2026-08-08) — option chain visible while maximized.**
+ * An optional `chain` prop widens the right-panel segmented control from
+ * `[Ticket | Strategy]` to `[Ticket | Chain | Strategy]` (options-page-
+ * client.tsx passes its `OptionChainBrowser` element; every other caller
+ * omits the prop and keeps the original two-tab control exactly as before).
+ * `chain`, like `ticket`, is the caller's SAME single-mount element instance
+ * (null'd out of `TerminalShell`'s ladder slot while any workbench is open —
+ * the exact conditional-swap idiom this file's `ticket` prop already uses) —
+ * rendered here in its OWN CSS-hidden wrapper, always mounted alongside
+ * Ticket/Strategy, so its own 30s poll and internal selection state survive
+ * every tab switch. An optional `chartModeSwitcher` prop renders a small
+ * pill in the top bar (e.g. options' Underlying/Premium toggle) so a strike
+ * picked from the Chain tab can jump straight to viewing its premium chart
+ * without minimizing first — deliberately generic (label + onClick only),
+ * so this file stays instrument-agnostic.
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Loader2, Minimize2, PanelRightClose, PanelRightOpen } from "lucide-react";
+import { ArrowLeftRight, Loader2, Minimize2, PanelRightClose, PanelRightOpen } from "lucide-react";
 
 import { ChartOrderIntentPopover } from "@/components/finance/chart-order-intent-popover";
 import type { ChartOrderLine, OrderSide, OrderVariant } from "@/components/finance/chart-order-lines";
@@ -176,7 +192,9 @@ export function ChartWorkbench({
   onOrderLineDrag,
   onOrderLineCancel,
   onQuoteChange,
-  ticket
+  ticket,
+  chain,
+  chartModeSwitcher
 }: {
   feed: WorkbenchFeed;
   /** `EQ:SYMBOL` / `INDEX:SYMBOL` / `OPT:UNDERLYING:EXPIRY:STRIKE:TYPE` — drives `use-chart-drawings.ts`'s per-chart persistence (W3). Futures and the options terminal's underlying chart deliberately share the SAME `INDEX:` key (W1's schema design) so a trendline drawn on one appears on the other. */
@@ -190,6 +208,10 @@ export function ChartWorkbench({
   onQuoteChange?: (quote: { price: number; prevClose: number | null; changeAbs: number; changePct: number } | null) => void;
   /** The SAME `DockedOrderTicket` element instance the caller's terminal shell would otherwise render — the ticket single-mount rule (see workbench-maximize-button.tsx's own doc) requires this be the ONE mounted copy while the workbench is open. */
   ticket: ReactNode;
+  /** Founder feature (2026-08-08) — the SAME `OptionChainBrowser` element instance the caller's terminal shell would otherwise render in its ladder slot, single-mount just like `ticket`. Present: right panel gains a `Chain` tab between Ticket and Strategy. Absent (every non-options caller): the panel stays `[Ticket | Strategy]`, unchanged. */
+  chain?: ReactNode;
+  /** Founder feature (2026-08-08) — an optional top-bar pill for jumping to a sibling workbench (e.g. options' Underlying <-> Premium chart) without minimizing first. Purely a label + callback so this file never needs to know what "the other chart" means for a given terminal. */
+  chartModeSwitcher?: { label: string; onClick: () => void };
 }) {
   const isPremiumMode = feed.kind === "optionPremium";
   const [chartInterval, setChartInterval] = useState<CandleInterval>(() => (isPremiumMode ? "15m" : "5m"));
@@ -502,9 +524,9 @@ export function ChartWorkbench({
   // `StrategyDisclaimerFooter`'s render (see that component's own doc for
   // why the disclaimer lives OUTSIDE the tab-scoped wrapper and needs its
   // own separate visibility condition).
-  const [rightPanelTab, setRightPanelTab] = useState<"ticket" | "strategy">("ticket");
+  const [rightPanelTab, setRightPanelTab] = useState<"ticket" | "chain" | "strategy">("ticket");
   const [hasOpenedStrategyTab, setHasOpenedStrategyTab] = useState(false);
-  function selectRightPanelTab(tab: "ticket" | "strategy") {
+  function selectRightPanelTab(tab: "ticket" | "chain" | "strategy") {
     setRightPanelTab(tab);
     if (tab === "strategy") setHasOpenedStrategyTab(true);
   }
@@ -672,6 +694,25 @@ export function ChartWorkbench({
     setSelectedDrawing(null);
   }
 
+  // Founder feature (2026-08-08) — the embedded Chain tab can now change
+  // `chartKey` (e.g. selecting a different strike) while THIS workbench
+  // instance stays mounted (see `useWorkbenchAutoRestore`'s no-op close in
+  // options-page-client.tsx). `useChartDrawings`/`useWorkbenchCandles` above
+  // already refetch correctly for the new chartKey/feed on their own
+  // (identity/primitive-keyed effects — verified against both hooks' own
+  // source), but any in-progress drawing tool/selection state belongs to the
+  // PREVIOUS contract's canvas and must not silently carry over onto the new
+  // one — `prevChartKeyRef` only fires this on a REAL change, never on mount.
+  const prevChartKeyRef = useRef(chartKey);
+  useEffect(() => {
+    if (prevChartKeyRef.current === chartKey) return;
+    prevChartKeyRef.current = chartKey;
+    cancelActiveDrawing();
+    setSelectedDrawing(null);
+    setTextPopover(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chartKey]);
+
   // Body scroll lock while the workbench is open, restored on close.
   useEffect(() => {
     const prevOverflow = document.body.style.overflow;
@@ -774,17 +815,30 @@ export function ChartWorkbench({
           onRemove={handleRemoveIndicator}
           onOpenDialog={() => setIndicatorDialogOpen(true)}
         />
-        <button
-          type="button"
-          onClick={() => setTicketCollapsed((v) => !v)}
-          className="ml-auto rounded-lg p-2 text-ink-400 hover:bg-ink-100 hover:text-ink-700"
-          title={ticketCollapsed ? "Show order ticket" : "Hide order ticket"}
-        >
-          {ticketCollapsed ? <PanelRightOpen className="h-4 w-4" /> : <PanelRightClose className="h-4 w-4" />}
-        </button>
-        <button type="button" onClick={onClose} className="rounded-lg p-2 text-ink-500 hover:bg-ink-100 hover:text-ink-900" title="Minimize (Esc)">
-          <Minimize2 className="h-4 w-4" />
-        </button>
+        <div className="ml-auto flex items-center gap-2">
+          {chartModeSwitcher && (
+            <button
+              type="button"
+              onClick={chartModeSwitcher.onClick}
+              className="flex items-center gap-1.5 rounded-lg border border-ink-200 px-2.5 py-1.5 text-xs font-medium text-ink-600 hover:bg-ink-100 hover:text-ink-900"
+              title={`Switch to ${chartModeSwitcher.label}`}
+            >
+              <ArrowLeftRight className="h-3.5 w-3.5" aria-hidden="true" />
+              {chartModeSwitcher.label}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setTicketCollapsed((v) => !v)}
+            className="rounded-lg p-2 text-ink-400 hover:bg-ink-100 hover:text-ink-700"
+            title={ticketCollapsed ? "Show order ticket" : "Hide order ticket"}
+          >
+            {ticketCollapsed ? <PanelRightOpen className="h-4 w-4" /> : <PanelRightClose className="h-4 w-4" />}
+          </button>
+          <button type="button" onClick={onClose} className="rounded-lg p-2 text-ink-500 hover:bg-ink-100 hover:text-ink-900" title="Minimize (Esc)">
+            <Minimize2 className="h-4 w-4" />
+          </button>
+        </div>
       </div>
 
       {drawingsHook.error && (
@@ -912,9 +966,11 @@ export function ChartWorkbench({
 
         {!ticketCollapsed && (
           <div ref={panelRef} className="flex shrink-0 flex-col" style={{ width: panelWidth }}>
-            {/* TA Suite S3, T3 — [Ticket | Strategy] segmented control (D5). Switching tabs NEVER unmounts either
-                side (the single-mount rule) — both wrappers below are always in the DOM, toggled by CSS
-                `display` only, so an in-progress order-ticket draft survives a trip through the Strategy tab. */}
+            {/* TA Suite S3, T3 — [Ticket | Strategy] segmented control (D5), widened by the founder's Chain-in-
+                workbench feature (2026-08-08) to [Ticket | Chain | Strategy] whenever a `chain` prop is supplied.
+                Switching tabs NEVER unmounts any side (the single-mount rule) — every wrapper below is always in
+                the DOM, toggled by CSS `display` only, so an in-progress order-ticket draft OR the chain browser's
+                own poll/selection state survives a trip through any other tab. */}
             <div className="flex shrink-0 gap-1 border-b border-ink-100 p-2">
               <button
                 type="button"
@@ -925,6 +981,17 @@ export function ChartWorkbench({
               >
                 Ticket
               </button>
+              {chain && (
+                <button
+                  type="button"
+                  onClick={() => selectRightPanelTab("chain")}
+                  className={`flex-1 rounded-lg py-1.5 text-xs font-semibold ${
+                    rightPanelTab === "chain" ? "bg-sky-600 text-white" : "text-ink-500 hover:bg-ink-100"
+                  }`}
+                >
+                  Chain
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => selectRightPanelTab("strategy")}
@@ -938,6 +1005,7 @@ export function ChartWorkbench({
 
             <div className="min-h-0 flex-1 overflow-y-auto p-3">
               <div style={{ display: rightPanelTab === "ticket" ? "block" : "none" }}>{ticket}</div>
+              {chain && <div style={{ display: rightPanelTab === "chain" ? "block" : "none" }}>{chain}</div>}
               {hasOpenedStrategyTab && (
                 <div style={{ display: rightPanelTab === "strategy" ? "block" : "none" }}>
                   <TechnicalsGauge rating={technicalRating} combined={combinedRating} />

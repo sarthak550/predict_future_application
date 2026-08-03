@@ -214,7 +214,17 @@ function OptionsPageClientInner() {
       setChartMode("underlying");
       setWorkbenchOpenState(true);
     },
-    () => setWorkbenchOpen(false)
+    () => {
+      // Founder feature (Chain tab in maximized workbench, 2026-08-08) — the
+      // chain browser is null'd out of TerminalShell's ladder slot while ANY
+      // workbench is open (see `chainElement` below), so the only way
+      // `chartUnderlying` can still change while THIS workbench is open is
+      // the embedded Chain tab's own search/mode toggle — a deliberate
+      // in-workbench browse, never a reason to auto-close. A genuine
+      // page-level navigation away from this terminal unmounts
+      // OptionsPageClientInner entirely (see `remountKey` above), so this
+      // no-op can never mask a real stale-workbench case.
+    }
   );
 
   // Charting Workbench (W3, T6) — the PREMIUM chart's own maximize button
@@ -258,7 +268,19 @@ function OptionsPageClientInner() {
       setChartMode("premium");
       setPremiumWorkbenchOpenState(true);
     },
-    () => setPremiumWorkbenchOpen(false)
+    () => {
+      // Founder feature (Chain tab in maximized workbench, 2026-08-08) — the
+      // chain browser is null'd out of TerminalShell's ladder slot while ANY
+      // workbench is open (see `chainElement` below), so a real contractKey
+      // change can now ONLY originate from the embedded Chain tab's own
+      // strike selection while this exact premium workbench is open — the
+      // scenario this callback used to treat as "stale workbench, close it"
+      // is exactly the deliberate live contract-switch this feature adds.
+      // No-op: `feed`/`chartKey` alone (new props on the same still-mounted
+      // ChartWorkbench instance) drive `useWorkbenchCandles`/
+      // `useChartDrawings` to refetch for the new contract without a
+      // remount — verified against both hooks' own dependency arrays.
+    }
   );
   // Runs at most once (`consumedRef`): if the URL asked for the premium
   // chart but there's no deep-linked contract that could EVER auto-resolve
@@ -306,6 +328,38 @@ function OptionsPageClientInner() {
     if (chartMode !== "premium" && premiumWorkbenchOpen) setPremiumWorkbenchOpen(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chartMode]);
+
+  // Founder feature (Chain tab in maximized workbench, 2026-08-08) — a tiny
+  // chart-mode switcher rendered INSIDE the workbench top bar (via
+  // ChartWorkbench's generic `chartModeSwitcher` prop), so a strike picked
+  // from the embedded Chain tab can jump straight to the OTHER chart
+  // without minimizing first. Both handlers flip `chartMode` + both
+  // workbench booleans + write the URL param in ONE synchronous call
+  // (bypassing the wrapped `setWorkbenchOpen`/`setPremiumWorkbenchOpen`
+  // helpers, which would each independently call `setWorkbenchParam` and
+  // race two `router.replace` calls in the same event) — the mutual-
+  // exclusion effect above then no-ops on the next render since both
+  // booleans are already consistent with the new `chartMode`.
+  function handleSwitchToPremium() {
+    if (!selectedContract) return;
+    setChartMode("premium");
+    setWorkbenchOpenState(false);
+    setPremiumWorkbenchOpenState(true);
+    setWorkbenchParam("premium");
+  }
+
+  function handleSwitchToUnderlying() {
+    // The premium workbench's own contract may belong to a DIFFERENT
+    // underlying than whatever `chartUnderlying` last resolved to (e.g. the
+    // Chain tab was used to browse a different symbol while staying in
+    // premium mode) — target the contract's own underlying explicitly
+    // rather than trust a possibly-stale `chartUnderlying`.
+    if (selectedContract) setChartUnderlying(selectedContract.underlying);
+    setChartMode("underlying");
+    setPremiumWorkbenchOpenState(false);
+    setWorkbenchOpenState(true);
+    setWorkbenchParam("underlying");
+  }
   // Sprint C, C2 widens this from LIMIT-only to LIMIT|STOP (the popover
   // confirms an explicit variant, unlike Sprint B's hardcoded LIMIT click).
   const [presetOrderType, setPresetOrderType] = useState<"LIMIT" | "STOP" | undefined>(undefined);
@@ -639,6 +693,26 @@ function OptionsPageClientInner() {
     />
   );
 
+  // Founder feature (Chain tab in maximized workbench, 2026-08-08) — ONE
+  // `OptionChainBrowser` element instance, reused verbatim whether it renders
+  // in `TerminalShell`'s own ladder slot or inside a maximized workbench's
+  // new Chain tab (the exact single-mount conditional-swap idiom
+  // `ticketElement` above already uses). Same props the ladder slot always
+  // passed — `onSelectContract`/`onChainData` work identically from inside
+  // the workbench, since neither callback is aware of WHERE the browser is
+  // currently mounted.
+  const chainElement = (
+    <OptionChainBrowser
+      onSelectContract={handleLadderAction}
+      onChainData={handleChainData}
+      initialUnderlying={deepLinkUnderlying}
+      initialOptionType={deepLinkOptionType}
+      initialExpiry={deepLinkExpiry}
+      getHeldLots={getHeldLots}
+    />
+  );
+  const anyWorkbenchOpen = workbenchOpen || premiumWorkbenchOpen;
+
   return (
     <div className="space-y-6">
       {error && <p className="text-sm text-rose-600">{error}</p>}
@@ -723,17 +797,8 @@ function OptionsPageClientInner() {
             )}
           </div>
         }
-        ladder={
-          <OptionChainBrowser
-            onSelectContract={handleLadderAction}
-            onChainData={handleChainData}
-            initialUnderlying={deepLinkUnderlying}
-            initialOptionType={deepLinkOptionType}
-            initialExpiry={deepLinkExpiry}
-            getHeldLots={getHeldLots}
-          />
-        }
-        ticket={workbenchOpen || premiumWorkbenchOpen ? null : ticketElement}
+        ladder={anyWorkbenchOpen ? null : chainElement}
+        ticket={anyWorkbenchOpen ? null : ticketElement}
         positions={<PositionsStrip positions={positionChips} />}
       />
 
@@ -749,6 +814,8 @@ function OptionsPageClientInner() {
           // same props. The maximized underlying view stays click-inert.
           orderLines={EMPTY_ORDER_LINES}
           ticket={ticketElement}
+          chain={chainElement}
+          chartModeSwitcher={selectedContract ? { label: "Contract premium", onClick: handleSwitchToPremium } : undefined}
         />
       )}
 
@@ -775,6 +842,8 @@ function OptionsPageClientInner() {
           onOrderLineDrag={handlePremiumOrderLineDrag}
           onOrderLineCancel={handlePremiumOrderLineCancel}
           ticket={ticketElement}
+          chain={chainElement}
+          chartModeSwitcher={{ label: "Underlying", onClick: handleSwitchToUnderlying }}
         />
       )}
 
