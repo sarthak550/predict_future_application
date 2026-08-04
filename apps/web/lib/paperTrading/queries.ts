@@ -102,14 +102,18 @@ export interface OrderHistoryRow {
   lots: number | null;
   /** Phase 4 (Sprint 2) — true only for a cash-only daily mark-to-market leg. False for every other row. */
   isDailyMtm: boolean;
-  /** Phase 4 added FUTURES_EXPIRY_SETTLEMENT and FUTURES_MARGIN_CALL — same "enum widened, literal union must follow" reasoning as instrumentKind above. */
+  /** Expiry Settlement Backfill (2026-08-04) added OPTION_EXPIRY_BACKFILL and FUTURES_EXPIRY_BACKFILL — same "enum widened, literal union must follow" reasoning as instrumentKind above. */
   squareOffReason:
     | "INTRADAY_SESSION_CLOSE"
     | "OPTION_EXPIRY"
     | "STOCK_OPTION_EXPIRY_SQUAREOFF"
     | "FUTURES_EXPIRY_SETTLEMENT"
     | "FUTURES_MARGIN_CALL"
+    | "OPTION_EXPIRY_BACKFILL"
+    | "FUTURES_EXPIRY_BACKFILL"
     | null;
+  /** Expiry Settlement Backfill (2026-08-04) — which price source produced fillPrice on an auto-settlement leg. Null for every manual trade leg and every settlement leg written before this field existed. See the schema doc on PaperOrder.settlementBasis. */
+  settlementBasis: "LIVE_MARKET" | "HISTORICAL_EXCHANGE_CLOSE" | "LAST_KNOWN_MARK" | "ASSUMED_WORTHLESS" | null;
 }
 
 /** Phase 2/3 — one open (or, for the lifetime rollup, ever-traded) option contract position (index OR stock). */
@@ -584,6 +588,7 @@ export async function getAccountDetail(userId: string): Promise<PaperAccountDeta
       lotSize: o.lotSize,
       lots: o.lots,
       squareOffReason: o.squareOffReason,
+      settlementBasis: o.settlementBasis,
       isDailyMtm: o.isDailyMtm
     }))
   };

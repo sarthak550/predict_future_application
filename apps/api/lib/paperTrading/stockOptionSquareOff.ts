@@ -65,6 +65,17 @@
  * branch inside it — settlement logic, cost path, and pricing-fallback logic
  * are different enough that forking that file would make its single
  * responsibility (cash settlement) harder to reason about.
+ *
+ * Expiry Settlement Backfill (2026-08-04): this cron intentionally has NO
+ * backfill sweep of its own — a stock option that's already past its own
+ * expiry can never be force-sold at a real tradeable price (the contract no
+ * longer exists on the exchange, so there is no live chain to price it
+ * against). Any STOCK_OPTION position missed by this same-day cron is instead
+ * caught and cash-settled at historical intrinsic value by
+ * optionsExpiry.ts's backfill sweep (its OPTION_EXPIRY_BACKFILL path covers
+ * both INDEX_OPTION and STOCK_OPTION) — see that file's module doc for the
+ * full rationale. This file's only change this sprint is dryRun support,
+ * for parity with its two sibling crons.
  */
 
 import {
@@ -111,6 +122,7 @@ function findQuote(chain: OptionChainSnapshot, strikePrice: number, optionType: 
 }
 
 export interface StockOptionSquareOffRunResult {
+  dryRun: boolean;
   accountsScanned: number;
   positionsSquaredOff: number;
   /** No chain available at all for this position's underlying+expiry (upstream failure) — left open, retried next pass/run. */
@@ -120,13 +132,23 @@ export interface StockOptionSquareOffRunResult {
   errors: number;
 }
 
+export interface RunStockOptionSquareOffOptions {
+  /** When true, computes and returns everything a live run would square off WITHOUT writing anything. */
+  dryRun?: boolean;
+}
+
 /**
  * Force-closes every account's open STOCK_OPTION positions expiring today
  * (IST calendar date). Never throws — per-account/per-contract failures are
  * caught and counted, matching every other cron route's contract in this app.
  */
-export async function runStockOptionSquareOff(now: Date = new Date()): Promise<StockOptionSquareOffRunResult> {
+export async function runStockOptionSquareOff(
+  now: Date = new Date(),
+  options: RunStockOptionSquareOffOptions = {}
+): Promise<StockOptionSquareOffRunResult> {
+  const dryRun = options.dryRun ?? false;
   const result: StockOptionSquareOffRunResult = {
+    dryRun,
     accountsScanned: 0,
     positionsSquaredOff: 0,
     skippedNoPrice: 0,
@@ -150,7 +172,7 @@ export async function runStockOptionSquareOff(now: Date = new Date()): Promise<S
   for (const { accountId } of accountsWithExpiringStockOptionsToday) {
     result.accountsScanned += 1;
     try {
-      await squareOffAccount(accountId, now, chainCache, result);
+      await squareOffAccount(accountId, now, chainCache, dryRun, result);
     } catch (err) {
       result.errors += 1;
       console.error(`[cron/paper-trading-stock-options-squareoff] account ${accountId} failed:`, err);
@@ -174,6 +196,7 @@ async function squareOffAccount(
   accountId: string,
   now: Date,
   chainCache: Map<string, OptionChainSnapshot | null>,
+  dryRun: boolean,
   result: StockOptionSquareOffRunResult
 ): Promise<void> {
   const orderRows = await prisma.paperOrder.findMany({
@@ -191,7 +214,7 @@ async function squareOffAccount(
   if (expiringToday.length === 0) return; // already squared off/closed — no-op
 
   for (const position of expiringToday) {
-    await squareOffPosition(accountId, position, now, chainCache, result);
+    await squareOffPosition(accountId, position, now, chainCache, dryRun, result);
   }
 }
 
@@ -200,6 +223,7 @@ async function squareOffPosition(
   position: OptionContractPosition,
   now: Date,
   chainCache: Map<string, OptionChainSnapshot | null>,
+  dryRun: boolean,
   result: StockOptionSquareOffRunResult
 ): Promise<void> {
   const chain = await resolveChain(position.underlyingSymbol, position.expiryDate, chainCache);
@@ -259,37 +283,41 @@ async function squareOffPosition(
   );
   if (!freshOpen || freshOpen.quantity === 0) return; // already squared off/closed by the user (or the other pass) since the initial read
 
-  await prisma.paperOrder.create({
-    data: {
-      accountId,
-      symbol: freshOrderRows[0].symbol,
-      side: "SELL",
-      productType: null,
-      quantity: Math.abs(position.quantity),
-      fillPrice: pricing.price,
-      fillTickAt: now,
-      grossAmount: costs.grossAmount,
-      brokerage: costs.brokerage,
-      sttAmount: costs.stt,
-      exchangeCharge: costs.exchangeCharge,
-      sebiFee: costs.sebiFee,
-      stampDuty: costs.stampDuty,
-      gstAmount: costs.gst,
-      dpCharge: costs.dpCharge,
-      totalCosts: costs.totalCosts,
-      netAmount: costs.netAmount,
-      isSquareOff: true,
-      autoSquaredOff: true,
-      instrumentKind: "STOCK_OPTION",
-      underlyingSymbol: position.underlyingSymbol,
-      optionType: position.optionType,
-      strikePrice: position.strikePrice,
-      expiryDate: position.expiryDate,
-      lotSize: position.lotSize,
-      lots: position.lots,
-      squareOffReason: "STOCK_OPTION_EXPIRY_SQUAREOFF"
-    }
-  });
+  if (!dryRun) {
+    await prisma.paperOrder.create({
+      data: {
+        accountId,
+        symbol: freshOrderRows[0].symbol,
+        side: "SELL",
+        productType: null,
+        quantity: Math.abs(position.quantity),
+        fillPrice: pricing.price,
+        fillTickAt: now,
+        grossAmount: costs.grossAmount,
+        brokerage: costs.brokerage,
+        sttAmount: costs.stt,
+        exchangeCharge: costs.exchangeCharge,
+        sebiFee: costs.sebiFee,
+        stampDuty: costs.stampDuty,
+        gstAmount: costs.gst,
+        dpCharge: costs.dpCharge,
+        totalCosts: costs.totalCosts,
+        netAmount: costs.netAmount,
+        isSquareOff: true,
+        autoSquaredOff: true,
+        instrumentKind: "STOCK_OPTION",
+        underlyingSymbol: position.underlyingSymbol,
+        optionType: position.optionType,
+        strikePrice: position.strikePrice,
+        expiryDate: position.expiryDate,
+        lotSize: position.lotSize,
+        lots: position.lots,
+        squareOffReason: "STOCK_OPTION_EXPIRY_SQUAREOFF",
+        settlementBasis: "LIVE_MARKET"
+      },
+      select: { id: true }
+    });
+  }
 
   result.positionsSquaredOff += 1;
 }

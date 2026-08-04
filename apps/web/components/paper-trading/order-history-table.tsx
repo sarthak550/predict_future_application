@@ -49,9 +49,27 @@ export interface OrderHistoryEntry {
     | "STOCK_OPTION_EXPIRY_SQUAREOFF"
     | "FUTURES_EXPIRY_SETTLEMENT"
     | "FUTURES_MARGIN_CALL"
+    | "OPTION_EXPIRY_BACKFILL"
+    | "FUTURES_EXPIRY_BACKFILL"
     | null;
   /** Phase 4 — true only for a cash-only daily mark-to-market leg (quantity 0, all costs 0, netAmount is the signed variation-margin cash flow). */
   isDailyMtm?: boolean;
+  /** Expiry Settlement Backfill (2026-08-04) — which price source produced fillPrice on an auto-settlement leg. Null for a manual trade or a settlement leg written before this field existed. */
+  settlementBasis?: "LIVE_MARKET" | "HISTORICAL_EXCHANGE_CLOSE" | "LAST_KNOWN_MARK" | "ASSUMED_WORTHLESS" | null;
+}
+
+/** Human-readable disclosure for a backfilled settlement's price basis — shown only for the non-"normal" bases, see the module doc. Never invents a reason for `LIVE_MARKET`/null (the ordinary same-day path needs no disclosure). */
+function settlementBasisDisclosure(basis: OrderHistoryEntry["settlementBasis"]): string | null {
+  switch (basis) {
+    case "HISTORICAL_EXCHANGE_CLOSE":
+      return "Settled late, after this contract's own expiry had already passed — priced from NSE's official exchange record for that expiry date (its live quote was no longer available by the time this ran).";
+    case "LAST_KNOWN_MARK":
+      return "Settled late, after this contract's own expiry had already passed — no official exchange record was available for that date, so this used the last price we had on record for this contract.";
+    case "ASSUMED_WORTHLESS":
+      return "Settled late, after this contract's own expiry had already passed — no price data of any kind was available for this contract, so it was conservatively settled at ₹0 rather than guessed.";
+    default:
+      return null;
+  }
 }
 
 /** Human label for one row: the contract label for an option leg (index OR stock), the futures contract label, or the plain symbol for an equity leg. */
@@ -95,7 +113,11 @@ export function OrderHistoryTable({ orders }: { orders: OrderHistoryEntry[] }) {
             const isOption = isIndexOption || isStockOption;
             const isFuture = order.instrumentKind === "INDEX_FUTURE";
             const isMtmLeg = isFuture && order.isDailyMtm === true;
-            const isWorthlessExpiry = isIndexOption && order.squareOffReason === "OPTION_EXPIRY" && order.fillPrice === 0;
+            const isWorthlessExpiry =
+              isOption &&
+              (order.squareOffReason === "OPTION_EXPIRY" || order.squareOffReason === "OPTION_EXPIRY_BACKFILL") &&
+              order.fillPrice === 0;
+            const basisDisclosure = settlementBasisDisclosure(order.settlementBasis ?? null);
             return (
               <Fragment key={order.id}>
                 <TableRow className="cursor-pointer select-none" onClick={() => setOpenId(isOpen ? null : order.id)}>
@@ -140,9 +162,19 @@ export function OrderHistoryTable({ orders }: { orders: OrderHistoryEntry[] }) {
                         CLOSED BEFORE EXPIRY — NOT SETTLED
                       </Badge>
                     )}
+                    {order.autoSquaredOff && order.squareOffReason === "OPTION_EXPIRY_BACKFILL" && (
+                      <Badge variant={isWorthlessExpiry ? "danger" : "warning"} className="ml-1.5">
+                        {isWorthlessExpiry ? "EXPIRED WORTHLESS — FULL LOSS" : "SETTLED LATE — EXPIRED"}
+                      </Badge>
+                    )}
                     {order.autoSquaredOff && order.squareOffReason === "FUTURES_EXPIRY_SETTLEMENT" && (
                       <Badge variant="warning" className="ml-1.5">
                         CASH-SETTLED AT EXPIRY
+                      </Badge>
+                    )}
+                    {order.autoSquaredOff && order.squareOffReason === "FUTURES_EXPIRY_BACKFILL" && (
+                      <Badge variant="warning" className="ml-1.5">
+                        SETTLED LATE — EXPIRED
                       </Badge>
                     )}
                     {order.autoSquaredOff && order.squareOffReason === "FUTURES_MARGIN_CALL" && (
@@ -168,21 +200,28 @@ export function OrderHistoryTable({ orders }: { orders: OrderHistoryEntry[] }) {
                           {order.fillPrice.toLocaleString("en-IN")}. No brokerage, STT, or other trading costs apply to this leg.
                         </p>
                       ) : (
-                        <CostBreakdownTable
-                          breakdown={{
-                            grossAmount: order.grossAmount,
-                            brokerage: order.brokerage,
-                            stt: order.sttAmount,
-                            exchangeCharge: order.exchangeCharge,
-                            sebiFee: order.sebiFee,
-                            stampDuty: order.stampDuty,
-                            gst: order.gstAmount,
-                            dpCharge: order.dpCharge,
-                            totalCosts: order.totalCosts,
-                            netAmount: order.netAmount
-                          }}
-                          side={order.side}
-                        />
+                        <>
+                          {basisDisclosure && (
+                            <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2 text-xs text-amber-800">
+                              {basisDisclosure}
+                            </p>
+                          )}
+                          <CostBreakdownTable
+                            breakdown={{
+                              grossAmount: order.grossAmount,
+                              brokerage: order.brokerage,
+                              stt: order.sttAmount,
+                              exchangeCharge: order.exchangeCharge,
+                              sebiFee: order.sebiFee,
+                              stampDuty: order.stampDuty,
+                              gst: order.gstAmount,
+                              dpCharge: order.dpCharge,
+                              totalCosts: order.totalCosts,
+                              netAmount: order.netAmount
+                            }}
+                            side={order.side}
+                          />
+                        </>
                       )}
                     </TableCell>
                   </TableRow>

@@ -116,6 +116,17 @@ function foBhavcopyUrl(sessionDate: Date): string {
  */
 export const INDEX_FUTURES_INSTRUMENT_TYPE = "IDF";
 
+/**
+ * NSE's ISO UDiFF instrument-type codes for index and stock OPTIONS —
+ * confirmed against the same real 24-Jul-2026 file as INDEX_FUTURES_INSTRUMENT_TYPE
+ * (`{"STO":33020,"STF":625,"IDO":5140,"IDF":15}`). Used by the Expiry
+ * Settlement Backfill (2026-08-04) options-underlying-price lookup below —
+ * exported as named constants for the same reason INDEX_FUTURES_INSTRUMENT_TYPE
+ * is: so a verify-script assertion can pin them against silent drift.
+ */
+export const INDEX_OPTIONS_INSTRUMENT_TYPE = "IDO";
+export const STOCK_OPTIONS_INSTRUMENT_TYPE = "STO";
+
 /** One parsed F&O bhavcopy row — every UDiFF FO column we actually use, general enough to cover both index futures (IDF) and stock futures (STF) (Phase 4.1 inherits this parser unchanged). */
 export interface FoBhavcopyRow {
   tradeDate: string; // "YYYY-MM-DD", UDiFF's own TradDt value — used for the stale-file check
@@ -125,6 +136,20 @@ export interface FoBhavcopyRow {
   expiryDate: string;
   settlementPrice: number; // SttlmPric
   closePrice: number; // ClsPric — fallback display value only, never used as the settlement price
+  /**
+   * Expiry Settlement Backfill (2026-08-04) — UndrlygPric, the underlying
+   * instrument's own recorded price for this row's trade date. Present on
+   * every FinInstrmTp row uniformly (options AND futures), but this module
+   * only reads it for IDO/STO (options) rows — futures already have their
+   * own authoritative settlementPrice (SttlmPric) and don't need it.
+   * Documented by NSE as the reference underlying price options/futures
+   * daily MTM and final settlement are computed against — i.e. exactly the
+   * "underlying's closing/settlement price on this trading day" a historical
+   * intrinsic-value settlement needs. NaN if the column is missing/unparseable
+   * (defensive — every real row has it, but a future UDiFF revision dropping
+   * or renaming it should degrade to "unavailable," never a silent 0).
+   */
+  underlyingPrice: number; // UndrlygPric
 }
 
 /** Parses a UDiFF FO CSV's header row into a column-name -> index map, tolerant of column reordering (UDiFF's own guidance doc does not guarantee column order is stable release-to-release, unlike the older fixed-width-adjacent CSVs). */
@@ -140,6 +165,7 @@ function parseFoBhavcopyCsv(csv: string): FoBhavcopyRow[] {
   const xpryDtIdx = idx("XpryDt");
   const sttlmPricIdx = idx("SttlmPric");
   const clsPricIdx = idx("ClsPric");
+  const undrlygPricIdx = idx("UndrlygPric");
 
   if (tradDtIdx < 0 || finInstrmTpIdx < 0 || tckrSymbIdx < 0 || xpryDtIdx < 0 || sttlmPricIdx < 0) {
     console.warn("[marketMoves/foBhavcopy] unexpected CSV header shape, missing required column(s)");
@@ -158,11 +184,20 @@ function parseFoBhavcopyCsv(csv: string): FoBhavcopyRow[] {
     const expiryDate = cells[xpryDtIdx];
     const settlementPrice = Number(cells[sttlmPricIdx]);
     const closePrice = clsPricIdx >= 0 ? Number(cells[clsPricIdx]) : NaN;
+    const underlyingPrice = undrlygPricIdx >= 0 ? Number(cells[undrlygPricIdx]) : NaN;
 
     if (!tradeDate || !instrumentType || !underlyingSymbol || !expiryDate) continue;
     if (!Number.isFinite(settlementPrice) || settlementPrice <= 0) continue;
 
-    rows.push({ tradeDate, instrumentType, underlyingSymbol, expiryDate, settlementPrice, closePrice: Number.isFinite(closePrice) ? closePrice : settlementPrice });
+    rows.push({
+      tradeDate,
+      instrumentType,
+      underlyingSymbol,
+      expiryDate,
+      settlementPrice,
+      closePrice: Number.isFinite(closePrice) ? closePrice : settlementPrice,
+      underlyingPrice
+    });
   }
   return rows;
 }
@@ -280,5 +315,67 @@ export async function fetchIndexFuturesSettlementPrices(sessionDate: Date): Prom
     sessionDate,
     rows: indexFutures,
     settlementPriceFor: (underlyingSymbol: string, expiryDateIso: string) => byKey.get(`${underlyingSymbol}::${expiryDateIso}`) ?? null
+  };
+}
+
+/**
+ * Expiry Settlement Backfill (2026-08-04) — every OPTIONS (`IDO` index OR
+ * `STO` stock) row's `underlyingPrice` (UndrlygPric) for the given IST
+ * session date, deduplicated to one entry per (underlyingSymbol, expiryDate)
+ * pair (UndrlygPric is the underlying's own price, identical across every
+ * strike/optionType of the same underlying+expiry+date — the per-strike
+ * option rows are only a vehicle for the file to carry it once per date).
+ *
+ * This is the historical analogue of `fetchIndexFuturesSettlementPrices`
+ * above, purpose-built for a PAST date: unlike optionChain.ts's live
+ * `fetchOptionChain` (which only reflects an in-force, currently-listed
+ * contract — an already-expired strike silently drops out of that feed),
+ * this reads the SAME frozen, date-addressed NSE archive file
+ * `fetchIndexFuturesSettlementPrices` already proved works for arbitrary past
+ * dates, so a contract that expired weeks ago is just as retrievable as
+ * today's. Used by lib/paperTrading/optionsExpiry.ts's backfill sweep to
+ * settle an overdue-expired option position at real historical intrinsic
+ * value instead of a same-day live/fallback quote. Returns `null` (never
+ * throws) under the same "not available" conditions as
+ * `fetchIndexFuturesSettlementPrices` (a 404, parse failure, stale-file
+ * mismatch, or zero matching rows).
+ */
+export interface OptionUnderlyingSettlement {
+  underlyingSymbol: string;
+  /** "YYYY-MM-DD" (UDiFF's own XpryDt string) — same date-library-free convention as IndexFuturesSettlement.expiryDate. */
+  expiryDate: string;
+  underlyingPrice: number;
+}
+
+export interface OptionUnderlyingSettlementSession {
+  sessionDate: Date;
+  rows: OptionUnderlyingSettlement[];
+  /** O(1) lookup for "this underlying, this expiry" — same key shape as IndexFuturesSettlementSession.settlementPriceFor. */
+  underlyingPriceFor(underlyingSymbol: string, expiryDateIso: string): number | null;
+}
+
+export async function fetchOptionUnderlyingSettlementPrices(sessionDate: Date): Promise<OptionUnderlyingSettlementSession | null> {
+  const rows = await fetchFoBhavcopyRows(sessionDate);
+  if (!rows) return null;
+
+  const byKey = new Map<string, number>();
+  for (const r of rows) {
+    if (r.instrumentType !== INDEX_OPTIONS_INSTRUMENT_TYPE && r.instrumentType !== STOCK_OPTIONS_INSTRUMENT_TYPE) continue;
+    if (!Number.isFinite(r.underlyingPrice) || r.underlyingPrice <= 0) continue;
+    const key = `${r.underlyingSymbol}::${r.expiryDate}`;
+    if (!byKey.has(key)) byKey.set(key, r.underlyingPrice); // first occurrence wins — every strike/optionType row for this (underlying, expiry, date) carries the identical value
+  }
+
+  if (byKey.size === 0) return null;
+
+  const optionUnderlyings: OptionUnderlyingSettlement[] = Array.from(byKey.entries()).map(([key, underlyingPrice]) => {
+    const [underlyingSymbol, expiryDate] = key.split("::");
+    return { underlyingSymbol, expiryDate, underlyingPrice };
+  });
+
+  return {
+    sessionDate,
+    rows: optionUnderlyings,
+    underlyingPriceFor: (underlyingSymbol: string, expiryDateIso: string) => byKey.get(`${underlyingSymbol}::${expiryDateIso}`) ?? null
   };
 }

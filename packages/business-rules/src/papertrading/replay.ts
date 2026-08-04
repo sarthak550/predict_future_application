@@ -464,6 +464,28 @@ export function openExpiringPositions(orders: PaperEngineOrder[], today: Date): 
   return deriveOptionPositions(orders).filter((p) => istCalendarDateNumber(p.expiryDate) === targetDay);
 }
 
+/**
+ * Expiry Settlement Backfill (2026-08-04) — every OPEN option position (index
+ * OR stock, mixed) whose expiryDate falls STRICTLY BEFORE the IST calendar
+ * day `today` falls on — i.e. already past expiry and missed by
+ * openExpiringPositions' same-day detection above. This is the sibling
+ * "catch up a historical backlog" query the expiry-settlement crons' backfill
+ * sweep uses: openExpiringPositions alone can only ever catch a contract on
+ * the exact day it expires, so any day that cron didn't run (most notably:
+ * every day before it was first installed on the crontab) permanently misses
+ * that day's expiries under the `===` filter — there is no future date on
+ * which openExpiringPositions would ever find them again. `<` (not `<=`)
+ * deliberately excludes today's own expiries, which openExpiringPositions
+ * already owns — the two functions are a strict partition of every open
+ * option position's expiry-relative-to-today state (future / today / overdue),
+ * never overlapping, so a caller running both never double-processes a
+ * position.
+ */
+export function overdueExpiredOptionPositions(orders: PaperEngineOrder[], today: Date): OptionContractPosition[] {
+  const targetDay = istCalendarDateNumber(today);
+  return deriveOptionPositions(orders).filter((p) => istCalendarDateNumber(p.expiryDate) < targetDay);
+}
+
 // ─── Phase 4: Index Futures ──────────────────────────────────────────────────
 //
 // A genuinely different replay shape from the option path above (hence a
@@ -661,4 +683,15 @@ export const deriveFuturesPositions = deriveOpenFuturesPositions;
 export function openExpiringFuturesPositions(orders: PaperEngineOrder[], today: Date): FuturesContractPosition[] {
   const targetDay = istCalendarDateNumber(today);
   return deriveOpenFuturesPositions(orders).filter((p) => istCalendarDateNumber(p.expiryDate) === targetDay);
+}
+
+/**
+ * Expiry Settlement Backfill (2026-08-04) — every OPEN INDEX_FUTURE position
+ * whose expiryDate falls STRICTLY BEFORE the IST calendar day `today` falls
+ * on. Sibling of overdueExpiredOptionPositions above — same "strict partition
+ * of future/today/overdue, `<` not `<=`" reasoning applies identically here.
+ */
+export function overdueExpiredFuturesPositions(orders: PaperEngineOrder[], today: Date): FuturesContractPosition[] {
+  const targetDay = istCalendarDateNumber(today);
+  return deriveOpenFuturesPositions(orders).filter((p) => istCalendarDateNumber(p.expiryDate) < targetDay);
 }

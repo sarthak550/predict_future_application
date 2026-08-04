@@ -1929,6 +1929,20 @@ model PaperOrder {
   /// Set only when autoSquaredOff is true; distinguishes the two cron sources
   /// in UI copy ("auto-closed at session close" vs. "settled at expiry").
   squareOffReason  PaperSquareOffReason?
+  /// Expiry Settlement Backfill (2026-08-04) — set ONLY on an auto-settlement
+  /// leg (autoSquaredOff = true, squareOffReason non-null) for an
+  /// INDEX_OPTION/STOCK_OPTION/INDEX_FUTURE contract; null for every EQUITY
+  /// row and every manual trade leg. Records WHICH price source produced
+  /// `fillPrice`, so a "settled at ₹X" UI label can honestly disclose its
+  /// basis rather than implying every settlement drew on the same live,
+  /// authoritative quote — see PaperSettlementBasis's own doc for what each
+  /// value means and lib/paperTrading/{optionsExpiry,futuresExpiry}.ts for
+  /// which cron writes which value. Null for every pre-2026-08-04 settlement
+  /// row (OPTION_EXPIRY/STOCK_OPTION_EXPIRY_SQUAREOFF/FUTURES_EXPIRY_SETTLEMENT/
+  /// FUTURES_MARGIN_CALL legs written before this column existed) — the UI
+  /// treats null as "basis not tracked, pre-dates this field" rather than
+  /// silently mislabeling it as anything more specific than that.
+  settlementBasis  PaperSettlementBasis?
 
   // ─── Phase 4 (Index Futures) — additive column, false for every prior row ──
 
@@ -2101,10 +2115,15 @@ model PaperPendingOrder {
   /// currentQuote` at placement time — a wrong-side request is always user
   /// error and 422s before a row is ever written.
   triggerPrice   Float?
-  /// Set ONLY on a REJECTED row — see PendingOrderStatus.REJECTED. Explains,
+  /// Originally REJECTED-only (see PendingOrderStatus.REJECTED) — explains,
   /// in human-readable terms, why a crossed STOP could not fill at the actual
-  /// crossing price (insufficient cash/margin/holdings at fill time). Never
-  /// set for any other status.
+  /// crossing price (insufficient cash/margin/holdings at fill time). Expiry
+  /// Settlement Backfill (2026-08-04) broadened this to also cover a
+  /// CANCELLED row where the cancellation reason isn't self-evident from
+  /// status alone — specifically a pending order auto-cancelled because its
+  /// underlying contract's expiry has passed (see optionsExpiry.ts's/
+  /// futuresExpiry.ts's cancelExpired*PendingOrders helpers). Still null for
+  /// every ordinary user-initiated CANCELLED row (that reason IS self-evident).
   resolutionNote String?
   /// Stamped by Sprint C's drag-to-reprice PATCH endpoint (not built this
   /// sprint — see A6 section 42 for the pure invariant that endpoint will
@@ -2195,12 +2214,61 @@ enum PaperOptionType {
 /// STOCK_OPTION_EXPIRY_SQUAREOFF, NOT the zero-brokerage settlement path — see
 /// futuresCosts.ts path 3's doc comment for why this is the easiest leg-type
 /// mis-copy in the whole futures flow).
+///
+/// Expiry Settlement Backfill (2026-08-04) adds two more: OPTION_EXPIRY_BACKFILL
+/// and FUTURES_EXPIRY_BACKFILL — a LATE sweep that cash-settles a position
+/// whose expiry has ALREADY PASSED (missed by the same-day cron above, most
+/// commonly because that day's cron never ran — see the two crons' own module
+/// docs). OPTION_EXPIRY_BACKFILL covers BOTH INDEX_OPTION and STOCK_OPTION —
+/// unlike the same-day path, a stock option that's already past its own
+/// expiry can never be force-sold at a real tradeable price (the contract no
+/// longer exists on the exchange), so backfill cash-settles it at intrinsic
+/// value exactly like an index option, using the best available historical
+/// source — this IS the documented "cash-settle stock options too"
+/// simplification for the one case where physical-settlement-adjacent
+/// square-off is impossible after the fact. See settlementBasis for which
+/// price source resolved the settlement, and optionsExpiry.ts's/
+/// futuresExpiry.ts's module docs for the full tiered-fallback design.
 enum PaperSquareOffReason {
   INTRADAY_SESSION_CLOSE
   OPTION_EXPIRY
   STOCK_OPTION_EXPIRY_SQUAREOFF
   FUTURES_EXPIRY_SETTLEMENT
   FUTURES_MARGIN_CALL
+  OPTION_EXPIRY_BACKFILL
+  FUTURES_EXPIRY_BACKFILL
+}
+
+/// Expiry Settlement Backfill (2026-08-04) — records which price source
+/// produced an auto-settlement leg's fillPrice. See PaperOrder.settlementBasis.
+enum PaperSettlementBasis {
+  /// The normal, expected path: priced off a live/near-live tradeable quote
+  /// captured THE SAME DAY the contract expired (index option's live chain
+  /// spot or its Yahoo index-quote fallback; stock option's live-price/
+  /// bid-ask-mid/intrinsic-estimate square-off tiers; futures' own-day F&O
+  /// bhavcopy settlement price). Used by every same-day settlement leg.
+  LIVE_MARKET
+  /// Backfill only: no same-day price was ever captured (the contract's
+  /// expiry has already passed), so this leg is priced from the NSE F&O
+  /// bhavcopy's own recorded value for the CONTRACT'S OWN past expiry date —
+  /// UndrlygPric (options, feeds computeIntrinsicValue) or SttlmPric
+  /// (futures) — the authoritative exchange record, reconstructed after the
+  /// fact rather than observed live.
+  HISTORICAL_EXCHANGE_CLOSE
+  /// Backfill only: the historical bhavcopy for that exact past date was
+  /// unobtainable (NSE archive gap / non-trading-day edge case), so this leg
+  /// falls back to the last real data point this app itself captured before
+  /// expiry — an option's most recent OptionPremiumSnapshot, or a future's
+  /// own last-marked referencePrice (its last daily-MTM leg, or entry price
+  /// if it was never marked). Strictly a fallback of last resort, one tier
+  /// more honest than assuming zero.
+  LAST_KNOWN_MARK
+  /// Backfill only, options exclusively: neither a historical bhavcopy nor
+  /// any premium snapshot was ever obtainable for this contract. Settled at
+  /// ₹0 as the conservative floor — this is a DATA-ABSENCE assumption, not a
+  /// verified "expired worthless" computation, and is disclosed as such
+  /// rather than silently reading identically to a real ₹0 intrinsic result.
+  ASSUMED_WORTHLESS
 }
 
 /// Trading Terminal UI Overhaul (Sprint A, T1) — premium-history capture. Market

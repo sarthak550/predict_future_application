@@ -49,6 +49,8 @@ import {
   openExpiringFuturesPositions,
   openExpiringPositions,
   openIntradayPositions,
+  overdueExpiredFuturesPositions,
+  overdueExpiredOptionPositions,
   replayPosition,
   unrealizedGrossPnl,
   type FuturesContractPosition,
@@ -65,7 +67,7 @@ import {
   zeroDailyMtmCosts
 } from "@predict-future/business-rules/papertrading/futuresCosts";
 import { computeFuturesMarginRequired, INDEX_FUTURES_MARGIN_RATE } from "@predict-future/business-rules/papertrading/futuresMargin";
-import { INDEX_FUTURES_INSTRUMENT_TYPE } from "@/lib/marketMoves/foBhavcopy";
+import { INDEX_FUTURES_INSTRUMENT_TYPE, INDEX_OPTIONS_INSTRUMENT_TYPE, STOCK_OPTIONS_INSTRUMENT_TYPE } from "@/lib/marketMoves/foBhavcopy";
 import {
   formatFuturesContractLabel,
   formatFuturesContractSymbol
@@ -1471,6 +1473,181 @@ async function main() {
     const futuresOriginalBlock = computePendingFuturesBlockAmount({ side: "BUY", quantity: 75, price: 24000 });
     const futuresRepricedBlock = computePendingFuturesBlockAmount({ side: "BUY", quantity: 75, price: 24200 });
     assertTrue(futuresRepricedBlock > futuresOriginalBlock, "A higher repriced price on a futures BUY-to-open produces a strictly larger margin+costs block");
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Expiry Settlement Backfill (2026-08-04) — replay.ts's overdueExpired*
+  // functions + foBhavcopy.ts's options instrument-type codes
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // ── 43. overdueExpiredOptionPositions — the strict-partition sibling of openExpiringPositions ──
+  console.log("\n43. overdueExpiredOptionPositions — finds only STRICTLY PAST-expiry, still-open contracts (index AND stock), never today's or the future's");
+  {
+    const today = istInstant(2026, 8, 28, 15, 40);
+    const orders: PaperEngineOrder[] = [
+      // Expired 3 weeks ago, still open (the founder-reported bug scenario) — must appear.
+      optionOrder({
+        underlyingSymbol: "NIFTY",
+        optionType: "CE",
+        strikePrice: 24500,
+        expiryDate: utcDate(2026, 8, 7),
+        lotSize: 75,
+        side: "BUY",
+        quantity: 75,
+        fillPrice: 80,
+        createdAt: istInstant(2026, 7, 20, 10, 0)
+      }),
+      // A stock option, also expired weeks ago, still open — must appear too (backfill covers BOTH kinds, unlike the same-day stock cron).
+      optionOrder({
+        underlyingSymbol: "RELIANCE",
+        optionType: "PE",
+        strikePrice: 1300,
+        expiryDate: utcDate(2026, 8, 7),
+        lotSize: 500,
+        side: "BUY",
+        quantity: 500,
+        fillPrice: 12,
+        createdAt: istInstant(2026, 7, 20, 10, 5),
+        instrumentKind: "STOCK_OPTION"
+      }),
+      // Expires TODAY — must NOT appear (that's openExpiringPositions' job, the two functions must never double-count the same position).
+      optionOrder({
+        underlyingSymbol: "NIFTY",
+        optionType: "CE",
+        strikePrice: 24700,
+        expiryDate: utcDate(2026, 8, 28),
+        lotSize: 75,
+        side: "BUY",
+        quantity: 75,
+        fillPrice: 100,
+        createdAt: istInstant(2026, 8, 1, 10, 0)
+      }),
+      // Expires next week (the future) — must NOT appear.
+      optionOrder({
+        underlyingSymbol: "NIFTY",
+        optionType: "PE",
+        strikePrice: 24600,
+        expiryDate: utcDate(2026, 9, 4),
+        lotSize: 75,
+        side: "BUY",
+        quantity: 75,
+        fillPrice: 90,
+        createdAt: istInstant(2026, 8, 1, 10, 0)
+      }),
+      // Expired weeks ago but already manually closed before this test's "today" — must NOT appear (flat).
+      optionOrder({
+        underlyingSymbol: "TCS",
+        optionType: "CE",
+        strikePrice: 3800,
+        expiryDate: utcDate(2026, 8, 7),
+        lotSize: 225,
+        side: "BUY",
+        quantity: 225,
+        fillPrice: 40,
+        createdAt: istInstant(2026, 7, 15, 10, 0),
+        instrumentKind: "STOCK_OPTION"
+      }),
+      optionOrder({
+        underlyingSymbol: "TCS",
+        optionType: "CE",
+        strikePrice: 3800,
+        expiryDate: utcDate(2026, 8, 7),
+        lotSize: 225,
+        side: "SELL",
+        quantity: 225,
+        fillPrice: 55,
+        createdAt: istInstant(2026, 8, 5, 10, 0),
+        instrumentKind: "STOCK_OPTION"
+      })
+    ];
+
+    const overdue = overdueExpiredOptionPositions(orders, today);
+    assertEqual(overdue.length, 2, "Exactly two positions are open AND already past their own expiry — one index, one stock");
+    assertTrue(
+      overdue.some((p) => p.underlyingSymbol === "NIFTY" && p.instrumentKind === "INDEX_OPTION"),
+      "The overdue NIFTY 24500 CE (index) is found"
+    );
+    assertTrue(
+      overdue.some((p) => p.underlyingSymbol === "RELIANCE" && p.instrumentKind === "STOCK_OPTION"),
+      "The overdue RELIANCE 1300 PE (stock) is found too — backfill is instrument-kind-agnostic, unlike the same-day stock cron"
+    );
+    assertTrue(
+      !overdue.some((p) => p.strikePrice === 24700),
+      "Today's own expiry (24700 CE) is NOT returned by the overdue function — strict partition with openExpiringPositions"
+    );
+
+    // The strict-partition guarantee itself: the union of both functions'
+    // results, for the same order log and the same `today`, must contain no
+    // duplicate contract — this is what makes it safe for optionsExpiry.ts to
+    // run both sweeps in the same cron invocation without double-processing.
+    const expiringToday = openExpiringPositions(orders, today);
+    const overdueKeys = new Set(overdue.map((p) => `${p.underlyingSymbol}::${p.strikePrice}::${p.optionType}`));
+    const todayKeys = new Set(expiringToday.map((p) => `${p.underlyingSymbol}::${p.strikePrice}::${p.optionType}`));
+    const intersection = [...overdueKeys].filter((k) => todayKeys.has(k));
+    assertEqual(intersection.length, 0, "openExpiringPositions and overdueExpiredOptionPositions never both return the same contract — a strict partition, so a cron calling both never double-settles one position");
+  }
+
+  // ── 44. overdueExpiredFuturesPositions — the futures-side sibling ──
+  console.log("\n44. overdueExpiredFuturesPositions — finds only STRICTLY PAST-expiry, still-open futures contracts");
+  {
+    const today = istInstant(2026, 8, 28, 21, 15);
+    const overdueFuture = futuresOrder({
+      symbol: "NIFTYFUT31JUL2026",
+      side: "BUY",
+      quantity: 65,
+      fillPrice: 24000,
+      underlyingSymbol: "NIFTY",
+      expiryDate: new Date(Date.UTC(2026, 6, 31)),
+      lotSize: 65,
+      instrumentKind: "INDEX_FUTURE",
+      createdAt: istInstant(2026, 7, 20, 9, 30)
+    });
+    const expiringTodayFuture = futuresOrder({
+      symbol: "NIFTYFUT28AUG2026",
+      side: "BUY",
+      quantity: 65,
+      fillPrice: 24100,
+      underlyingSymbol: "NIFTY",
+      expiryDate: new Date(Date.UTC(2026, 7, 28)),
+      lotSize: 65,
+      instrumentKind: "INDEX_FUTURE",
+      createdAt: istInstant(2026, 8, 1, 9, 30)
+    });
+    const futureExpiryFuture = futuresOrder({
+      symbol: "NIFTYFUT25SEP2026",
+      side: "BUY",
+      quantity: 65,
+      fillPrice: 24200,
+      underlyingSymbol: "NIFTY",
+      expiryDate: new Date(Date.UTC(2026, 8, 25)),
+      lotSize: 65,
+      instrumentKind: "INDEX_FUTURE",
+      createdAt: istInstant(2026, 8, 1, 9, 31)
+    });
+
+    const overdue = overdueExpiredFuturesPositions([overdueFuture, expiringTodayFuture, futureExpiryFuture], today);
+    assertEqual(overdue.length, 1, "Exactly one futures contract is open AND already past its own expiry");
+    assertEqual(overdue[0].expiryDate.toISOString().slice(0, 10), "2026-07-31", "The overdue 31-Jul contract is the one found, not today's 28-Aug or next month's 25-Sep");
+
+    const expiringToday = openExpiringFuturesPositions([overdueFuture, expiringTodayFuture, futureExpiryFuture], today);
+    assertEqual(expiringToday.length, 1, "Sanity: today's own 28-Aug contract is still found by openExpiringFuturesPositions, unaffected by the new function");
+    assertTrue(
+      overdue[0].expiryDate.getTime() !== expiringToday[0].expiryDate.getTime(),
+      "The overdue and today's-expiry results are disjoint contracts — same strict-partition guarantee as the option-side test above"
+    );
+  }
+
+  // ── 45. foBhavcopy.ts's options instrument-type codes, pinned ──
+  console.log("\n45. foBhavcopy.ts's INDEX_OPTIONS_INSTRUMENT_TYPE/STOCK_OPTIONS_INSTRUMENT_TYPE pinned to the EC2-verified real codes");
+  {
+    // Same real 24-Jul-2026 bhavcopy distinct-value capture test 31 pins
+    // INDEX_FUTURES_INSTRUMENT_TYPE against (STO=33020, STF=625, IDO=5140,
+    // IDF=15) — pinning the two OPTIONS codes here too so a future edit to
+    // foBhavcopy.ts's fetchOptionUnderlyingSettlementPrices can't silently
+    // regress them back to a documentation-plausible-but-wrong value the way
+    // INDEX_FUTURES_INSTRUMENT_TYPE's first pass did.
+    assertEqual(INDEX_OPTIONS_INSTRUMENT_TYPE, "IDO", "Index-options FinInstrmTp code, EC2-verified 2026-07-25 (IDO=5140 rows in the real file)");
+    assertEqual(STOCK_OPTIONS_INSTRUMENT_TYPE, "STO", "Stock-options FinInstrmTp code, EC2-verified 2026-07-25 (STO=33020 rows in the real file)");
   }
 
   console.log(`\n${passCount} passed, ${failCount} failed.`);

@@ -21,6 +21,10 @@
  *       -H "Authorization: Bearer $CRON_SECRET"
  * (09:25 UTC = 15:25 IST primary pass; 09:29 UTC = 15:29 IST safety pass)
  *
+ * dryRun: pass `?dryRun=true` (or POST body `{"dryRun": true}`) to compute
+ * and return exactly what a live pass would square off WITHOUT writing
+ * anything.
+ *
  * Never throws: every failure mode is caught inside runStockOptionSquareOff
  * and reported in the JSON response body instead.
  */
@@ -37,13 +41,26 @@ function hasCronAccess(request: Request): boolean {
   return authHeader === `Bearer ${secret}` || cronHeader === secret;
 }
 
+async function resolveDryRun(request: Request): Promise<boolean> {
+  const url = new URL(request.url);
+  if (url.searchParams.get("dryRun") === "true") return true;
+  if (request.method !== "POST") return false;
+  try {
+    const body = await request.clone().json();
+    return body?.dryRun === true;
+  } catch {
+    return false;
+  }
+}
+
 async function run(request: Request) {
   if (!hasCronAccess(request)) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
 
   try {
-    const result = await runStockOptionSquareOff();
+    const dryRun = await resolveDryRun(request);
+    const result = await runStockOptionSquareOff(new Date(), { dryRun });
     // Loud log line for ops/alerting: a position surviving both today's
     // passes is the one true residual-risk edge case this design doesn't
     // fully close (total NSE outage) — see the module doc.
