@@ -15,6 +15,18 @@
  *     NSE session, fetched client-side from /api/instruments/[symbol]/intraday
  *     ONLY when the user selects it (never prefetched) — a live NSE call is
  *     too expensive/volatile to run for every page view.
+ *
+ * Quote-driven intrabar ticks (founder complaint, live market open,
+ * 2026-08-04): between `pollIntervalMs` background refreshes of the FULL 1D
+ * series, this chart used to sit still. `quoteSource` (optional — see its
+ * own prop doc) now drives a fast (~4-5s) `useLiveQuoteTick` poll while
+ * parked on 1D, appending each fresh tick as a new point rather than
+ * overwriting anything — the same honest "session tick" pattern
+ * `premium-chart.tsx`/the workbench's `optionPremium` branch already
+ * established. The background `pollIntervalMs` full refetch stays the
+ * correction authority: every time it lands, the locally-appended ticks are
+ * discarded (see `fetchIntraday`'s success handler) since the server's own
+ * fresh series has by then already absorbed whatever really happened.
  */
 
 import { Loader2 } from "lucide-react";
@@ -34,6 +46,7 @@ import { ChartOrderIntentPopover } from "@/components/finance/chart-order-intent
 import { ChartAxisPlusButton } from "@/components/finance/chart-axis-plus-button";
 import { ChartContextMenu } from "@/components/finance/chart-context-menu";
 import { ChartTradeHint, useTradeHintDismissed } from "@/components/finance/chart-trade-hint";
+import { useLiveQuoteTick } from "@/components/paper-trading/use-live-quote-tick";
 
 export type { ChartOrderLine } from "@/components/finance/chart-order-lines";
 
@@ -105,6 +118,7 @@ export function PriceChart({
   onOrderLineDrag,
   onOrderLineCancel,
   pollIntervalMs,
+  quoteSource,
 }: {
   series: PricePoint[];
   symbol: string;
@@ -200,6 +214,47 @@ export function PriceChart({
    * entirely when omitted (zero behavior change for every existing caller).
    */
   pollIntervalMs?: number;
+  /**
+   * Quote-driven intrabar ticks (founder complaint, live market open,
+   * 2026-08-04) — additive, optional. Points a fast (~4-5s), market-hours-
+   * gated last-price poll at a `{price, asOf}`-shaped endpoint (apps/web's
+   * `/api/instruments/[symbol]/quote` or `/index/[symbol]/quote`), active
+   * only while `timeframe === "1D"`. Each fresh tick is APPENDED as a new
+   * point to the 1D series — the SAME "session tick" pattern
+   * `use-workbench-candles.ts`'s `optionPremium` branch and
+   * `premium-chart.tsx` already use for `livePremium` — never overwriting
+   * an existing point, never fabricating one.
+   *
+   * Three states, not two:
+   *   - `{ url }`: poll exactly that endpoint (futures/options-index
+   *     underlyings pass their own `/index/[symbol]/quote`).
+   *   - `false`: NEVER poll, full stop — required for any `symbol` that
+   *     isn't a real NSE equity/index ticker (bonds, or any future non-
+   *     equity consumer). REQUIRED, not optional-by-omission: QA caught a
+   *     live regression (2026-08-04) where `app/bonds/[symbol]/page.tsx`
+   *     omitted this prop entirely and silently inherited the bare-equity
+   *     default below, turning what was previously a harmless ONE-SHOT
+   *     `/intraday` 404 into a recurring real outbound Yahoo hit every
+   *     ~4-5s for as long as a bond's "1D" chip stayed open during market
+   *     hours — the exact "no background hammering" failure this whole
+   *     feature was built to avoid. `intradaySource` being set is NOT a
+   *     reliable proxy for "don't poll" (it correlates for the index
+   *     callers that motivated the original design, but bonds omits BOTH
+   *     props and still isn't equity) — every non-equity, non-index caller
+   *     must say so explicitly.
+   *   - omitted (`undefined`) AND `intradaySource` also omitted: defaults
+   *     to this chart's own bare-equity quote endpoint
+   *     (`/api/instruments/${symbol}/quote`) — the call-site audit behind
+   *     the fix above (2026-08-04) confirmed this default is correct and
+   *     wanted by every current caller in this shape (the equity dashboard,
+   *     the options terminal's equity underlying branch, and the public
+   *     `/instruments/[symbol]` page's equity branch — three real call
+   *     sites, `symbol` is always a genuine NSE ticker in this shape).
+   *     Omitted but `intradaySource` IS given (the indices page and the
+   *     public instrument page's index branch): the live poll stays off
+   *     rather than guessing a URL — zero behavior change for those.
+   */
+  quoteSource?: { url: string } | false;
 }) {
   const [timeframe, setTimeframe] = useState<TimeframeKey>(defaultTimeframe ?? "3M");
 
@@ -270,6 +325,15 @@ export function PriceChart({
   const [contextMenu, setContextMenu] = useState<{ price: number; left: number; top: number } | null>(null);
   const [hintDismissed, dismissHint] = useTradeHintDismissed();
 
+  // Quote-driven intrabar ticks (2026-08-04) — locally-appended live points,
+  // reset every time a REAL server fetch lands (see fetchIntraday's success
+  // handler below) since the fresh server series is always the correction
+  // authority. `lastAppendedLiveTickPrice` skips a duplicate consecutive
+  // point for an unchanged price, same dedupe convention as
+  // use-workbench-candles.ts's optionPremium `sessionTicks`.
+  const [liveTicks, setLiveTicks] = useState<IntradayTick[]>([]);
+  const lastAppendedLiveTickPrice = useRef<number | null>(null);
+
   // Lazy-fetch: only hits the network the first time "1D" is selected, never
   // on mount and never for the EOD timeframes. Extracted into a `silent`-
   // aware callback (Sprint B, B1) so the SAME fetch logic backs both the
@@ -305,6 +369,13 @@ export function PriceChart({
             prevClose: typeof body.prevClose === "number" ? body.prevClose : null,
             sessionLabel: body.sessionLabel ?? "today",
           });
+          // A real server fetch just landed (initial OR the background
+          // pollIntervalMs refresh) — it's the correction authority, so any
+          // locally-appended live ticks from before this point are now
+          // superseded and must be dropped, never left dangling past a
+          // real bar boundary the server itself has since captured.
+          setLiveTicks([]);
+          lastAppendedLiveTickPrice.current = null;
         })
         .catch(() => {
           if (!opts.silent) setIntraday({ status: "error" });
@@ -343,15 +414,42 @@ export function PriceChart({
     return () => clearInterval(id);
   }, [timeframe, pollIntervalMs]);
 
+  // Quote-driven intrabar ticks (2026-08-04) — see this file's own module
+  // doc and `quoteSource`'s prop doc for the full 3-state default/override/
+  // opt-out contract (the `=== false` check is a REQUIRED explicit opt-out
+  // for non-equity symbols, not an incidental branch — see that doc for the
+  // bonds-page regression this exists to prevent). Only ever active on 1D
+  // (there's nothing to tick on an EOD timeframe).
+  const effectiveQuoteUrl =
+    quoteSource === false
+      ? null
+      : (quoteSource?.url ?? (intradaySource ? null : `/api/instruments/${encodeURIComponent(symbol)}/quote`));
+  const liveTick = useLiveQuoteTick(effectiveQuoteUrl, timeframe === "1D");
+  useEffect(() => {
+    if (!liveTick || liveTick.price <= 0) return;
+    if (lastAppendedLiveTickPrice.current === liveTick.price) return;
+    lastAppendedLiveTickPrice.current = liveTick.price;
+    // Callers that pass `pollIntervalMs` reset `liveTicks` to empty every
+    // 60s (see fetchIntraday's success handler) — this array never grows
+    // past ~13 points in practice for them. A caller WITHOUT a background
+    // poll (e.g. the plain /instruments/[symbol] page, outside this pass's
+    // explicit scope) has no such reset, so a very long single-page session
+    // would otherwise accumulate indefinitely; a generous 500-point cap
+    // (~35+ minutes of ticks at this cadence) bounds memory for that case
+    // too without ever being reachable by the pollIntervalMs callers.
+    setLiveTicks((prev) => [...prev, { t: liveTick.asOf, price: liveTick.price }].slice(-500));
+  }, [liveTick]);
+
   const points = useMemo<ChartPoint[]>(() => {
     if (timeframe === "1D") {
       if (intraday.status !== "ready") return [];
-      return intraday.points.map((p) => ({ xValue: p.t, y: p.price, label: formatIstTime(p.t) }));
+      const allPoints = liveTicks.length > 0 ? [...intraday.points, ...liveTicks] : intraday.points;
+      return allPoints.map((p) => ({ xValue: p.t, y: p.price, label: formatIstTime(p.t) }));
     }
     const tf = TIMEFRAMES.find((t) => t.key === timeframe)!;
     const windowed = tf.sessions === Infinity ? series : series.slice(-tf.sessions);
     return windowed.map((p, i) => ({ xValue: i, y: p.close, label: p.date }));
-  }, [series, timeframe, intraday]);
+  }, [series, timeframe, intraday, liveTicks]);
 
   // Reports the chart's own last-price/prevClose/change figures out to the
   // caller (terminal-header.tsx) — computed unconditionally (before any early
@@ -593,7 +691,7 @@ export function PriceChart({
 
   const footerNote =
     timeframe === "1D" && intraday.status === "ready"
-      ? `1-minute ticks · ${intraday.sessionLabel}`
+      ? `1-minute ticks${effectiveQuoteUrl ? " + live" : ""} · ${intraday.sessionLabel}`
       : "Daily closes · updates after each session";
 
   return (

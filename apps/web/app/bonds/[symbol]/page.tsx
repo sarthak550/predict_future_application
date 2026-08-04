@@ -102,6 +102,15 @@ export default async function BondDetailPage({ params }: { params: { symbol: str
             symbol={bond.symbol}
             series={bond.spark.map((pt) => ({ date: formatIstSessionDate(pt.sessionDate), close: pt.close }))}
             defaultTimeframe="MAX"
+            // Quote-driven intrabar ticks (2026-08-04) — REQUIRED explicit
+            // opt-out: `bond.symbol` (e.g. "SGBDEC26") is not a Yahoo-tradable
+            // NSE equity/index ticker, so the default bare-equity quote poll
+            // would otherwise hammer `/api/instruments/${symbol}/quote` with
+            // a real outbound Yahoo hit every ~4-5s the whole time a user has
+            // this bond's "1D" chip open during market hours — QA caught this
+            // live. See PriceChart's own `quoteSource` prop doc for the full
+            // 3-state contract.
+            quoteSource={false}
           />
         </CardContent>
       </Card>

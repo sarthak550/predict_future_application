@@ -449,7 +449,7 @@ export function ChartWorkbench({
     saveStoredPanelWidth(PANEL_DEFAULT_WIDTH);
   }
 
-  const { candles, status, errorMessage, sourceLabel, quote, premiumMeta, lastUpdatedAt, pollIntervalMs } = useWorkbenchCandles(feed, chartInterval);
+  const { candles, status, errorMessage, sourceLabel, quote, premiumMeta, lastUpdatedAt, pollIntervalMs, liveTicksActive } = useWorkbenchCandles(feed, chartInterval);
 
   // Founder-feedback pass (2026-08-03) — PART A (per-indicator signal chips) + PART B (Technicals Rating gauge).
   // Both `computeIndicatorSignal`/`computeTechnicalRating` are pure functions over `candles` — recomputed here
@@ -931,7 +931,9 @@ export function ChartWorkbench({
           cadenceNote={
             isPremiumMode
               ? "Premium mode: live session ticks fold in as they arrive; full history re-polls every 60s (snapshots are captured every 5 minutes)."
-              : undefined
+              : liveTicksActive
+                ? "Price ticks fold in every ~5s during market hours; full candle bars re-sync every 30-60s. Also bounded by Yahoo's own delayed-data latency."
+                : undefined
           }
         />
         <TimeframeSelector intervals={isPremiumMode ? PREMIUM_INTERVALS : WORKBENCH_INTERVALS} value={chartInterval} onChange={setChartInterval} />

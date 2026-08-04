@@ -894,6 +894,13 @@ function OptionsUnderlyingChart({
     () => (underlying ? { url: `/api/instruments/index/${underlying}/intraday` } : undefined),
     [underlying]
   );
+  // Quote-driven intrabar ticks (2026-08-04) — the index quote sibling of
+  // indexIntradaySource, required for PriceChart to enable its fast poll at
+  // all (it never guesses a quote URL for a non-default `intradaySource`).
+  const indexQuoteSource = useMemo(
+    () => (underlying ? { url: `/api/instruments/index/${underlying}/quote` } : undefined),
+    [underlying]
+  );
 
   if (!underlying) {
     return <p className="text-sm text-ink-400">Select an underlying in the chain below to see its chart.</p>;
@@ -907,9 +914,11 @@ function OptionsUnderlyingChart({
         series={EMPTY_SERIES}
         defaultTimeframe="1D"
         intradaySource={indexIntradaySource}
+        quoteSource={indexQuoteSource}
+        pollIntervalMs={60_000}
       />
     );
   }
 
-  return <PriceChart key={underlying} symbol={underlying} series={stockEodSeries} />;
+  return <PriceChart key={underlying} symbol={underlying} series={stockEodSeries} pollIntervalMs={60_000} />;
 }

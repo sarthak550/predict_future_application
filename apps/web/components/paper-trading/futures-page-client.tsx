@@ -411,6 +411,10 @@ function FuturesPageClientInner() {
   );
 
   const indexIntradaySource = { url: `/api/instruments/index/${underlying}/intraday` };
+  // Quote-driven intrabar ticks (2026-08-04) — the index quote sibling of
+  // indexIntradaySource, required for PriceChart to enable its fast poll at
+  // all (it never guesses a quote URL for a non-default `intradaySource`).
+  const indexQuoteSource = { url: `/api/instruments/index/${underlying}/quote` };
 
   // Chart Trading + SL/TP (Sprint B, B3) — order lines for the CURRENTLY
   // charted underlying's pending orders (any expiry — the underlying's spot
@@ -553,6 +557,7 @@ function FuturesPageClientInner() {
                 series={EMPTY_SERIES}
                 defaultTimeframe="1D"
                 intradaySource={indexIntradaySource}
+                quoteSource={indexQuoteSource}
                 orderLines={orderLines}
                 onOrderIntentConfirm={handleOrderIntentConfirm}
                 onOrderLineDrag={handleOrderLineDrag}
