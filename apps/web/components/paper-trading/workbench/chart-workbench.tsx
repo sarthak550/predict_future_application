@@ -1248,6 +1248,8 @@ export function ChartWorkbench({
             isPremiumMode={isPremiumMode}
             notional={strategyNotional}
             onRunSignals={handleScriptSignals}
+            open={scriptDrawerOpen}
+            shortcutsSuppressed={Boolean(textPopover || intentPopover || contextMenu)}
           />
         </div>
       )}

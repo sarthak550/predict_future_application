@@ -66,6 +66,29 @@
  * cursor state) every time the parent's `value` prop changes for any
  * reason, including the editor's OWN `onChange` echoing straight back in as
  * a new `value` prop on the next render.
+ *
+ * **SS3 — Cmd+Enter/Ctrl+S keybindings, in-editor path.** `@codemirror/commands`'s
+ * own `defaultKeymap` ALREADY binds `Mod-Enter` to `insertBlankLine`
+ * (verified directly against the installed package's source, not assumed) —
+ * a real conflict, not a hypothetical one. `Mod-s` has no `defaultKeymap`
+ * binding at all, so without explicit handling here it falls straight
+ * through to the browser's native "Save Page" dialog. Both are intercepted
+ * by a small `keymap.of([...])` built inside the init effect (`shortcutKeymap`,
+ * local to that effect since it closes over the two ref reads below), listed
+ * FIRST in the combined extensions array — CodeMirror's keymap facet
+ * matches the FIRST binding for a given key across the whole combined
+ * array, so listing it before `defaultKeymap` gives it priority without a
+ * separate `Prec.highest` wrapper. Each command reads its callback through
+ * a ref (same "read through a ref, never a closure" law `onChangeRef`
+ * already establishes in this file) so the init-once effect never needs
+ * `onRunShortcut`/`onSaveShortcut` in its dep array. Returning `true` from a
+ * CodeMirror command handler makes the keymap facet call
+ * `event.preventDefault()` itself — this is what stops `Mod-Enter` from
+ * also inserting a blank line and `Mod-s` from also opening the browser's
+ * save dialog when focus is inside the editor. The "elsewhere in the
+ * drawer" half of T3's requirement (focus outside the editor entirely) is
+ * handled one level up, in `script-editor-drawer.tsx`'s own document-level
+ * listener — this file only owns the in-editor path.
  */
 import { useEffect, useRef } from "react";
 import { EditorView } from "codemirror";
@@ -76,20 +99,6 @@ import { bracketMatching, indentOnInput, syntaxHighlighting, defaultHighlightSty
 import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 import { javascript } from "@codemirror/lang-javascript";
 
-/** Hand-composed per this file's own module doc — the "minimal extension set" D1's §1 describes, not `codemirror`'s own heavier `basicSetup`. */
-const MINIMAL_EXTENSIONS = [
-  lineNumbers(),
-  highlightActiveLineGutter(),
-  highlightActiveLine(),
-  history(),
-  drawSelection(),
-  indentOnInput(),
-  syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-  bracketMatching(),
-  closeBrackets(),
-  keymap.of([...closeBracketsKeymap, ...defaultKeymap, ...historyKeymap])
-];
-
 export interface CodeEditorProps {
   /** Controlled value — see module doc for how external updates are applied without tearing down the editor. */
   value: string;
@@ -97,6 +106,10 @@ export interface CodeEditorProps {
   /** Examples load into the editor read-only (D onClick "Duplicate to edit" is the only active affordance) — toggled via a `Compartment.reconfigure`, not a remount (D5). */
   readOnly?: boolean;
   className?: string;
+  /** SS3, T3 — Cmd+Enter/Ctrl+Enter while focus is inside the editor. Omitted/no-op-safe: a script with no callback simply lets `Mod-Enter` do nothing (never falls back to `insertBlankLine` — the binding still wins the keymap race either way). */
+  onRunShortcut?: () => void;
+  /** SS3, T3 — Cmd+S/Ctrl+S while focus is inside the editor. Always calls `preventDefault` on the native Save-page dialog even if the handler itself is a no-op for the current mode (e.g. viewing a read-only Example). */
+  onSaveShortcut?: () => void;
 }
 
 const EDITOR_THEME = EditorView.theme({
@@ -106,11 +119,18 @@ const EDITOR_THEME = EditorView.theme({
   "&.cm-focused": { outline: "none" }
 });
 
-export function CodeEditor({ value, onChange, readOnly = false, className }: CodeEditorProps) {
+export function CodeEditor({ value, onChange, readOnly = false, className, onRunShortcut, onSaveShortcut }: CodeEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  // Same "read through a ref, never a closure captured at init" law as
+  // `onChangeRef` above — these two are re-pointed every render so the
+  // init-once effect below never needs either in its dep array.
+  const onRunShortcutRef = useRef(onRunShortcut);
+  onRunShortcutRef.current = onRunShortcut;
+  const onSaveShortcutRef = useRef(onSaveShortcut);
+  onSaveShortcutRef.current = onSaveShortcut;
   // A Compartment is a mutable "slot" inside ONE EditorState's extension
   // list — it must be created per component instance (a module-level
   // singleton would make two simultaneously-mounted editors fight over the
@@ -127,10 +147,41 @@ export function CodeEditor({ value, onChange, readOnly = false, className }: Cod
 
   useEffect(() => {
     if (!containerRef.current) return;
+    // SS3, T3 — listed FIRST so it wins the keymap facet's key-matching
+    // race against `defaultKeymap`'s own `Mod-Enter` -> `insertBlankLine`
+    // binding (see this file's own module doc). Reads both callbacks
+    // through the refs above at FIRE time, never captured here at
+    // construction time — this whole `useEffect` is init-once (D5).
+    const shortcutKeymap = keymap.of([
+      {
+        key: "Mod-Enter",
+        run: () => {
+          onRunShortcutRef.current?.();
+          return true;
+        }
+      },
+      {
+        key: "Mod-s",
+        run: () => {
+          onSaveShortcutRef.current?.();
+          return true;
+        }
+      }
+    ]);
     const state = EditorState.create({
       doc: value,
       extensions: [
-        MINIMAL_EXTENSIONS,
+        lineNumbers(),
+        highlightActiveLineGutter(),
+        highlightActiveLine(),
+        history(),
+        drawSelection(),
+        indentOnInput(),
+        syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+        bracketMatching(),
+        closeBrackets(),
+        shortcutKeymap,
+        keymap.of([...closeBracketsKeymap, ...defaultKeymap, ...historyKeymap]),
         javascript(),
         EDITOR_THEME,
         readOnlyCompartmentRef.current.of(EditorView.editable.of(!readOnly)),

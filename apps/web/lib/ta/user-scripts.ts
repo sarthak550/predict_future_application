@@ -110,6 +110,25 @@ export const MISSING_RUN_FUNCTION_MESSAGE = "Script must define a top-level func
 export const INVALID_SCRIPT_RESULT_MESSAGE = "Script returned an invalid result.";
 
 /**
+ * SS3 — the signal-cap honesty log line QA flagged during SS1: D7's
+ * truncate-not-reject contract silently drops everything past
+ * `USER_SCRIPT_MAX_SIGNALS` with no visible trace anywhere the author can
+ * see. A script that legitimately fires on every one of 25,000 bars "ran
+ * successfully" per the documented contract, but the author has no way to
+ * know their last N signals never made it to the chart/stats unless this is
+ * said out loud. Pushed into the SAME `logs` array the console strip
+ * already renders (`script-console.tsx` treats every entry uniformly, no
+ * `line`/error styling needed for this one) — appended AFTER the script's
+ * own `console.log` output, so it reads as the host's own closing note, not
+ * something the script itself printed. Exported as a function (not a bare
+ * string constant) since the exact counts are only known post-truncation —
+ * `ta:check` asserts against this SAME function, never a hand-retyped copy.
+ */
+export function signalCapMessage(totalSignals: number, cap: number): string {
+  return `Signal cap reached — showing the first ${cap.toLocaleString()} of ${totalSignals.toLocaleString()} signals.`;
+}
+
+/**
  * D9 — the reserved `PF_SIGNALS` `calcParams[0]` value that routes
  * `custom-indicators/pf-signals.ts`'s `calc()` into the precomputed-script
  * branch instead of the `STRATEGY_REGISTRY` template branch. Defined HERE
@@ -482,9 +501,13 @@ export function runScriptSync(userSource: string, bars: readonly StrategyCandle[
   // chart can usefully render still "ran successfully." An explicit slice
   // AFTER structural validation (never a zod `.max()` bound — see
   // `rawScriptSignalListSchema`'s own doc comment for why).
-  const signals = parsed.data.length > USER_SCRIPT_MAX_SIGNALS ? parsed.data.slice(0, USER_SCRIPT_MAX_SIGNALS) : parsed.data;
+  const exceedsCap = parsed.data.length > USER_SCRIPT_MAX_SIGNALS;
+  const signals = exceedsCap ? parsed.data.slice(0, USER_SCRIPT_MAX_SIGNALS) : parsed.data;
+  // SS3 honesty log line — see `signalCapMessage`'s own doc. Appended after
+  // the script's own console output, never replacing it.
+  const outLogs = exceedsCap ? [...logs, signalCapMessage(parsed.data.length, USER_SCRIPT_MAX_SIGNALS)] : logs;
 
-  return { ok: true, signals, logs };
+  return { ok: true, signals, logs: outLogs };
 }
 
 // ── resolveSignalsAgainstBars (D3) ──────────────────────────────────────────

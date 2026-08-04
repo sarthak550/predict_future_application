@@ -48,7 +48,8 @@ import {
   DENYLIST_KEYS,
   SCRIPT_SENTINEL,
   MISSING_RUN_FUNCTION_MESSAGE,
-  INVALID_SCRIPT_RESULT_MESSAGE
+  INVALID_SCRIPT_RESULT_MESSAGE,
+  signalCapMessage
 } from "./user-scripts";
 
 // ── Tiny assertion harness ───────────────────────────────────────────────
@@ -695,6 +696,28 @@ function checkSignalCapTruncation(): void {
     outcome.signals.length === USER_SCRIPT_MAX_SIGNALS,
     `got ${outcome.signals.length}`
   );
+  // SS3 — the cap-truncation honesty log line QA flagged in SS1: a
+  // truncated run must say so, visibly, in the SAME logs array the console
+  // strip renders.
+  const expectedCapMessage = signalCapMessage(25_000, USER_SCRIPT_MAX_SIGNALS);
+  assert(
+    "userScript: a capped run appends the honest signal-cap message to logs",
+    outcome.logs.includes(expectedCapMessage),
+    JSON.stringify(outcome.logs)
+  );
+
+  const underCapOutcome = runScriptSync(
+    `function run(bars, ta, helpers) { return [helpers.buy(0)]; }`,
+    fixtureCandles
+  );
+  assert("userScript: a run under the cap resolves ok:true", underCapOutcome.ok === true, JSON.stringify(underCapOutcome));
+  if (underCapOutcome.ok) {
+    assert(
+      "userScript: a run under the cap never appends the signal-cap message",
+      !underCapOutcome.logs.some((line) => line.startsWith("Signal cap reached")),
+      JSON.stringify(underCapOutcome.logs)
+    );
+  }
 }
 
 /** D8 honesty law: malformed `run()` return shapes (a bare string, `null`, a non-numeric `index`) must each resolve to a clean `ok: false` — NEVER a thrown exception escaping `runScriptSync` itself, and never a fabricated signal. */

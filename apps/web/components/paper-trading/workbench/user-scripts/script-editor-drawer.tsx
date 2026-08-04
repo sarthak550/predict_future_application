@@ -97,9 +97,26 @@ export interface ScriptEditorDrawerProps {
   isPremiumMode: boolean;
   notional: number;
   onRunSignals: (config: { kind: "script"; runToken: string; signals: StrategySignal[] }) => void;
+  /**
+   * SS3, T3 — whether the drawer is actually VISIBLE right now (the drawer
+   * component itself is sticky-mounted by `chart-workbench.tsx` once opened
+   * and never unmounted again, per that file's own doc — `display: none`
+   * hides it without tearing down editor/console state). The "elsewhere in
+   * the drawer" keyboard-shortcut listener below must only act while this
+   * is true; otherwise Cmd+Enter/Cmd+S would keep firing against a closed,
+   * merely-hidden drawer.
+   */
+  open: boolean;
+  /**
+   * SS3, T3 — mirrors `chart-workbench.tsx`'s own Escape-priority-chain
+   * state (text popover / order-intent popover / right-click context menu)
+   * so Cmd+Enter/Cmd+S don't fire while one of those is capturing keyboard
+   * focus, the same convention Escape itself already follows one level up.
+   */
+  shortcutsSuppressed: boolean;
 }
 
-export function ScriptEditorDrawer({ candles, interval, isPremiumMode, notional, onRunSignals }: ScriptEditorDrawerProps) {
+export function ScriptEditorDrawer({ candles, interval, isPremiumMode, notional, onRunSignals, open, shortcutsSuppressed }: ScriptEditorDrawerProps) {
   const [openScript, setOpenScript] = useState<OpenScript>({ kind: "new" });
   const [source, setSource] = useState("");
   /** The DB-persisted source for the currently-open script (`null` for "new"/an example — neither has a persisted row to diff against). Dirty-dot (D8) is `source !== (lastSavedSource ?? "")`. */
@@ -352,6 +369,65 @@ export function ScriptEditorDrawer({ candles, interval, isPremiumMode, notional,
   const canRun = openScript.kind !== "example" && candles.length > 0;
   const isStaleResult = scriptRunResult !== null && scriptRunResult.ranInterval !== interval;
 
+  // SS3, T3 — Cmd+Enter/Cmd+S. Mirrors the toolbar buttons' own enabled
+  // conditions exactly (`canRun`/`isDirty` above) rather than re-deriving a
+  // parallel set of rules, and additionally respects `shortcutsSuppressed`
+  // (the Escape-priority-chain overlays one level up in `chart-workbench.tsx`).
+  // Captured through a ref (below), same "read through a ref updated every
+  // render" law `code-editor.tsx`'s own `onChangeRef` establishes — `handleRun`/
+  // `handleSave` close over `candles`/`interval`/`source`/`openScript`, all of
+  // which can change on every render (live bar polling, typing, switching
+  // scripts) independent of `open`/`shortcutsSuppressed` — a dependency array
+  // naming only the latter two would hold a STALE `candles` snapshot the
+  // moment new bars arrive while the drawer sits open.
+  function handleRunShortcut() {
+    if (shortcutsSuppressed || !canRun || running) return;
+    void handleRun();
+  }
+  function handleSaveShortcut() {
+    if (shortcutsSuppressed || !isDirty) return;
+    void handleSave();
+  }
+  const handleRunShortcutRef = useRef(handleRunShortcut);
+  handleRunShortcutRef.current = handleRunShortcut;
+  const handleSaveShortcutRef = useRef(handleSaveShortcut);
+  handleSaveShortcutRef.current = handleSaveShortcut;
+
+  // The "elsewhere in the drawer" half of T3 — `code-editor.tsx` owns the
+  // in-editor path (its own CodeMirror keymap, see that file's module doc);
+  // this listener covers every OTHER focus target inside the drawer (the
+  // toolbar, the sidebar, or nothing focused at all) via a `document`-level
+  // listener, attached/detached only when `open` itself toggles (the two
+  // refs above carry every other bit of freshness, so this effect's own dep
+  // array can stay minimal and STABLE rather than re-subscribing on every
+  // keystroke). Skips when `event.defaultPrevented` is already true — that
+  // means CodeMirror's own keymap just handled this exact keystroke (focus
+  // was inside the editor), so acting again here would double-fire the same
+  // Run/Save. `Mod-s` ALWAYS calls `preventDefault()` here regardless of
+  // `shortcutsSuppressed`/dirty state, so the browser's native "Save Page"
+  // dialog can never sneak through just because the action itself was
+  // suppressed — see this component's own props doc for why suppression
+  // exists.
+  useEffect(() => {
+    if (!open) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.defaultPrevented) return;
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod) return;
+      if (e.key === "Enter") {
+        e.preventDefault();
+        handleRunShortcutRef.current();
+        return;
+      }
+      if (e.key === "s" || e.key === "S") {
+        e.preventDefault();
+        handleSaveShortcutRef.current();
+      }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [open]);
+
   return (
     <div ref={rootRef} style={{ height: drawerHeight }} className="flex shrink-0 flex-col border-t border-ink-200 bg-white">
       <DrawerResizeHandle
@@ -396,7 +472,11 @@ export function ScriptEditorDrawer({ candles, interval, isPremiumMode, notional,
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1">
+      {/* SS3, T5 — narrow-viewport pass: `flex-col` below `sm` stacks the
+          sidebar above the editor (see `ScriptListSidebar`'s own comment for
+          its half of this), `sm:flex-row` restores the original side-by-side
+          layout unchanged at desktop widths. */}
+      <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
         <ScriptListSidebar
           myScripts={myScripts}
           scriptsLoading={scriptsLoading}
@@ -411,7 +491,14 @@ export function ScriptEditorDrawer({ candles, interval, isPremiumMode, notional,
         />
 
         <div className="flex min-w-0 flex-1 flex-col">
-          <CodeEditor value={source} onChange={handleSourceChange} readOnly={openScript.kind === "example"} className="min-h-0 flex-1" />
+          <CodeEditor
+            value={source}
+            onChange={handleSourceChange}
+            readOnly={openScript.kind === "example"}
+            className="min-h-0 flex-1"
+            onRunShortcut={handleRunShortcut}
+            onSaveShortcut={handleSaveShortcut}
+          />
           {scriptRunResult && (
             <div className="max-h-[45%] shrink-0 overflow-y-auto border-t border-ink-100 p-2">
               <OriginBadge origin={scriptRunResult.origin} />

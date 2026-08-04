@@ -41,7 +41,13 @@ export function ScriptListSidebar({
   onDeleteScript
 }: ScriptListSidebarProps) {
   return (
-    <div className="flex w-[200px] shrink-0 flex-col overflow-y-auto border-r border-ink-100">
+    // SS3, T5 — narrow-viewport pass: below `sm` this stacks ABOVE the
+    // editor (full width, height-capped so it can't dominate the drawer's
+    // scarce vertical space on a phone-sized viewport) instead of sitting
+    // beside it — the "stack list-above-editor-above-console" bar §4's own
+    // text sets as the minimum, non-"beautiful" requirement. `sm:` and up
+    // restores the original fixed-width side-by-side layout unchanged.
+    <div className="flex max-h-[160px] w-full shrink-0 flex-col overflow-y-auto border-b border-ink-100 sm:max-h-none sm:w-[200px] sm:border-b-0 sm:border-r">
       <div className="flex items-center justify-between px-2.5 pt-2.5">
         <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-400">My Scripts</p>
         <button type="button" onClick={onOpenNew} title="New script" className="rounded-md p-1 text-ink-400 hover:bg-ink-100 hover:text-ink-700">
@@ -57,8 +63,22 @@ export function ScriptListSidebar({
           </div>
         )}
         {scriptsError && <p className="px-1.5 py-1 text-[11px] text-rose-600">{scriptsError}</p>}
+        {/* SS3, T4 — a real empty state with a clickable CTA (not just text
+            pointing at the nearby + icon), same "No X yet — [action]" house
+            voice `signals-table.tsx`'s own "No custom signals yet — tap +
+            above to build one" empty state and `positions-strip.tsx`'s "No
+            open positions yet — trades you place will show up here" already
+            establish elsewhere in this file family. */}
         {!scriptsLoading && !scriptsError && myScripts.length === 0 && (
-          <p className="px-1.5 py-2 text-[11px] leading-4 text-ink-400">No scripts yet — click + to start writing one.</p>
+          <button
+            type="button"
+            onClick={onOpenNew}
+            className="flex flex-col items-center gap-1 rounded-lg border border-dashed border-ink-200 px-2 py-3 text-center hover:border-sky-300 hover:bg-sky-50"
+          >
+            <FileCode2 className="h-4 w-4 text-ink-400" aria-hidden="true" />
+            <span className="text-[11px] font-semibold text-ink-700">Write your first script</span>
+            <span className="text-[10px] leading-4 text-ink-400">Or duplicate an example below to start from a working strategy.</span>
+          </button>
         )}
         {myScripts.map((row) => {
           const active = row.id === openScriptId;
