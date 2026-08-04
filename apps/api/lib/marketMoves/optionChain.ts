@@ -107,6 +107,16 @@ export interface OptionChainSnapshot {
   asOf: Date | null;
   lotSize: number | null;
   strikes: OptionStrikeRow[];
+  /**
+   * True when this snapshot was re-served from the last known-good cache
+   * entry after a live re-fetch failed (see fetchOptionChain's `allowStale`
+   * option, below). `asOf` is NEVER re-stamped when this is true — it still
+   * reads the original upstream timestamp from the fetch that actually
+   * produced this data, so a caller rendering `asOf` never lies about
+   * recency even while `stale` softens the presentation. Always false for a
+   * snapshot that came straight from a fresh upstream fetch.
+   */
+  stale: boolean;
 }
 
 const REFERER_PATH = "/option-chain";
@@ -351,7 +361,73 @@ function parseNseChainTimestamp(raw: string | null | undefined): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
-const chainCache = new Map<string, { at: number; data: OptionChainSnapshot | null }>();
+/**
+ * Founder complaint 2026-08-04 (9:15-9:30 IST market-open flake window):
+ * chain fetches diagnosed healthy end-to-end, but a single transient upstream
+ * miss used to blank the whole ladder. This entry now tracks the last
+ * ATTEMPT (success or failure, for the 60s no-hammer throttle below) SEPARATE
+ * from the last known-GOOD snapshot (never cleared by a failed re-fetch) —
+ * the same never-overwrite-good-with-empty convention fetchOptionChainExpiries
+ * already applies above, extended to the chain path with an explicit
+ * `stale`-tagging contract instead of that function's implicit forever-cache.
+ */
+interface ChainCacheEntry {
+  /** Wall-clock time of the last fetch ATTEMPT (success or failure) — governs the CHAIN_CACHE_TTL_MS no-hammer throttle. */
+  attemptedAt: number;
+  /** Whether the attempt at `attemptedAt` succeeded. When false, `lastGood`/`lastGoodAt` still hold the most recent PRIOR success untouched — callers must go through the allowStale gate in fetchOptionChain rather than trusting this entry's presence alone. */
+  lastAttemptSucceeded: boolean;
+  /** Most recent successfully-fetched snapshot for this key, or null if one has never been obtained. Always stored with `stale: false` — staleness is tagged on the COPY handed back to a stale-serving caller, never mutated here. */
+  lastGood: OptionChainSnapshot | null;
+  /** Wall-clock time `lastGood` was captured — the basis for CHAIN_STALE_SERVE_MS bound-checking. Deliberately NOT derived from `asOf` (the upstream's own IST timestamp), since `asOf` can lag real fetch time (e.g. just after market close) and would understate how long we've actually been serving this snapshot. */
+  lastGoodAt: number;
+}
+
+/**
+ * Serve-stale bound: a re-fetch failure keeps returning the last good chain
+ * for up to 15 minutes past when it was fetched, then genuinely reports
+ * unavailable. Chosen because 15 minutes safely spans the worst NSE flake
+ * windows observed (market-open 9:15-9:30 IST) while still being short enough
+ * that no premium ever gets presented as "live" when it's actually from a
+ * different market regime — a strike ladder that's an hour stale is a lie,
+ * not a convenience.
+ */
+const CHAIN_STALE_SERVE_MS = 15 * 60 * 1000;
+
+/**
+ * Memory bound on chainCache: process-local, one entry per (underlying,
+ * expiry) pair actually browsed. 216 F&O underlyings x every listed expiry
+ * would be a multi-thousand-entry worst case that nothing in the product
+ * legitimately drives (retail traffic concentrates on the nearest 1-2
+ * expiries of whatever's currently being viewed — the same locality
+ * getRecentlyViewedContracts' 15-minute window already leans on). 500 entries
+ * comfortably covers realistic concurrent browsing diversity — every one of
+ * today's ~216 stocks plus all 5 indices each with 2 expiries in play at
+ * once — while still hard-capping unbounded growth from someone scripting
+ * requests against arbitrary expiry strings. Simple size-guard LRU: Map
+ * insertion order + delete-then-set on every write moves an entry to the
+ * MRU end; a full map evicts from the front (oldest-written).
+ */
+const CHAIN_CACHE_MAX_ENTRIES = 500;
+
+const chainCache = new Map<string, ChainCacheEntry>();
+
+function touchChainCache(key: string, entry: ChainCacheEntry): void {
+  chainCache.delete(key);
+  chainCache.set(key, entry);
+  if (chainCache.size > CHAIN_CACHE_MAX_ENTRIES) {
+    const oldestKey = chainCache.keys().next().value;
+    if (oldestKey !== undefined) chainCache.delete(oldestKey);
+  }
+}
+
+/** Resolves what fetchOptionChain returns for a NON-successful current attempt: null unless the caller opted into allowStale AND a still-within-window last-good snapshot exists, in which case a `stale: true`-tagged COPY of it (asOf untouched). */
+function resolveStaleOrNull(entry: ChainCacheEntry, now: number, allowStale: boolean | undefined): OptionChainSnapshot | null {
+  if (!allowStale) return null;
+  if (entry.lastGood && now - entry.lastGoodAt <= CHAIN_STALE_SERVE_MS) {
+    return { ...entry.lastGood, stale: true };
+  }
+  return null;
+}
 
 /**
  * Trading Terminal UI Overhaul (Sprint A, T3) — "recently viewed" tracking for
@@ -387,24 +463,68 @@ export function getRecentlyViewedContracts(windowMs = 15 * 60_000): Array<{ unde
   return result;
 }
 
+export interface FetchOptionChainOptions {
+  /**
+   * Opt-in: when the live re-fetch fails, serve the last known-good snapshot
+   * (tagged `stale: true`, bounded by CHAIN_STALE_SERVE_MS) instead of null.
+   * Defaults to false, which reproduces the function's ORIGINAL fresh-or-null
+   * contract exactly — every pre-existing caller (premium capture, options/
+   * futures expiry settlement, limit-order fills, stock square-off, the
+   * futures put-call-parity mid-price derivation) keeps that contract
+   * untouched by not passing this option, since settlement/fill/pricing math
+   * on a 15-minute-stale chain would be a correctness bug, not a UX nicety.
+   * Only the public chain-browsing route opts in.
+   */
+  allowStale?: boolean;
+}
+
 /**
  * Fetches the full strike ladder for `underlying`'s `expiry` contract, plus the
  * live underlying spot value and the snapshotted lot size for that specific
  * contract month. Never throws — returns null on any upstream failure or an
- * empty/malformed response, so the route layer can render an honest
- * "unavailable" state rather than a 500 or an infinite spinner. Cached
- * in-module for CHAIN_CACHE_TTL_MS (60s) per (underlying, expiry) pair.
+ * empty/malformed response with no eligible stale fallback, so the route layer
+ * can render an honest "unavailable" state rather than a 500 or an infinite
+ * spinner. Cached in-module for CHAIN_CACHE_TTL_MS (60s, no-hammer throttle)
+ * per (underlying, expiry) pair; see `allowStale` above for the serve-stale
+ * behavior on a failed re-fetch.
  */
-export async function fetchOptionChain(underlying: string, expiry: string): Promise<OptionChainSnapshot | null> {
+export async function fetchOptionChain(
+  underlying: string,
+  expiry: string,
+  opts: FetchOptionChainOptions = {}
+): Promise<OptionChainSnapshot | null> {
   recordChainRequest(underlying, expiry);
 
   const cacheKey = `${underlying}::${expiry}`;
   const cached = chainCache.get(cacheKey);
-  if (cached && Date.now() - cached.at < CHAIN_CACHE_TTL_MS) return cached.data;
+  const now = Date.now();
 
-  const result = await fetchOptionChainUncached(underlying, expiry);
-  chainCache.set(cacheKey, { at: Date.now(), data: result });
-  return result;
+  if (cached && now - cached.attemptedAt < CHAIN_CACHE_TTL_MS) {
+    // Within the no-hammer throttle window — don't re-hit NSE, but a THROTTLED
+    // window after a FAILED attempt must still go through the same
+    // allowStale gate as a live failure, not silently hand back lastGood to
+    // every caller regardless of what they opted into.
+    return cached.lastAttemptSucceeded ? cached.lastGood : resolveStaleOrNull(cached, now, opts.allowStale);
+  }
+
+  const fresh = await fetchOptionChainUncached(underlying, expiry);
+
+  if (fresh) {
+    touchChainCache(cacheKey, { attemptedAt: now, lastAttemptSucceeded: true, lastGood: fresh, lastGoodAt: now });
+    return fresh;
+  }
+
+  // Live fetch failed. Never overwrite a good cached snapshot with null —
+  // carry lastGood/lastGoodAt forward untouched, only bumping attemptedAt so
+  // we don't hammer NSE again for CHAIN_CACHE_TTL_MS.
+  const survivingEntry: ChainCacheEntry = {
+    attemptedAt: now,
+    lastAttemptSucceeded: false,
+    lastGood: cached?.lastGood ?? null,
+    lastGoodAt: cached?.lastGoodAt ?? 0
+  };
+  touchChainCache(cacheKey, survivingEntry);
+  return resolveStaleOrNull(survivingEntry, now, opts.allowStale);
 }
 
 async function fetchOptionChainUncached(underlying: string, expiry: string): Promise<OptionChainSnapshot | null> {
@@ -443,6 +563,7 @@ async function fetchOptionChainUncached(underlying: string, expiry: string): Pro
     underlyingValue: records.underlyingValue,
     asOf: parseNseChainTimestamp(records.timestamp),
     lotSize,
-    strikes
+    strikes,
+    stale: false
   };
 }

@@ -56,6 +56,16 @@ export interface OptionChainSnapshot {
   asOf: string | null;
   lotSize: number | null;
   strikes: OptionStrikeRow[];
+  /**
+   * Graceful-degradation (founder complaint 2026-08-04): true when apps/api
+   * re-served this snapshot from its last-known-good cache after a live
+   * NSE re-fetch failed (bounded to 15 minutes old server-side — see
+   * CHAIN_STALE_SERVE_MS in apps/api/lib/marketMoves/optionChain.ts). `asOf`
+   * still reads the ORIGINAL fetch time in this case, never re-stamped —
+   * this flag is what drives the "live update delayed" chip below, not a
+   * client-side staleness guess.
+   */
+  stale: boolean;
 }
 
 export interface SelectedContract {
@@ -151,6 +161,17 @@ export function OptionChainBrowser({
   const [loadingChain, setLoadingChain] = useState(false);
   const [expiriesError, setExpiriesError] = useState("");
   const [chainError, setChainError] = useState("");
+  /**
+   * Graceful-degradation (founder complaint 2026-08-04): true when the most
+   * recent SILENT poll (opts.silent) threw outright — network error, timeout,
+   * a non-OK proxy status, or an unparseable/empty body — while a good chain
+   * was already on screen. Distinct from `chain?.stale` (the SERVER telling
+   * us it re-served a cached snapshot): this covers the CLIENT-side miss case
+   * where the request itself never made it back with usable data at all.
+   * Either condition drives the same "live update delayed" chip — see
+   * liveUpdateDelayed below — and both clear the moment a poll succeeds.
+   */
+  const [pollFailedSilently, setPollFailedSilently] = useState(false);
   const [showFullLadder, setShowFullLadder] = useState(false);
   /** "<strike>-CE" / "<strike>-PE" → tick direction, cleared FLASH_CLEAR_MS after each polled change. */
   const [flashes, setFlashes] = useState<ReadonlyMap<string, FlashDirection>>(new Map());
@@ -270,14 +291,24 @@ export function OptionChainBrowser({
 
         chainRef.current = data;
         setChain(data);
+        // Any successful parse — fresh OR a server-tagged stale re-serve —
+        // means the poll itself landed fine; the delayed chip's OWN state
+        // (chain?.stale) takes over from here, no client-outage flag needed.
+        setPollFailedSilently(false);
         onChainDataRef.current?.(data);
       } catch {
-        // A failed SILENT poll keeps showing the last good snapshot — a blip in
-        // the upstream feed must not blank a working ladder.
         if (!opts.silent) {
+          // Nothing at all to show yet (first load / explicit reload with no
+          // prior data) — this is the one case that still earns the
+          // full-panel error.
           chainRef.current = null;
           setChain(null);
           setChainError("Chain temporarily unavailable — try again shortly.");
+        } else if (chainRef.current) {
+          // A failed SILENT poll keeps showing the last good snapshot — a
+          // blip in the upstream feed must not blank a working ladder. Flag
+          // it with a subtle chip instead of going silent about it.
+          setPollFailedSilently(true);
         }
       } finally {
         if (!opts.silent) setLoadingChain(false);
@@ -291,6 +322,7 @@ export function OptionChainBrowser({
     setChain(null);
     setFlashes(new Map());
     setSpotFlash(null);
+    setPollFailedSilently(false);
     if (expiry) void loadChain({ silent: false });
   }, [expiry, loadChain]);
 
@@ -332,6 +364,13 @@ export function OptionChainBrowser({
       minute: "2-digit"
     });
   }, [chain]);
+
+  // Two independent signals feed the same "live update delayed" chip: the
+  // SERVER telling us it re-served a bounded-stale cached snapshot
+  // (chain.stale), or the CLIENT's own last silent poll failing outright
+  // while a good chain stayed on screen (pollFailedSilently). Either one
+  // means what's rendered right now isn't confirmed fresh.
+  const liveUpdateDelayed = pollFailedSilently || Boolean(chain?.stale);
 
   function handleChipTap(strikePrice: number, optionType: "CE" | "PE", quote: OptionQuote | null, side: "BUY" | "SELL") {
     if (!chain || !chain.lotSize || quote?.lastPrice == null || quote.lastPrice <= 0) return;
@@ -481,7 +520,15 @@ export function OptionChainBrowser({
       {chainError && <p className="text-sm text-rose-600">{chainError}</p>}
       {loadingChain && !chain && <p className="text-sm text-ink-400">Loading chain…</p>}
 
-      {asOfLabel && (
+      {asOfLabel && liveUpdateDelayed && (
+        <p className="flex items-center gap-1.5 text-xs text-amber-700">
+          <span className="relative flex h-2 w-2" aria-hidden="true">
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-500" />
+          </span>
+          Live update delayed — showing {asOfLabel} IST data, retrying every ~30s…
+        </p>
+      )}
+      {asOfLabel && !liveUpdateDelayed && (
         <p className="flex items-center gap-1.5 text-xs text-ink-400">
           <span className="relative flex h-2 w-2" aria-hidden="true">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-signal-sky opacity-60" />
