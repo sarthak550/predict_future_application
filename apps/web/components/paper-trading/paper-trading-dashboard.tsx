@@ -9,6 +9,21 @@
  * New Trade form — this is how "Paper trade this call" (T7) hands off into this
  * page without any prop-drilling across the navigation boundary.
  *
+ * Delivery-holdings Sell button (2026-08-04) — every row in the "Delivery
+ * holdings" / "Open intraday positions" tables below now links to this SAME
+ * `?symbol=&side=SELL&productType=` deep-link (a `?quantity=` param added
+ * alongside it, defaulting the ticket's quantity field to the row's full
+ * held size — editable from there) instead of inventing a second prefill
+ * path. This is the exact shape terminal/positions-strip.tsx already builds
+ * for its equity chips (T8, 2026-07-25) — that surface just had no caller
+ * wiring equity positions into it yet (see that file's own note). A plain
+ * `<Link>` (default `scroll={true}`) is used rather than a client `onClick`
+ * handler specifically so the browser's own scroll-to-top-of-page behavior
+ * (already relied on elsewhere in this codebase — see
+ * use-workbench-url-param.ts's contrasting `scroll: false`) carries the
+ * ticket into view on a mobile-narrow layout where the holdings tables sit
+ * well below the fold; no bespoke scroll code was added.
+ *
  * Trading Terminal UI Overhaul (Sprint A, T5) — the top section is now a
  * TerminalShell: sticky header (spot + day/total P&L + cash), the focused
  * symbol's PriceChart, and a DockedOrderTicket delegating to the EXISTING,
@@ -422,6 +437,14 @@ export function PaperTradingDashboard() {
   const initialSide = searchParams.get("side") === "SELL" ? "SELL" : "BUY";
   const initialProductType = searchParams.get("productType") === "INTRADAY" ? "INTRADAY" : "DELIVERY";
   const linkedOpinionId = searchParams.get("linkedOpinionId");
+  // Delivery-holdings Sell button (2026-08-04) — sibling to the three params
+  // above, carrying the holding row's full quantity across the same
+  // deep-link hand-off. Validated defensively (positive integer) since it's
+  // user-editable URL text; anything else just leaves the ticket's quantity
+  // field blank, same as omitting it entirely.
+  const rawQuantityParam = searchParams.get("quantity");
+  const parsedQuantityParam = rawQuantityParam != null ? Number(rawQuantityParam) : NaN;
+  const initialQuantity = Number.isInteger(parsedQuantityParam) && parsedQuantityParam > 0 ? parsedQuantityParam : undefined;
 
   // Chart Trading + SL/TP (Sprint B, B3) — order lines for the FOCUSED
   // symbol's chart only: its own resting pending orders (LIMIT/STOP,
@@ -481,7 +504,7 @@ export function PaperTradingDashboard() {
   // <DockedOrderTicket> JSX literals that could drift out of sync.
   const ticketElement = (
     <DockedOrderTicket
-      key={`${initialSymbol ?? focusedSymbol ?? ""}-${initialSide}-${initialProductType}`}
+      key={`${initialSymbol ?? focusedSymbol ?? ""}-${initialSide}-${initialProductType}-${initialQuantity ?? ""}`}
       kind="equity"
       cash={account.availableCash}
       heldDeliveryQtyBySymbol={heldDeliveryQtyBySymbol}
@@ -489,6 +512,7 @@ export function PaperTradingDashboard() {
       initialSymbol={initialSymbol ?? focusedSymbol}
       initialSide={initialSide}
       initialProductType={initialProductType}
+      initialQuantity={initialQuantity}
       linkedOpinionId={linkedOpinionId}
       onOrderPlaced={(order) => {
         setLastOrder(order);
@@ -642,7 +666,7 @@ export function PaperTradingDashboard() {
           <CardTitle>Delivery holdings</CardTitle>
         </CardHeader>
         <CardContent>
-          <PositionsTable rows={account.deliveryHoldings} emptyLabel="No open delivery holdings." />
+          <PositionsTable rows={account.deliveryHoldings} emptyLabel="No open delivery holdings." productType="DELIVERY" />
         </CardContent>
       </Card>
 
@@ -653,7 +677,7 @@ export function PaperTradingDashboard() {
             <CardDescription>Auto-squared-off near market close if still open.</CardDescription>
           </CardHeader>
           <CardContent>
-            <PositionsTable rows={account.openIntradayPositions} emptyLabel="No open intraday positions." />
+            <PositionsTable rows={account.openIntradayPositions} emptyLabel="No open intraday positions." productType="INTRADAY" />
           </CardContent>
         </Card>
       )}
@@ -709,7 +733,51 @@ export function PaperTradingDashboard() {
   );
 }
 
-function PositionsTable({ rows, emptyLabel }: { rows: PositionRow[]; emptyLabel: string }) {
+/**
+ * Delivery-holdings Sell button (2026-08-04) — why a row is un-sellable, or
+ * `null` when it's fine. `quantity < 0` only ever fires for an INTRADAY short
+ * (delivery short-selling isn't offered — see new-trade-form.tsx — so
+ * Delivery rows never hit that branch); closing a short is a BUY, which is a
+ * distinct feature this ticket doesn't build (see the report's intraday-
+ * sibling note) — surfaced here as a disabled state, not a wrong-side Sell
+ * link. `quantity === 0` is dead in practice (queries.ts already filters
+ * zero-quantity positions out of both arrays) but kept as a defensive floor
+ * per the founder's own disable spec. `latestLtp === null` reuses the same
+ * "delayed price unavailable" signal the row itself already renders — this
+ * codebase has no separate halted/tradability flag to check instead.
+ */
+function sellDisabledReason(row: PositionRow): string | null {
+  if (row.quantity < 0) return "Short position — close it with a Buy order in the ticket, not Sell.";
+  if (row.quantity === 0) return "No sellable quantity.";
+  if (row.latestLtp === null) return "Live price unavailable for this instrument right now.";
+  return null;
+}
+
+function PositionSellAction({ row, productType }: { row: PositionRow; productType: "DELIVERY" | "INTRADAY" }) {
+  const disabledReason = sellDisabledReason(row);
+  if (disabledReason) {
+    return (
+      <button
+        type="button"
+        disabled
+        title={disabledReason}
+        className="cursor-not-allowed rounded-lg border border-ink-100 px-3 py-1 text-xs font-semibold text-ink-300"
+      >
+        Sell
+      </button>
+    );
+  }
+  return (
+    <Link
+      href={`/paper-trading?symbol=${encodeURIComponent(row.symbol)}&side=SELL&productType=${productType}&quantity=${row.quantity}`}
+      className="rounded-lg border border-rose-200 px-3 py-1 text-xs font-semibold text-rose-600 hover:bg-rose-50"
+    >
+      Sell
+    </Link>
+  );
+}
+
+function PositionsTable({ rows, emptyLabel, productType }: { rows: PositionRow[]; emptyLabel: string; productType: "DELIVERY" | "INTRADAY" }) {
   if (rows.length === 0) {
     return <p className="text-sm text-ink-400">{emptyLabel}</p>;
   }
@@ -724,6 +792,9 @@ function PositionsTable({ rows, emptyLabel }: { rows: PositionRow[]; emptyLabel:
             <TableHeaderCell>Delayed LTP</TableHeaderCell>
             <TableHeaderCell>Unrealized gross</TableHeaderCell>
             <TableHeaderCell>Net P&L</TableHeaderCell>
+            <TableHeaderCell>
+              <span className="sr-only">Actions</span>
+            </TableHeaderCell>
           </TableRow>
         </TableHead>
         <TableBody>
@@ -740,6 +811,9 @@ function PositionsTable({ rows, emptyLabel }: { rows: PositionRow[]; emptyLabel:
               </TableCell>
               <TableCell className={row.netPnl != null ? (row.netPnl >= 0 ? "text-emerald-600" : "text-rose-600") : undefined}>
                 {row.netPnl != null ? formatSignedRupees(row.netPnl) : "—"}
+              </TableCell>
+              <TableCell>
+                <PositionSellAction row={row} productType={productType} />
               </TableCell>
             </TableRow>
           ))}

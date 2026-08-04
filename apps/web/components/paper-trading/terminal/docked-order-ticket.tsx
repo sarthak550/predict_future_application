@@ -61,6 +61,8 @@ interface EquityTicketProps {
   initialSymbol: string | null;
   initialSide: "BUY" | "SELL";
   initialProductType: "DELIVERY" | "INTRADAY";
+  /** Delivery-holdings Sell button (2026-08-04) — passed straight through to NewTradeForm's own mount-time initializer. See that component's doc for why this isn't part of the preset-nonce channel below. */
+  initialQuantity?: number | null;
   linkedOpinionId: string | null;
   onOrderPlaced: (order: PlacedOrderPayload) => void;
   /** Limit Orders (Sprint, 2026-07-26) — optional so callers that haven't wired a pending-orders section still compile; the Limit toggle itself only renders when this is provided (see NewTradeForm). */
@@ -131,6 +133,7 @@ export function DockedOrderTicket(props: DockedOrderTicketProps) {
           fixedSymbol={props.initialSymbol}
           initialSide={props.initialSide}
           initialProductType={props.initialProductType}
+          initialQuantity={props.initialQuantity}
           linkedOpinionId={props.linkedOpinionId}
           onOrderPlaced={props.onOrderPlaced}
           onPendingOrderPlaced={props.onPendingOrderPlaced}

@@ -10,11 +10,24 @@
  *   - Option: `?underlying=&expiry=&strike=&optionType=&side=SELL` — the same
  *     shape options-page-client.tsx's OptionPositionsTable already builds
  *     (shipped 2026-07-25), unchanged here.
- *   - Equity: `?symbol=&side=SELL&productType=` — GENERALIZED here for the
- *     first time into an actual UI link. paper-trading-dashboard.tsx already
- *     READS these params (via useSearchParams, pre-dating this brief) but no
- *     surface previously WROTE this link for an equity holding — this strip
- *     is that surface.
+ *   - Equity: `?symbol=&side=SELL&productType=&quantity=` — GENERALIZED here
+ *     for the first time into an actual UI link. paper-trading-dashboard.tsx
+ *     already READS these params (via useSearchParams, pre-dating this
+ *     brief) but no surface previously WROTE this link for an equity holding
+ *     — this strip is that surface. `quantity` (Delivery-holdings Sell
+ *     button, 2026-08-04) mirrors the same param the dashboard's own
+ *     holdings-table Sell links now send, defaulting the ticket to the
+ *     chip's full held size.
+ *
+ *     NOTE: as of 2026-08-04, neither options-page-client.tsx nor
+ *     futures-page-client.tsx actually constructs an `EquityPositionChip` —
+ *     both fetch `deliveryHoldings`/`openIntradayPositions` into their
+ *     account state but only ever map option/futures positions into
+ *     `positionChips`. This equity branch is kept correct and consistent for
+ *     whenever that gets wired up, but it isn't reachable in the running app
+ *     today — flagged separately, not fixed here (out of scope: it's "no
+ *     equity holdings shown here at all" rather than "shown without a Sell
+ *     action").
  *
  * Pure presentation — no data fetching. Receives already-derived equity +
  * option position rows from the account payload both terminal pages already
@@ -89,7 +102,7 @@ function PositionChipCard({ chip }: { chip: PositionChip }) {
   const tone = pnl == null ? "text-ink-400" : pnl >= 0 ? "text-emerald-600" : "text-rose-600";
   const href =
     chip.kind === "equity"
-      ? `/paper-trading?symbol=${encodeURIComponent(chip.symbol)}&side=SELL&productType=${chip.productType}`
+      ? `/paper-trading?symbol=${encodeURIComponent(chip.symbol)}&side=SELL&productType=${chip.productType}&quantity=${Math.abs(chip.quantity)}`
       : chip.kind === "future"
         ? `/paper-trading/futures?underlying=${encodeURIComponent(chip.underlyingSymbol)}&expiry=${encodeURIComponent(
             formatNseExpiryDate(new Date(chip.expiryDate))

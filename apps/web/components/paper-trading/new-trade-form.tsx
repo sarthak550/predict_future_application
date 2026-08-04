@@ -35,6 +35,17 @@
  *      resets `lastSyncedPresetNonce` to its initial value too, so a preset
  *      that was already active at the moment of remount is naturally
  *      re-applied on the fresh instance, never lost.
+ *
+ * Delivery-holdings Sell button (2026-08-04) — `initialQuantity`, a fifth
+ * mount-time initializer alongside `initialSymbol`/`initialSide`/
+ * `initialProductType`. NOT part of the nonce-gated preset channel above
+ * (that channel only ever syncs side/orderType/price into an ALREADY-MOUNTED
+ * form from a chart click) — quantity instead rides the dashboard's existing
+ * full-remount `key=` idiom, same as symbol/side/productType, so
+ * paper-trading-dashboard.tsx's `?quantity=` deep-link param (holdings-row
+ * Sell tap, mirroring the pre-existing `?symbol=&side=&productType=`
+ * hand-off) lands here with zero new state-sync machinery. Omitted, this
+ * form is byte-identical to before.
  */
 import { useEffect, useRef, useState } from "react";
 
@@ -79,6 +90,7 @@ export function NewTradeForm({
   fixedSymbol = null,
   initialSide = "BUY",
   initialProductType = "DELIVERY",
+  initialQuantity = null,
   linkedOpinionId = null,
   onOrderPlaced,
   onPendingOrderPlaced,
@@ -102,6 +114,8 @@ export function NewTradeForm({
   fixedSymbol?: string | null;
   initialSide?: "BUY" | "SELL";
   initialProductType?: "DELIVERY" | "INTRADAY";
+  /** Delivery-holdings Sell button — the row's full held quantity, mount-time only (see the doc comment above). `null`/omitted leaves the quantity field blank, exactly as before. */
+  initialQuantity?: number | null;
   linkedOpinionId?: string | null;
   /** Market-mode fill confirmation — unchanged Phase 1 contract. */
   onOrderPlaced: (order: PlacedOrderPayload) => void;
@@ -136,7 +150,7 @@ export function NewTradeForm({
   }, [fixedSymbol]);
   const [side, setSide] = useState<"BUY" | "SELL">(initialSide);
   const [productType, setProductType] = useState<"DELIVERY" | "INTRADAY">(initialProductType);
-  const [quantity, setQuantity] = useState("");
+  const [quantity, setQuantity] = useState(initialQuantity != null && initialQuantity > 0 ? String(initialQuantity) : "");
   const [ltp, setLtp] = useState<number | null>(null);
   const [ltpLoading, setLtpLoading] = useState(false);
   const [ltpError, setLtpError] = useState("");
