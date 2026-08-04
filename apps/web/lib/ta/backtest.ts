@@ -29,6 +29,57 @@
  * `intervalToProductType(activeInterval)` — kept as two functions rather
  * than folding interval-awareness into `runBacktest` itself, so the pure
  * backtest math never needs to know what an "interval string" is).
+ *
+ * ── Metrics Engine extension (founder feedback: "the backtest run is not
+ * very informative"; standing mandate: mirror TradingView's Strategy
+ * Tester Performance Summary) ───────────────────────────────────────────
+ *
+ * Everything below `BacktestStats.tradesDetail` in the interface is
+ * ADDITIVE — every field that existed before this extension keeps its
+ * exact prior semantics and value (verified: `checkBacktestCostCrossCheck`
+ * in `selfcheck.ts` still passes unmodified for every pre-existing
+ * assertion). New fields follow ONE consistent sign law across the whole
+ * module, stated once here instead of re-litigated per field:
+ *
+ *   THE SIGN LAW — every ₹ P&L figure keeps the natural sign of the money
+ *   itself (a loss is a NEGATIVE number), exactly like the pre-existing
+ *   `BacktestTrade.grossPnl`/`netPnl` already do. `grossLoss`/`netLoss`,
+ *   `avgLossGross`/`avgLossNet`, and `largestLossGross`/`largestLossNet`
+ *   are therefore all `≤ 0`. The ONLY values that flip to a positive
+ *   magnitude are pure RATIOS that divide a loss into a win
+ *   (`profitFactorGross`/`Net`, `avgWinLossRatioGross`/`Net`) — dividing
+ *   two signed numbers of opposite sign would itself produce a negative
+ *   ratio, which is not how any real trading platform (TradingView
+ *   included) displays a profit factor. This is the same convention
+ *   TradingView's own Performance Summary uses (Gross Loss / Avg Losing
+ *   Trade / Largest Losing Trade all render negative; Profit Factor and
+ *   the Avg Win/Loss ratio render positive).
+ *
+ *   "NULL, NEVER INFINITY/NaN" LAW — every new ratio or average that can
+ *   divide by zero (no losses, no closed trades, a window too short to
+ *   annualize) returns `null`, exactly matching the precedent
+ *   `winRatePct` already set. `null` is asserted, never inferred — every
+ *   such field is audited below and in `selfcheck.ts`'s fixtures.
+ *
+ *   OPEN-TRADE LAW — an at-most-one open-at-end position is marked to the
+ *   last loaded bar's close (unchanged from the original spec). Every WIN/
+ *   LOSS-CLASSIFIED aggregate (profit factor, expectancy, avg/largest win
+ *   or loss, consecutive streaks, `grossWins`) is computed over CLOSED
+ *   trades ONLY — the open trade's outcome isn't settled yet, exactly the
+ *   precedent `wins`/`winRatePct` already set pre-extension. By contrast,
+ *   `avgTradeGrossPnl`/`avgTradeNetPnl`, `totalBarsInTrades` (+ its
+ *   derived avg/%-in-market), the equity curve, drawdown, run-up, and the
+ *   annualized return all INCLUDE the open trade's mark-to-last-close
+ *   contribution — these describe what actually happened to the account,
+ *   not a settled-trade statistic. This split is deliberate and gives two
+ *   genuinely different, both-useful numbers instead of one: on a fixture
+ *   with NO open trade, `avgTradeNetPnl === expectancyNet` exactly (same
+ *   closed set) — asserted directly in `selfcheck.ts` as a consistency
+ *   invariant, not just documented.
+ *
+ * See each field's own doc comment for the metric-specific reasoning
+ * (annualization's day-count convention and honesty threshold, MAE/MFE's
+ * bar-exclusion rule, why drawdown/run-up have no "gross" variant, etc).
  */
 import { computeOrderCosts, type PaperProductType } from "@predict-future/business-rules/papertrading/costs";
 
@@ -56,12 +107,43 @@ export interface BacktestTrade {
   /** `0` for an open (never-exited) trade. */
   exitCosts: number;
   isOpen: boolean;
+
+  /** `entryCosts + exitCosts` — convenience sum so the UI never has to add these two itself. */
+  totalCosts: number;
+  /** `grossPnl ÷ (entryPrice × qty) × 100` — the trade's own % return on the capital it actually deployed (NOT ÷ notional — `qty = floor(notional/entryPrice)` means `entryPrice × qty` can be slightly less than notional). `0` in the (unreachable in practice) `entryPrice === 0` case, guarded defensively. */
+  grossPnlPct: number;
+  /** `netPnl ÷ (entryPrice × qty) × 100`, mirrors `grossPnlPct` net-side. */
+  netPnlPct: number;
+  /** Running NET equity immediately after this trade closes (or, for the still-open trade, marked to the last loaded bar's close) — `startingCapital + sum of netPnl of every trade up to and including this one`, in the SAME order as `tradesDetail`. Lets the UI plot a trade-indexed equity step chart without re-summing `tradesDetail` itself. Cross-checked in `selfcheck.ts`: the LAST trade's `cumulativeNetEquity` always equals `startingCapital + stats.netPnl` and the equity curve's final bar. */
+  cumulativeNetEquity: number;
+  /** `(exitIndex ?? lastCandleIndex) - entryIndex` — the number of bar-to-bar closing intervals the position was held. Both entry and exit fill AT their signal bar's close (the plan's existing convention), so the entry bar itself contributes zero held intervals; a trade that enters and exits one bar later has `barsHeld === 1`. `0` for a trade opened on the very last loaded bar (nothing has elapsed since entry yet). */
+  barsHeld: number;
+  /**
+   * Maximum Adverse/Favorable Excursion — the worst paper loss / best paper
+   * gain (magnitude in ₹, off `entryPrice × qty`) reached AT ANY POINT
+   * during the holding window, using each bar's `high`/`low` (the honest
+   * intrabar bound `close`-only P&L can't see). GROSS (pre-cost) by
+   * construction — this is an unrealized bound the position passed
+   * through, not an actual fill, so no transaction cost ever applies to
+   * it. Scanned over bars `entryIndex+1 .. (exitIndex ?? lastCandleIndex)`
+   * inclusive — the ENTRY bar's own high/low is deliberately excluded: the
+   * fill happens at that bar's close, so the position was never exposed to
+   * that bar's intrabar range before it existed. `0` when `barsHeld === 0`
+   * (no bar has elapsed since entry — nothing to measure yet), floored at
+   * `0` otherwise (a trade whose price only ever moved in its favor has a
+   * `0` MAE, not a negative one).
+   */
+  mae: number;
+  mfe: number;
+  /** Same as `mae`/`mfe`, expressed as a % of `entryPrice` instead of ₹. */
+  maePct: number;
+  mfePct: number;
 }
 
 export interface BacktestStats {
   /** Total trades, closed + the at-most-one open-at-end trade (see `openAtEnd`). */
   trades: number;
-  /** Wins are counted over CLOSED trades only (an open position's sign can still flip before it would ever close) — `winRatePct`'s own denominator matches. */
+  /** Wins are counted over CLOSED trades only (an open position's sign can still flip before it would ever close) — `winRatePct`'s own denominator matches. NET-classified (`netPnl > 0`) — see `grossWins` for the gross-side count. */
   wins: number;
   /** `null` when there are zero CLOSED trades — never `NaN`/`0` standing in for "undefined," per the product-gap acceptance criterion. */
   winRatePct: number | null;
@@ -78,25 +160,150 @@ export interface BacktestStats {
   /** True iff the last trade is still open (unrealised) at the end of the loaded window. */
   openAtEnd: boolean;
   tradesDetail: BacktestTrade[];
+
+  // ── Profitability, gross + net (CLOSED trades only — see module doc's
+  // OPEN-TRADE LAW) ─────────────────────────────────────────────────────
+
+  /** Sum of `grossPnl` over gross-winning CLOSED trades (`≥ 0`). */
+  grossProfit: number;
+  /** Sum of `grossPnl` over gross-losing CLOSED trades — SIGNED, `≤ 0` (see module doc's SIGN LAW). */
+  grossLoss: number;
+  /** Sum of `netPnl` over net-winning CLOSED trades (`≥ 0`). */
+  netProfit: number;
+  /** Sum of `netPnl` over net-losing CLOSED trades — SIGNED, `≤ 0`. */
+  netLoss: number;
+  /** `grossProfit ÷ |grossLoss|`. `null` when there are zero gross-losing closed trades (incl. zero closed trades at all) — NEVER `Infinity`. */
+  profitFactorGross: number | null;
+  /** `netProfit ÷ |netLoss|`, net-side mirror. `null` under the same zero-losses condition. */
+  profitFactorNet: number | null;
+
+  /**
+   * Classic expectancy-per-trade formula (`winRate × avgWin − lossRate ×
+   * |avgLoss|`), which reduces algebraically to the mean `grossPnl`/`netPnl`
+   * over CLOSED trades only — "what do I expect to make on my next
+   * COMPLETED trade, based on closed-trade history." `null` when there are
+   * zero closed trades. Compare with `avgTradeGrossPnl`/`avgTradeNetPnl`
+   * below, which is the same average but over ALL trades incl. the open
+   * one — the two are asserted EQUAL in any fixture with no open-at-end
+   * trade (same underlying set) and legitimately DIFFER when a trade is
+   * still open (see module doc's OPEN-TRADE LAW).
+   */
+  expectancyGross: number | null;
+  expectancyNet: number | null;
+  /** Mean `grossPnl` over ALL trades in `tradesDetail` (closed + the at-most-one open one, marked to last close) — `null` when `trades === 0`. See `expectancyGross`'s own doc for how this differs from expectancy. */
+  avgTradeGrossPnl: number | null;
+  avgTradeNetPnl: number | null;
+
+  /** Count of CLOSED trades with `grossPnl > 0` — the gross-side mirror of `wins` (which is net-classified). */
+  grossWins: number;
+  /** `grossWins ÷ closedTradeCount × 100`. `null` when there are zero closed trades — mirrors `winRatePct`. */
+  grossWinRatePct: number | null;
+
+  /** Mean `grossPnl` of gross-winning CLOSED trades (`≥ 0`). `null` when there are none. */
+  avgWinGross: number | null;
+  /** Mean `grossPnl` of gross-losing CLOSED trades — SIGNED, `≤ 0`. `null` when there are none. */
+  avgLossGross: number | null;
+  avgWinNet: number | null;
+  avgLossNet: number | null;
+  /** `|avgWinGross| ÷ |avgLossGross|`. `null` when there are zero gross-losing closed trades (`avgLossGross` is `null` or exactly `0`). */
+  avgWinLossRatioGross: number | null;
+  avgWinLossRatioNet: number | null;
+
+  /** Highest `grossPnl` among gross-winning CLOSED trades. `null` when there are none. */
+  largestWinGross: number | null;
+  /** Lowest (most negative) `grossPnl` among gross-losing CLOSED trades — SIGNED, `≤ 0`. `null` when there are none. */
+  largestLossGross: number | null;
+  largestWinNet: number | null;
+  largestLossNet: number | null;
+
+  /** Longest run of consecutive NET-winning CLOSED trades in chronological order. `0` when there are zero closed trades. Streaks are NET-classified only (matching `wins`'s own convention) — a gross-side streak isn't separately tracked since "win or loss" streaks are fundamentally a single classification choice, not a money amount that needs a gross/net pair. */
+  maxConsecutiveWins: number;
+  maxConsecutiveLosses: number;
+
+  // ── Time / exposure (ALL trades incl. the open one — see module doc's
+  // OPEN-TRADE LAW) ─────────────────────────────────────────────────────
+
+  /** Sum of `barsHeld` across every trade in `tradesDetail`. `0` when there are zero trades. */
+  totalBarsInTrades: number;
+  /** `totalBarsInTrades ÷ trades`. `null` when `trades === 0`. */
+  avgBarsInTrades: number | null;
+  /** `totalBarsInTrades ÷ (candles.length − 1) × 100` — % of the loaded window's bar-to-bar intervals during which a position was held. `null` when fewer than 2 candles are loaded (no interval to measure). Trades are non-overlapping by construction (long-only, single position — a new entry can only ever land strictly after the prior exit), so this sum can never double-count or exceed 100%. */
+  pctTimeInMarket: number | null;
+
+  // ── Drawdown / run-up ─────────────────────────────────────────────────
+
+  /**
+   * Max drawdown in ₹ — the largest (running-peak-equity − equity) gap
+   * reached at any bar, tracked INDEPENDENTLY of `maxDrawdownPct` (which
+   * tracks the largest *relative* gap). These two deliberately do NOT
+   * always peak at the same bar: an early, small equity peak can produce a
+   * large % dip that's small in ₹, while a later, much larger peak can
+   * produce a small % dip that's large in ₹ — see `selfcheck.ts`'s
+   * dedicated drawdown-shape fixture, which engineers exactly this
+   * divergence and asserts the two maxima land on different bars.
+   */
+  maxDrawdownAmount: number;
+  /** Mirror of max drawdown: the largest (equity − running-trough-equity) gain reached at any bar, in %. `0` when equity never rises off a new low (incl. the 0-signal case). */
+  maxEquityRunUpPct: number;
+  /** Same, in ₹. Neither run-up figure has a "gross" variant — see `maxDrawdownAmount`'s sibling note on why drawdown/run-up are net-only. */
+  maxEquityRunUpAmount: number;
+
+  // ── Annualized return ─────────────────────────────────────────────────
+
+  /**
+   * CAGR-style annualization of the WHOLE-WINDOW `grossReturnPct` /
+   * `netReturnPct`: `(1 + returnPct/100) ^ (365.25 / spanDays) − 1`, where
+   * `spanDays` is the ACTUAL ELAPSED CALENDAR TIME between the first and
+   * last loaded bar's timestamps (`(lastTimestamp − firstTimestamp) /
+   * 86,400,000`) — deliberately NOT bar count. "Annualized" is inherently
+   * a calendar-time concept: a 252-trading-day year should compound against
+   * ~365 elapsed calendar days, not 252 bars (bar count would silently
+   * treat every loaded interval, `1m` through `1d`, as if it had the same
+   * "year length," which is wrong for all of them). Day-count convention:
+   * `365.25`, the standard actual/365.25 finance convention (accounts for
+   * leap years).
+   *
+   * HONESTY GATE (the founder-named failure mode this ticket forbids —
+   * "never extrapolate a 3-day backtest into a fake CAGR"): returns `null`,
+   * never a number, when the loaded window spans under `90` calendar days.
+   * Compounding a multi-day or few-week window into a "per year" figure
+   * amplifies noise into something that reads far more confident than the
+   * data supports; 90 days (~1 quarter) is the shortest span this module
+   * considers honest to extrapolate from, and is asserted as a hard floor,
+   * not a soft rounding choice. Also `null` when `1 + returnPct/100 ≤ 0`
+   * (a ≥100% loss has no real CAGR — there's nothing to "recompound" from
+   * a wipeout) or when fewer than 2 candles are loaded (no span at all).
+   * In practice: the workbench's default `1d` window (5 years of daily
+   * bars, per `chart-workbench.tsx`) comfortably clears this floor, so
+   * daily-interval backtests annualize normally; short intraday windows
+   * (a day or two of `1m`/`5m` bars) correctly and honestly return `null`.
+   */
+  annualizedReturnPctGross: number | null;
+  annualizedReturnPctNet: number | null;
+
+  /** Per-bar net equity curve, mark-to-market on EVERY bar's close (not just at trade exits — the open trade, if any, is marked to that bar's close, identical to the mechanism `equity[i]` already used pre-extension), plus a frictionless buy-and-hold overlay. See `EquityPoint`'s own field docs. */
+  equityCurve: EquityPoint[];
+}
+
+/**
+ * One point on the backtest's equity curve — see `BacktestStats.equityCurve`.
+ */
+export interface EquityPoint {
+  timestamp: number;
+  /** Net-of-costs account equity, marked to THIS bar's close (starting capital + realized net P&L of every trade closed by this bar + unrealized net P&L of whichever trade, if any, is open at this bar). */
+  equity: number;
+  /** Drawdown from the running peak equity-to-date, in %. `0` at (or above) a new equity high. */
+  drawdownPct: number;
+  /** Same, in ₹. `maxDrawdownAmount === Math.max(...equityCurve.map(p => p.drawdownAmount))` by construction — both are produced by the same running-peak loop, not independently re-derived. */
+  drawdownAmount: number;
+  /** Frictionless buy-and-hold equity for the SAME starting capital: `notional × candles[i].close ÷ candles[0].open`. Deliberately cost-free and signal-independent, mirroring `buyHoldReturnPct`'s own existing convention (a single hypothetical buy at the window's first open, held throughout, never re-priced for transaction costs — the classic passive baseline every strategy is measured against, not a claim that real buy-and-hold investing is literally free). At the final bar, `buyHoldEquity === notional × (1 + buyHoldReturnPct/100)` exactly. */
+  buyHoldEquity: number;
 }
 
 export interface BacktestOptions {
   /** Notional capital per trade — NOT compounded across trades (every entry independently sizes `qty = floor(notional/entryPrice)`, matching a fixed-position-size backtest convention, not a compounding-equity one). Defaults to ₹1,00,000 per the plan. */
   notional?: number;
   productType: PaperProductType;
-}
-
-function computeMaxDrawdownPct(equity: readonly number[], startingCapital: number): number {
-  let peak = startingCapital;
-  let maxDrawdown = 0;
-  for (const e of equity) {
-    if (e > peak) peak = e;
-    if (peak > 0) {
-      const dd = ((peak - e) / peak) * 100;
-      if (dd > maxDrawdown) maxDrawdown = dd;
-    }
-  }
-  return maxDrawdown;
 }
 
 /** First-open to last-close, computed straight from `candles` — see `BacktestStats.buyHoldReturnPct`'s own doc for why this must never touch `signals`/`trades`. */
@@ -108,6 +315,181 @@ function computeBuyHoldReturnPct(candles: readonly StrategyCandle[]): number {
   return ((lastClose - firstOpen) / firstOpen) * 100;
 }
 
+/**
+ * Single forward pass over the already-built net `equity[]` array (see this
+ * module's own "single-pass design" doc — this is a downstream O(bars)
+ * DERIVATION from that one array, not a second independent reconstruction
+ * of it) that produces the full `EquityPoint[]` curve AND the four
+ * aggregate drawdown/run-up figures in one sweep: a running PEAK (for
+ * drawdown, mirrors the pre-extension `computeMaxDrawdownPct` exactly —
+ * verified algebraically identical, just also emitting the ₹ amount
+ * alongside the existing %) and a running TROUGH (for run-up, the mirror-
+ * image computation: largest gain off a running low instead of largest dip
+ * off a running high).
+ */
+function buildEquityCurve(
+  candles: readonly StrategyCandle[],
+  equity: readonly number[],
+  startingCapital: number
+): {
+  points: EquityPoint[];
+  maxDrawdownPct: number;
+  maxDrawdownAmount: number;
+  maxEquityRunUpPct: number;
+  maxEquityRunUpAmount: number;
+} {
+  const points: EquityPoint[] = new Array(candles.length);
+  const firstOpen = candles.length > 0 ? candles[0].open : 0;
+  const firstOpenValid = Number.isFinite(firstOpen) && firstOpen !== 0;
+
+  let peak = startingCapital;
+  let trough = startingCapital;
+  let maxDrawdownPct = 0;
+  let maxDrawdownAmount = 0;
+  let maxEquityRunUpPct = 0;
+  let maxEquityRunUpAmount = 0;
+
+  for (let i = 0; i < candles.length; i++) {
+    const e = equity[i];
+
+    if (e > peak) peak = e;
+    const drawdownAmount = peak - e;
+    if (drawdownAmount > maxDrawdownAmount) maxDrawdownAmount = drawdownAmount;
+    const drawdownPct = peak > 0 ? (drawdownAmount / peak) * 100 : 0;
+    if (drawdownPct > maxDrawdownPct) maxDrawdownPct = drawdownPct;
+
+    if (e < trough) trough = e;
+    const runUpAmount = e - trough;
+    if (runUpAmount > maxEquityRunUpAmount) maxEquityRunUpAmount = runUpAmount;
+    const runUpPct = trough > 0 ? (runUpAmount / trough) * 100 : 0;
+    if (runUpPct > maxEquityRunUpPct) maxEquityRunUpPct = runUpPct;
+
+    const buyHoldEquity = firstOpenValid ? (startingCapital * candles[i].close) / firstOpen : startingCapital;
+
+    points[i] = { timestamp: candles[i].timestamp, equity: e, drawdownPct, drawdownAmount, buyHoldEquity };
+  }
+
+  return { points, maxDrawdownPct, maxDrawdownAmount, maxEquityRunUpPct, maxEquityRunUpAmount };
+}
+
+const ANNUALIZATION_MIN_SPAN_DAYS = 90;
+const DAYS_PER_YEAR = 365.25;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/** See `BacktestStats.annualizedReturnPctGross`/`Net`'s own doc for the full convention and honesty gate — this is the shared implementation both feed through, so the gross and net sides can never apply different rules. */
+function computeAnnualizedReturnPct(returnPct: number, firstTimestamp: number, lastTimestamp: number): number | null {
+  const spanDays = (lastTimestamp - firstTimestamp) / MS_PER_DAY;
+  if (!Number.isFinite(spanDays) || spanDays < ANNUALIZATION_MIN_SPAN_DAYS) return null;
+  const base = 1 + returnPct / 100;
+  if (base <= 0) return null;
+  const annualized = (Math.pow(base, DAYS_PER_YEAR / spanDays) - 1) * 100;
+  return Number.isFinite(annualized) ? annualized : null;
+}
+
+/**
+ * MAE/MFE for one trade — see `BacktestTrade.mae`/`mfe`'s own doc for the
+ * bar-exclusion rule. Returns PER-SHARE magnitudes + %; the caller
+ * multiplies by `qty` for the money-denominated fields.
+ */
+function computeExcursion(
+  candles: readonly StrategyCandle[],
+  entryIndex: number,
+  throughIndex: number,
+  entryPrice: number
+): { maePerShare: number; mfePerShare: number; maePct: number; mfePct: number } {
+  let minLow = Infinity;
+  let maxHigh = -Infinity;
+  for (let i = entryIndex + 1; i <= throughIndex; i++) {
+    if (candles[i].low < minLow) minLow = candles[i].low;
+    if (candles[i].high > maxHigh) maxHigh = candles[i].high;
+  }
+  if (!Number.isFinite(minLow) || !Number.isFinite(maxHigh)) {
+    // No bar has elapsed since entry yet (throughIndex === entryIndex) — nothing to measure.
+    return { maePerShare: 0, mfePerShare: 0, maePct: 0, mfePct: 0 };
+  }
+  const maePerShare = Math.max(0, entryPrice - minLow);
+  const mfePerShare = Math.max(0, maxHigh - entryPrice);
+  const maePct = entryPrice > 0 ? (maePerShare / entryPrice) * 100 : 0;
+  const mfePct = entryPrice > 0 ? (mfePerShare / entryPrice) * 100 : 0;
+  return { maePerShare, mfePerShare, maePct, mfePct };
+}
+
+/** Longest run of consecutive NET-winning / NET-losing CLOSED trades, in the chronological order `closedTrades` is already in. See `BacktestStats.maxConsecutiveWins`'s own doc for why this is net-only. */
+function computeMaxConsecutive(closedTrades: readonly Pick<BacktestTrade, "netPnl">[]): { maxConsecutiveWins: number; maxConsecutiveLosses: number } {
+  let maxWins = 0;
+  let maxLosses = 0;
+  let curWins = 0;
+  let curLosses = 0;
+  for (const t of closedTrades) {
+    if (t.netPnl > 0) {
+      curWins += 1;
+      curLosses = 0;
+      if (curWins > maxWins) maxWins = curWins;
+    } else {
+      curLosses += 1;
+      curWins = 0;
+      if (curLosses > maxLosses) maxLosses = curLosses;
+    }
+  }
+  return { maxConsecutiveWins: maxWins, maxConsecutiveLosses: maxLosses };
+}
+
+/**
+ * Win/loss aggregate stats over a set of CLOSED trades, generic over WHICH
+ * P&L field to classify on via `pnlOf` — the ONE implementation both the
+ * gross and net call sites route through, so gross/net logic can never
+ * silently drift apart (same "one shared function, not two hand-rolled
+ * copies" principle `strategies.ts`'s own `finalizeSignals` already
+ * established for this codebase). See module doc's SIGN LAW for why `loss`/
+ * `avgLoss`/`largestLoss` stay signed (`≤ 0`) while `profitFactor`/
+ * `avgWinLossRatio` are positive magnitudes.
+ */
+function computeProfitLossAggregates(
+  closedTrades: readonly BacktestTrade[],
+  pnlOf: (t: BacktestTrade) => number
+): {
+  profit: number;
+  loss: number;
+  winCount: number;
+  avgWin: number | null;
+  avgLoss: number | null;
+  avgWinLossRatio: number | null;
+  profitFactor: number | null;
+  largestWin: number | null;
+  largestLoss: number | null;
+} {
+  let profit = 0;
+  let loss = 0; // signed, sum of every non-positive pnl
+  let winCount = 0;
+  let winSum = 0;
+  let lossCount = 0;
+  let lossSum = 0; // signed
+  let largestWin: number | null = null;
+  let largestLoss: number | null = null; // signed, the most negative
+
+  for (const t of closedTrades) {
+    const pnl = pnlOf(t);
+    if (pnl > 0) {
+      profit += pnl;
+      winCount += 1;
+      winSum += pnl;
+      largestWin = largestWin === null ? pnl : Math.max(largestWin, pnl);
+    } else {
+      loss += pnl;
+      lossCount += 1;
+      lossSum += pnl;
+      largestLoss = largestLoss === null ? pnl : Math.min(largestLoss, pnl);
+    }
+  }
+
+  const avgWin = winCount > 0 ? winSum / winCount : null;
+  const avgLoss = lossCount > 0 ? lossSum / lossCount : null;
+  const profitFactor = loss === 0 ? null : profit / Math.abs(loss);
+  const avgWinLossRatio = avgWin !== null && avgLoss !== null && avgLoss !== 0 ? Math.abs(avgWin) / Math.abs(avgLoss) : null;
+
+  return { profit, loss, winCount, avgWin, avgLoss, avgWinLossRatio, profitFactor, largestWin, largestLoss };
+}
+
 export function runBacktest(candles: readonly StrategyCandle[], signals: readonly StrategySignal[], options: BacktestOptions): BacktestStats {
   const notional = options.notional && options.notional > 0 ? options.notional : 100000;
   const productType = options.productType;
@@ -115,7 +497,12 @@ export function runBacktest(candles: readonly StrategyCandle[], signals: readonl
   const signalByIndex = new Map<number, StrategySignal>();
   for (const s of signals) signalByIndex.set(s.index, s);
 
-  const trades: BacktestTrade[] = [];
+  // Base trade shape (pre-metrics-engine fields only) — kept byte-identical to the pre-extension construction
+  // logic below; the new per-trade fields are added in a separate enrichment pass after this loop, over
+  // `candles`, which every base trade already carries enough indices/prices to derive from.
+  type BaseTrade = Omit<BacktestTrade, "totalCosts" | "grossPnlPct" | "netPnlPct" | "cumulativeNetEquity" | "barsHeld" | "mae" | "mfe" | "maePct" | "mfePct">;
+
+  const trades: BaseTrade[] = [];
   const equity: number[] = new Array(candles.length);
   let realizedNet = 0;
   let openTrade: { entryIndex: number; entryTimestamp: number; entryPrice: number; qty: number; entryCosts: number } | null = null;
@@ -166,7 +553,7 @@ export function runBacktest(candles: readonly StrategyCandle[], signals: readonl
     equity[i] = notional + realizedNet + unrealized;
   }
 
-  let openTradeDetail: BacktestTrade | null = null;
+  let openTradeDetail: BaseTrade | null = null;
   if (openTrade && candles.length > 0) {
     const lastClose = candles[candles.length - 1].close;
     const grossPnl = (lastClose - openTrade.entryPrice) * openTrade.qty;
@@ -188,19 +575,70 @@ export function runBacktest(candles: readonly StrategyCandle[], signals: readonl
     };
   }
 
-  const tradesDetail = openTradeDetail ? [...trades, openTradeDetail] : trades;
+  const baseTradesDetail = openTradeDetail ? [...trades, openTradeDetail] : trades;
   const closedCount = trades.length;
   const wins = trades.filter((t) => t.netPnl > 0).length;
   const winRatePct = closedCount > 0 ? (wins / closedCount) * 100 : null;
 
-  const grossPnl = tradesDetail.reduce((s, t) => s + t.grossPnl, 0);
-  const netPnl = tradesDetail.reduce((s, t) => s + t.netPnl, 0);
-  const totalCosts = tradesDetail.reduce((s, t) => s + t.entryCosts + t.exitCosts, 0);
+  const grossPnl = baseTradesDetail.reduce((s, t) => s + t.grossPnl, 0);
+  const netPnl = baseTradesDetail.reduce((s, t) => s + t.netPnl, 0);
+  const totalCosts = baseTradesDetail.reduce((s, t) => s + t.entryCosts + t.exitCosts, 0);
 
   const grossReturnPct = (grossPnl / notional) * 100;
   const netReturnPct = (netPnl / notional) * 100;
-  const maxDrawdownPct = computeMaxDrawdownPct(equity, notional);
   const buyHoldReturnPct = computeBuyHoldReturnPct(candles);
+
+  // ── Enrichment pass: add the new per-trade fields over the already-built base trades. Needs `candles` (for
+  // MAE/MFE) and a running sum (for cumulativeNetEquity) — a for-loop, not `.map()`, since the running sum is
+  // stateful across iterations. ──────────────────────────────────────────────────────────────────────────
+  const lastCandleIndex = candles.length - 1;
+  const tradesDetail: BacktestTrade[] = new Array(baseTradesDetail.length);
+  let cumulativeNet = 0;
+  for (let i = 0; i < baseTradesDetail.length; i++) {
+    const t = baseTradesDetail[i];
+    const throughIndex = t.exitIndex ?? lastCandleIndex;
+    const barsHeld = throughIndex - t.entryIndex;
+    const { maePerShare, mfePerShare, maePct, mfePct } = computeExcursion(candles, t.entryIndex, throughIndex, t.entryPrice);
+    const deployed = t.entryPrice * t.qty;
+    cumulativeNet += t.netPnl;
+    tradesDetail[i] = {
+      ...t,
+      totalCosts: t.entryCosts + t.exitCosts,
+      grossPnlPct: deployed !== 0 ? (t.grossPnl / deployed) * 100 : 0,
+      netPnlPct: deployed !== 0 ? (t.netPnl / deployed) * 100 : 0,
+      cumulativeNetEquity: notional + cumulativeNet,
+      barsHeld,
+      mae: maePerShare * t.qty,
+      mfe: mfePerShare * t.qty,
+      maePct,
+      mfePct
+    };
+  }
+
+  // ── Aggregates: profitability (gross + net, CLOSED-only), time-in-market (ALL trades), drawdown/run-up,
+  // annualized return, equity curve. See module doc for the OPEN-TRADE LAW governing which of these include
+  // the still-open position. ──────────────────────────────────────────────────────────────────────────────
+  const closedTradesDetail = tradesDetail.filter((t) => !t.isOpen);
+
+  const grossAgg = computeProfitLossAggregates(closedTradesDetail, (t) => t.grossPnl);
+  const netAgg = computeProfitLossAggregates(closedTradesDetail, (t) => t.netPnl);
+  const grossWinRatePct = closedCount > 0 ? (grossAgg.winCount / closedCount) * 100 : null;
+
+  const expectancyGross = closedCount > 0 ? (grossAgg.profit + grossAgg.loss) / closedCount : null;
+  const expectancyNet = closedCount > 0 ? (netAgg.profit + netAgg.loss) / closedCount : null;
+  const avgTradeGrossPnl = tradesDetail.length > 0 ? grossPnl / tradesDetail.length : null;
+  const avgTradeNetPnl = tradesDetail.length > 0 ? netPnl / tradesDetail.length : null;
+
+  const { maxConsecutiveWins, maxConsecutiveLosses } = computeMaxConsecutive(closedTradesDetail);
+
+  const totalBarsInTrades = tradesDetail.reduce((s, t) => s + t.barsHeld, 0);
+  const avgBarsInTrades = tradesDetail.length > 0 ? totalBarsInTrades / tradesDetail.length : null;
+  const pctTimeInMarket = candles.length >= 2 ? (totalBarsInTrades / (candles.length - 1)) * 100 : null;
+
+  const { points: equityCurve, maxDrawdownPct, maxDrawdownAmount, maxEquityRunUpPct, maxEquityRunUpAmount } = buildEquityCurve(candles, equity, notional);
+
+  const annualizedReturnPctGross = candles.length >= 2 ? computeAnnualizedReturnPct(grossReturnPct, candles[0].timestamp, candles[candles.length - 1].timestamp) : null;
+  const annualizedReturnPctNet = candles.length >= 2 ? computeAnnualizedReturnPct(netReturnPct, candles[0].timestamp, candles[candles.length - 1].timestamp) : null;
 
   return {
     trades: tradesDetail.length,
@@ -214,6 +652,49 @@ export function runBacktest(candles: readonly StrategyCandle[], signals: readonl
     maxDrawdownPct,
     buyHoldReturnPct,
     openAtEnd: openTradeDetail !== null,
-    tradesDetail
+    tradesDetail,
+
+    grossProfit: grossAgg.profit,
+    grossLoss: grossAgg.loss,
+    netProfit: netAgg.profit,
+    netLoss: netAgg.loss,
+    profitFactorGross: grossAgg.profitFactor,
+    profitFactorNet: netAgg.profitFactor,
+
+    expectancyGross,
+    expectancyNet,
+    avgTradeGrossPnl,
+    avgTradeNetPnl,
+
+    grossWins: grossAgg.winCount,
+    grossWinRatePct,
+
+    avgWinGross: grossAgg.avgWin,
+    avgLossGross: grossAgg.avgLoss,
+    avgWinNet: netAgg.avgWin,
+    avgLossNet: netAgg.avgLoss,
+    avgWinLossRatioGross: grossAgg.avgWinLossRatio,
+    avgWinLossRatioNet: netAgg.avgWinLossRatio,
+
+    largestWinGross: grossAgg.largestWin,
+    largestLossGross: grossAgg.largestLoss,
+    largestWinNet: netAgg.largestWin,
+    largestLossNet: netAgg.largestLoss,
+
+    maxConsecutiveWins,
+    maxConsecutiveLosses,
+
+    totalBarsInTrades,
+    avgBarsInTrades,
+    pctTimeInMarket,
+
+    maxDrawdownAmount,
+    maxEquityRunUpPct,
+    maxEquityRunUpAmount,
+
+    annualizedReturnPctGross,
+    annualizedReturnPctNet,
+
+    equityCurve
   };
 }

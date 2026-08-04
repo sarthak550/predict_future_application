@@ -183,6 +183,123 @@ function checkBacktestCostCrossCheck(signals: StrategySignal[]): void {
   assert("intervalToProductType: 1d -> DELIVERY", intervalToProductType("1d") === "DELIVERY");
   assert("intervalToProductType: 5m -> INTRADAY", intervalToProductType("5m") === "INTRADAY");
   assert("intervalToProductType: 60m -> INTRADAY", intervalToProductType("60m") === "INTRADAY");
+
+  // ── Metrics-engine extension: SAME fixture (1 closed loss + 1 open unrealised win), cross-checked BY HAND
+  // against every new gross/net aggregate from trade1/trade2 above — see backtest.ts module doc's SIGN LAW
+  // (loss-side aggregates stay SIGNED negative) and OPEN-TRADE LAW (win/loss-classified aggregates are
+  // CLOSED-only; trade2 is excluded from all of them). ──────────────────────────────────────────────────────
+  // Only trade1 is closed; trade2 is the open-at-end position (closedCount === 1 throughout this block).
+  assert("backtest: grossWins is 0 (trade1 is the only closed trade, and it's a gross loss)", stats.grossWins === 0, `got ${stats.grossWins}`);
+  assertClose("backtest: grossWinRatePct is 0", stats.grossWinRatePct ?? NaN, 0);
+
+  assertClose("backtest: grossProfit is 0 (no gross-winning closed trades)", stats.grossProfit, 0);
+  assertClose("backtest: grossLoss equals trade1's grossPnl, SIGNED negative", stats.grossLoss, grossPnl1);
+  assertClose("backtest: netProfit is 0 (no net-winning closed trades)", stats.netProfit, 0);
+  assertClose("backtest: netLoss equals trade1's netPnl, SIGNED negative", stats.netLoss, netPnl1);
+
+  // A loss EXISTS but zero wins -> profit factor is a real 0, not null (null is reserved for "no losses at
+  // all" — see checkNoLossSeries below for that branch).
+  assertClose("backtest: profitFactorGross is 0 (a loss exists, but zero gross wins)", stats.profitFactorGross ?? NaN, 0);
+  assertClose("backtest: profitFactorNet is 0 (a loss exists, but zero net wins)", stats.profitFactorNet ?? NaN, 0);
+
+  assert("backtest: avgWinGross is null (zero gross-winning closed trades)", stats.avgWinGross === null, `got ${stats.avgWinGross}`);
+  assertClose("backtest: avgLossGross equals trade1's grossPnl", stats.avgLossGross ?? NaN, grossPnl1);
+  assert("backtest: avgWinNet is null", stats.avgWinNet === null, `got ${stats.avgWinNet}`);
+  assertClose("backtest: avgLossNet equals trade1's netPnl", stats.avgLossNet ?? NaN, netPnl1);
+  assert("backtest: avgWinLossRatioGross is null (avgWinGross is null)", stats.avgWinLossRatioGross === null, `got ${stats.avgWinLossRatioGross}`);
+  assert("backtest: avgWinLossRatioNet is null", stats.avgWinLossRatioNet === null, `got ${stats.avgWinLossRatioNet}`);
+
+  assert("backtest: largestWinGross is null", stats.largestWinGross === null, `got ${stats.largestWinGross}`);
+  assertClose("backtest: largestLossGross equals trade1's grossPnl", stats.largestLossGross ?? NaN, grossPnl1);
+  assert("backtest: largestWinNet is null", stats.largestWinNet === null, `got ${stats.largestWinNet}`);
+  assertClose("backtest: largestLossNet equals trade1's netPnl", stats.largestLossNet ?? NaN, netPnl1);
+
+  assertClose("backtest: expectancyGross equals trade1's grossPnl (the only closed trade)", stats.expectancyGross ?? NaN, grossPnl1);
+  assertClose("backtest: expectancyNet equals trade1's netPnl", stats.expectancyNet ?? NaN, netPnl1);
+  // avgTrade includes the OPEN trade too (2 trades total) — deliberately differs from expectancy (1 closed
+  // trade only) here; see module doc's OPEN-TRADE LAW.
+  assertClose("backtest: avgTradeGrossPnl averages BOTH trades (closed + open)", stats.avgTradeGrossPnl ?? NaN, (grossPnl1 + grossPnl2) / 2);
+  assertClose("backtest: avgTradeNetPnl averages BOTH trades", stats.avgTradeNetPnl ?? NaN, (netPnl1 + netPnl2) / 2);
+  assert(
+    "backtest: expectancyNet != avgTradeNetPnl here (an open trade is excluded from expectancy but included in avgTrade)",
+    stats.expectancyNet !== stats.avgTradeNetPnl
+  );
+
+  assert("backtest: maxConsecutiveWins is 0", stats.maxConsecutiveWins === 0, `got ${stats.maxConsecutiveWins}`);
+  assert("backtest: maxConsecutiveLosses is 1", stats.maxConsecutiveLosses === 1, `got ${stats.maxConsecutiveLosses}`);
+
+  // Time-in-market: trade1 barsHeld = exitIndex(3)-entryIndex(2) = 1; trade2 (open) barsHeld = lastIndex(9)-entryIndex(6) = 3.
+  const trade1Detail = stats.tradesDetail[0];
+  const trade2Detail = stats.tradesDetail[1];
+  assert("backtest: trade1.barsHeld is 1", trade1Detail?.barsHeld === 1, `got ${trade1Detail?.barsHeld}`);
+  assert("backtest: trade2 (open).barsHeld is 3", trade2Detail?.barsHeld === 3, `got ${trade2Detail?.barsHeld}`);
+  assert("backtest: totalBarsInTrades is 4", stats.totalBarsInTrades === 4, `got ${stats.totalBarsInTrades}`);
+  assertClose("backtest: avgBarsInTrades is 2", stats.avgBarsInTrades ?? NaN, 2);
+  assertClose("backtest: pctTimeInMarket is 4/9 * 100", stats.pctTimeInMarket ?? NaN, (4 / 9) * 100);
+
+  // MAE/MFE (fixtureCandles are flat OHLC = close per bar, from closesToCandles — see its own doc):
+  // trade1 (entry idx2@12, exit idx3@9) scans idx3 only (close 9): MAE = 12-9 = 3/share, MFE = 0 (floored, price never rose above entry).
+  assertClose("backtest: trade1.mae is 3/share * qty1", trade1Detail?.mae ?? NaN, 3 * qty1);
+  assertClose("backtest: trade1.mfe is 0 (price never exceeded entry)", trade1Detail?.mfe ?? NaN, 0);
+  assertClose("backtest: trade1.maePct is 25%", trade1Detail?.maePct ?? NaN, 25);
+  assertClose("backtest: trade1.mfePct is 0", trade1Detail?.mfePct ?? NaN, 0);
+  // trade2 (entry idx6@12, open through idx9) scans idx7/8/9 (closes 13,14,15): MAE = 0 (never dipped below entry), MFE = 15-12 = 3/share.
+  assertClose("backtest: trade2 (open).mae is 0 (price never dipped below entry)", trade2Detail?.mae ?? NaN, 0);
+  assertClose("backtest: trade2 (open).mfe is 3/share * qty2", trade2Detail?.mfe ?? NaN, 3 * qty2);
+  assertClose("backtest: trade2.maePct is 0", trade2Detail?.maePct ?? NaN, 0);
+  assertClose("backtest: trade2.mfePct is 25%", trade2Detail?.mfePct ?? NaN, 25);
+
+  // Per-trade convenience fields.
+  assertClose("backtest: trade1.totalCosts is entryCosts1+exitCosts1", trade1Detail?.totalCosts ?? NaN, entryCosts1 + exitCosts1);
+  assertClose("backtest: trade1.grossPnlPct is (9-12)/12*100", trade1Detail?.grossPnlPct ?? NaN, ((exitPrice1 - entryPrice1) / entryPrice1) * 100);
+  assertClose("backtest: trade1.netPnlPct matches netPnl1/(entryPrice1*qty1)*100", trade1Detail?.netPnlPct ?? NaN, (netPnl1 / (entryPrice1 * qty1)) * 100);
+  assertClose("backtest: trade2.grossPnlPct is (15-12)/12*100", trade2Detail?.grossPnlPct ?? NaN, ((lastClose - entryPrice2) / entryPrice2) * 100);
+  assertClose("backtest: trade2.netPnlPct matches netPnl2/(entryPrice2*qty2)*100", trade2Detail?.netPnlPct ?? NaN, (netPnl2 / (entryPrice2 * qty2)) * 100);
+  assertClose("backtest: trade1.cumulativeNetEquity is notional+netPnl1", trade1Detail?.cumulativeNetEquity ?? NaN, notional + netPnl1);
+  assertClose(
+    "backtest: trade2 (last).cumulativeNetEquity is notional+stats.netPnl, matching the final equity-curve bar",
+    trade2Detail?.cumulativeNetEquity ?? NaN,
+    notional + stats.netPnl
+  );
+
+  // Annualization honesty gate: this fixture spans only 9 calendar days (idx0..idx9, 1 day/bar) — well under
+  // the 90-day floor — both gross and net MUST be null, never a fabricated CAGR off a 9-day window.
+  assert(
+    "backtest: annualizedReturnPctGross is null (9-day window, under the 90-day honesty floor)",
+    stats.annualizedReturnPctGross === null,
+    `got ${stats.annualizedReturnPctGross}`
+  );
+  assert("backtest: annualizedReturnPctNet is null (same 9-day window)", stats.annualizedReturnPctNet === null, `got ${stats.annualizedReturnPctNet}`);
+
+  // Equity curve: 10 points (1 per candle), final point matches the final realized+unrealized total, buy-hold overlay matches buyHoldReturnPct's own first-open-to-last-close convention.
+  assert("backtest: equityCurve has 10 points (1 per candle)", stats.equityCurve.length === 10, `got ${stats.equityCurve.length}`);
+  assertClose("backtest: equityCurve's final equity matches notional+stats.netPnl", stats.equityCurve[9]?.equity ?? NaN, notional + stats.netPnl);
+  assertClose("backtest: equityCurve's final buyHoldEquity is notional*15/10", stats.equityCurve[9]?.buyHoldEquity ?? NaN, notional * (15 / 10));
+
+  // Independent max-drawdown-₹ and max-run-up reconstructions (mirrors the existing maxDrawdownPct cross-check
+  // above) — a second, brute-force implementation, not a hand-typed magic decimal.
+  const independentDrawdownAmount = independentMaxDrawdownAmount(independentEquity, notional);
+  assertClose("backtest: maxDrawdownAmount matches an independent equity-curve reconstruction", stats.maxDrawdownAmount, independentDrawdownAmount, 1e-6);
+  assertFinite("backtest: maxDrawdownAmount is finite", stats.maxDrawdownAmount);
+  assert("backtest: maxDrawdownAmount is non-negative", stats.maxDrawdownAmount >= 0, `got ${stats.maxDrawdownAmount}`);
+  assertClose(
+    "backtest: maxDrawdownAmount equals the max drawdownAmount across the equity curve's own points",
+    stats.maxDrawdownAmount,
+    Math.max(...stats.equityCurve.map((p) => p.drawdownAmount)),
+    1e-6
+  );
+
+  const independentRunUp = independentMaxEquityRunUp(independentEquity, notional);
+  assertClose("backtest: maxEquityRunUpPct matches an independent reconstruction", stats.maxEquityRunUpPct, independentRunUp.pct, 1e-6);
+  assertClose("backtest: maxEquityRunUpAmount matches an independent reconstruction", stats.maxEquityRunUpAmount, independentRunUp.amount, 1e-6);
+  assertFinite("backtest: maxEquityRunUpPct is finite", stats.maxEquityRunUpPct);
+  assertFinite("backtest: maxEquityRunUpAmount is finite", stats.maxEquityRunUpAmount);
+
+  // Generic finiteness sweep over every numeric stat (incl. every new field) — the "NULL, NEVER
+  // INFINITY/NaN" law from the module doc, checked mechanically rather than per-field.
+  for (const [label, value] of Object.entries(stats)) {
+    if (typeof value === "number") assertFinite(`backtest (fixture 1): stats.${label} is finite`, value);
+  }
 }
 
 /** A brute-force, INDEPENDENT reconstruction of the net equity curve from an already-built `tradesDetail` array — deliberately NOT `runBacktest`'s own single-pass sweep (a different code path testing the same invariant: "equity = starting capital + realized net PnL of every trade closed by this bar + unrealized mark-to-market of whichever trade is open at this bar"). O(bars * trades), fine for a selfcheck fixture. */
@@ -212,6 +329,406 @@ function independentMaxDrawdownPct(equity: readonly number[], startingCapital: n
     if (peak > 0) maxDrawdown = Math.max(maxDrawdown, ((peak - e) / peak) * 100);
   }
   return maxDrawdown;
+}
+
+/** ₹ mirror of `independentMaxDrawdownPct` — same running-peak reconstruction, tracking the ₹ gap instead of the % gap. */
+function independentMaxDrawdownAmount(equity: readonly number[], startingCapital: number): number {
+  let peak = startingCapital;
+  let maxDrawdownAmount = 0;
+  for (const e of equity) {
+    if (e > peak) peak = e;
+    maxDrawdownAmount = Math.max(maxDrawdownAmount, peak - e);
+  }
+  return maxDrawdownAmount;
+}
+
+/** Mirror-image reconstruction of `independentMaxDrawdownPct`/`independentMaxDrawdownAmount`: a running TROUGH (instead of peak) tracks the largest subsequent gain, in both ₹ and %. */
+function independentMaxEquityRunUp(equity: readonly number[], startingCapital: number): { pct: number; amount: number } {
+  let trough = startingCapital;
+  let maxAmount = 0;
+  let maxPct = 0;
+  for (const e of equity) {
+    if (e < trough) trough = e;
+    const amount = e - trough;
+    if (amount > maxAmount) maxAmount = amount;
+    if (trough > 0) maxPct = Math.max(maxPct, (amount / trough) * 100);
+  }
+  return { pct: maxPct, amount: maxAmount };
+}
+
+// ── Metrics-engine extension fixtures — 4 dedicated series per the ticket's
+// exact spec: (a) a 3-trade known series with profit factor/expectancy/avg
+// win-loss/consecutives/equity-curve points verified by hand, (b) a no-loss
+// series (profit factor null), (c) an annualization POSITIVE-case series
+// (every OTHER fixture in this file only exercises the null/honesty-gate
+// path — this one proves the real formula works too), (d) a drawdown-shape
+// series where max DD ₹ and max DD % are engineered to peak on DIFFERENT
+// bars. All bypass `strategy.compute()` with synthetic `StrategySignal[]`,
+// same pattern `checkSingleOpenTradeEdgeCase` already established. ────────
+
+/**
+ * WIN, WIN, LOSS chronologically (a real 2-streak, not just alternating
+ * 1s), all CLOSED (no open-at-end — that's fixture 1's/annualize+'s job),
+ * with REAL (non-flat) intrabar high/low ranges so MAE/MFE gets a
+ * non-degenerate hand-check too (fixture 1's flat-OHLC candles make
+ * MAE/MFE trivial). notional=10000, DELIVERY.
+ *
+ * Trade 1: entry idx1@100, exit idx3@120 (WIN, gross +2000, qty=100).
+ * Trade 2: entry idx4@120, exit idx6@125 (WIN, gross +415, qty=83).
+ * Trade 3: entry idx7@125, exit idx11@100 (LOSS, gross -2000, qty=80).
+ * idx12 is a flat trailing bar after the last exit (proves no phantom
+ * position / equity drift once flat).
+ */
+function buildThreeTradeCandles(): StrategyCandle[] {
+  const baseTs = Date.UTC(2026, 0, 1);
+  const dayMs = 24 * 60 * 60 * 1000;
+  const bar = (i: number, high: number, low: number, close: number): StrategyCandle => ({
+    timestamp: baseTs + i * dayMs,
+    open: close,
+    high,
+    low,
+    close,
+    volume: 1000
+  });
+  return [
+    bar(0, 100, 100, 100), // pre-entry
+    bar(1, 100, 100, 100), // ENTRY trade1 BUY@100 (entry bar excluded from MAE/MFE scan)
+    bar(2, 115, 95, 110), // scanned (trade1)
+    bar(3, 122, 118, 120), // EXIT trade1 SELL@120 (scanned)
+    bar(4, 120, 120, 120), // ENTRY trade2 BUY@120
+    bar(5, 124, 112, 118), // scanned (trade2)
+    bar(6, 127, 123, 125), // EXIT trade2 SELL@125 (scanned)
+    bar(7, 125, 125, 125), // ENTRY trade3 BUY@125
+    bar(8, 126, 108, 115), // scanned (trade3)
+    bar(9, 118, 95, 105), // scanned (trade3)
+    bar(10, 108, 88, 95), // scanned (trade3)
+    bar(11, 105, 98, 100), // EXIT trade3 SELL@100 (scanned)
+    bar(12, 100, 100, 100) // trailing flat bar, no open position
+  ];
+}
+
+function checkThreeTradeKnownSeries(): void {
+  const candles = buildThreeTradeCandles();
+  const notional = 10000;
+  const productType = "DELIVERY" as const;
+  const mkSignal = (index: number, side: "BUY" | "SELL"): StrategySignal => ({
+    index,
+    timestamp: candles[index].timestamp,
+    side,
+    price: candles[index].close
+  });
+  const signals: StrategySignal[] = [
+    mkSignal(1, "BUY"),
+    mkSignal(3, "SELL"),
+    mkSignal(4, "BUY"),
+    mkSignal(6, "SELL"),
+    mkSignal(7, "BUY"),
+    mkSignal(11, "SELL")
+  ];
+  const stats = runBacktest(candles, signals, { notional, productType });
+
+  assert("3-trade: exactly 3 closed trades, none open", stats.trades === 3 && stats.openAtEnd === false, `got ${stats.trades} trades, openAtEnd=${stats.openAtEnd}`);
+
+  const qty1 = Math.floor(notional / 100); // 100
+  const qty2 = Math.floor(notional / 120); // 83
+  const qty3 = Math.floor(notional / 125); // 80
+  const grossPnl1 = (120 - 100) * qty1; // 2000
+  const grossPnl2 = (125 - 120) * qty2; // 415
+  const grossPnl3 = (100 - 125) * qty3; // -2000
+  assertClose("3-trade: trade1 grossPnl is 2000", stats.tradesDetail[0]?.grossPnl ?? NaN, grossPnl1);
+  assertClose("3-trade: trade2 grossPnl is 415", stats.tradesDetail[1]?.grossPnl ?? NaN, grossPnl2);
+  assertClose("3-trade: trade3 grossPnl is -2000", stats.tradesDetail[2]?.grossPnl ?? NaN, grossPnl3);
+
+  // Real cost cross-check (not reimplemented) — same pattern as fixture 1.
+  const entryCosts1 = computeOrderCosts({ side: "BUY", productType, quantity: qty1, price: 100 }).totalCosts;
+  const exitCosts1 = computeOrderCosts({ side: "SELL", productType, quantity: qty1, price: 120, isFirstDeliverySellOfScripToday: true }).totalCosts;
+  const entryCosts2 = computeOrderCosts({ side: "BUY", productType, quantity: qty2, price: 120 }).totalCosts;
+  const exitCosts2 = computeOrderCosts({ side: "SELL", productType, quantity: qty2, price: 125, isFirstDeliverySellOfScripToday: true }).totalCosts;
+  const entryCosts3 = computeOrderCosts({ side: "BUY", productType, quantity: qty3, price: 125 }).totalCosts;
+  const exitCosts3 = computeOrderCosts({ side: "SELL", productType, quantity: qty3, price: 100, isFirstDeliverySellOfScripToday: true }).totalCosts;
+  const netPnl1 = grossPnl1 - entryCosts1 - exitCosts1;
+  const netPnl2 = grossPnl2 - entryCosts2 - exitCosts2;
+  const netPnl3 = grossPnl3 - entryCosts3 - exitCosts3;
+
+  // Sign sanity — costs must not flip the classification this fixture was designed around (trade2's small
+  // ~415 gross win must comfortably survive its round-trip cost; verified here, not assumed).
+  assert("3-trade: trade2's net win survives costs (fixture design margin)", netPnl2 > 0, `netPnl2=${netPnl2}, costs=${entryCosts2 + exitCosts2}`);
+
+  assertClose("3-trade: trade1 netPnl matches real computeOrderCosts()", stats.tradesDetail[0]?.netPnl ?? NaN, netPnl1);
+  assertClose("3-trade: trade2 netPnl matches real computeOrderCosts()", stats.tradesDetail[1]?.netPnl ?? NaN, netPnl2);
+  assertClose("3-trade: trade3 netPnl matches real computeOrderCosts()", stats.tradesDetail[2]?.netPnl ?? NaN, netPnl3);
+
+  // WIN, WIN, LOSS chronologically -> a streak of 2 wins, then 1 loss.
+  assert("3-trade: wins is 2", stats.wins === 2, `got ${stats.wins}`);
+  assertClose("3-trade: winRatePct is 66.6667", stats.winRatePct ?? NaN, (2 / 3) * 100);
+  assert("3-trade: maxConsecutiveWins is 2", stats.maxConsecutiveWins === 2, `got ${stats.maxConsecutiveWins}`);
+  assert("3-trade: maxConsecutiveLosses is 1", stats.maxConsecutiveLosses === 1, `got ${stats.maxConsecutiveLosses}`);
+
+  // Profit factor: grossProfit = 2000+415 = 2415, grossLoss = -2000 (SIGNED) -> profitFactorGross = 2415/2000 = 1.2075.
+  assertClose("3-trade: grossProfit is 2415", stats.grossProfit, grossPnl1 + grossPnl2);
+  assertClose("3-trade: grossLoss is -2000 (SIGNED)", stats.grossLoss, grossPnl3);
+  assertClose("3-trade: profitFactorGross is 2415/2000", stats.profitFactorGross ?? NaN, (grossPnl1 + grossPnl2) / Math.abs(grossPnl3));
+  const netProfit = netPnl1 + netPnl2;
+  assertClose("3-trade: netProfit matches netPnl1+netPnl2", stats.netProfit, netProfit);
+  assertClose("3-trade: netLoss matches netPnl3 (SIGNED)", stats.netLoss, netPnl3);
+  assertClose("3-trade: profitFactorNet matches netProfit/|netLoss|", stats.profitFactorNet ?? NaN, netProfit / Math.abs(netPnl3));
+
+  assertClose("3-trade: avgWinGross is 2415/2", stats.avgWinGross ?? NaN, (grossPnl1 + grossPnl2) / 2);
+  assertClose("3-trade: avgLossGross is -2000 (only 1 losing trade)", stats.avgLossGross ?? NaN, grossPnl3);
+  assertClose("3-trade: avgWinLossRatioGross is (2415/2)/2000", stats.avgWinLossRatioGross ?? NaN, Math.abs((grossPnl1 + grossPnl2) / 2) / Math.abs(grossPnl3));
+  assertClose("3-trade: largestWinGross is 2000 (trade1, bigger than trade2's 415)", stats.largestWinGross ?? NaN, grossPnl1);
+  assertClose("3-trade: largestLossGross is -2000 (only losing trade)", stats.largestLossGross ?? NaN, grossPnl3);
+
+  // Expectancy over the 3 CLOSED trades vs. avg trade P&L over ALL trades — both independently hand-checked
+  // against the SAME expected value, which simultaneously proves they equal EACH OTHER (they must, since
+  // there's no open trade here — same underlying set; see module doc's OPEN-TRADE LAW).
+  const expectedExpectancyGross = (grossPnl1 + grossPnl2 + grossPnl3) / 3;
+  const expectedExpectancyNet = (netPnl1 + netPnl2 + netPnl3) / 3;
+  assertClose("3-trade: expectancyGross is (2000+415-2000)/3", stats.expectancyGross ?? NaN, expectedExpectancyGross);
+  assertClose("3-trade: expectancyNet matches real-cost sum / 3", stats.expectancyNet ?? NaN, expectedExpectancyNet);
+  assertClose("3-trade: avgTradeGrossPnl equals the SAME value as expectancyGross (no open trade — identical closed set)", stats.avgTradeGrossPnl ?? NaN, expectedExpectancyGross);
+  assertClose("3-trade: avgTradeNetPnl equals the SAME value as expectancyNet", stats.avgTradeNetPnl ?? NaN, expectedExpectancyNet);
+
+  // Bars held: trade1 = 3-1=2, trade2 = 6-4=2, trade3 = 11-7=4 -> total 8, avg 8/3, %-time = 8/(13-1)*100.
+  assert("3-trade: trade1.barsHeld is 2", stats.tradesDetail[0]?.barsHeld === 2, `got ${stats.tradesDetail[0]?.barsHeld}`);
+  assert("3-trade: trade2.barsHeld is 2", stats.tradesDetail[1]?.barsHeld === 2, `got ${stats.tradesDetail[1]?.barsHeld}`);
+  assert("3-trade: trade3.barsHeld is 4", stats.tradesDetail[2]?.barsHeld === 4, `got ${stats.tradesDetail[2]?.barsHeld}`);
+  assert("3-trade: totalBarsInTrades is 8", stats.totalBarsInTrades === 8, `got ${stats.totalBarsInTrades}`);
+  assertClose("3-trade: avgBarsInTrades is 8/3", stats.avgBarsInTrades ?? NaN, 8 / 3);
+  assertClose("3-trade: pctTimeInMarket is 8/12*100", stats.pctTimeInMarket ?? NaN, (8 / 12) * 100);
+
+  // MAE/MFE, hand-traced from the candle high/low ranges above (entry bar excluded from every scan):
+  // trade1 scans idx2..idx3: minLow=95, maxHigh=122, entry=100 -> mae/share=5, mfe/share=22.
+  assertClose("3-trade: trade1.mae is 5/share * qty1", stats.tradesDetail[0]?.mae ?? NaN, 5 * qty1);
+  assertClose("3-trade: trade1.mfe is 22/share * qty1", stats.tradesDetail[0]?.mfe ?? NaN, 22 * qty1);
+  // trade2 scans idx5..idx6: minLow=112, maxHigh=127, entry=120 -> mae/share=8, mfe/share=7.
+  assertClose("3-trade: trade2.mae is 8/share * qty2", stats.tradesDetail[1]?.mae ?? NaN, 8 * qty2);
+  assertClose("3-trade: trade2.mfe is 7/share * qty2", stats.tradesDetail[1]?.mfe ?? NaN, 7 * qty2);
+  // trade3 scans idx8..idx11: minLow=88, maxHigh=126, entry=125 -> mae/share=37, mfe/share=1.
+  assertClose("3-trade: trade3.mae is 37/share * qty3", stats.tradesDetail[2]?.mae ?? NaN, 37 * qty3);
+  assertClose("3-trade: trade3.mfe is 1/share * qty3", stats.tradesDetail[2]?.mfe ?? NaN, 1 * qty3);
+
+  // Annualization: 12-day window, well under the 90-day floor -> null on both sides.
+  assert("3-trade: annualizedReturnPctGross is null (12-day window)", stats.annualizedReturnPctGross === null, `got ${stats.annualizedReturnPctGross}`);
+  assert("3-trade: annualizedReturnPctNet is null (12-day window)", stats.annualizedReturnPctNet === null, `got ${stats.annualizedReturnPctNet}`);
+
+  // Equity curve: cumulative net equity after trade3 (last trade) equals notional + full net P&L, and the
+  // trailing flat bar (idx12) carries that exact equity forward — no phantom drift once flat.
+  const finalNet = netPnl1 + netPnl2 + netPnl3;
+  assertClose("3-trade: trade3.cumulativeNetEquity is notional+netPnl total", stats.tradesDetail[2]?.cumulativeNetEquity ?? NaN, notional + finalNet);
+  assertClose("3-trade: equityCurve's last bar matches final cumulative equity", stats.equityCurve[12]?.equity ?? NaN, notional + finalNet);
+  assertClose(
+    "3-trade: equityCurve is flat between the last exit (idx11) and the trailing bar (idx12) — no open position",
+    stats.equityCurve[12]?.equity ?? NaN,
+    stats.equityCurve[11]?.equity ?? NaN
+  );
+
+  for (const [label, value] of Object.entries(stats)) {
+    if (typeof value === "number") assertFinite(`3-trade: stats.${label} is finite`, value);
+  }
+}
+
+/** No-loss series — every closed trade is a WIN. Profit factor and every loss-side aggregate MUST be `null` (never `Infinity`/`NaN`), the exact acceptance criterion the ticket names. notional=10000, DELIVERY, 2 closed wins, no open trade. */
+function checkNoLossSeries(): void {
+  const baseTs = Date.UTC(2026, 0, 1);
+  const dayMs = 24 * 60 * 60 * 1000;
+  const bar = (i: number, high: number, low: number, close: number): StrategyCandle => ({
+    timestamp: baseTs + i * dayMs,
+    open: close,
+    high,
+    low,
+    close,
+    volume: 1000
+  });
+  const candles: StrategyCandle[] = [
+    bar(0, 100, 100, 100),
+    bar(1, 100, 100, 100), // ENTRY trade1 BUY@100
+    bar(2, 108, 98, 105), // scanned
+    bar(3, 121, 115, 120), // EXIT trade1 SELL@120
+    bar(4, 100, 100, 100), // ENTRY trade2 BUY@100
+    bar(5, 112, 99, 105), // scanned
+    bar(6, 113, 104, 110) // EXIT trade2 SELL@110
+  ];
+  const notional = 10000;
+  const productType = "DELIVERY" as const;
+  const mkSignal = (index: number, side: "BUY" | "SELL"): StrategySignal => ({
+    index,
+    timestamp: candles[index].timestamp,
+    side,
+    price: candles[index].close
+  });
+  const signals: StrategySignal[] = [mkSignal(1, "BUY"), mkSignal(3, "SELL"), mkSignal(4, "BUY"), mkSignal(6, "SELL")];
+  const stats = runBacktest(candles, signals, { notional, productType });
+
+  const qty = Math.floor(notional / 100); // 100, identical sizing both trades
+  const grossPnl1 = (120 - 100) * qty; // 2000
+  const grossPnl2 = (110 - 100) * qty; // 1000
+
+  assert("no-loss: 2 closed trades, both wins", stats.trades === 2 && stats.wins === 2, `trades=${stats.trades}, wins=${stats.wins}`);
+  assertClose("no-loss: winRatePct is 100", stats.winRatePct ?? NaN, 100);
+  assertClose("no-loss: grossProfit is 3000", stats.grossProfit, grossPnl1 + grossPnl2);
+  assertClose("no-loss: grossLoss is 0 (no losing closed trades)", stats.grossLoss, 0);
+  assert("no-loss: profitFactorGross is null, NEVER Infinity", stats.profitFactorGross === null, `got ${stats.profitFactorGross}`);
+  assert("no-loss: profitFactorNet is null, NEVER Infinity", stats.profitFactorNet === null, `got ${stats.profitFactorNet}`);
+  assert("no-loss: avgLossGross is null (no losing closed trades)", stats.avgLossGross === null, `got ${stats.avgLossGross}`);
+  assert("no-loss: avgLossNet is null", stats.avgLossNet === null, `got ${stats.avgLossNet}`);
+  assert("no-loss: avgWinLossRatioGross is null (undefined without a loss to divide by)", stats.avgWinLossRatioGross === null, `got ${stats.avgWinLossRatioGross}`);
+  assert("no-loss: avgWinLossRatioNet is null", stats.avgWinLossRatioNet === null, `got ${stats.avgWinLossRatioNet}`);
+  assert("no-loss: largestLossGross is null", stats.largestLossGross === null, `got ${stats.largestLossGross}`);
+  assert("no-loss: largestLossNet is null", stats.largestLossNet === null, `got ${stats.largestLossNet}`);
+  assert("no-loss: maxConsecutiveLosses is 0", stats.maxConsecutiveLosses === 0, `got ${stats.maxConsecutiveLosses}`);
+  assert("no-loss: maxConsecutiveWins is 2", stats.maxConsecutiveWins === 2, `got ${stats.maxConsecutiveWins}`);
+  assertClose("no-loss: largestWinGross is 2000 (trade1)", stats.largestWinGross ?? NaN, grossPnl1);
+  assertClose("no-loss: expectancyGross is (2000+1000)/2", stats.expectancyGross ?? NaN, (grossPnl1 + grossPnl2) / 2);
+
+  // MAE/MFE hand-trace: trade1 scans idx2..idx3 (minLow=98, maxHigh=121, entry=100) -> mae/share=2, mfe/share=21.
+  assertClose("no-loss: trade1.mae is 2/share*qty", stats.tradesDetail[0]?.mae ?? NaN, 2 * qty);
+  assertClose("no-loss: trade1.mfe is 21/share*qty", stats.tradesDetail[0]?.mfe ?? NaN, 21 * qty);
+  // trade2 scans idx5..idx6 (minLow=99, maxHigh=113, entry=100) -> mae/share=1, mfe/share=13.
+  assertClose("no-loss: trade2.mae is 1/share*qty", stats.tradesDetail[1]?.mae ?? NaN, 1 * qty);
+  assertClose("no-loss: trade2.mfe is 13/share*qty", stats.tradesDetail[1]?.mfe ?? NaN, 13 * qty);
+
+  for (const [label, value] of Object.entries(stats)) {
+    if (typeof value === "number") assertFinite(`no-loss: stats.${label} is finite`, value);
+  }
+}
+
+/**
+ * Annualization POSITIVE case — every OTHER fixture in this file only
+ * exercises the null/honesty-gate path (a bug in the real CAGR formula
+ * would go completely undetected by `ta:check` without this). A 2-bar
+ * window spanning EXACTLY 365 calendar days, single open-at-end trade,
+ * clean round-number gross return (100% exactly) so the expected
+ * annualized value is derivable from the documented formula applied to
+ * KNOWN, independently-chosen inputs (spanDays=365, base=2) — the textbook
+ * CAGR formula, not a re-derivation of `runBacktest`'s own code. What's
+ * actually under test: whether `spanDays` came from ACTUAL ELAPSED
+ * CALENDAR TIME (365, by construction) rather than bar count (which would
+ * be 1, for a 2-bar array — a wildly different, obviously-wrong number;
+ * see the negative-control assertion below).
+ */
+function checkAnnualizedReturnPositiveCase(): void {
+  const baseTs = Date.UTC(2026, 0, 1);
+  const dayMs = 24 * 60 * 60 * 1000;
+  const spanDays = 365;
+  const candles: StrategyCandle[] = [
+    { timestamp: baseTs, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+    { timestamp: baseTs + spanDays * dayMs, open: 200, high: 210, low: 190, close: 200, volume: 1000 }
+  ];
+  const notional = 10000;
+  const productType = "DELIVERY" as const;
+  const signal: StrategySignal = { index: 0, timestamp: candles[0].timestamp, side: "BUY", price: 100 };
+  const stats = runBacktest(candles, [signal], { notional, productType });
+
+  const qty = Math.floor(notional / 100); // 100
+  assertClose("annualize+: grossReturnPct is exactly 100% (clean round-trip design)", stats.grossReturnPct, 100);
+  assert("annualize+: still open at end (single BUY, no SELL)", stats.openAtEnd === true);
+
+  const expectedAnnualizedGross = (Math.pow(2, 365.25 / spanDays) - 1) * 100;
+  assertClose("annualize+: annualizedReturnPctGross matches the CAGR formula on known inputs", stats.annualizedReturnPctGross ?? NaN, expectedAnnualizedGross, 1e-6);
+
+  // Negative control: if spanDays had been computed from BAR COUNT (1 interval, not 365 days), the result
+  // would be astronomically larger — assert our real result is nowhere near that regime, i.e. it used
+  // calendar days, not bar count.
+  assert(
+    "annualize+: result is NOT the bar-count-based figure (proves calendar-day span, not bar count, was used)",
+    stats.annualizedReturnPctGross !== null && stats.annualizedReturnPctGross < 1000,
+    `got ${stats.annualizedReturnPctGross}`
+  );
+
+  const entryCosts = computeOrderCosts({ side: "BUY", productType, quantity: qty, price: 100 }).totalCosts;
+  const netPnl = (200 - 100) * qty - entryCosts;
+  const netReturnPct = (netPnl / notional) * 100;
+  const expectedAnnualizedNet = (Math.pow(1 + netReturnPct / 100, 365.25 / spanDays) - 1) * 100;
+  assertClose("annualize+: annualizedReturnPctNet matches the CAGR formula on the real net return", stats.annualizedReturnPctNet ?? NaN, expectedAnnualizedNet, 1e-6);
+
+  // barsHeld=1 (one bar elapsed since entry); MAE/MFE scans just idx1 (minLow=190, maxHigh=210, entry=100).
+  assert("annualize+: barsHeld is 1", stats.tradesDetail[0]?.barsHeld === 1, `got ${stats.tradesDetail[0]?.barsHeld}`);
+  assertClose("annualize+: mae is 0 (price never dipped below entry)", stats.tradesDetail[0]?.mae ?? NaN, 0);
+  assertClose("annualize+: mfe is 110/share*qty", stats.tradesDetail[0]?.mfe ?? NaN, 110 * qty);
+
+  for (const [label, value] of Object.entries(stats)) {
+    if (typeof value === "number") assertFinite(`annualize+: stats.${label} is finite`, value);
+  }
+}
+
+/**
+ * Drawdown-SHAPE divergence — an equity path engineered so the bar
+ * producing the LARGEST ₹ drawdown is DIFFERENT from the bar producing the
+ * LARGEST % drawdown (an early, small peak with a steep % dip; a later,
+ * much bigger peak with a shallower % but bigger ₹ dip). A single held
+ * trade (entry idx0@100, exit idx8@600) makes the equity path a direct
+ * linear function of each bar's close (`equity[i] = notional - entryCosts
+ * + (close[i]-100) × qty` while open) — chosen specifically so both
+ * `maxDrawdownAmount` (2000) and `maxEquityRunUpAmount` (50100) are EXACT,
+ * cost-independent numbers (the constant `entryCosts` offset cancels out
+ * of any peak-minus-current ₹ difference taken while the SAME trade is
+ * still open); the %-based figures need the real `entryCosts`, computed
+ * via `computeOrderCosts()` below, not hand-typed.
+ */
+function checkDrawdownShapeDivergence(): void {
+  const closes = [100, 109, 99, 110, 500, 480, 500, 600, 600];
+  const candles = closesToCandles(closes);
+  const notional = 10000;
+  const productType = "DELIVERY" as const;
+  const qty = Math.floor(notional / 100); // 100
+  const signals: StrategySignal[] = [
+    { index: 0, timestamp: candles[0].timestamp, side: "BUY", price: 100 },
+    { index: 8, timestamp: candles[8].timestamp, side: "SELL", price: 600 }
+  ];
+  const stats = runBacktest(candles, signals, { notional, productType });
+
+  const entryCosts = computeOrderCosts({ side: "BUY", productType, quantity: qty, price: 100 }).totalCosts;
+
+  const peak1 = 10900 - entryCosts; // running peak at idx1, before the idx2 dip
+  const trough1 = 9900 - entryCosts; // equity at idx2 (also the GLOBAL running trough from idx2 onward)
+  const peak2 = 50000 - entryCosts; // running peak at idx4, before the idx5 dip
+  const trough2 = 48000 - entryCosts; // equity at idx5
+
+  // The ₹ gap is bigger at the SECOND (bigger-peak) dip; the % gap is bigger at the FIRST (smaller-peak) dip
+  // — the two metrics' maxima are engineered to land on genuinely different bars (fixture design sanity,
+  // checked before trusting the runBacktest assertions below).
+  const ddAmount1 = peak1 - trough1; // 1000, exact (entryCosts cancels)
+  const ddAmount2 = peak2 - trough2; // 2000, exact
+  const ddPct1 = (ddAmount1 / peak1) * 100; // ~9.18%
+  const ddPct2 = (ddAmount2 / peak2) * 100; // ~4.00%
+  assert("drawdown-shape: fixture design sanity — ddAmount2 > ddAmount1 (bigger ₹ dip is the LATER one)", ddAmount2 > ddAmount1, `${ddAmount2} vs ${ddAmount1}`);
+  assert("drawdown-shape: fixture design sanity — ddPct1 > ddPct2 (bigger % dip is the EARLIER one)", ddPct1 > ddPct2, `${ddPct1} vs ${ddPct2}`);
+
+  assertClose("drawdown-shape: maxDrawdownAmount is exactly 2000 (cost-independent by construction)", stats.maxDrawdownAmount, 2000, 1e-6);
+  assertClose("drawdown-shape: maxDrawdownPct matches the FIRST (smaller-peak) dip, not the bigger-₹ one", stats.maxDrawdownPct, ddPct1, 1e-6);
+  assert(
+    "drawdown-shape: maxDrawdownAmount and maxDrawdownPct are driven by DIFFERENT dips — the whole point of this fixture",
+    Math.abs(stats.maxDrawdownAmount - ddAmount2) < 1e-6 && Math.abs(stats.maxDrawdownPct - ddPct1) < 1e-6 && Math.abs(ddAmount1 - stats.maxDrawdownAmount) > 1e-6
+  );
+
+  assertClose("drawdown-shape: maxEquityRunUpAmount is exactly 50100 (cost-independent by construction)", stats.maxEquityRunUpAmount, 50100, 1e-6);
+  const expectedRunUpPct = (50100 / trough1) * 100; // trough1 (idx2) is also the running trough the max run-up (at idx7) is measured off.
+  assertClose("drawdown-shape: maxEquityRunUpPct matches the run-up off the idx2 trough", stats.maxEquityRunUpPct, expectedRunUpPct, 1e-6);
+
+  // Per-bar equityCurve cross-check: the max of the curve's own drawdownAmount/drawdownPct fields must equal
+  // the aggregate stats — not a second, independently-drifting computation of the same thing.
+  assertClose(
+    "drawdown-shape: maxDrawdownAmount equals the max drawdownAmount across equityCurve's own points",
+    stats.maxDrawdownAmount,
+    Math.max(...stats.equityCurve.map((p) => p.drawdownAmount)),
+    1e-6
+  );
+  assertClose(
+    "drawdown-shape: maxDrawdownPct equals the max drawdownPct across equityCurve's own points",
+    stats.maxDrawdownPct,
+    Math.max(...stats.equityCurve.map((p) => p.drawdownPct)),
+    1e-6
+  );
+  assert(
+    "drawdown-shape: the bar index of max drawdownAmount differs from the bar index of max drawdownPct",
+    stats.equityCurve.findIndex((p) => Math.abs(p.drawdownAmount - stats.maxDrawdownAmount) < 1e-6) !==
+      stats.equityCurve.findIndex((p) => Math.abs(p.drawdownPct - stats.maxDrawdownPct) < 1e-6)
+  );
+
+  for (const [label, value] of Object.entries(stats)) {
+    if (typeof value === "number") assertFinite(`drawdown-shape: stats.${label} is finite`, value);
+  }
 }
 
 // ── Fixture 2: edge cases — 0-signal, 1-signal open-at-end, qty guard ────
@@ -547,6 +1064,10 @@ checkBacktestCostCrossCheck(signals);
 checkZeroSignalEdgeCase();
 checkSingleOpenTradeEdgeCase();
 checkQtyMinOneGuard();
+checkThreeTradeKnownSeries();
+checkNoLossSeries();
+checkAnnualizedReturnPositiveCase();
+checkDrawdownShapeDivergence();
 checkFinalizeSignalsDropsLeadingSell();
 checkTechnicalRatingFixtures();
 checkIndicatorSignalFixtures();
