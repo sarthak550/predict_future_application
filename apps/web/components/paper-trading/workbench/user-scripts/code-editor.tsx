@@ -106,6 +106,8 @@ export interface CodeEditorProps {
   /** Examples load into the editor read-only (D onClick "Duplicate to edit" is the only active affordance) — toggled via a `Compartment.reconfigure`, not a remount (D5). */
   readOnly?: boolean;
   className?: string;
+  /** Founder-feedback pass (2026-08-04) — lets the caller apply a numeric `minHeight` (shared with `script-editor-drawer.tsx`'s console-height budget math as ONE exported constant, not a duplicated Tailwind arbitrary-value literal) without this component needing to know why. */
+  style?: React.CSSProperties;
   /** SS3, T3 — Cmd+Enter/Ctrl+Enter while focus is inside the editor. Omitted/no-op-safe: a script with no callback simply lets `Mod-Enter` do nothing (never falls back to `insertBlankLine` — the binding still wins the keymap race either way). */
   onRunShortcut?: () => void;
   /** SS3, T3 — Cmd+S/Ctrl+S while focus is inside the editor. Always calls `preventDefault` on the native Save-page dialog even if the handler itself is a no-op for the current mode (e.g. viewing a read-only Example). */
@@ -119,7 +121,7 @@ const EDITOR_THEME = EditorView.theme({
   "&.cm-focused": { outline: "none" }
 });
 
-export function CodeEditor({ value, onChange, readOnly = false, className, onRunShortcut, onSaveShortcut }: CodeEditorProps) {
+export function CodeEditor({ value, onChange, readOnly = false, className, style, onRunShortcut, onSaveShortcut }: CodeEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
@@ -221,5 +223,5 @@ export function CodeEditor({ value, onChange, readOnly = false, className, onRun
     view.dispatch({ effects: readOnlyCompartmentRef.current.reconfigure(EditorView.editable.of(!readOnly)) });
   }, [readOnly]);
 
-  return <div ref={containerRef} className={className} />;
+  return <div ref={containerRef} className={className} style={style} />;
 }

@@ -8,6 +8,17 @@
  * distinct via a lock icon). Purely presentational/controlled — every
  * mutation is a callback, `script-editor-drawer.tsx` owns all the actual
  * state (which script is open, the fetched list, loading/error).
+ *
+ * **Founder-feedback pass (2026-08-04)** — width is now user-adjustable via
+ * `SidebarResizeHandle` (a sibling the parent renders next to this
+ * component, not inside it). The `sm:w-[var(--script-sidebar-w)]` class
+ * below reads a CSS custom property `script-editor-drawer.tsx` sets on the
+ * shared row ancestor — this lets the resize handle's drag update the width
+ * with a single imperative `style.setProperty` call on that ancestor
+ * (inherits down to every descendant referencing the var, including this
+ * component) without this file needing a width PROP or a ref of its own.
+ * The old static `sm:w-[200px]` is gone; `sm:border-r` moved onto the
+ * handle itself (it now owns that visual seam).
  */
 import { FileCode2, Lock, Loader2, Plus, Trash2 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
@@ -47,7 +58,7 @@ export function ScriptListSidebar({
     // beside it — the "stack list-above-editor-above-console" bar §4's own
     // text sets as the minimum, non-"beautiful" requirement. `sm:` and up
     // restores the original fixed-width side-by-side layout unchanged.
-    <div className="flex max-h-[160px] w-full shrink-0 flex-col overflow-y-auto border-b border-ink-100 sm:max-h-none sm:w-[200px] sm:border-b-0 sm:border-r">
+    <div className="flex max-h-[160px] w-full shrink-0 flex-col overflow-y-auto border-b border-ink-100 sm:max-h-none sm:w-[var(--script-sidebar-w)] sm:border-b-0">
       <div className="flex items-center justify-between px-2.5 pt-2.5">
         <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-400">My Scripts</p>
         <button type="button" onClick={onOpenNew} title="New script" className="rounded-md p-1 text-ink-400 hover:bg-ink-100 hover:text-ink-700">
