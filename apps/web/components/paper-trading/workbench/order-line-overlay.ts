@@ -37,7 +37,7 @@
  */
 import { registerFigure, registerOverlay, type OverlayFigure, type OverlayCreateFiguresCallbackParams } from "klinecharts";
 
-import { snapToTick, type ChartOrderLine } from "@/components/finance/chart-order-lines";
+import { orderLineColor, snapToTick, type ChartOrderLine } from "@/components/finance/chart-order-lines";
 
 /** Vertical hit-test tolerance for `pfHitLine`, in canvas pixels either side of the line's y — mirrors chart-order-lines.ts's `DRAG_HIT_STROKE_WIDTH` (44px total) so the touch target is identically sized to the SVG chart's. */
 const HIT_TOLERANCE_PX = 22;
@@ -47,12 +47,6 @@ const EDGE_MARGIN_PX = 8;
 
 function formatRupees(v: number): string {
   return `₹${v.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
-}
-
-function lineColor(line: ChartOrderLine): string {
-  if (line.kind === "pending-stop") return "#d97706";
-  if (line.kind === "pending-limit") return "#0284c7";
-  return line.side === "SELL" ? "#e11d48" : "#059669";
 }
 
 /**
@@ -65,6 +59,18 @@ function lineColor(line: ChartOrderLine): string {
  */
 export interface PfOrderLineExtendData {
   line: ChartOrderLine;
+  /**
+   * Founder bug fix (2026-08-04b) — the workbench's own live "current price"
+   * (the last candle's close, folded live by use-workbench-candles.ts's
+   * quote-tick machinery — see kline-chart.tsx's own doc on where this comes
+   * from), threaded through so `createPointFigures` can color a "position"
+   * line by live unrealized P&L (see chart-order-lines.ts's `orderLineColor`,
+   * the SAME formula price-chart.tsx/premium-chart.tsx use) instead of a
+   * static long/short read. `null` before the first candle/tick has resolved
+   * — `orderLineColor` treats that as "no reading yet" (neutral tone), never
+   * a guess.
+   */
+  currentPrice: number | null;
   /** Fires once, when a drag gesture begins — `currentPrice` is the overlay's own live point value at that instant (its pre-drag price), used to detect a no-op tap-without-movement at drag end. */
   onDragStart: (id: string, currentPrice: number) => void;
   /** Fires once, when a drag gesture (or a plain click/tap on the line) ends. `snappedPrice` is null when the line isn't draggable at all — the handler still needs to know the gesture ended so it can clear `draggingIdRef` / suppress the surface click-to-trade popover, even for a non-draggable (locked) line's tap. */
@@ -107,7 +113,7 @@ export function registerWorkbenchOrderLineOverlay(): void {
       const width = params.bounding.width;
       const clampedY = Math.min(Math.max(rawY, EDGE_MARGIN_PX), Math.max(EDGE_MARGIN_PX, params.bounding.height - EDGE_MARGIN_PX));
       const offScale: "above" | "below" | null = rawY < EDGE_MARGIN_PX ? "above" : rawY > params.bounding.height - EDGE_MARGIN_PX ? "below" : null;
-      const color = lineColor(ext.line);
+      const color = orderLineColor(ext.line, ext.currentPrice);
       const dashed = ext.line.kind !== "position";
 
       // The point's LIVE value (tracks the pointer during an active drag,

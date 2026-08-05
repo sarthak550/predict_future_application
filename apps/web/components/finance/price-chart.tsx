@@ -36,6 +36,7 @@ import {
   CANCEL_HIT_DIAMETER,
   DRAG_HIT_STROKE_WIDTH,
   clampLineY,
+  orderLineColor,
   priceAtFraction,
   snapToTick,
   type ChartOrderLine,
@@ -779,14 +780,13 @@ export function PriceChart({
               const isDragging = dragState?.id === line.id;
               const renderPrice = isDragging ? dragState.price : line.price;
               const { y, offScale } = clampLineY(renderPrice, geometry.min, geometry.max, geometry.y);
-              const color =
-                line.kind === "pending-stop"
-                  ? "#d97706"
-                  : line.kind === "pending-limit"
-                    ? "#0284c7"
-                    : line.side === "SELL"
-                      ? "#e11d48"
-                      : "#059669";
+              // Founder bug fix (2026-08-04b) — a "position" line's color now
+              // tracks live unrealized P&L (green in profit, red in loss,
+              // neutral at breakeven) instead of a static read of long/short.
+              // `last.y` is this chart's own latest displayed price — live
+              // for 1D once the quote-driven intrabar tick (Bug 2's fix) has
+              // landed, same value the header/crosshair readout already show.
+              const color = orderLineColor(line, last.y);
               const dash = line.kind === "position" ? undefined : "4 3";
               const label = isDragging ? `${line.label.split(" @ ")[0]} @ ${formatRupees(snapToTick(dragState.price))}` : line.label;
               return (

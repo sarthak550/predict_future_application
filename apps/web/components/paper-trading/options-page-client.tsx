@@ -27,6 +27,16 @@
  * selected contract — order lines, click-to-prefill, and the position
  * avg-premium line all attach ONLY to the premium chart, never mixed onto
  * the underlying view (decision 6 of the Sprint B brief).
+ *
+ * Founder bug fix (2026-08-04b) — sibling of the equity dashboard's/futures
+ * terminal's "focused symbol lost on refresh" fix. `chartUnderlying` now
+ * persists across a refresh via `?focus=` (see futures-page-client.tsx's
+ * identical doc for why it's a separate param from `?underlying=`, which
+ * this page's `remountKey` wrapper still treats as "a new deep link
+ * arrived"). `?side=` is one-shot (a Sell chip's side, always derived from
+ * the position being closed) — `useFrozenSearchParams`/
+ * `useStripOneShotParams` give it the same seed-once/strip-after fix as the
+ * equity ticket, so refreshing after a Sell tap never re-arms it.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
@@ -54,7 +64,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getLastLotsForContract } from "@/lib/paperTrading/lastLotsMemory";
 import { cancelPendingOrder, repricePendingOrder, type PendingOrderPayload } from "@/lib/paperTrading/pendingOrdersClient";
-import { useWorkbenchAutoRestore, useWorkbenchUrlParam } from "@/components/paper-trading/use-workbench-url-param";
+import {
+  useFocusUrlParam,
+  useFrozenSearchParams,
+  useStripOneShotParams,
+  useWorkbenchAutoRestore,
+  useWorkbenchUrlParam
+} from "@/components/paper-trading/use-workbench-url-param";
 
 type LoadState = "loading" | "signed-out" | "ready";
 
@@ -130,24 +146,45 @@ export function OptionsPageClient() {
   // it: toggling the workbench does its OWN router.replace and must not
   // blow away the selected contract / chain state / everything else just
   // to persist which chart is maximized.
+  //
+  // Founder bug fix (2026-08-04b) — `?focus=`/`?side=` get the same
+  // exclusion, for the same reason (both are written by
+  // OptionsPageClientInner's own bookkeeping post-mount) — see
+  // futures-page-client.tsx's identical wrapper doc for the full reasoning,
+  // including why this doesn't weaken the "fresh instance per genuinely new
+  // contract deep link" guarantee (a real new contract always still differs
+  // in underlying/expiry/strike/optionType).
   const remountKey = useMemo(() => {
     const params = new URLSearchParams(searchParams.toString());
     params.delete("workbench");
+    params.delete("focus");
+    params.delete("side");
     return params.toString();
   }, [searchParams]);
   return <OptionsPageClientInner key={remountKey} />;
 }
 
 function OptionsPageClientInner() {
-  const searchParams = useSearchParams();
-  const deepLinkUnderlying = searchParams.get("underlying");
-  const deepLinkOptionTypeRaw = searchParams.get("optionType");
+  // Founder bug fix (2026-08-04b) — `deepLinkSide` is one-shot and gets
+  // stripped from the live URL shortly after mount; reading every deep-link
+  // field from the FROZEN snapshot (not live `searchParams`) means the
+  // async auto-select below (`handleChainData`) still applies it correctly
+  // even if a chain snapshot happens to land after the strip — see
+  // use-workbench-url-param.ts's own doc on the race this avoids.
+  // `deepLinkOpinionId` is deliberately NOT stripped (see
+  // useStripOneShotParams' call below) — reading it frozen here is just for
+  // consistency with the rest of this group, not because it needs the fix.
+  const frozenParams = useFrozenSearchParams();
+  useStripOneShotParams(["side"]);
+  const deepLinkUnderlying = frozenParams.get("underlying");
+  const deepLinkOptionTypeRaw = frozenParams.get("optionType");
   const deepLinkOptionType = deepLinkOptionTypeRaw === "CE" || deepLinkOptionTypeRaw === "PE" ? deepLinkOptionTypeRaw : null;
-  const deepLinkOpinionId = searchParams.get("linkedOpinionId");
-  const deepLinkExpiry = searchParams.get("expiry");
-  const deepLinkStrikeRaw = searchParams.get("strike");
+  const deepLinkOpinionId = frozenParams.get("linkedOpinionId");
+  const deepLinkExpiry = frozenParams.get("expiry");
+  const deepLinkStrikeRaw = frozenParams.get("strike");
   const deepLinkStrike = deepLinkStrikeRaw != null && deepLinkStrikeRaw !== "" ? Number(deepLinkStrikeRaw) : null;
-  const deepLinkSide = searchParams.get("side") === "SELL" ? ("SELL" as const) : null;
+  const deepLinkSide = frozenParams.get("side") === "SELL" ? ("SELL" as const) : null;
+  const [focusParam, setFocusParam] = useFocusUrlParam();
 
   const [state, setState] = useState<LoadState>("loading");
   const [account, setAccount] = useState<AccountSummary | null>(null);
@@ -161,7 +198,15 @@ function OptionsPageClientInner() {
   const [lastOrder, setLastOrder] = useState<PlacedOptionOrderPayload | null>(null);
   const [pendingOrderNotice, setPendingOrderNotice] = useState<string | null>(null);
 
-  const [chartUnderlying, setChartUnderlying] = useState<string | null>(deepLinkUnderlying);
+  const [chartUnderlying, setChartUnderlying] = useState<string | null>(deepLinkUnderlying ?? focusParam);
+  // Founder bug fix (2026-08-04b) — every path that changes `chartUnderlying`
+  // (the chain browser's own snapshots via handleChainData,
+  // handleSwitchToUnderlying) funnels through this ONE setState, so a
+  // single effect keeps `?focus=` mirroring it — see futures-page-client.tsx's
+  // identical effect for the full reasoning.
+  useEffect(() => {
+    if (chartUnderlying && chartUnderlying !== focusParam) setFocusParam(chartUnderlying);
+  }, [chartUnderlying, focusParam, setFocusParam]);
 
   // Chart Trading + SL/TP (Sprint B, B4) — Underlying/Contract-premium toggle
   // + the premium chart's own click-prefill preset channel, reusing the SAME

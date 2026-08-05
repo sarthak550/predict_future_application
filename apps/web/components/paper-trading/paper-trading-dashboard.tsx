@@ -9,6 +9,81 @@
  * New Trade form — this is how "Paper trade this call" (T7) hands off into this
  * page without any prop-drilling across the navigation boundary.
  *
+ * Founder bug fix (2026-08-04b) — "whenever I refresh, [a different holding]
+ * is shown instead of what I was looking at": `?symbol=` is now BOTH the
+ * one-shot deep-link entry point above AND the live focus-persistence
+ * channel — every focus change (search select, a holdings-row tap, the
+ * Sell-button navigation) keeps it in sync via `useSymbolUrlParam`
+ * (use-workbench-url-param.ts), and a refresh restores from it instead of
+ * falling through to `largestHoldingSymbol` (the actual root cause of the
+ * report: that fallback sat ABOVE the localStorage-remembered symbol in the
+ * old priority chain, so a refresh silently re-focused the biggest holding
+ * by value — e.g. INDIGO — over whatever smaller position, e.g. SHRIRAM
+ * FINANCE, the founder had actually navigated to). `side`/`productType`/
+ * `quantity` stay genuinely ONE-SHOT: `useFrozenSearchParams` captures them
+ * before `useStripOneShotParams` removes them from the live URL shortly
+ * after mount, so a later refresh of the SAME address-bar entry (e.g. after
+ * following a Sell deep-link) never re-arms a stale ticket — see both
+ * hooks' own docs for the exact race this closes.
+ *
+ * QA fix (2026-08-05) — two regressions the 2026-08-04b fix above shipped
+ * with. (1) `focusedSymbol` used to be a `??` PRIORITY CHAIN
+ * (`symbolParam ?? manualFocus ?? largestHoldingSymbol ?? restoredLastFocus`)
+ * with an echo effect writing the resolved value back into `?symbol=`. Once
+ * that echo landed once, `symbolParam` was non-null on every later render
+ * and PERMANENTLY outranked `manualFocus` — so search-select and
+ * holdings-row clicks became silent no-ops after the first change. (2) This
+ * page had no `remountKey` wrapper (unlike futures-page-client.tsx/
+ * options-page-client.tsx), so an in-app, query-only navigation to this
+ * same route (a holdings-row Sell tap while already here) re-rendered the
+ * SAME component instance, and a mount-frozen params snapshot never saw the
+ * new `side`/`productType`/`quantity` — the ticket silently failed to
+ * re-arm.
+ *
+ * QA fix, ROUND 3 (2026-08-05) — the round-2 fix for both bugs above
+ * shipped with two NEW, more severe regressions, both traced live via
+ * `history.replaceState`/`pushState` instrumentation:
+ * (B1) round 2 made `?symbol=` a live, continuously-synced persistence
+ * channel (mirrored one-directionally out of `focusedSymbol`) AND kept it
+ * readable by `useWorkbenchAutoRestore`'s own `router.replace` in the same
+ * commit — `router.replace` does not apply synchronously, so whichever
+ * effect's replace landed SECOND silently clobbered the first's write,
+ * and every focus change after the account's initial bootstrap failed to
+ * persist. (B2) round 2's `remountKey` wrapper decided "is this a new deep
+ * link" from whether `side`/`productType`/`quantity`/`linkedOpinionId` were
+ * CURRENTLY present in the live URL — but the freshly-remounted instance's
+ * OWN `useStripOneShotParams` removed those same params ~114ms later (its
+ * documented job), which ALSO changed `useSearchParams()` the outer
+ * wrapper's key depended on, triggering a SECOND spurious remount whose own
+ * frozen-params snapshot captured the ALREADY-STRIPPED url — losing the
+ * one-shot values entirely, so a same-page Sell click never armed the
+ * ticket. See `feedback_remountkey_self_defeating_strip_cascade.md` and
+ * `feedback_strictmode_double_invoke_defeats_ref_guard.md`'s sibling entry
+ * for the full traces.
+ *
+ * Round 3's fix is architectural, not another patch on top: the URL is no
+ * longer BOTH a persistence store and a one-shot input for this page.
+ * (1) `?symbol=` is GONE — the focused symbol persists to
+ * `window.localStorage` (`LAST_FOCUSED_SYMBOL_KEY`) ONLY, written by every
+ * changer (`setFocusedSymbol`); a refresh restores from localStorage, never
+ * from the URL, so there is no second writer left to race B1 against.
+ * (2) There is no more page-level `remountKey` wrapper at all. A single
+ * effect, keyed on the live search-params string, is the ONLY consumer of
+ * one-shot deep-link fields (`side`/`productType`/`quantity`/`symbol`/
+ * `linkedOpinionId`): it applies them imperatively to state (focused
+ * symbol + `armedSide`/`armedProductType`/`armedQuantity`/
+ * `armedLinkedOpinionId`), bumps a monotonic `armToken` counter, and THEN
+ * strips those keys from the URL — folded into the SAME effect rather than
+ * a separate one-shot hook, specifically so it can run again for a SECOND
+ * (or Nth) deep link that arrives later in this page's single lifetime,
+ * not just once ever. `armToken` (not the frozen params) is what forces the
+ * ticket to re-arm on every new deep link — the ticket already remounts off
+ * its own `key` prop, this just gives it a fresh reason to on every arm
+ * instead of relying on the PAGE remounting. Cold-load deep links
+ * (a shared link landing directly on `?symbol=...&side=SELL...`) flow
+ * through this exact same effect on its first run.
+ *
+
  * Delivery-holdings Sell button (2026-08-04) — every row in the "Delivery
  * holdings" / "Open intraday positions" tables below now links to this SAME
  * `?symbol=&side=SELL&productType=` deep-link (a `?quantity=` param added
@@ -49,9 +124,9 @@
  * poll landing mid-drag — see that hook's own doc for the exact race it
  * closes).
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { formatNseExpiryDate } from "@predict-future/business-rules/papertrading/optionContract";
 
@@ -172,8 +247,18 @@ function pnlTone(value: number): "up" | "down" | undefined {
   return undefined;
 }
 
+/**
+ * Round 3 (2026-08-05) — no more outer `remountKey` wrapper (see this
+ * file's own module doc for why that mechanism was self-defeating). This
+ * component reads `useSearchParams()` directly, which is why
+ * `app/paper-trading/page.tsx` still wraps it in a `<Suspense>` boundary —
+ * that requirement is independent of any remount mechanism.
+ */
 export function PaperTradingDashboard() {
   const searchParams = useSearchParams();
+  const searchParamsString = searchParams.toString();
+  const router = useRouter();
+  const pathname = usePathname();
   const [state, setState] = useState<LoadState>("loading");
   const [account, setAccount] = useState<AccountDetail | null>(null);
   const [error, setError] = useState("");
@@ -313,10 +398,17 @@ export function PaperTradingDashboard() {
     }
   }
 
-  // ── Focused symbol (T5): deep-link > largest holding by value > last
-  // focused (localStorage) > null (search prompt). ──────────────────────────
-  const deepLinkSymbol = searchParams.get("symbol");
-  const [manualFocus, setManualFocus] = useState<string | null>(null);
+  // ── Focused symbol (round 3, 2026-08-05): a PLAIN useState set DIRECTLY
+  // by every changer (search-select, a holdings-row click, the deep-link
+  // effect below, the Sell-button/CTA deep-link via `onOrderPlaced`) — the
+  // exact pattern futures-page-client.tsx's `underlying` state already
+  // uses. NOT initialized from the URL — this page carries no persisted
+  // `?symbol=` param at all anymore (see this file's own module doc on why
+  // that mirror was dropped). It resolves via effect, shortly after mount:
+  // a one-shot `?symbol=` deep link wins immediately; otherwise the
+  // bootstrap fallback below fills in "largest holding by value > last
+  // focused (localStorage) > null (search prompt)".
+  const [focusedSymbol, setFocusedSymbolState] = useState<string | null>(null);
   const [restoredLastFocus, setRestoredLastFocus] = useState<string | null | undefined>(undefined); // undefined = not yet read from storage
 
   useEffect(() => {
@@ -327,6 +419,62 @@ export function PaperTradingDashboard() {
     }
   }, []);
 
+  // One-shot ticket-arm fields — what a deep link (Sell-button/opinion-CTA)
+  // wants the docked ticket seeded with. Plain defaults (BUY/DELIVERY/no
+  // quantity/no linked opinion) until the deep-link effect below applies a
+  // real one. `armToken` is a monotonically-increasing counter, folded into
+  // the ticket's own `key` in the render below, so every NEW deep link
+  // forces a fresh ticket instance even when every other field happens to
+  // coincide with the previous arm (e.g. two Sell taps on different rows
+  // with the same quantity) — see this file's own module doc.
+  const [armedSide, setArmedSide] = useState<"BUY" | "SELL">("BUY");
+  const [armedProductType, setArmedProductType] = useState<"DELIVERY" | "INTRADAY">("DELIVERY");
+  const [armedQuantity, setArmedQuantity] = useState<number | undefined>(undefined);
+  const [armedLinkedOpinionId, setArmedLinkedOpinionId] = useState<string | null>(null);
+  const [armToken, setArmToken] = useState(0);
+
+  // Shared between the deep-link effect and the bootstrap-fallback effect
+  // below — set the instant EITHER has resolved a focused symbol, so
+  // whichever runs second (same commit) never races to also set one. A ref
+  // mutated synchronously inside an earlier-declared effect is visible to a
+  // later effect in the SAME commit even though React state closures are
+  // not (same technique script-editor-drawer.tsx's merged restore/sync
+  // effect uses for the identical class of same-commit staleness).
+  const bootstrappedRef = useRef(false);
+
+  // Writes `focusedSymbol` + localStorage ONLY — no ticket-arm side
+  // effects. Used by the deep-link effect below (which sets the arm fields
+  // itself, in the SAME breath, from the URL) so it doesn't clobber its own
+  // work by routing through `setFocusedSymbol`'s unconditional arm-reset.
+  const applyFocusedSymbol = useCallback((symbol: string) => {
+    setFocusedSymbolState(symbol);
+    try {
+      window.localStorage.setItem(LAST_FOCUSED_SYMBOL_KEY, symbol);
+    } catch {
+      // Preference just won't persist.
+    }
+  }, []);
+
+  // The general "user manually focused this symbol" entry point —
+  // search-select, a holdings-row click, and the post-order callback all go
+  // through this. Always resets the ticket-arm fields to defaults: a manual
+  // focus switch is never itself an armed deep link, and without this reset
+  // a stale SELL/quantity from a PREVIOUS deep link could leak onto the
+  // newly-focused symbol's ticket. Inert when the ticket doesn't actually
+  // remount (e.g. `onOrderPlaced` re-focusing the symbol that's already
+  // focused) since it never rereads these props without a key change.
+  const setFocusedSymbol = useCallback(
+    (symbol: string) => {
+      bootstrappedRef.current = true; // an explicit pick always wins outright — see applyFocusedSymbol's own callers for why this guard matters.
+      applyFocusedSymbol(symbol);
+      setArmedSide("BUY");
+      setArmedProductType("DELIVERY");
+      setArmedQuantity(undefined);
+      setArmedLinkedOpinionId(null);
+    },
+    [applyFocusedSymbol]
+  );
+
   const largestHoldingSymbol = useMemo(() => {
     if (!account || account.deliveryHoldings.length === 0) return null;
     const byValue = [...account.deliveryHoldings].sort(
@@ -335,7 +483,87 @@ export function PaperTradingDashboard() {
     return byValue[0]?.symbol ?? null;
   }, [account]);
 
-  const focusedSymbol = deepLinkSymbol ?? manualFocus ?? largestHoldingSymbol ?? restoredLastFocus ?? null;
+  // ── One-shot deep-link consumption (round 3, 2026-08-05) — replaces the
+  // OLD `remountKey` wrapper + frozen/strip hook combo entirely (see this
+  // file's own module doc — that combo was self-defeating: the wrapper's
+  // key depended on whether one-shot params were STILL present, but the
+  // freshly-mounted instance's own strip removed them ~114ms later,
+  // triggering a second spurious remount that froze the already-stripped
+  // URL). This page never remounts for a deep link now. ONE effect, keyed
+  // on the live search-params string, is the sole consumer of
+  // `side`/`productType`/`quantity`/`symbol`/`linkedOpinionId`: it applies
+  // them to state, bumps `armToken`, then strips those keys from the URL —
+  // all in the SAME effect, so it can fire again for a SECOND (or Nth) deep
+  // link that arrives later in this page's single lifetime, not just once.
+  // The post-strip URL change re-triggers this same effect; the
+  // `hasOneShot` guard below makes that rerun (and any unrelated param
+  // change, e.g. `?workbench=`) an immediate no-op — no loop, no
+  // double-apply. Declared BEFORE the bootstrap-fallback effect so it
+  // always runs first within a shared commit and can set `bootstrappedRef`
+  // before bootstrap gets a chance to race it (see that ref's own doc).
+  // Cold-load deep links flow through this exact same effect on its first
+  // run — there is no separate one-time/lazy-init path for them.
+  useEffect(() => {
+    const params = new URLSearchParams(typeof window !== "undefined" ? window.location.search : searchParamsString);
+    const oneShotKeys = ["side", "productType", "quantity", "symbol", "linkedOpinionId"] as const;
+    const hasOneShot = oneShotKeys.some((k) => params.has(k));
+    if (!hasOneShot) return;
+
+    const symbol = params.get("symbol");
+    const side = params.get("side") === "SELL" ? "SELL" : "BUY";
+    const productType = params.get("productType") === "INTRADAY" ? "INTRADAY" : "DELIVERY";
+    const rawQuantity = params.get("quantity");
+    const parsedQuantity = rawQuantity != null ? Number(rawQuantity) : NaN;
+    const quantity = Number.isInteger(parsedQuantity) && parsedQuantity > 0 ? parsedQuantity : undefined;
+    const linkedOpinionId = params.get("linkedOpinionId");
+
+    bootstrappedRef.current = true; // a deep link always wins outright — nothing left to bootstrap.
+    if (symbol) applyFocusedSymbol(symbol);
+    setArmedSide(side);
+    setArmedProductType(productType);
+    setArmedQuantity(quantity);
+    setArmedLinkedOpinionId(linkedOpinionId);
+    setArmToken((t) => t + 1);
+
+    for (const k of oneShotKeys) params.delete(k);
+    const query = params.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParamsString]);
+
+  // Bootstrap fallback — fires at most once (`bootstrappedRef`, shared with
+  // the deep-link effect above), and only when no deep link resolved
+  // anything. Gated on `state === "ready"` (not just `account` truthy) so
+  // this doesn't fire a tick before the account's holdings are actually
+  // available.
+  //
+  // Round 3 (2026-08-05) — `restoredLastFocus` (localStorage) now OUTRANKS
+  // `largestHoldingSymbol`, reversed from the priority order this fallback
+  // used to have. That old order (largest-holding-first) was the ORIGINAL
+  // founder bug (INDIGO shown instead of the smaller SHRIRAM FINANCE
+  // position the founder had actually navigated to) — it was merely masked
+  // in round 2 because `?symbol=` (once written) permanently dominated this
+  // bootstrap fallback on every later visit, so the fallback's OWN internal
+  // ordering was only ever exercised on a session's truest-first-ever
+  // resolution. Now that `?symbol=` is gone and localStorage is the ONLY
+  // persistence channel, this fallback runs the SAME comparison on every
+  // cold load — leaving largest-holding-first would silently revert every
+  // refresh back to the biggest position, defeating the very persistence
+  // guarantee this round exists to deliver. A real, explicit focus (search-
+  // select, a holdings-row click, a Sell tap) always wins over an automatic
+  // "biggest position" guess; "largest holding" now only applies on a
+  // genuinely fresh device/browser with no remembered focus at all.
+  useEffect(() => {
+    if (bootstrappedRef.current) return;
+    if (focusedSymbol) {
+      bootstrappedRef.current = true; // resolved by the deep-link effect above in this same commit — nothing to bootstrap.
+      return;
+    }
+    if (state !== "ready" || restoredLastFocus === undefined) return; // wait for both to resolve
+    bootstrappedRef.current = true;
+    const fallback = restoredLastFocus ?? largestHoldingSymbol ?? null;
+    if (fallback) setFocusedSymbolState(fallback);
+  }, [focusedSymbol, state, restoredLastFocus, largestHoldingSymbol]);
 
   // Chart Trading + SL/TP (Sprint B, B3) — a stale quote from the PREVIOUS
   // focused symbol must never compute the position line's P&L for the NEW
@@ -365,12 +593,25 @@ export function PaperTradingDashboard() {
   // after that, same as before.
   const [workbenchParam, setWorkbenchParam] = useWorkbenchUrlParam();
   const [workbenchOpen, setWorkbenchOpenState] = useState(false);
+  // Round 3 (2026-08-05) — only write `?workbench=` when the target value
+  // actually DIFFERS from the current one. `useWorkbenchAutoRestore`'s own
+  // "close on every real focus change" call site below invokes this
+  // unconditionally on EVERY focus change, including the overwhelmingly
+  // common case where the workbench was never open to begin with (nothing
+  // to close, nothing to write) — that redundant `router.replace` used to
+  // fire regardless, and its async `window.location.search` read raced the
+  // deep-link effect's own strip above: whichever landed last won, and a
+  // no-op "close" write that happened to read a not-yet-visible strip would
+  // silently restore the just-stripped one-shot params right back onto the
+  // URL. Skipping the write entirely when there's nothing to change removes
+  // that race at its source rather than trying to out-order it.
   const setWorkbenchOpen = useCallback(
     (open: boolean) => {
       setWorkbenchOpenState(open);
-      setWorkbenchParam(open ? "1" : null);
+      const nextParam = open ? "1" : null;
+      if (nextParam !== workbenchParam) setWorkbenchParam(nextParam);
     },
-    [setWorkbenchParam]
+    [setWorkbenchParam, workbenchParam]
   );
   useWorkbenchAutoRestore(
     focusedSymbol,
@@ -378,15 +619,6 @@ export function PaperTradingDashboard() {
     () => setWorkbenchOpenState(true),
     () => setWorkbenchOpen(false)
   );
-
-  const setFocusedSymbol = useCallback((symbol: string) => {
-    setManualFocus(symbol);
-    try {
-      window.localStorage.setItem(LAST_FOCUSED_SYMBOL_KEY, symbol);
-    } catch {
-      // Preference just won't persist.
-    }
-  }, []);
 
   const eodSeries = useEodSeries(focusedSymbol);
 
@@ -433,18 +665,18 @@ export function PaperTradingDashboard() {
     if (orderDayIst === todayIst) hasSoldDeliveryTodayBySymbol[order.symbol] = true;
   }
 
-  const initialSymbol = deepLinkSymbol;
-  const initialSide = searchParams.get("side") === "SELL" ? "SELL" : "BUY";
-  const initialProductType = searchParams.get("productType") === "INTRADAY" ? "INTRADAY" : "DELIVERY";
-  const linkedOpinionId = searchParams.get("linkedOpinionId");
-  // Delivery-holdings Sell button (2026-08-04) — sibling to the three params
-  // above, carrying the holding row's full quantity across the same
-  // deep-link hand-off. Validated defensively (positive integer) since it's
-  // user-editable URL text; anything else just leaves the ticket's quantity
-  // field blank, same as omitting it entirely.
-  const rawQuantityParam = searchParams.get("quantity");
-  const parsedQuantityParam = rawQuantityParam != null ? Number(rawQuantityParam) : NaN;
-  const initialQuantity = Number.isInteger(parsedQuantityParam) && parsedQuantityParam > 0 ? parsedQuantityParam : undefined;
+  // Round 3 (2026-08-05) — the ticket's seed values now come straight from
+  // the `armed*` state the deep-link effect (above) populated, not a frozen
+  // URL snapshot — there is no more URL snapshot to freeze, one-shot fields
+  // live in state from the moment they're consumed. `armToken` (folded into
+  // `ticketElement`'s `key` below) is what forces a fresh ticket instance
+  // per deep link now, so these can be read directly without any risk of a
+  // later strip flipping them back to defaults out from under an
+  // already-rendered ticket.
+  const initialSide = armedSide;
+  const initialProductType = armedProductType;
+  const initialQuantity = armedQuantity;
+  const linkedOpinionId = armedLinkedOpinionId;
 
   // Chart Trading + SL/TP (Sprint B, B3) — order lines for the FOCUSED
   // symbol's chart only: its own resting pending orders (LIMIT/STOP,
@@ -504,12 +736,12 @@ export function PaperTradingDashboard() {
   // <DockedOrderTicket> JSX literals that could drift out of sync.
   const ticketElement = (
     <DockedOrderTicket
-      key={`${initialSymbol ?? focusedSymbol ?? ""}-${initialSide}-${initialProductType}-${initialQuantity ?? ""}`}
+      key={`${focusedSymbol ?? ""}-${armToken}`}
       kind="equity"
       cash={account.availableCash}
       heldDeliveryQtyBySymbol={heldDeliveryQtyBySymbol}
       hasSoldDeliveryTodayBySymbol={hasSoldDeliveryTodayBySymbol}
-      initialSymbol={initialSymbol ?? focusedSymbol}
+      initialSymbol={focusedSymbol}
       initialSide={initialSide}
       initialProductType={initialProductType}
       initialQuantity={initialQuantity}
@@ -532,6 +764,7 @@ export function PaperTradingDashboard() {
       presetOrderType={presetOrderType}
       presetLimitPrice={presetLimitPrice}
       presetTriggerPrice={presetTriggerPrice}
+      liveLtp={chartQuote?.price ?? null}
     />
   );
 
@@ -666,7 +899,14 @@ export function PaperTradingDashboard() {
           <CardTitle>Delivery holdings</CardTitle>
         </CardHeader>
         <CardContent>
-          <PositionsTable rows={account.deliveryHoldings} emptyLabel="No open delivery holdings." productType="DELIVERY" />
+          <PositionsTable
+            rows={account.deliveryHoldings}
+            emptyLabel="No open delivery holdings."
+            productType="DELIVERY"
+            focusedSymbol={focusedSymbol}
+            liveLtp={chartQuote?.price ?? null}
+            onFocusSymbol={setFocusedSymbol}
+          />
         </CardContent>
       </Card>
 
@@ -677,7 +917,14 @@ export function PaperTradingDashboard() {
             <CardDescription>Auto-squared-off near market close if still open.</CardDescription>
           </CardHeader>
           <CardContent>
-            <PositionsTable rows={account.openIntradayPositions} emptyLabel="No open intraday positions." productType="INTRADAY" />
+            <PositionsTable
+              rows={account.openIntradayPositions}
+              emptyLabel="No open intraday positions."
+              productType="INTRADAY"
+              focusedSymbol={focusedSymbol}
+              liveLtp={chartQuote?.price ?? null}
+              onFocusSymbol={setFocusedSymbol}
+            />
           </CardContent>
         </Card>
       )}
@@ -777,7 +1024,24 @@ function PositionSellAction({ row, productType }: { row: PositionRow; productTyp
   );
 }
 
-function PositionsTable({ rows, emptyLabel, productType }: { rows: PositionRow[]; emptyLabel: string; productType: "DELIVERY" | "INTRADAY" }) {
+function PositionsTable({
+  rows,
+  emptyLabel,
+  productType,
+  focusedSymbol,
+  liveLtp,
+  onFocusSymbol
+}: {
+  rows: PositionRow[];
+  emptyLabel: string;
+  productType: "DELIVERY" | "INTRADAY";
+  /** Founder bug fix (2026-08-04b) — which symbol (if any) the terminal chart above is currently focused on, so this table can show a LIVE LTP for that one row (see `liveLtp`'s own doc) and highlight it. */
+  focusedSymbol?: string | null;
+  /** The chart's own live quote-tick price for `focusedSymbol` (shared with price-chart.tsx's `useLiveQuoteTick` poll via the dashboard's `onQuoteChange` — never a second poll). Only ever applied to the row matching `focusedSymbol`; every other row stays on the account payload's own 60s-refreshed `latestLtp` — polling a live tick per holding would hammer the quote endpoint for zero benefit on rows the user isn't even looking at. */
+  liveLtp?: number | null;
+  /** Founder bug fix (2026-08-04b) — clicking a row's symbol focuses the terminal chart on it, the same "selecting a stock" action search/Sell already trigger — wired to `setFocusedSymbol`, which also keeps `?symbol=` in sync for refresh-persistence. */
+  onFocusSymbol?: (symbol: string) => void;
+}) {
   if (rows.length === 0) {
     return <p className="text-sm text-ink-400">{emptyLabel}</p>;
   }
@@ -798,25 +1062,46 @@ function PositionsTable({ rows, emptyLabel, productType }: { rows: PositionRow[]
           </TableRow>
         </TableHead>
         <TableBody>
-          {rows.map((row) => (
-            <TableRow key={row.symbol}>
-              <TableCell className="font-medium text-ink-900">{row.symbol}</TableCell>
-              <TableCell className={row.quantity < 0 ? "text-rose-600" : undefined}>
-                {row.quantity} {row.quantity < 0 ? "(short)" : ""}
-              </TableCell>
-              <TableCell>{formatRupees(row.avgCost)}</TableCell>
-              <TableCell>{row.latestLtp != null ? formatRupees(row.latestLtp) : "— (delayed price unavailable)"}</TableCell>
-              <TableCell className={row.unrealizedGrossPnl != null ? (pnlTone(row.unrealizedGrossPnl) === "up" ? "text-emerald-600" : row.unrealizedGrossPnl < 0 ? "text-rose-600" : undefined) : undefined}>
-                {row.unrealizedGrossPnl != null ? formatSignedRupees(row.unrealizedGrossPnl) : "—"}
-              </TableCell>
-              <TableCell className={row.netPnl != null ? (row.netPnl >= 0 ? "text-emerald-600" : "text-rose-600") : undefined}>
-                {row.netPnl != null ? formatSignedRupees(row.netPnl) : "—"}
-              </TableCell>
-              <TableCell>
-                <PositionSellAction row={row} productType={productType} />
-              </TableCell>
-            </TableRow>
-          ))}
+          {rows.map((row) => {
+            const isFocused = focusedSymbol != null && row.symbol === focusedSymbol;
+            // Founder bug fix (2026-08-04b) — the focused row's LTP ticks
+            // live with the chart; every other row stays on the account
+            // payload's own load-time/60s-poll snapshot (see this
+            // component's own prop doc on why that boundary is deliberate).
+            const displayLtp = isFocused && liveLtp != null ? liveLtp : row.latestLtp;
+            return (
+              <TableRow key={row.symbol}>
+                <TableCell className="font-medium text-ink-900">
+                  {onFocusSymbol ? (
+                    <button
+                      type="button"
+                      onClick={() => onFocusSymbol(row.symbol)}
+                      className={`underline-offset-2 hover:underline ${isFocused ? "text-signal-sky" : ""}`}
+                      title={`Show ${row.symbol} on the terminal chart`}
+                    >
+                      {row.symbol}
+                    </button>
+                  ) : (
+                    row.symbol
+                  )}
+                </TableCell>
+                <TableCell className={row.quantity < 0 ? "text-rose-600" : undefined}>
+                  {row.quantity} {row.quantity < 0 ? "(short)" : ""}
+                </TableCell>
+                <TableCell>{formatRupees(row.avgCost)}</TableCell>
+                <TableCell>{displayLtp != null ? formatRupees(displayLtp) : "— (delayed price unavailable)"}</TableCell>
+                <TableCell className={row.unrealizedGrossPnl != null ? (pnlTone(row.unrealizedGrossPnl) === "up" ? "text-emerald-600" : row.unrealizedGrossPnl < 0 ? "text-rose-600" : undefined) : undefined}>
+                  {row.unrealizedGrossPnl != null ? formatSignedRupees(row.unrealizedGrossPnl) : "—"}
+                </TableCell>
+                <TableCell className={row.netPnl != null ? (row.netPnl >= 0 ? "text-emerald-600" : "text-rose-600") : undefined}>
+                  {row.netPnl != null ? formatSignedRupees(row.netPnl) : "—"}
+                </TableCell>
+                <TableCell>
+                  <PositionSellAction row={row} productType={productType} />
+                </TableCell>
+              </TableRow>
+            );
+          })}
         </TableBody>
       </Table>
     </div>

@@ -36,6 +36,7 @@ import {
   CANCEL_HIT_DIAMETER,
   DRAG_HIT_STROKE_WIDTH,
   clampLineY,
+  orderLineColor,
   priceAtFraction,
   snapToTick,
   type ChartOrderLine,
@@ -380,14 +381,12 @@ export function PremiumChart({
               const isDragging = dragState?.id === line.id;
               const renderPrice = isDragging ? dragState.price : line.price;
               const { y, offScale } = clampLineY(renderPrice, geometry.min, geometry.max, geometry.y);
-              const color =
-                line.kind === "pending-stop"
-                  ? "#d97706"
-                  : line.kind === "pending-limit"
-                    ? "#0284c7"
-                    : line.side === "SELL"
-                      ? "#e11d48"
-                      : "#059669";
+              // Founder bug fix (2026-08-04b) — same live-P&L coloring as
+              // price-chart.tsx's identical order-line overlay (see
+              // orderLineColor's own doc). `last.y` is this chart's own
+              // latest premium point (history tick or in-session livePremium
+              // append), never a second/duplicate price source.
+              const color = orderLineColor(line, last.y);
               const dash = line.kind === "position" ? undefined : "4 3";
               const label = isDragging ? `${line.label.split(" @ ")[0]} @ ${formatRupees(snapToTick(dragState.price))}` : line.label;
               return (

@@ -73,6 +73,8 @@ interface EquityTicketProps {
   presetOrderType?: "MARKET" | "LIMIT" | "STOP";
   presetLimitPrice?: number;
   presetTriggerPrice?: number;
+  /** Founder bug fix (2026-08-04b) — the terminal chart's own live quote tick for this symbol, passed straight through to NewTradeForm (see that component's own doc for the full contract). */
+  liveLtp?: number | null;
 }
 
 interface OptionTicketProps {
@@ -142,6 +144,7 @@ export function DockedOrderTicket(props: DockedOrderTicketProps) {
           presetOrderType={props.presetOrderType}
           presetLimitPrice={props.presetLimitPrice}
           presetTriggerPrice={props.presetTriggerPrice}
+          liveLtp={props.liveLtp}
         />
       </DockedTicketChrome>
     );

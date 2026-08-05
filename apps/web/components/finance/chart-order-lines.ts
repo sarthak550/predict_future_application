@@ -68,6 +68,51 @@ export function priceAtFraction(
 /** Stable empty array for referentially-stable "no order lines" defaults — an inline `[]` is a fresh identity every render (see price-chart.tsx's own EMPTY_SERIES precedent in options-page-client.tsx). */
 export const EMPTY_ORDER_LINES: ChartOrderLine[] = [];
 
+// ─── Founder bug fix (2026-08-04b) — position-line P&L coloring ───
+
+/** Neutral (breakeven) tone — ink-500 from tailwind.config.ts, the same gray every other "no directional reading yet" state in this codebase uses. */
+const POSITION_NEUTRAL_COLOR = "#475569";
+const POSITION_PROFIT_COLOR = "#059669";
+const POSITION_LOSS_COLOR = "#e11d48";
+const PENDING_STOP_COLOR = "#d97706";
+const PENDING_LIMIT_COLOR = "#0284c7";
+
+/**
+ * The color for ANY order line, one formula shared by every chart that
+ * draws them (price-chart.tsx, terminal/premium-chart.tsx, the workbench's
+ * `pfOrderLine` overlay) — factored out for the same reason the rest of
+ * this module is: forking a formula this visible across charts risks it
+ * silently drifting out of sync.
+ *
+ * Founder complaint, verbatim: "the line that we show the average price is
+ * always green whereas it should only be green when we are in gross Profit
+ * and red when lossing." Before this fix, a `kind: "position"` line was
+ * colored by `line.side` alone (BUY -> always green, SELL -> always red) —
+ * a static read of which SIDE the position is, not whether it's actually
+ * winning. Pending LIMIT/STOP lines are unaffected (still their own fixed
+ * amber/sky tones — those aren't P&L-bearing).
+ *
+ * `line.side` on a `"position"` line is this codebase's own established
+ * convention for LONG vs SHORT (every caller — paper-trading-dashboard.tsx,
+ * futures-page-client.tsx, options-page-client.tsx — sets it via
+ * `quantity/lots < 0 ? "SELL" : "BUY"`, never the literal order side), so
+ * `"SELL"` here means an open SHORT, not "the last order was a sell":
+ *   - LONG ("BUY"): profit when `currentPrice > line.price` (price is the
+ *     average cost / futures reference price).
+ *   - SHORT ("SELL"): INVERTED — profit when `currentPrice < line.price`.
+ *   - Exact equality, or `currentPrice` not resolved yet (no live tick has
+ *     landed for this chart), falls back to the neutral tone rather than
+ *     guessing a direction.
+ */
+export function orderLineColor(line: ChartOrderLine, currentPrice: number | null): string {
+  if (line.kind === "pending-stop") return PENDING_STOP_COLOR;
+  if (line.kind === "pending-limit") return PENDING_LIMIT_COLOR;
+  if (currentPrice == null || currentPrice === line.price) return POSITION_NEUTRAL_COLOR;
+  const isShort = line.side === "SELL";
+  const inProfit = isShort ? currentPrice < line.price : currentPrice > line.price;
+  return inProfit ? POSITION_PROFIT_COLOR : POSITION_LOSS_COLOR;
+}
+
 // ─── Chart Trading + SL/TP (Sprint C, C1) — drag-to-reprice hit-target sizing ───
 
 /**

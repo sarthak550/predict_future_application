@@ -38,6 +38,20 @@
  * live on the same still-mounted `ChartWorkbench` instance — see the
  * `useWorkbenchAutoRestore` no-op below for why that's now a deliberate
  * in-workbench browse rather than a "stale workbench, close it" case.
+ *
+ * Founder bug fix (2026-08-04b) — sibling of the equity dashboard's
+ * "focused symbol lost on refresh" fix. `underlying` now persists across a
+ * refresh via `?focus=` (`useFocusUrlParam` — see that hook's own doc for
+ * why it's a SEPARATE param from `?underlying=`, not a reuse of it: this
+ * page's `remountKey` wrapper below treats `?underlying=` changing as "a
+ * new deep link arrived, give this page a fresh instance," and continuously
+ * writing in-page browsing back into that same param would make every
+ * ordinary underlying switch look like a fresh deep link and blow away the
+ * loaded account/selected-contract state). `?side=` is genuinely one-shot
+ * (a Sell/Close chip's side, always derived from the position being closed
+ * — see positions-strip.tsx) — `useFrozenSearchParams`/
+ * `useStripOneShotParams` give it the same "seed once, strip after" fix the
+ * equity ticket got, so refreshing after a Close tap never re-arms it.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -61,7 +75,13 @@ import { DynamicChartWorkbench, WorkbenchMaximizeButton } from "@/components/pap
 import type { PlacedFuturesOrderPayload } from "@/lib/paperTrading/futuresOrdersClient";
 import { cancelPendingOrder, repricePendingOrder, type PendingOrderPayload } from "@/lib/paperTrading/pendingOrdersClient";
 import { usePriceOverrides } from "@/components/paper-trading/use-price-overrides";
-import { useWorkbenchAutoRestore, useWorkbenchUrlParam } from "@/components/paper-trading/use-workbench-url-param";
+import {
+  useFocusUrlParam,
+  useFrozenSearchParams,
+  useStripOneShotParams,
+  useWorkbenchAutoRestore,
+  useWorkbenchUrlParam
+} from "@/components/paper-trading/use-workbench-url-param";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -110,25 +130,58 @@ export function FuturesPageClient() {
   // workbench open/closed does its OWN router.replace and must not blow
   // away the selected contract / loaded account / everything else just to
   // persist one flag.
+  //
+  // Founder bug fix (2026-08-04b) — `?focus=` (the persisted-underlying
+  // channel) and `?side=` (one-shot, stripped after consumption) get the
+  // SAME exclusion, for the same reason: both are written by
+  // FuturesPageClientInner's OWN bookkeeping after it's already mounted, so
+  // letting either changing count as "a new deep link arrived" would force
+  // an immediate, unwanted second remount right after mount (undoing the
+  // very persistence/one-shot-strip this fix exists to add). A REAL new
+  // deep link always still differs in `underlying`/`expiry` too (the
+  // combination that actually identifies a different contract), so this
+  // exclusion doesn't weaken the "fresh instance per genuinely new deep
+  // link" guarantee documented above.
   const remountKey = useMemo(() => {
     const params = new URLSearchParams(searchParams.toString());
     params.delete("workbench");
+    params.delete("focus");
+    params.delete("side");
     return params.toString();
   }, [searchParams]);
   return <FuturesPageClientInner key={remountKey} />;
 }
 
 function FuturesPageClientInner() {
-  const searchParams = useSearchParams();
-  const deepLinkUnderlying = searchParams.get("underlying");
-  const deepLinkExpiry = searchParams.get("expiry");
-  const deepLinkSide = searchParams.get("side") === "SELL" ? ("SELL" as const) : searchParams.get("side") === "BUY" ? ("BUY" as const) : null;
+  // Founder bug fix (2026-08-04b) — `deepLinkSide` is genuinely one-shot
+  // (see this file's own module doc) and gets stripped from the live URL
+  // shortly after mount; reading it from the FROZEN snapshot instead of the
+  // live `searchParams` means the async auto-select below (`handleQuoteData`)
+  // still sees it correctly even if that strip has already landed by the
+  // time a matching quote arrives. `deepLinkUnderlying`/`deepLinkExpiry`
+  // read from the same frozen snapshot purely for consistency — neither is
+  // ever stripped, so this is behavior-neutral for them.
+  const frozenParams = useFrozenSearchParams();
+  useStripOneShotParams(["side"]);
+  const deepLinkUnderlying = frozenParams.get("underlying");
+  const deepLinkExpiry = frozenParams.get("expiry");
+  const deepLinkSide = frozenParams.get("side") === "SELL" ? ("SELL" as const) : frozenParams.get("side") === "BUY" ? ("BUY" as const) : null;
+  const [focusParam, setFocusParam] = useFocusUrlParam();
 
   const [state, setState] = useState<LoadState>("loading");
   const [account, setAccount] = useState<AccountSummary | null>(null);
   const [error, setError] = useState("");
 
-  const [underlying, setUnderlying] = useState<string>(deepLinkUnderlying ?? "NIFTY");
+  const [underlying, setUnderlying] = useState<string>(deepLinkUnderlying ?? focusParam ?? "NIFTY");
+  // Founder bug fix (2026-08-04b) — every path that changes `underlying`
+  // (the contract table's own selector, the deep-link auto-select below)
+  // funnels through this ONE setState, so a single effect here is enough to
+  // keep `?focus=` mirroring it — no need to touch each call site
+  // individually. Guarded on inequality so it can never loop (see
+  // paper-trading-dashboard.tsx's identical guard on its own `?symbol=` sync).
+  useEffect(() => {
+    if (underlying && underlying !== focusParam) setFocusParam(underlying);
+  }, [underlying, focusParam, setFocusParam]);
   const [selectedContract, setSelectedContract] = useState<SelectedFuturesContract | null>(null);
   const [presetSide, setPresetSide] = useState<"BUY" | "SELL">(deepLinkSide ?? "BUY");
   const [presetLots, setPresetLots] = useState(1);

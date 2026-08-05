@@ -1124,15 +1124,35 @@ export function KlineChart({
   // re-render (unlike price-chart.tsx's onQuoteChange effect, which DOES
   // feed back into its caller's state and therefore had to move to a
   // primitive-keyed dependency array to avoid a loop), an identity-keyed
-  // effect here cannot cycle — it's a one-way sync, not a feedback loop. ──
+  // effect here cannot cycle — it's a one-way sync, not a feedback loop.
+  // Founder bug fix (2026-08-04b) added a SECOND, primitive-keyed dep
+  // (`latestClose`, below) alongside this identity one — the two are
+  // additive, not in tension: `latestClose` ticking every ~4.5s just makes
+  // this effect run more often, re-syncing a "position" line's live-P&L
+  // color (see `currentPriceChanged` below), still a one-way sync. ──
   const overlaySnapshotRef = useRef<Map<string, ChartOrderLine>>(new Map());
+  // Founder bug fix (2026-08-04b) — the workbench's own "current price" for
+  // position-line P&L coloring: the last candle's close, which
+  // use-workbench-candles.ts already keeps live (quote ticks fold into the
+  // forming bar — see that hook's own doc, untouched here). Read fresh at
+  // effect-run time below, never cached across renders.
+  const latestClose = candles.length > 0 ? candles[candles.length - 1].close : null;
+  // Tracks the currentPrice actually baked into the overlays right now, so
+  // the sync loop below can tell "the live price moved, position lines need
+  // a fresh color" apart from "orderLines itself changed" — both are valid
+  // reasons to re-sync, but only the former needs to force an override when
+  // every OTHER field on the line is unchanged.
+  const lastColorPriceRef = useRef<number | null>(null);
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;
+    const currentPriceChanged = lastColorPriceRef.current !== latestClose;
+    lastColorPriceRef.current = latestClose;
 
     function buildExtendData(line: ChartOrderLine): PfOrderLineExtendData {
       return {
         line,
+        currentPrice: latestClose,
         onDragStart: (id, currentPrice) => {
           draggingIdRef.current = id;
           dragStartPriceRef.current[id] = currentPrice;
@@ -1182,7 +1202,16 @@ export function KlineChart({
         existing.kind !== line.kind ||
         existing.side !== line.side ||
         existing.cancellable !== line.cancellable ||
-        existing.draggable !== line.draggable;
+        existing.draggable !== line.draggable ||
+        // Founder bug fix (2026-08-04b) — every OTHER field can be
+        // unchanged while the live price still moved past a "position"
+        // line's avg cost, which must flip its color live (see
+        // orderLineColor's own doc). Pending limit/stop lines don't carry a
+        // P&L-based color, but re-syncing them too on a price tick is
+        // harmless (buildExtendData always writes the fresh currentPrice
+        // regardless of kind, so a later position line added to the same
+        // orderLines array is never left with a stale reading).
+        (currentPriceChanged && line.kind === "position");
       if (changed) {
         chart.overrideOverlay({ id: overlayId, points: [{ value: line.price }], lock: !line.draggable, extendData: buildExtendData(line) });
         overlaySnapshotRef.current.set(line.id, line);
@@ -1195,7 +1224,15 @@ export function KlineChart({
         overlaySnapshotRef.current.delete(id);
       }
     }
-  }, [orderLines]);
+    // Founder bug fix (2026-08-04b) — `latestClose` added to the deps
+    // alongside `orderLines`' own identity (see this effect's module doc
+    // above for why THAT one is a deliberate identity-key exception): a
+    // primitive number, so this follows the house "never key on object
+    // identity" rule normally, and re-running on every live price tick is
+    // exactly the point — it's what lets a "position" line's color flip
+    // live without a parent re-render (candles ticking is entirely a
+    // use-workbench-candles.ts-owned effect, decoupled from orderLines).
+  }, [orderLines, latestClose]);
 
   /**
    * Builds the per-instance event handlers shared by BOTH the hydration

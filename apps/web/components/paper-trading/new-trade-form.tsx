@@ -46,6 +46,20 @@
  * Sell tap, mirroring the pre-existing `?symbol=&side=&productType=`
  * hand-off) lands here with zero new state-sync machinery. Omitted, this
  * form is byte-identical to before.
+ *
+ * Founder bug fix (2026-08-04b) — "the Delayed LTP is not live updated, it
+ * needs refresh": this form's `ltp` used to come ONLY from the one-shot
+ * `/intraday` fetch below, debounced on `symbol` and never refetched after
+ * that — so once loaded it sat frozen for the rest of the session
+ * regardless of how long the ticket stayed open. `liveLtp` (new, optional)
+ * lets the terminal share its ALREADY-RUNNING chart quote tick
+ * (price-chart.tsx's `useLiveQuoteTick`, surfaced via the dashboard's
+ * `onQuoteChange` -> `chartQuote` state) straight into this form — every
+ * time it reports a fresh price for the CURRENT symbol, it overrides `ltp`
+ * directly, no second poll. The one-shot fetch below still runs (unchanged)
+ * so a freshly-selected symbol has SOME price immediately, before the first
+ * live tick lands or while the market's closed. Omitted (every non-terminal
+ * caller, if one is ever added): zero behavior change.
  */
 import { useEffect, useRef, useState } from "react";
 
@@ -98,7 +112,8 @@ export function NewTradeForm({
   presetSide,
   presetOrderType,
   presetLimitPrice,
-  presetTriggerPrice
+  presetTriggerPrice,
+  liveLtp
 }: {
   /** Available cash right now, for the client-side insufficient-cash warning (server re-validates independently). Callers should pass `availableCash` (cash minus pending-order blocks), not raw account cash — see queries.ts's PaperAccountDetail.availableCash. */
   cash: number;
@@ -135,6 +150,8 @@ export function NewTradeForm({
   presetOrderType?: "MARKET" | "LIMIT" | "STOP";
   presetLimitPrice?: number;
   presetTriggerPrice?: number;
+  /** Founder bug fix (2026-08-04b) — see this file's own module doc. A fresh, non-null value for the CURRENTLY selected symbol overrides `ltp` directly; `null`/omitted leaves the one-shot fetch below as the only source, unchanged. */
+  liveLtp?: number | null;
 }) {
   const [selectedSymbol, setSelectedSymbol] = useState<PaperSymbolOption | null>(
     fixedSymbol ?? initialSymbol ? { symbol: (fixedSymbol ?? initialSymbol) as string, companyName: "", close: 0 } : null
@@ -223,6 +240,21 @@ export function NewTradeForm({
       clearTimeout(timer);
     };
   }, [symbol]);
+
+  // Founder bug fix (2026-08-04b) — the shared live tick overrides `ltp`
+  // whenever a fresh reading lands, keeping the displayed/estimate price
+  // moving without a refresh. The dashboard resets `chartQuote` (this
+  // form's `liveLtp` source) to `null` on a symbol change BEFORE this form
+  // remounts for the new symbol (see paper-trading-dashboard.tsx's own
+  // effect), so a stale tick from the PREVIOUS symbol can never leak in
+  // here — `liveLtp` is only ever non-null for whatever symbol is currently
+  // focused, which by construction is always this form's own `symbol`.
+  useEffect(() => {
+    if (liveLtp == null || liveLtp <= 0) return;
+    setLtp(liveLtp);
+    setLtpError("");
+    setLtpLoading(false);
+  }, [liveLtp]);
 
   const qtyNumber = Number(quantity);
   const validQuantity = Number.isInteger(qtyNumber) && qtyNumber > 0;
