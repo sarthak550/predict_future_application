@@ -66,11 +66,9 @@
  * mechanism the 60s/30s candle poll already relies on to reach
  * `kline-chart.tsx`'s data effect and the signals/rating pipeline
  * (`candlesKey` already includes last close/high/low, so nothing downstream
- * needed to change to pick this up). A tick that would land outside the
- * last bar's own [timestamp, timestamp+intervalMs) window is DROPPED, never
- * folded — the real bar has rolled over server-side and this client just
- * hasn't received the new one yet; only the next 30s/60s candle poll is
- * allowed to introduce a new bar or correct a rolled-over one. Closed bars
+ * needed to change to pick this up). A tick landing outside the last bar's
+ * own [timestamp, timestamp+intervalMs) window is handled by the rollover
+ * fix below (2026-08-04) rather than always dropped outright. Closed bars
  * (every element before the last) are never touched. Deliberately skipped
  * for the "1d" interval — a daily bar's honest forming-window is "until
  * today's NSE close," not a fixed duration, and getting that boundary wrong
@@ -81,6 +79,38 @@
  * ACTUALLY in effect (the fast tick when live-ticking is active, the slower
  * candle poll otherwise) — see `liveTicksActive` in the return shape, which
  * `heartbeat-chip.tsx`'s caller uses to pick honest cadence copy.
+ *
+ * **QA-round fixes, same day (2026-08-04), both founder-reported from live
+ * prod (0d1d38e).**
+ *
+ * (1) INTERVAL RACE: chart-workbench.tsx initializes its interval state to
+ * a hardcoded default, then timeframe-selector.tsx's mount effect restores
+ * the PERSISTED interval via `onChange` one render later — two `url`s (old
+ * default, then restored pick) fire in quick succession, and without a
+ * guard whichever response resolved LAST painted, regardless of which one
+ * the chip was actually showing. Fixed with `latestUrlRef`/
+ * `latestPremiumKeyRef` below: every fetch path (the equity/index branch's
+ * `fetchOnce` — which the 30s/60s background poll also calls, so this one
+ * guard covers both — and the premium branch's `fetchPremiumOnce`, keyed on
+ * contract identity since interval doesn't affect ITS fetch) drops its own
+ * response unless it's still the most-recently-STARTED request when it
+ * resolves. The quote-tick fold needed no separate guard for this: once
+ * `state.candles` can never be stale, the existing per-bar timestamp-
+ * identity checks (`sameBar`, `sameProvisional`) already self-heal any
+ * cross-interval tick naturally (a stale tick almost never matches a new
+ * interval's bar boundaries) — verified by tracing, not just assumed. The
+ * actual ROOT CAUSE (the double-fetch itself) lives in chart-workbench.tsx,
+ * out of scope for this file (concurrent edit by another engineer) — see
+ * this pass's own report for the 1-line follow-up.
+ *
+ * (2) ROLLOVER STALL: `foldQuoteIntoCandles` dropping every out-of-window
+ * tick meant the forming bar went visually dead at every interval boundary
+ * until the next 30s/60s refetch — up to ~30s of freeze per bar, reading as
+ * lag. Fixed with `extendProvisionalBar` + `provisionalBarRef`: a tick
+ * landing in EXACTLY the next bucket after the real last bar creates (or
+ * extends) one provisional bar client-side from that real price, capped at
+ * one bar ahead (never chain-fabricated through a real outage) — see that
+ * function's own doc for the full honesty/cap reasoning.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -169,13 +199,11 @@ const INTRADAY_INTERVAL_MS: Partial<Record<CandleInterval, number>> = {
  * honestly: only the LAST bar's `close`/`high`/`low` ever change, and only
  * while `tick.asOf` still falls inside that bar's own
  * `[timestamp, timestamp + intervalMs)` window — the exact bar the exchange
- * itself hasn't closed yet. A tick landing at or after that window means
- * the real current bar has already rolled over server-side and this client
- * just hasn't received it yet; the honest response is to drop the tick and
- * wait for the next 30s/60s candle poll (the only thing allowed to
- * introduce a new bar or correct a rolled-over one), never to touch the
- * now-stale last bar or fabricate a new one client-side. Every bar before
- * the last is never touched.
+ * itself hasn't closed yet. A tick landing at or after that window is NOT
+ * this function's concern any more (2026-08-04 rollover fix — see
+ * `extendProvisionalBar` below for what happens then); callers only reach
+ * this function once they've already confirmed the tick is in-window.
+ * Every bar before the last is never touched.
  *
  * `runningHigh`/`runningLow` are the caller's own running extremes for THIS
  * bar (see `runningExtremesRef` in `useWorkbenchCandles` below) —
@@ -202,6 +230,58 @@ function foldQuoteIntoCandles(candles: Candle[], tick: LiveQuoteTick, intervalMs
 
   const merged: Candle = { ...last, close: tick.price, high, low };
   return [...candles.slice(0, -1), merged];
+}
+
+/**
+ * Rollover fix (2026-08-04, founder-reported: "candles are changing but
+ * still laggy"). Before this, a tick landing AFTER the real last bar's own
+ * window was simply dropped — meaning the forming bar went visually DEAD at
+ * every interval boundary until the next 30s/60s candle poll delivered the
+ * real new bar (up to ~30s of freeze per bar, which reads as lag even
+ * though ticks are still arriving underneath).
+ *
+ * This creates (or extends) a PROVISIONAL next bar client-side instead —
+ * exactly what TradingView itself does at every boundary, and still
+ * honest: the provisional bar's `open`/`high`/`low`/`close` are built
+ * ENTIRELY from real traded prices (this hook's own quote ticks, the same
+ * ones `foldQuoteIntoCandles` uses), its `timestamp` is the real, exact
+ * next interval boundary (`realLast.timestamp + intervalMs` — never a
+ * guessed or rounded value), and `volume: 0` (a genuinely unknown volume is
+ * never invented). The very next successful candle refetch is still the
+ * sole correction authority: once `state.candles`'s own real last bar
+ * reaches or passes this timestamp, `useWorkbenchCandles`' commit-phase
+ * effect discards the provisional outright — the real bar (same timestamp,
+ * so klinecharts replaces in place rather than removing+re-adding — no
+ * flicker) or a later real bar simply takes over.
+ *
+ * Only ONE bar is ever fabricated ahead of the real last one: `tick.asOf`
+ * must fall inside `[nextBarStart, nextBarStart + intervalMs)` — exactly
+ * the next bucket. If a SECOND boundary has already passed with still no
+ * refetch (`tick.asOf >= nextBarStart + intervalMs`), this returns `null`
+ * and the tick is dropped — chain-fabricating bar after bar through a real
+ * data outage would stop being "the next honest bar" and start being
+ * invented history. The heartbeat chip is left to go stale in that case,
+ * on purpose: an honest signal that something is actually wrong, rather
+ * than a chart that keeps looking alive through a genuine outage.
+ *
+ * `existingProvisional` (the caller's own `provisionalBarRef`) lets a
+ * SECOND tick within the same still-open provisional bucket EXTEND it
+ * (open stays fixed at the first tick's price, high/low accumulate, close
+ * tracks the latest) rather than each tick starting a fresh single-point
+ * bar — same "running extremes, not re-derived from scratch" discipline
+ * `foldQuoteIntoCandles`'s own `runningHigh`/`runningLow` params apply to
+ * the real-bar case.
+ */
+function extendProvisionalBar(realLast: Candle, intervalMs: number, tick: LiveQuoteTick, existingProvisional: Candle | null): Candle | null {
+  const nextBarStart = realLast.timestamp + intervalMs;
+  const nextBarEnd = nextBarStart + intervalMs;
+  if (tick.asOf < nextBarStart || tick.asOf >= nextBarEnd) return null;
+
+  const sameProvisional = existingProvisional != null && existingProvisional.timestamp === nextBarStart;
+  const open = sameProvisional ? existingProvisional.open : tick.price;
+  const high = sameProvisional ? Math.max(existingProvisional.high, tick.price) : tick.price;
+  const low = sameProvisional ? Math.min(existingProvisional.low, tick.price) : tick.price;
+  return { timestamp: nextBarStart, open, high, low, close: tick.price, volume: 0 };
 }
 
 function premiumHistoryUrl(underlying: string, expiry: string, strikePrice: number, optionType: "CE" | "PE"): string {
@@ -261,10 +341,31 @@ export function useWorkbenchCandles(
   const isPremium = feed.kind === "optionPremium";
   const url = feedUrl(feed, interval);
 
+  // Interval-race fix (2026-08-04, QA-caught: "select 1m, refresh -> chip
+  // shows 1m but bars are 5m"). Root cause traced to chart-workbench.tsx
+  // initializing chartInterval to a hardcoded default, then
+  // timeframe-selector.tsx's mount effect restoring the PERSISTED interval
+  // via onChange one render later — two `url`s fire in quick succession
+  // (e.g. the 5m candles URL, then the 1m one), and without a guard here
+  // whichever response resolves LAST paints, regardless of which one is
+  // still wanted. `latestUrlRef` is a plain "which request is currently
+  // authoritative" ref (an effect-local cancelled-flag idiom, not an
+  // AbortController — nothing here needs to actually cancel the underlying
+  // network request, only to ignore a superseded one's result): set
+  // synchronously the instant a NEW `fetchOnce` call starts, checked again
+  // inside every one of that SAME call's own `.then`/`.catch` — a response
+  // is applied to `state` ONLY if `url` (captured by this call's own
+  // closure) still equals `latestUrlRef.current` when it resolves. This
+  // also transitively fixes the SAME hole in the 30s/60s background poll
+  // below, since it calls this identical `fetchOnce` — one guard, two
+  // call sites, no separate code needed for the poll path.
+  const latestUrlRef = useRef<string | null>(null);
+
   // ── Equity/index branch (W2, unchanged). ────────────────────────────────
   const fetchOnce = useCallback(
     (opts: { silent: boolean }) => {
       if (!url) return; // optionPremium — handled by the separate effect below.
+      latestUrlRef.current = url;
       if (!opts.silent) setState({ status: "loading" });
       fetch(url, { cache: "no-store" })
         .then(async (res) => {
@@ -272,6 +373,7 @@ export function useWorkbenchCandles(
           return (await res.json()) as { candles?: unknown; prevClose?: number | null };
         })
         .then((body) => {
+          if (latestUrlRef.current !== url) return; // superseded by a newer interval/symbol request — drop silently, never paint stale data under the wrong chip.
           const rawCandles = Array.isArray(body.candles) ? body.candles : [];
           const candles: Candle[] = rawCandles
             .filter(
@@ -294,6 +396,7 @@ export function useWorkbenchCandles(
           setLastUpdatedAt(Date.now());
         })
         .catch(() => {
+          if (latestUrlRef.current !== url) return; // superseded — don't show a stale error for a request nobody's waiting on any more either.
           // Same "silent poll never regresses a working chart" posture as
           // price-chart.tsx's fetchIntraday — a transient background blip
           // keeps showing the last good series.
@@ -331,50 +434,101 @@ export function useWorkbenchCandles(
     if (liveQuote) setLastUpdatedAt(Date.now());
   }, [liveQuote]);
 
-  // Running intrabar high/low for the bar `runningExtremesRef.current
-  // .barTimestamp` belongs to — see `foldQuoteIntoCandles`'s own doc for
-  // why a running value (not the base fetch's own high/low, read fresh on
-  // every fold) is required for a monotonic wick. Updated in a COMMIT-phase
-  // effect below (never mutated during the render/memo below itself — this
-  // hook must stay pure during render).
+  // Running intrabar high/low for the REAL (server-fetched) last bar —
+  // `runningExtremesRef.current.barTimestamp` identifies which bar it
+  // belongs to. See `foldQuoteIntoCandles`'s own doc for why a running
+  // value (not the base fetch's own high/low, read fresh on every fold) is
+  // required for a monotonic wick. Updated in a COMMIT-phase effect below,
+  // read purely from `state.candles` (never from `displayCandles`, which
+  // can also hold a provisional bar past the real one — this ref is
+  // strictly about the real bar's own accumulation, decoupled from the
+  // rollover mechanism below).
   const runningExtremesRef = useRef<{ barTimestamp: number; high: number; low: number } | null>(null);
 
+  // Rollover fix (2026-08-04) — the currently-held PROVISIONAL bar, if any
+  // (see `extendProvisionalBar`'s own doc). `null` whenever there isn't
+  // one (still inside the real last bar's window, or the server has since
+  // caught up). Also updated only in the commit-phase effect below.
+  const provisionalBarRef = useRef<Candle | null>(null);
+
   // The array the rest of this hook (and its caller) actually reads: the
-  // base fetched candles with the live quote folded into the forming bar,
-  // when applicable. A fresh identity here is exactly what
-  // kline-chart.tsx's data effect and the signals/rating pipeline
-  // (`candlesKey`) are already built to react to — see module doc.
+  // base fetched candles with the live quote folded into the forming bar
+  // (or, past its window, a provisional next bar appended), when
+  // applicable. A fresh identity here is exactly what kline-chart.tsx's
+  // data effect and the signals/rating pipeline (`candlesKey`, which
+  // already includes `candles.length` — an appended provisional bar is
+  // picked up with zero changes needed there) are already built to react
+  // to — see module doc.
   const displayCandles = useMemo(() => {
     if (state.status !== "ready") return EMPTY_CANDLES;
     if (isPremium || intervalMs == null) return state.candles;
 
     const last = state.candles[state.candles.length - 1];
     if (!last) return state.candles;
-
-    // Absorb the server's own fresh high/low for this SAME bar (its 30s/60s
-    // fetch is still the correction authority) without discarding anything
-    // an earlier tick this render-cycle already recorded. A bar timestamp
-    // that doesn't match what's tracked means a genuinely NEW bar (rollover,
-    // interval switch, or first load) — starts fresh from the server's own
-    // reported extremes, never carrying a prior bar's high/low forward.
-    const running = runningExtremesRef.current;
-    const sameBar = running != null && running.barTimestamp === last.timestamp;
-    const high = sameBar ? Math.max(running.high, last.high) : last.high;
-    const low = sameBar ? Math.min(running.low, last.low) : last.low;
-
     if (!liveQuote) return state.candles;
-    return foldQuoteIntoCandles(state.candles, liveQuote, intervalMs, high, low);
+
+    const bucketEnd = last.timestamp + intervalMs;
+    if (liveQuote.asOf >= last.timestamp && liveQuote.asOf < bucketEnd) {
+      // Still inside the real last bar's own window — absorb the server's
+      // own fresh high/low for this SAME bar (its 30s/60s fetch is still
+      // the correction authority) without discarding anything an earlier
+      // tick this render-cycle already recorded. A bar timestamp that
+      // doesn't match what's tracked means a genuinely NEW bar (rollover,
+      // interval switch, or first load) — starts fresh from the server's
+      // own reported extremes, never carrying a prior bar's high/low
+      // forward.
+      const running = runningExtremesRef.current;
+      const sameBar = running != null && running.barTimestamp === last.timestamp;
+      const high = sameBar ? Math.max(running.high, last.high) : last.high;
+      const low = sameBar ? Math.min(running.low, last.low) : last.low;
+      return foldQuoteIntoCandles(state.candles, liveQuote, intervalMs, high, low);
+    }
+
+    // Past the real last bar's window — the rollover case. Either extends
+    // the already-held provisional bar or starts a fresh one; `null` means
+    // the tick doesn't belong to exactly the next bucket (too old — already
+    // handled above and can't reach here — or 2+ buckets ahead, the
+    // data-outage guard), so the tick is dropped and `state.candles` is
+    // returned unchanged.
+    const provisional = extendProvisionalBar(last, intervalMs, liveQuote, provisionalBarRef.current);
+    if (!provisional) return state.candles;
+    return [...state.candles, provisional];
   }, [state, isPremium, liveQuote, intervalMs]);
 
-  // Commit-phase bookkeeping for the running-extremes ref above — reads
-  // back whatever `displayCandles` just rendered (which already folded this
-  // tick in, if any) so the NEXT tick's fold starts from a true "everything
-  // seen so far" high/low instead of the memo re-deriving it during render.
+  // Commit-phase bookkeeping for both refs above — reads back whatever
+  // `state`/`displayCandles` this render actually settled on. Never
+  // mutated during the render/memo itself (this hook must stay pure during
+  // render); a ref written here is only ever READ by the NEXT render's
+  // memo, never by this one.
   useEffect(() => {
-    if (displayCandles.length === 0) return;
-    const last = displayCandles[displayCandles.length - 1];
-    runningExtremesRef.current = { barTimestamp: last.timestamp, high: last.high, low: last.low };
-  }, [displayCandles]);
+    if (state.status !== "ready") return;
+    const realLast = state.candles[state.candles.length - 1];
+    if (!realLast) return;
+
+    // Running extremes for the real bar — reset whenever the server's own
+    // last-bar timestamp has moved on (rollover once the server catches
+    // up, interval switch, or first load); otherwise absorb whatever the
+    // server itself additionally reported this fetch.
+    const running = runningExtremesRef.current;
+    runningExtremesRef.current =
+      running != null && running.barTimestamp === realLast.timestamp
+        ? { barTimestamp: realLast.timestamp, high: Math.max(running.high, realLast.high), low: Math.min(running.low, realLast.low) }
+        : { barTimestamp: realLast.timestamp, high: realLast.high, low: realLast.low };
+
+    // Provisional bar handoff: once the server's OWN real data reaches or
+    // passes the slot the provisional was standing in for, the real bar
+    // (same timestamp -> klinecharts replaces it in place, no flicker) or
+    // whatever the server reports next is authoritative — discard.
+    // Otherwise, if `displayCandles` just rendered a bar past the real
+    // last one, that IS the current provisional — remember it so the next
+    // tick extends it instead of starting over.
+    const displayLast = displayCandles[displayCandles.length - 1];
+    const stillProvisional = displayLast != null && displayLast.timestamp > realLast.timestamp;
+    if (provisionalBarRef.current != null && realLast.timestamp >= provisionalBarRef.current.timestamp) {
+      provisionalBarRef.current = null;
+    }
+    if (stillProvisional) provisionalBarRef.current = displayLast;
+  }, [state, displayCandles]);
 
   // ── optionPremium branch (W3, T5). ──────────────────────────────────────
   // Raw snapshot points are fetched once per CONTRACT identity (never on an
@@ -393,14 +547,26 @@ export function useWorkbenchCandles(
   const [sessionTicks, setSessionTicks] = useState<PremiumSnapshotPoint[]>([]);
   const [premiumLoadState, setPremiumLoadState] = useState<"loading" | "ready" | "error">("loading");
 
+  // Same interval-race class of bug applies here too: rapidly switching the
+  // SELECTED CONTRACT (strike/expiry/type) can fire two premium-history
+  // fetches in quick succession — this key (not `url2`, which doesn't
+  // include `interval`/isn't affected by it, but IS the actual fetch
+  // identity: contract identity, not interval) is the one that must match
+  // at resolution time. Same "ignore a superseded response, never cancel
+  // the underlying request" posture as `latestUrlRef` above.
+  const latestPremiumKeyRef = useRef<string | null>(null);
+
   const fetchPremiumOnce = useCallback(
     (opts: { silent: boolean }) => {
       if (!isPremium || premiumUnderlying == null || premiumExpiry == null || premiumStrike == null || premiumType == null) return;
+      const key = `${premiumUnderlying}|${premiumExpiry}|${premiumStrike}|${premiumType}`;
+      latestPremiumKeyRef.current = key;
       if (!opts.silent) setPremiumLoadState("loading");
       const url2 = premiumHistoryUrl(premiumUnderlying, premiumExpiry, premiumStrike, premiumType);
       fetch(url2, { cache: "no-store" })
         .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
         .then((data: { points?: unknown }) => {
+          if (latestPremiumKeyRef.current !== key) return; // superseded by a newer contract selection — drop silently.
           const points: PremiumSnapshotPoint[] = Array.isArray(data.points)
             ? data.points
                 .filter((p: { capturedAt?: string; lastPrice?: number }) => typeof p.capturedAt === "string" && Number.isFinite(p.lastPrice) && (p.lastPrice ?? 0) > 0)
@@ -411,6 +577,7 @@ export function useWorkbenchCandles(
           setLastUpdatedAt(Date.now());
         })
         .catch(() => {
+          if (latestPremiumKeyRef.current !== key) return; // superseded — don't show a stale error for a contract nobody's viewing any more either.
           if (!opts.silent) setPremiumLoadState("error");
         });
     },
