@@ -554,6 +554,122 @@ export function extendToRightEdge(p0: Coordinate, p1: Coordinate, targetX: numbe
   return { x: targetX, y: p0.y + (p1.y - p0.y) * t };
 }
 
+// ── Arc-free elliptical/circular arc path builder ────────────────────────
+/**
+ * Founder bug (2026-08-07), prod `3fa6ddc`: "few drawing tools ... for
+ * example ellipse" render wrong. Root-caused by reading klinecharts@10.0.1's
+ * OWN `dist/index.esm.js` `drawPath` (the `path` figure's SVG-mini-parser,
+ * `~L5753`): inside its per-command `commands.forEach(...)` callback,
+ * `currentX`/`currentY` are declared `var currentX = 0; var currentY = 0;`
+ * — i.e. RESET TO THE ORIGIN ON EVERY SINGLE COMMAND, not carried forward
+ * from the previous command's endpoint. `M`/`L`/`C`/`Q` (their absolute
+ * uppercase forms) are unaffected because each computes its own endpoint
+ * purely from its own args + the figure's `x`/`y` offset — none of them
+ * READ incoming `currentX`/`currentY` to know where to start. `A`/`a`
+ * (`~L5859-5872`) is the one command whose whole job is "arc FROM the
+ * current point TO (x,y)" — it calls `drawEllipticalArc(ctx, currentX,
+ * currentY, ...)`, and because `currentX`/`currentY` were just reset to `0`
+ * by the bug, the arc always starts from the coordinate-space origin
+ * instead of wherever the path actually was. This is a real upstream bug
+ * (not a usage error), verified line-by-line against the installed dist,
+ * not assumed from docs.
+ *
+ * Grepped every `path`-figure string in this `overlays/` tree (2026-08-07
+ * audit): exactly two tools ever emit an `A`/`a` command — `shapes.ts`'s
+ * `ellipse` (two `A`s, the full-ellipse sweep) and `measure.ts`'s `sector`
+ * (one `A`, the pie-slice's curved edge). Every other path-figure tool
+ * (`arcShape`/`curve`'s `Q`, `doubleCurve`'s `C`, `annotations.ts`'s
+ * `M/L/C/Z` marks) never used `A` and was never affected. All circular fib
+ * tools (`fibArc`/`fibCircle`/`fibSpeedResistanceArcs`/`fibWedge`,
+ * `cycles.ts`'s `sineLine`) already render via the NATIVE `arc`/`circle`
+ * figure types (`arcFigure`/`circleFigure` above), which klinecharts draws
+ * via `ctx.arc(...)` directly — a completely separate code path from
+ * `drawPath`, confirmed unaffected by this bug.
+ *
+ * Fix: replace every `A`/`a` opcode with an equivalent run of cubic-Bézier
+ * (`C`) segments — `C` is one of the safe, self-contained absolute commands
+ * above, so a path built ONLY from `M`/`L`/`C`/`Q`/`Z` can never hit this
+ * bug regardless of how klinecharts' `drawPath` mishandles `currentX`/
+ * `currentY` internally. The math below (cubic-Bézier-per-≤90°-segment via
+ * the standard tangent-half-angle `alpha` formula) is the same well-known
+ * closed-form SVG-arc-to-Bézier construction klinecharts' OWN internal
+ * `ellipticalArcToBezier`/`ellipticalArcToBeziers` helpers use elsewhere
+ * (`dist/index.esm.js` `~L5687-5751`, used for OTHER internal rendering,
+ * just never reachable from a `path` FIGURE's own `A` opcode) —
+ * reimplemented here as pure geometry so this file's own path strings never
+ * touch the broken opcode at all. `rotation` is in RADIANS (matches every
+ * other angle in this file); `startAngle`/`endAngle` sweep in the ellipse's
+ * own local parameter space (θ=0 is the point at `rx` along the rotated
+ * major axis — i.e. exactly `{x: cx + rx·cos(rotation), y: cy + rx·sin
+ * (rotation)}`, the same convention `ellipse`'s pre-fix `p1`/`p2` anchors
+ * already used, so callers migrating off the old `A`-based path need no
+ * angle-convention changes).
+ */
+function ellipticalArcToBezierSegments(
+  cx: number,
+  cy: number,
+  rx: number,
+  ry: number,
+  rotation: number,
+  startAngle: number,
+  endAngle: number
+): { cp1x: number; cp1y: number; cp2x: number; cp2y: number; x: number; y: number }[] {
+  const cosPhi = Math.cos(rotation);
+  const sinPhi = Math.sin(rotation);
+  const deltaAngle = endAngle - startAngle;
+  if (Math.abs(deltaAngle) < 1e-9) return [];
+  const numSegments = Math.max(1, Math.ceil(Math.abs(deltaAngle) / (Math.PI / 2)));
+  const segments: { cp1x: number; cp1y: number; cp2x: number; cp2y: number; x: number; y: number }[] = [];
+  const pointAt = (theta: number): { x: number; y: number } => ({
+    x: cx + rx * Math.cos(theta) * cosPhi - ry * Math.sin(theta) * sinPhi,
+    y: cy + rx * Math.cos(theta) * sinPhi + ry * Math.sin(theta) * cosPhi,
+  });
+  const tangentAt = (theta: number): { x: number; y: number } => ({
+    x: -rx * Math.sin(theta) * cosPhi - ry * Math.cos(theta) * sinPhi,
+    y: -rx * Math.sin(theta) * sinPhi + ry * Math.cos(theta) * cosPhi,
+  });
+  for (let i = 0; i < numSegments; i++) {
+    const a0 = startAngle + (i * deltaAngle) / numSegments;
+    const a1 = startAngle + ((i + 1) * deltaAngle) / numSegments;
+    const alpha = (Math.sin(a1 - a0) * (Math.sqrt(4 + 3 * Math.pow(Math.tan((a1 - a0) / 2), 2)) - 1)) / 3;
+    const p0 = pointAt(a0);
+    const p1 = pointAt(a1);
+    const t0 = tangentAt(a0);
+    const t1 = tangentAt(a1);
+    segments.push({
+      cp1x: p0.x + alpha * t0.x,
+      cp1y: p0.y + alpha * t0.y,
+      cp2x: p1.x - alpha * t1.x,
+      cp2y: p1.y - alpha * t1.y,
+      x: p1.x,
+      y: p1.y,
+    });
+  }
+  return segments;
+}
+
+/**
+ * The arc-free drop-in for an `A`/`a` opcode — returns ONLY the `"C x1 y1 x2
+ * y2 x y"`-per-segment continuation string (no leading `M`, no trailing
+ * `Z`), so callers splice it into their own path exactly where the `A`
+ * command used to sit (after their own `M`/`L` to the arc's start point).
+ * See `ellipticalArcToBezierSegments` above for the full bug writeup and
+ * the math. A circular arc is just `rx === ry` with `rotation = 0`.
+ */
+export function arcPathCommands(cx: number, cy: number, rx: number, ry: number, rotation: number, startAngle: number, endAngle: number): string {
+  return ellipticalArcToBezierSegments(cx, cy, rx, ry, rotation, startAngle, endAngle)
+    .map((s) => `C ${s.cp1x} ${s.cp1y} ${s.cp2x} ${s.cp2y} ${s.x} ${s.y}`)
+    .join(" ");
+}
+
+/** The arc's own start point (θ=`startAngle`) — for building the initial `M`/`L` a caller splices `arcPathCommands` after. */
+export function pointOnEllipse(cx: number, cy: number, rx: number, ry: number, rotation: number, theta: number): Coordinate {
+  return {
+    x: cx + rx * Math.cos(theta) * Math.cos(rotation) - ry * Math.sin(theta) * Math.sin(rotation),
+    y: cy + rx * Math.cos(theta) * Math.sin(rotation) + ry * Math.sin(theta) * Math.cos(rotation),
+  };
+}
+
 // ── Fibonacci level sets ─────────────────────────────────────────────────
 export const FIB_RETRACEMENT_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1] as const;
 export const FIB_EXTENSION_LEVELS = [0, 0.382, 0.618, 1, 1.272, 1.618, 2, 2.618] as const;

@@ -20,6 +20,7 @@ import {
   dashedLine,
   outlinedRect,
   pathFigure,
+  arcPathCommands,
   labelFigure,
   formatRupeesLabel,
   formatPercentLabel,
@@ -241,6 +242,20 @@ export function registerMeasureOverlays(): void {
   // (opaque border) — since a pie slice's curved edge can't be expressed by
   // `fillPolygon` (straight edges only).
   //
+  // **2026-08-07 founder bug fix**: the curved edge was originally one `A`
+  // (elliptical-arc) command. klinecharts@10.0.1's `path` figure has a real
+  // upstream bug where `A`/`a` always draws from the coordinate-space
+  // origin instead of the path's actual current point (verified against
+  // `dist/index.esm.js`'s `drawPath` — see `figure-kit.ts`'s
+  // `ellipticalArcToBezierSegments` doc for the full writeup), so with this
+  // tool's own `x=0,y=0`-plus-origin-relative-coordinates convention (this
+  // comment block, below) the arc rendered as if `center` were always the
+  // canvas origin — a visibly wrong wedge. Now built via `arcPathCommands`'s
+  // cubic-Bézier approximation instead (center already known exactly —
+  // `angle1`/`angle1+delta` — so no SVG endpoint-to-center inverse is
+  // needed, just feed the same angles straight in), emitting only
+  // `M`/`L`/`C`/`Z`, immune to the bug.
+  //
   // **Deliberate divergence from `shapes.ts`'s `ellipse` convention**:
   // `ellipse` passes `x=0, y=0` and embeds ABSOLUTE canvas coordinates in
   // the path string. `path`'s own `checkEventOn` is `checkCoordinateOnRect`
@@ -275,12 +290,9 @@ export function registerMeasureOverlays(): void {
       // two rays" reading, not the reflex/long-way-round slice).
       while (delta > Math.PI) delta -= 2 * Math.PI;
       while (delta <= -Math.PI) delta += 2 * Math.PI;
-      const sweepFlag = delta >= 0 ? 1 : 0;
-      const largeArcFlag = Math.abs(delta) > Math.PI ? 1 : 0;
       // Origin-relative (relative to `center`, which becomes the figure's own x/y).
       const edge1Rel = { x: radius * Math.cos(angle1), y: radius * Math.sin(angle1) };
-      const edge2Rel = { x: radius * Math.cos(angle1 + delta), y: radius * Math.sin(angle1 + delta) };
-      const path = `M 0 0 L ${edge1Rel.x} ${edge1Rel.y} A ${radius} ${radius} 0 ${largeArcFlag} ${sweepFlag} ${edge2Rel.x} ${edge2Rel.y} Z`;
+      const path = `M 0 0 L ${edge1Rel.x} ${edge1Rel.y} ${arcPathCommands(0, 0, radius, radius, 0, angle1, angle1 + delta)} Z`;
       const hitOpts = { width: radius, height: radius };
       return [
         pathFigure(center.x, center.y, path, fill, { fill: true, ...hitOpts }),

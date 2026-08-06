@@ -4,16 +4,27 @@
  * `tool-registry.ts`).
  *
  * `ellipse` is the one genuinely tricky shape: "3pt: rotated major axis +
- * minor radius — ONE path figure w/ two A commands" per the plan. Built via
- * raw SVG-path arc commands, whose rotation is expressed natively by the
- * `A` command's own x-axis-rotation argument (arg index 3 of
- * `A rx ry x-axis-rotation large-arc-flag sweep-flag x y`) — this correctly
- * renders a NON-axis-aligned ellipse without needing a canvas transform the
- * mini SVG-path parser doesn't support. See `figure-kit.ts`'s `pathFigure`
- * doc for why passing `x=0, y=0` and embedding true absolute pixel
- * coordinates directly in the path string (rather than relative offsets)
- * is the correct usage here — `drawPath` offsets EVERY command's args by
- * the figure's own `(x,y)`, uppercase or lowercase alike.
+ * minor radius — ONE path figure". Originally built via raw SVG-path `A`
+ * (elliptical-arc) commands, whose rotation is expressed natively by the
+ * `A` command's own x-axis-rotation argument. **2026-08-07 founder bug
+ * fix**: klinecharts@10.0.1's `path` figure has a real upstream bug where
+ * `A`/`a` commands always draw from the coordinate-space origin instead of
+ * the path's actual current point (verified line-by-line against
+ * `dist/index.esm.js`'s `drawPath` — see `figure-kit.ts`'s
+ * `ellipticalArcToBezierSegments` doc for the full writeup). `ellipse` now
+ * builds the same rotated-ellipse outline via `arcPathCommands`'s cubic-
+ * Bézier approximation instead — visually equivalent (4 segments over the
+ * full 2π sweep, well under the ~1-2% max radial error a quarter-arc
+ * Bézier approximation carries) and immune to the bug since it only emits
+ * `M`/`C`/`Z`. See `figure-kit.ts`'s `pathFigure` doc for why passing
+ * `x=0, y=0` and embedding true absolute pixel coordinates directly in the
+ * path string (rather than relative offsets) is the correct usage here —
+ * `drawPath` offsets EVERY command's args by the figure's own `(x,y)`,
+ * uppercase or lowercase alike. (The resulting hit-test rect pinned to the
+ * canvas origin is a separate, PRE-EXISTING characteristic of this
+ * `x=0,y=0` convention, unrelated to the arc bug and out of this pass's
+ * scope — see `measure.ts`'s `sector` doc for the alternative
+ * origin-relative convention a NEW tool should use instead.)
  */
 import { registerOverlay, type Coordinate, type OverlayFigure, type OverlayCreateFiguresCallbackParams } from "klinecharts";
 import {
@@ -22,6 +33,8 @@ import {
   fillPolygon,
   circleFigure,
   pathFigure,
+  arcPathCommands,
+  pointOnEllipse,
   labelFigure,
   midpoint,
   resolveLineColor,
@@ -59,10 +72,8 @@ export function registerShapeOverlays(): void {
         // into the ellipse's own local frame and take the |y| component.
         ry = Math.max(2, Math.abs(-v.x * Math.sin(angle) + v.y * Math.cos(angle)));
       }
-      const p1 = { x: center.x + rx * Math.cos(angle), y: center.y + rx * Math.sin(angle) };
-      const p2 = { x: center.x - rx * Math.cos(angle), y: center.y - rx * Math.sin(angle) };
-      const rotationDeg = (angle * 180) / Math.PI;
-      const path = `M ${p1.x} ${p1.y} A ${rx} ${ry} ${rotationDeg} 1 1 ${p2.x} ${p2.y} A ${rx} ${ry} ${rotationDeg} 1 1 ${p1.x} ${p1.y} Z`;
+      const p1 = pointOnEllipse(center.x, center.y, rx, ry, angle, 0);
+      const path = `M ${p1.x} ${p1.y} ${arcPathCommands(center.x, center.y, rx, ry, angle, 0, 2 * Math.PI)} Z`;
       return [pathFigure(0, 0, path, color, { fill: true, width: rx * 2, height: ry * 2 }), solidLine([center, majorEnd], color, 0.8)];
     },
   });
