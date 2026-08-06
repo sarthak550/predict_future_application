@@ -69,6 +69,9 @@ import { Info } from "lucide-react";
 import { STRATEGY_LIST, clampStrategyParams, getStrategyDef, type StrategyDef, type StrategySignal } from "@/lib/ta/strategies";
 import { intervalToProductType, type BacktestStats } from "@/lib/ta/backtest";
 import type { PaperProductType } from "@predict-future/business-rules/papertrading/costs";
+import { OverviewTab } from "./backtest-results/overview-tab";
+import { PerformanceTab } from "./backtest-results/performance-tab";
+import { TradesTab } from "./backtest-results/trades-tab";
 
 /** SS2, D6 — which of the two signal producers a given run came from. A template run always carries the `STRATEGY_LIST` id that produced it; a script run carries the `UserStrategyScript` id/name (the id is `"new"` for a never-saved script — see `script-editor-drawer.tsx`). */
 export type RunOrigin = { kind: "template"; strategyId: string } | { kind: "script"; scriptId: string; scriptName: string };
@@ -121,16 +124,10 @@ export function saveStoredStrategyConfig(config: StoredStrategyConfig): void {
 }
 
 // ── Shared formatting helpers ────────────────────────────────────────────
-
-function formatRupees(v: number): string {
-  const sign = v < 0 ? "-" : "";
-  return `${sign}₹${Math.abs(v).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
-}
-
-function formatPct(v: number): string {
-  const sign = v > 0 ? "+" : "";
-  return `${sign}${v.toFixed(2)}%`;
-}
+// (`formatRupees`/`formatPct` moved to `./backtest-results/format.ts` when
+// `StrategyStatsCard` was rewritten to delegate to that folder's
+// sub-components — this file no longer formats any stat itself, only the
+// product-type chip below.)
 
 function productTypeLabel(productType: PaperProductType): string {
   return productType === "DELIVERY" ? "Delivery" : "Intraday";
@@ -281,6 +278,31 @@ export function OriginBadge({ origin }: { origin: RunOrigin }) {
   );
 }
 
+const RESULTS_SUB_TABS = [
+  { id: "overview", label: "Overview" },
+  { id: "performance", label: "Performance" },
+  { id: "trades", label: "Trades" }
+] as const;
+type ResultsSubTab = (typeof RESULTS_SUB_TABS)[number]["id"];
+
+/**
+ * Backtest Metrics Engine + Results UI ticket — the founder's exact ask:
+ * "show the strategy run results similar to what TradingView shows… run-ups,
+ * drawdowns, capital efficiency, margin usage… under real trading
+ * scenarios… views one with ideal situation and other with real situation
+ * having brokerage and trading costs." This replaces the old fixed Gross|
+ * Net two-column card with an IDEAL/REAL toggle (REAL — net of costs —
+ * default, matching the pre-existing "net visually primary" law this file
+ * already established) that drives THREE TradingView-style sub-tabs
+ * (Overview/Performance/Trades), each delegating to its own component in
+ * `./backtest-results/` rather than forking this shared card — both call
+ * sites (`StrategyConfigPanel` below, template runs; `script-editor-
+ * drawer.tsx`'s Results tab, script runs) get the identical richer card for
+ * free, per this component's own pre-existing "one shared component, not
+ * two copies" doc above. `view`/`tab` are component-local, session-only
+ * state (reset to REAL/Overview on remount) — same posture the drawer's own
+ * `resultsCollapsed` already has, no persistence requirement in the brief.
+ */
 export function StrategyStatsCard({
   runResult,
   isStale,
@@ -295,6 +317,8 @@ export function StrategyStatsCard({
   isPremiumMode: boolean;
 }) {
   const { stats } = runResult;
+  const [view, setView] = useState<"real" | "ideal">("real");
+  const [tab, setTab] = useState<ResultsSubTab>("overview");
 
   if (stats.trades === 0) {
     return (
@@ -304,10 +328,8 @@ export function StrategyStatsCard({
     );
   }
 
-  const netPositive = stats.netPnl >= 0;
-
   return (
-    <div className="space-y-2 rounded-xl border border-ink-100 p-3">
+    <div data-testid="strategy-stats-card" className="space-y-2 rounded-xl border border-ink-100 p-3">
       {isStale && (
         <p className="rounded-lg bg-amber-50 px-2 py-1.5 text-[11px] font-medium text-amber-700">
           Interval changed since this run ({liveCandleCount} {liveInterval} bars now loaded) — click Run backtest to refresh these
@@ -315,47 +337,54 @@ export function StrategyStatsCard({
         </p>
       )}
 
-      {/* Gross | Net columns — net visually PRIMARY: larger type, bold weight, a highlighted panel; gross is
-          deliberately smaller and muted, per the T3 acceptance criterion ("gross must be visibly, unambiguously
-          secondary/muted in a side-by-side comparison"). */}
-      <div className="grid grid-cols-2 gap-2">
-        <div className="rounded-lg bg-ink-50 p-2 text-center">
-          <p className="text-[10px] font-medium uppercase tracking-wide text-ink-400">Gross</p>
-          <p className="text-sm font-medium text-ink-500">{formatPct(stats.grossReturnPct)}</p>
-          <p className="text-[11px] text-ink-400">{formatRupees(stats.grossPnl)}</p>
+      {/* IDEAL/REAL toggle — REAL (net of costs) is the default, per the founder brief's own explicit default. */}
+      <div>
+        <div className="flex gap-1 rounded-lg bg-ink-50 p-0.5">
+          <button
+            type="button"
+            onClick={() => setView("real")}
+            className={`flex-1 rounded-md py-1 text-[11px] font-semibold transition-colors ${
+              view === "real" ? "bg-sky-600 text-white" : "text-ink-500 hover:bg-ink-100"
+            }`}
+          >
+            Real
+          </button>
+          <button
+            type="button"
+            onClick={() => setView("ideal")}
+            className={`flex-1 rounded-md py-1 text-[11px] font-semibold transition-colors ${
+              view === "ideal" ? "bg-sky-600 text-white" : "text-ink-500 hover:bg-ink-100"
+            }`}
+          >
+            Ideal
+          </button>
         </div>
-        <div className={`rounded-lg p-2 text-center ${netPositive ? "bg-emerald-50" : "bg-rose-50"}`}>
-          <p className={`text-[10px] font-semibold uppercase tracking-wide ${netPositive ? "text-emerald-700" : "text-rose-700"}`}>
-            Net of costs
-          </p>
-          <p className={`text-lg font-bold ${netPositive ? "text-emerald-700" : "text-rose-700"}`}>{formatPct(stats.netReturnPct)}</p>
-          <p className={`text-xs font-semibold ${netPositive ? "text-emerald-700" : "text-rose-700"}`}>{formatRupees(stats.netPnl)}</p>
-        </div>
+        <p className="mt-1 text-[10px] leading-4 text-ink-400">
+          {view === "real"
+            ? "Includes brokerage, STT, exchange charges, GST, stamp duty, DP charges (indicative FY2025-26 discount-broker rates)."
+            : "No costs — theoretical."}
+        </p>
       </div>
 
-      <div className="flex items-center justify-between text-[11px] text-ink-500">
-        <span>Costs (both legs)</span>
-        <span className="font-medium text-ink-700">{formatRupees(stats.totalCosts)}</span>
+      {/* TradingView-style sub-tabs. */}
+      <div className="flex gap-1 border-b border-ink-100">
+        {RESULTS_SUB_TABS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => setTab(t.id)}
+            className={`flex-1 rounded-t-md py-1.5 text-[11px] font-semibold ${
+              tab === t.id ? "border-b-2 border-sky-600 text-sky-700" : "text-ink-500 hover:bg-ink-50"
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
       </div>
 
-      <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] text-ink-500">
-        <div className="flex justify-between">
-          <span>Trades</span>
-          <span className="font-medium text-ink-700">{stats.trades}</span>
-        </div>
-        <div className="flex justify-between">
-          <span>Win rate</span>
-          <span className="font-medium text-ink-700">{stats.winRatePct === null ? "—" : `${stats.winRatePct.toFixed(0)}%`}</span>
-        </div>
-        <div className="flex justify-between">
-          <span>Max drawdown</span>
-          <span className="font-medium text-ink-700">{stats.maxDrawdownPct.toFixed(2)}%</span>
-        </div>
-        <div className="flex justify-between">
-          <span>Buy &amp; hold</span>
-          <span className="font-medium text-ink-700">{formatPct(stats.buyHoldReturnPct)}</span>
-        </div>
-      </div>
+      {tab === "overview" && <OverviewTab stats={stats} view={view} interval={runResult.ranInterval} />}
+      {tab === "performance" && <PerformanceTab stats={stats} view={view} />}
+      {tab === "trades" && <TradesTab trades={stats.tradesDetail} interval={runResult.ranInterval} view={view} />}
 
       {stats.openAtEnd && (
         <p className="rounded-full bg-sky-50 px-2 py-1 text-center text-[10px] font-semibold uppercase tracking-wide text-sky-700">

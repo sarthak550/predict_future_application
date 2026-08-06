@@ -283,7 +283,73 @@ export interface BacktestStats {
 
   /** Per-bar net equity curve, mark-to-market on EVERY bar's close (not just at trade exits — the open trade, if any, is marked to that bar's close, identical to the mechanism `equity[i]` already used pre-extension), plus a frictionless buy-and-hold overlay. See `EquityPoint`'s own field docs. */
   equityCurve: EquityPoint[];
+
+  // ── Capital efficiency + margin usage (founder feedback: "capital
+  // efficiency, margin usage… under real trading scenarios") ───────────────
+  //
+  // This engine is long-only, single-position (see the module's own
+  // "single-pass design" note — at most one `openTrade` at any bar), so
+  // "peak CONCURRENT position value" collapses to "the biggest single
+  // trade's own deployed capital" — there is never a second position to sum
+  // alongside it. Every ₹ figure here is on an ENTRY-BASIS (`entryPrice ×
+  // qty`, the capital actually committed at the moment of entry), not a
+  // mark-to-market current value — matching the product brief's own phrase
+  // "position value at entry basis" and keeping this figure stable for the
+  // life of the trade rather than wobbling bar-to-bar with price.
+
+  /** The single biggest trade's own deployed capital (`entryPrice × qty`, entry-basis) across every trade in `tradesDetail` (closed + the at-most-one open one). `0` when there are zero trades. Because this engine only ever holds one position at a time, this is also literally "peak concurrent position value" — there is no second, simultaneously-open position to add to it. */
+  peakDeployedCapital: number;
+  /**
+   * Bar-weighted average of "capital deployed at this bar" ÷ `notional`, over every loaded bar. A bar counts as
+   * deployed (at its trade's own entry-basis value) from the bar a position is entered through the bar it exits
+   * (or the last loaded bar, if still open) INCLUSIVE — the entry bar itself counts, since capital is committed
+   * from that bar's close onward (a deliberately different bar-inclusion rule from `barsHeld`'s excursion-scan
+   * convention, which excludes the entry bar for a different reason — see `computeExcursion`'s own doc). `null`
+   * only when there are zero loaded candles (no window to average over at all) — `0` is a real, meaningful value
+   * for a zero-trade run (genuinely no capital was ever deployed), not a stand-in for "undefined".
+   */
+  avgDeployedCapitalPct: number | null;
+  /** `grossPnl ÷ peakDeployedCapital × 100` — "if you'd had to hold the single biggest trade's own capital in reserve the whole run, what return did that reserve earn." `null` when `peakDeployedCapital === 0` (zero trades — nothing was ever deployed, so a return ON it is undefined, not zero). */
+  returnOnPeakCapitalPctGross: number | null;
+  /** Net-of-costs mirror of `returnOnPeakCapitalPctGross`. */
+  returnOnPeakCapitalPctNet: number | null;
+
+  /**
+   * Which margin rule was applied — see `MarginModel`'s own doc for the full honesty accounting. Set from the
+   * caller's `productType` directly, independent of whether any trade actually happened (a 0-trade DELIVERY run
+   * still reports `"DELIVERY_FULL_NOTIONAL"`).
+   */
+  marginModel: MarginModel;
+  /** Bar-weighted average margin utilization, identical in magnitude to `avgDeployedCapitalPct` under BOTH of this engine's current margin models (see `MarginModel`'s doc for why) — kept as its OWN field, not a re-export, so a future real intraday-leverage model only needs to change this computation, not `avgDeployedCapitalPct`'s. Same `null`-only-when-zero-candles rule. */
+  avgMarginUsedPct: number | null;
+  /** Peak margin utilization, `peakDeployedCapital ÷ notional × 100`. `0` (not `null`) for a zero-trade run — see `avgDeployedCapitalPct`'s own note on why `0` is a real value there, not an "undefined" stand-in. */
+  peakMarginUsedPct: number;
 }
+
+/**
+ * Which margin rule `runBacktest` applied for a run's `productType` — see the module's own capital-efficiency
+ * section doc for the surrounding context.
+ *
+ * `DELIVERY_FULL_NOTIONAL`: the REAL regulatory rule, not a limitation — Indian cash-delivery equity trades
+ * require the full notional up front, zero leverage, by law. Margin genuinely equals deployed capital here.
+ *
+ * `INTRADAY_FULL_NOTIONAL_NO_LEVERAGE_MODEL`: an HONEST LIMITATION, not the real rule — a real Indian discount
+ * broker offers intraday leverage (commonly ~4-5×, MTF/margin-trading-funding style), but
+ * `packages/business-rules/src/papertrading/` has never modeled intraday margin or leverage anywhere in this
+ * codebase (see `pendingOrders.ts`'s own comment: "Phase 1 never modeled margin for intraday shorting" — the
+ * live paper-trading order-blocking path has the identical gap this backtest engine does). Per the product
+ * brief's explicit instruction ("if the engine has NO intraday leverage model, DO NOT invent one — report margin
+ * = full notional with an explicit disclosed limitation"), this engine reports intraday margin at full notional
+ * too — identical in magnitude to the delivery case — rather than fabricating a leverage multiplier this
+ * codebase has never verified against a real broker. This DELIBERATELY OVERSTATES real intraday margin
+ * requirement; `INTRADAY_MARGIN_MODEL_DISCLAIMER` is the exact copy the UI must render alongside any intraday
+ * margin figure so this limitation is disclosed, not silently passed off as precise.
+ */
+export type MarginModel = "DELIVERY_FULL_NOTIONAL" | "INTRADAY_FULL_NOTIONAL_NO_LEVERAGE_MODEL";
+
+/** Exact UI copy for the disclosed limitation on `INTRADAY_FULL_NOTIONAL_NO_LEVERAGE_MODEL` — see that model's own doc for the full reasoning. Render this wherever intraday margin/capital-efficiency figures are shown; never render an intraday margin number without it. */
+export const INTRADAY_MARGIN_MODEL_DISCLAIMER =
+  "No intraday leverage/margin model exists in this simulator yet, so intraday margin is shown at full notional (no leverage applied) — the same as delivery. A real broker's intraday leverage (often 4-5×) would require meaningfully less margin than this. Delivery margin (full notional) is the actual regulatory rule, not a limitation.";
 
 /**
  * One point on the backtest's equity curve — see `BacktestStats.equityCurve`.
@@ -298,6 +364,18 @@ export interface EquityPoint {
   drawdownAmount: number;
   /** Frictionless buy-and-hold equity for the SAME starting capital: `notional × candles[i].close ÷ candles[0].open`. Deliberately cost-free and signal-independent, mirroring `buyHoldReturnPct`'s own existing convention (a single hypothetical buy at the window's first open, held throughout, never re-priced for transaction costs — the classic passive baseline every strategy is measured against, not a claim that real buy-and-hold investing is literally free). At the final bar, `buyHoldEquity === notional × (1 + buyHoldReturnPct/100)` exactly. */
   buyHoldEquity: number;
+  /**
+   * The "Ideal — no costs" mirror of `equity` — same mark-to-market mechanism (built in the SAME forward pass,
+   * so it can never drift from `equity`), but with EVERY transaction cost zeroed out on both legs. At the final
+   * bar, `grossEquity === notional × (1 + grossReturnPct/100)` exactly (same relationship `equity`'s own final
+   * bar already has with `netReturnPct`). Added for the Strategy Results UI's Ideal/Real toggle (a chart needs a
+   * cost-free SERIES to plot, not just the whole-window `grossPnl`/`grossReturnPct` scalars that already
+   * existed) — deliberately does NOT get its own `maxDrawdownPct`/`maxEquityRunUpPct` aggregate pair in
+   * `BacktestStats` (that law — "costs are real cash flows, so only the net equity curve is an actual economic
+   * curve" — is unchanged and still governs the STATS contract); any drawdown/run-up shading drawn against this
+   * series is a transient CHART computation the UI derives locally, not a persisted engine stat.
+   */
+  grossEquity: number;
 }
 
 export interface BacktestOptions {
@@ -330,6 +408,7 @@ function computeBuyHoldReturnPct(candles: readonly StrategyCandle[]): number {
 function buildEquityCurve(
   candles: readonly StrategyCandle[],
   equity: readonly number[],
+  equityGross: readonly number[],
   startingCapital: number
 ): {
   points: EquityPoint[];
@@ -366,7 +445,7 @@ function buildEquityCurve(
 
     const buyHoldEquity = firstOpenValid ? (startingCapital * candles[i].close) / firstOpen : startingCapital;
 
-    points[i] = { timestamp: candles[i].timestamp, equity: e, drawdownPct, drawdownAmount, buyHoldEquity };
+    points[i] = { timestamp: candles[i].timestamp, equity: e, drawdownPct, drawdownAmount, buyHoldEquity, grossEquity: equityGross[i] };
   }
 
   return { points, maxDrawdownPct, maxDrawdownAmount, maxEquityRunUpPct, maxEquityRunUpAmount };
@@ -490,6 +569,51 @@ function computeProfitLossAggregates(
   return { profit, loss, winCount, avgWin, avgLoss, avgWinLossRatio, profitFactor, largestWin, largestLoss };
 }
 
+/**
+ * Capital-efficiency + margin-usage aggregates — see `BacktestStats`'s own capital-efficiency section doc for
+ * the full reasoning (entry-basis valuation, single-position-so-"peak concurrent"-collapses-to-"biggest trade",
+ * the honest no-intraday-leverage-model accounting). Derived from the already-built `tradesDetail` (closed +
+ * the at-most-one open trade, entry/exit indices already resolved) rather than re-walking `candles` a third
+ * time — trades are non-overlapping by construction (this module's own `pctTimeInMarket` doc already establishes
+ * this), so summing each trade's own bar-span independently can never double-count a bar.
+ */
+function computeCapitalAndMarginMetrics(
+  tradesDetail: readonly BacktestTrade[],
+  candleCount: number,
+  notional: number,
+  productType: PaperProductType,
+  grossPnl: number,
+  netPnl: number
+): Pick<
+  BacktestStats,
+  "peakDeployedCapital" | "avgDeployedCapitalPct" | "returnOnPeakCapitalPctGross" | "returnOnPeakCapitalPctNet" | "marginModel" | "avgMarginUsedPct" | "peakMarginUsedPct"
+> {
+  const lastCandleIndex = candleCount - 1;
+  let peakDeployedCapital = 0;
+  let totalDeployedBarUnits = 0;
+
+  for (const t of tradesDetail) {
+    const deployed = t.entryPrice * t.qty;
+    if (deployed > peakDeployedCapital) peakDeployedCapital = deployed;
+    const throughIndex = t.exitIndex ?? lastCandleIndex;
+    const barsSpanned = throughIndex - t.entryIndex + 1; // inclusive of the entry bar itself — see field doc.
+    totalDeployedBarUnits += barsSpanned * deployed;
+  }
+
+  const avgDeployedCapitalPct = candleCount > 0 && notional > 0 ? (totalDeployedBarUnits / candleCount / notional) * 100 : null;
+  const returnOnPeakCapitalPctGross = peakDeployedCapital > 0 ? (grossPnl / peakDeployedCapital) * 100 : null;
+  const returnOnPeakCapitalPctNet = peakDeployedCapital > 0 ? (netPnl / peakDeployedCapital) * 100 : null;
+
+  // Honesty law (see `MarginModel`'s own doc): neither product type has a real leverage model in this codebase
+  // yet, so margin utilization is numerically identical to capital deployment in both cases — a future real
+  // intraday-leverage model would change ONLY this block, not the capital fields above.
+  const marginModel: MarginModel = productType === "DELIVERY" ? "DELIVERY_FULL_NOTIONAL" : "INTRADAY_FULL_NOTIONAL_NO_LEVERAGE_MODEL";
+  const avgMarginUsedPct = avgDeployedCapitalPct;
+  const peakMarginUsedPct = notional > 0 ? (peakDeployedCapital / notional) * 100 : 0;
+
+  return { peakDeployedCapital, avgDeployedCapitalPct, returnOnPeakCapitalPctGross, returnOnPeakCapitalPctNet, marginModel, avgMarginUsedPct, peakMarginUsedPct };
+}
+
 export function runBacktest(candles: readonly StrategyCandle[], signals: readonly StrategySignal[], options: BacktestOptions): BacktestStats {
   const notional = options.notional && options.notional > 0 ? options.notional : 100000;
   const productType = options.productType;
@@ -504,7 +628,11 @@ export function runBacktest(candles: readonly StrategyCandle[], signals: readonl
 
   const trades: BaseTrade[] = [];
   const equity: number[] = new Array(candles.length);
+  // "Ideal — no costs" mirror of `equity`, built in the SAME loop — see `EquityPoint.grossEquity`'s own doc for
+  // why this can never drift from the net array (same forward pass, same per-bar state).
+  const equityGross: number[] = new Array(candles.length);
   let realizedNet = 0;
+  let realizedGross = 0;
   let openTrade: { entryIndex: number; entryTimestamp: number; entryPrice: number; qty: number; entryCosts: number } | null = null;
 
   for (let i = 0; i < candles.length; i++) {
@@ -541,16 +669,21 @@ export function runBacktest(candles: readonly StrategyCandle[], signals: readonl
         isOpen: false
       });
       realizedNet += netPnl;
+      realizedGross += grossPnl;
       openTrade = null;
     }
 
     // Mark-to-market AFTER this bar's entry/exit resolves — "enter/exit at signal-bar close" applies to the
     // equity curve too, not just the trade log.
     let unrealized = 0;
+    let unrealizedGross = 0;
     if (openTrade) {
       unrealized = (candles[i].close - openTrade.entryPrice) * openTrade.qty - openTrade.entryCosts;
+      // Gross mark-to-market: zero cost drag at all, not even the entry leg — the literal "no costs" ideal view.
+      unrealizedGross = (candles[i].close - openTrade.entryPrice) * openTrade.qty;
     }
     equity[i] = notional + realizedNet + unrealized;
+    equityGross[i] = notional + realizedGross + unrealizedGross;
   }
 
   let openTradeDetail: BaseTrade | null = null;
@@ -635,10 +768,12 @@ export function runBacktest(candles: readonly StrategyCandle[], signals: readonl
   const avgBarsInTrades = tradesDetail.length > 0 ? totalBarsInTrades / tradesDetail.length : null;
   const pctTimeInMarket = candles.length >= 2 ? (totalBarsInTrades / (candles.length - 1)) * 100 : null;
 
-  const { points: equityCurve, maxDrawdownPct, maxDrawdownAmount, maxEquityRunUpPct, maxEquityRunUpAmount } = buildEquityCurve(candles, equity, notional);
+  const { points: equityCurve, maxDrawdownPct, maxDrawdownAmount, maxEquityRunUpPct, maxEquityRunUpAmount } = buildEquityCurve(candles, equity, equityGross, notional);
 
   const annualizedReturnPctGross = candles.length >= 2 ? computeAnnualizedReturnPct(grossReturnPct, candles[0].timestamp, candles[candles.length - 1].timestamp) : null;
   const annualizedReturnPctNet = candles.length >= 2 ? computeAnnualizedReturnPct(netReturnPct, candles[0].timestamp, candles[candles.length - 1].timestamp) : null;
+
+  const capitalAndMargin = computeCapitalAndMarginMetrics(tradesDetail, candles.length, notional, productType, grossPnl, netPnl);
 
   return {
     trades: tradesDetail.length,
@@ -695,6 +830,8 @@ export function runBacktest(candles: readonly StrategyCandle[], signals: readonl
     annualizedReturnPctGross,
     annualizedReturnPctNet,
 
-    equityCurve
+    equityCurve,
+
+    ...capitalAndMargin
   };
 }

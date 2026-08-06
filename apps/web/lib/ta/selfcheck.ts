@@ -523,6 +523,37 @@ function checkThreeTradeKnownSeries(): void {
     stats.equityCurve[11]?.equity ?? NaN
   );
 
+  // grossEquity ("Ideal — no costs") mirror: the last bar equals notional + total grossPnl exactly, matching the
+  // documented `grossEquity === notional*(1+grossReturnPct/100)` invariant.
+  const finalGross = grossPnl1 + grossPnl2 + grossPnl3;
+  assertClose("3-trade: equityCurve's last bar grossEquity is notional+total grossPnl (Ideal view)", stats.equityCurve[12]?.grossEquity ?? NaN, notional + finalGross);
+  assertClose("3-trade: grossEquity === notional*(1+grossReturnPct/100) invariant", stats.equityCurve[12]?.grossEquity ?? NaN, notional * (1 + stats.grossReturnPct / 100));
+
+  // Capital efficiency + margin (hand-traced): deployed1=entryPrice1*qty1=100*100=10000, deployed2=120*83=9960,
+  // deployed3=125*80=10000 -> peak is 10000 (tied trade1/trade3, both exactly notional since qty floors close to
+  // it at these prices). Bar spans (entry..through INCLUSIVE): trade1 idx1..3 = 3 bars, trade2 idx4..6 = 3 bars,
+  // trade3 idx7..11 = 5 bars, over candleCount=13.
+  const deployed1 = 100 * qty1;
+  const deployed2 = 120 * qty2;
+  const deployed3 = 125 * qty3;
+  const expectedPeakDeployed = Math.max(deployed1, deployed2, deployed3);
+  assertClose("3-trade: peakDeployedCapital is max(10000, 9960, 10000) = 10000", stats.peakDeployedCapital, expectedPeakDeployed);
+  const expectedAvgDeployedPct = ((3 * deployed1 + 3 * deployed2 + 5 * deployed3) / 13 / notional) * 100;
+  assertClose("3-trade: avgDeployedCapitalPct matches the hand bar-weighted sum", stats.avgDeployedCapitalPct ?? NaN, expectedAvgDeployedPct);
+  assertClose(
+    "3-trade: returnOnPeakCapitalPctGross is grossPnl/peakDeployedCapital*100",
+    stats.returnOnPeakCapitalPctGross ?? NaN,
+    (stats.grossPnl / expectedPeakDeployed) * 100
+  );
+  assertClose(
+    "3-trade: returnOnPeakCapitalPctNet is (netPnl1+netPnl2+netPnl3)/peakDeployedCapital*100 (real-cost sum)",
+    stats.returnOnPeakCapitalPctNet ?? NaN,
+    (finalNet / expectedPeakDeployed) * 100
+  );
+  assert("3-trade: marginModel is DELIVERY_FULL_NOTIONAL (fixture's own productType)", stats.marginModel === "DELIVERY_FULL_NOTIONAL", stats.marginModel);
+  assertClose("3-trade: avgMarginUsedPct equals avgDeployedCapitalPct (no leverage model applies to DELIVERY either)", stats.avgMarginUsedPct ?? NaN, expectedAvgDeployedPct);
+  assertClose("3-trade: peakMarginUsedPct is peakDeployedCapital/notional*100 = 100%", stats.peakMarginUsedPct, 100);
+
   for (const [label, value] of Object.entries(stats)) {
     if (typeof value === "number") assertFinite(`3-trade: stats.${label} is finite`, value);
   }
@@ -647,6 +678,16 @@ function checkAnnualizedReturnPositiveCase(): void {
   assertClose("annualize+: mae is 0 (price never dipped below entry)", stats.tradesDetail[0]?.mae ?? NaN, 0);
   assertClose("annualize+: mfe is 110/share*qty", stats.tradesDetail[0]?.mfe ?? NaN, 110 * qty);
 
+  // grossEquity ("Ideal — no costs") mirror, still-open trade: bar1's gross unrealized is (200-100)*qty, no cost
+  // deduction at all (unlike `equity[1]`, which subtracts entryCosts) — a clean, hand-typed divergence from the
+  // net series that proves the two really are computed independently, not aliased.
+  assertClose("annualize+: equityCurve[1].grossEquity is notional + (200-100)*qty, zero cost drag", stats.equityCurve[1]?.grossEquity ?? NaN, notional + (200 - 100) * qty);
+  assert(
+    "annualize+: grossEquity[1] is strictly greater than equity[1] (net pays entryCosts, gross doesn't)",
+    (stats.equityCurve[1]?.grossEquity ?? -Infinity) > (stats.equityCurve[1]?.equity ?? Infinity),
+    `grossEquity=${stats.equityCurve[1]?.grossEquity}, equity=${stats.equityCurve[1]?.equity}`
+  );
+
   for (const [label, value] of Object.entries(stats)) {
     if (typeof value === "number") assertFinite(`annualize+: stats.${label} is finite`, value);
   }
@@ -751,6 +792,17 @@ function checkZeroSignalEdgeCase(): void {
   assertClose("0-signal: maxDrawdownPct is 0 (flat equity curve)", stats.maxDrawdownPct, 0);
   assertClose("0-signal: buyHoldReturnPct is 0 (flat prices)", stats.buyHoldReturnPct, 0);
   assert("0-signal: openAtEnd is false", stats.openAtEnd === false);
+
+  // Capital efficiency + margin, zero-trade case: nothing was ever deployed. peak/avg are real ZEROES (a true
+  // fact about this run), NOT null — but return-on-peak-capital is null (undefined without any capital to divide
+  // by), matching the NULL LAW's "0 has meaning, undefined doesn't" distinction the module doc draws.
+  assertClose("0-signal: peakDeployedCapital is 0 (never deployed)", stats.peakDeployedCapital, 0);
+  assertClose("0-signal: avgDeployedCapitalPct is 0, not null (6 real candles, genuinely zero deployment)", stats.avgDeployedCapitalPct ?? NaN, 0);
+  assert("0-signal: returnOnPeakCapitalPctGross is null (nothing deployed to return on)", stats.returnOnPeakCapitalPctGross === null, `got ${stats.returnOnPeakCapitalPctGross}`);
+  assert("0-signal: returnOnPeakCapitalPctNet is null", stats.returnOnPeakCapitalPctNet === null, `got ${stats.returnOnPeakCapitalPctNet}`);
+  assert("0-signal: marginModel is DELIVERY_FULL_NOTIONAL (fixture's own productType)", stats.marginModel === "DELIVERY_FULL_NOTIONAL", stats.marginModel);
+  assertClose("0-signal: avgMarginUsedPct is 0", stats.avgMarginUsedPct ?? NaN, 0);
+  assertClose("0-signal: peakMarginUsedPct is 0", stats.peakMarginUsedPct, 0);
 }
 
 function checkSingleOpenTradeEdgeCase(): void {
@@ -769,7 +821,24 @@ function checkSingleOpenTradeEdgeCase(): void {
   const qty = Math.floor(10000 / 100); // 100
   assert("1-BUY: qty matches floor(notional/entry)", trade?.qty === qty, `expected ${qty}, got ${trade?.qty}`);
   const entryCosts = computeOrderCosts({ side: "BUY", productType: "INTRADAY", quantity: qty, price: 100 }).totalCosts;
-  assertClose("1-BUY: netPnl is grossPnl minus entry costs only", trade?.netPnl ?? NaN, (110 - 100) * qty - entryCosts);
+  const expectedNetPnl = (110 - 100) * qty - entryCosts;
+  assertClose("1-BUY: netPnl is grossPnl minus entry costs only", trade?.netPnl ?? NaN, expectedNetPnl);
+
+  // Capital efficiency + margin, INTRADAY single still-open trade: deployed = entryPrice(100)*qty -> also the
+  // peak (only ever one trade). Bar span entry(idx0)..through(lastCandleIndex=2, since exitIndex is null)
+  // INCLUSIVE = 3 bars, over candleCount=3 -> deployed the WHOLE window, 100%.
+  const deployed = 100 * qty;
+  assertClose("1-BUY: peakDeployedCapital is entryPrice*qty", stats.peakDeployedCapital, deployed);
+  assertClose("1-BUY: avgDeployedCapitalPct is 100% (deployed for the whole 3-bar window)", stats.avgDeployedCapitalPct ?? NaN, 100);
+  assertClose("1-BUY: returnOnPeakCapitalPctGross is grossPnl/deployed*100 = 1000/deployed*100", stats.returnOnPeakCapitalPctGross ?? NaN, ((110 - 100) * qty / deployed) * 100);
+  assertClose("1-BUY: returnOnPeakCapitalPctNet is netPnl/deployed*100", stats.returnOnPeakCapitalPctNet ?? NaN, (expectedNetPnl / deployed) * 100);
+  assert(
+    "1-BUY: marginModel is the honest INTRADAY_FULL_NOTIONAL_NO_LEVERAGE_MODEL (no leverage model exists — must not fabricate one)",
+    stats.marginModel === "INTRADAY_FULL_NOTIONAL_NO_LEVERAGE_MODEL",
+    stats.marginModel
+  );
+  assertClose("1-BUY: avgMarginUsedPct equals avgDeployedCapitalPct (100%) under the no-leverage-model honesty law", stats.avgMarginUsedPct ?? NaN, 100);
+  assertClose("1-BUY: peakMarginUsedPct is 100%", stats.peakMarginUsedPct, 100);
 
   for (const [label, value] of Object.entries(stats)) {
     if (typeof value === "number") assertFinite(`1-BUY: stats.${label} is finite`, value);
