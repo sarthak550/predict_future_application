@@ -60,6 +60,7 @@ import { PremiumChart } from "@/components/paper-trading/terminal/premium-chart"
 import { useEodSeries } from "@/components/paper-trading/terminal/use-eod-series";
 import { usePriceOverrides } from "@/components/paper-trading/use-price-overrides";
 import { DynamicChartWorkbench, WorkbenchMaximizeButton } from "@/components/paper-trading/workbench/workbench-maximize-button";
+import type { SymbolPick } from "@/components/paper-trading/workbench/use-symbol-search";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getLastLotsForContract } from "@/lib/paperTrading/lastLotsMemory";
@@ -400,6 +401,35 @@ function OptionsPageClientInner() {
     // premium mode) — target the contract's own underlying explicitly
     // rather than trust a possibly-stale `chartUnderlying`.
     if (selectedContract) setChartUnderlying(selectedContract.underlying);
+    setChartMode("underlying");
+    setPremiumWorkbenchOpenState(false);
+    setWorkbenchOpenState(true);
+    setWorkbenchParam("underlying");
+  }
+
+  /**
+   * Founder feature (2026-08-07) — the maximized workbench's symbol
+   * switcher (`chart-workbench.tsx`'s clickable header title), wired to
+   * BOTH workbenches this terminal can maximize (underlying and premium —
+   * see the two `<DynamicChartWorkbench>` mounts below). Unlike the equity
+   * dashboard/futures terminal, this terminal's underlying workbench feed
+   * ALREADY switches on `isIndexChart` (derived fresh from `chartUnderlying`
+   * every render — see that const above), so BOTH an equity pick and an
+   * F&O-index pick have a genuine in-place home here: `setChartUnderlying`
+   * alone is enough, no navigation ever needed from this terminal. Called
+   * from the PREMIUM workbench (a specific option contract's chart, which
+   * has no notion of "switch to a different underlying's premium" — a
+   * premium chart is contract-scoped, not underlying-scoped), a pick always
+   * jumps to the UNDERLYING view for the newly picked symbol — the same
+   * mode-transition mechanics `handleSwitchToUnderlying` above already
+   * uses, just targeting the picked symbol instead of the selected
+   * contract's underlying. Called from the underlying workbench itself,
+   * this is a true in-place switch (same still-mounted `ChartWorkbench`
+   * instance, new `feed`/`chartKey` props only) — the mode-transition calls
+   * below are then all inert no-ops (already in that state).
+   */
+  function handleWorkbenchSymbolPick(pick: SymbolPick) {
+    setChartUnderlying(pick.symbol);
     setChartMode("underlying");
     setPremiumWorkbenchOpenState(false);
     setWorkbenchOpenState(true);
@@ -861,6 +891,7 @@ function OptionsPageClientInner() {
           ticket={ticketElement}
           chain={chainElement}
           chartModeSwitcher={selectedContract ? { label: "Contract premium", onClick: handleSwitchToPremium } : undefined}
+          onSymbolPick={handleWorkbenchSymbolPick}
         />
       )}
 
@@ -889,6 +920,7 @@ function OptionsPageClientInner() {
           ticket={ticketElement}
           chain={chainElement}
           chartModeSwitcher={{ label: "Underlying", onClick: handleSwitchToUnderlying }}
+          onSymbolPick={handleWorkbenchSymbolPick}
         />
       )}
 

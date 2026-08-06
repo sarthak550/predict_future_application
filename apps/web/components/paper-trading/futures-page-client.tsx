@@ -55,7 +55,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import { formatNseExpiryDate } from "@predict-future/business-rules/papertrading/optionContract";
 
@@ -72,6 +72,7 @@ import { PositionsStrip, type PositionChip } from "@/components/paper-trading/te
 import { TerminalHeader } from "@/components/paper-trading/terminal/terminal-header";
 import { TerminalShell } from "@/components/paper-trading/terminal/terminal-shell";
 import { DynamicChartWorkbench, WorkbenchMaximizeButton } from "@/components/paper-trading/workbench/workbench-maximize-button";
+import type { SymbolPick } from "@/components/paper-trading/workbench/use-symbol-search";
 import type { PlacedFuturesOrderPayload } from "@/lib/paperTrading/futuresOrdersClient";
 import { cancelPendingOrder, repricePendingOrder, type PendingOrderPayload } from "@/lib/paperTrading/pendingOrdersClient";
 import { usePriceOverrides } from "@/components/paper-trading/use-price-overrides";
@@ -153,6 +154,7 @@ export function FuturesPageClient() {
 }
 
 function FuturesPageClientInner() {
+  const router = useRouter();
   // Founder bug fix (2026-08-04b) — `deepLinkSide` is genuinely one-shot
   // (see this file's own module doc) and gets stripped from the live URL
   // shortly after mount; reading it from the FROZEN snapshot instead of the
@@ -230,6 +232,30 @@ function FuturesPageClientInner() {
       // exists now that the ladder is null'd out instead.)
     }
   );
+
+  /**
+   * Founder feature (2026-08-07) — the maximized workbench's symbol
+   * switcher (`chart-workbench.tsx`'s clickable header title). This
+   * terminal is Index Futures ONLY (`underlying` is always one of the 5
+   * F&O indices — see `FuturesContractTable`'s own selector, which drives
+   * the SAME `setUnderlying` call this handler reuses): an INDEX pick
+   * switches the workbench IN PLACE, byte-identical to what the embedded
+   * Contracts tab's own underlying buttons already do (new `feed`/
+   * `chartKey` props on the same still-mounted `ChartWorkbench` instance,
+   * no remount — see this file's own module doc on why that's a deliberate
+   * in-workbench browse, not a stale-workbench close). An EQUITY pick has
+   * no in-place home here — this terminal has no stock feed/order-flow
+   * wiring at all — so it NAVIGATES to the equity dashboard instead, with
+   * `?workbench=1` auto-maximizing that terminal's own workbench on
+   * arrival. Never fakes an in-place switch with the wrong feed kind.
+   */
+  function handleWorkbenchSymbolPick(pick: SymbolPick) {
+    if (pick.kind === "index") {
+      setUnderlying(pick.symbol);
+    } else {
+      router.push(`/paper-trading?symbol=${encodeURIComponent(pick.symbol)}&workbench=1`);
+    }
+  }
 
   const [lastOrder, setLastOrder] = useState<PlacedFuturesOrderPayload | null>(null);
   const [pendingOrderNotice, setPendingOrderNotice] = useState<string | null>(null);
@@ -638,6 +664,7 @@ function FuturesPageClientInner() {
           ticket={ticketElement}
           chain={contractTableElement}
           chainLabel="Contracts"
+          onSymbolPick={handleWorkbenchSymbolPick}
         />
       )}
 

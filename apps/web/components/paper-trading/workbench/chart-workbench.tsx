@@ -78,11 +78,29 @@
  * selected — drawing interactions always win. A one-time `ChartTradeHint`
  * (localStorage-dismissed, shared across all four chart surfaces) tells
  * returning users where trading moved.
+ *
+ * **Founder feature (2026-08-07) — TradingView-style symbol switcher.**
+ * "The ability to change the stock or option or future from enlarged chart
+ * view only... click on the top left where you see the asset name... search
+ * for any other asset and open the chart view directly." The header title
+ * (below) becomes a clickable button whenever the optional `onSymbolPick`
+ * prop is supplied, opening `SymbolSearchPopover` (`symbol-search-popover.tsx`)
+ * anchored underneath it. This file stays instrument-agnostic about what a
+ * pick actually DOES — same posture as `chartModeSwitcher` — the caller's
+ * `onSymbolPick` decides whether a pick switches THIS workbench in place
+ * (new `feed`/`chartKey` props on the caller's own state) or navigates to a
+ * different terminal (see paper-trading-dashboard.tsx's/
+ * futures-page-client.tsx's/options-page-client.tsx's own
+ * `handleWorkbenchSymbolPick` docs for the exact in-place-vs-navigate
+ * matrix). Omitted entirely by no current caller — every one of the 4
+ * `DynamicChartWorkbench` mounts across the 3 terminals wires it — but kept
+ * optional so a future bare caller degrades to the plain, non-interactive
+ * title this component always had, never a crash.
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import dynamic from "next/dynamic";
-import { ArrowLeftRight, Code2, Loader2, Minimize2, PanelRightClose, PanelRightOpen } from "lucide-react";
+import { ArrowLeftRight, Code2, Loader2, Minimize2, PanelRightClose, PanelRightOpen, Search } from "lucide-react";
 
 import { ChartOrderIntentPopover } from "@/components/finance/chart-order-intent-popover";
 import { ChartAxisPlusButton } from "@/components/finance/chart-axis-plus-button";
@@ -131,6 +149,8 @@ import { TechnicalsGauge } from "./technicals-gauge";
 import { SignalsTable } from "./signals-table";
 import { CustomSignalBuilder, loadStoredCustomSignals, saveStoredCustomSignals, type CustomSignalItem } from "./custom-signal-builder";
 import { HeartbeatChip } from "./heartbeat-chip";
+import { SymbolSearchPopover } from "./symbol-search-popover";
+import type { SymbolPick } from "./use-symbol-search";
 
 export type { WorkbenchFeed } from "./use-workbench-candles";
 
@@ -234,7 +254,8 @@ export function ChartWorkbench({
   ticket,
   chain,
   chainLabel = "Chain",
-  chartModeSwitcher
+  chartModeSwitcher,
+  onSymbolPick
 }: {
   feed: WorkbenchFeed;
   /** `EQ:SYMBOL` / `INDEX:SYMBOL` / `OPT:UNDERLYING:EXPIRY:STRIKE:TYPE` — drives `use-chart-drawings.ts`'s per-chart persistence (W3). Futures and the options terminal's underlying chart deliberately share the SAME `INDEX:` key (W1's schema design) so a trendline drawn on one appears on the other. */
@@ -254,6 +275,8 @@ export function ChartWorkbench({
   chainLabel?: string;
   /** Founder feature (2026-08-04) — an optional top-bar pill for jumping to a sibling workbench (e.g. options' Underlying <-> Premium chart) without minimizing first. Purely a label + callback so this file never needs to know what "the other chart" means for a given terminal. */
   chartModeSwitcher?: { label: string; onClick: () => void };
+  /** Founder feature (2026-08-07) — makes the header title clickable, opening the symbol-search popover; see this file's own module doc for the full feature and the caller-owned in-place-vs-navigate decision. Optional so a bare caller keeps the plain, non-interactive title. */
+  onSymbolPick?: (pick: SymbolPick) => void;
 }) {
   const isPremiumMode = feed.kind === "optionPremium";
   const [chartInterval, setChartInterval] = useState<CandleInterval>(() => (isPremiumMode ? "15m" : "5m"));
@@ -425,6 +448,12 @@ export function ChartWorkbench({
   const [axisHover, setAxisHover] = useState<{ price: number; left: number; top: number } | null>(null);
   const [contextMenu, setContextMenu] = useState<{ price: number; left: number; top: number } | null>(null);
   const [hintDismissed, dismissHint] = useTradeHintDismissed();
+
+  // Founder feature (2026-08-07) — symbol-search popover anchor, `{left,top}`
+  // from the header title button's own `getBoundingClientRect()` at click
+  // time, same shape/idiom `indicatorSettings`/`customSignalBuilder` already
+  // use for an anchored popover. `null` = closed.
+  const [symbolSearchAnchor, setSymbolSearchAnchor] = useState<{ left: number; top: number } | null>(null);
 
   // Founder-feedback pass (2026-08-04) — resizable right panel. `panelRef`
   // is the imperative write target DURING a drag (`PanelResizeHandle`'s
@@ -809,6 +838,11 @@ export function ChartWorkbench({
     cancelActiveDrawing();
     setSelectedDrawing(null);
     setTextPopover(null);
+    // Founder feature (2026-08-07) — a symbol pick already closes the popover
+    // itself (see the `onPick` wiring below), but this guards the case of a
+    // chartKey changing for some OTHER reason (e.g. the embedded Chain tab)
+    // while it happened to still be open.
+    setSymbolSearchAnchor(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chartKey]);
 
@@ -821,14 +855,17 @@ export function ChartWorkbench({
     };
   }, []);
 
-  // W3, T5; S1 widens with a new top tier — Escape priority chain: text
-  // popover (handles its own Escape internally — this listener just has to
-  // step aside) > order-intent popover > right-click trade menu (2026-08-04
-  // rework, same "handles its own Escape" deferral) > active drawing tool >
-  // workbench close.
+  // W3, T5; S1 widens with a new top tier — Escape priority chain: symbol-
+  // search popover (2026-08-07, handles its own Escape internally via its
+  // input's own onKeyDown — this listener just has to step aside, same
+  // deferral every other popover tier below already uses) > text popover >
+  // order-intent popover > right-click trade menu (2026-08-04 rework, same
+  // "handles its own Escape" deferral) > active drawing tool > workbench
+  // close.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== "Escape") return;
+      if (symbolSearchAnchor) return; // SymbolSearchPopover's own listener handles it first.
       if (textPopover) return;
       if (intentPopover) return; // ChartOrderIntentPopover's own listener handles it first.
       if (contextMenu) return; // ChartContextMenu's own listener handles it first.
@@ -841,7 +878,7 @@ export function ChartWorkbench({
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [textPopover, intentPopover, contextMenu, activeTool, onClose]);
+  }, [symbolSearchAnchor, textPopover, intentPopover, contextMenu, activeTool, onClose]);
 
   const onQuoteChangeRef = useRef(onQuoteChange);
   onQuoteChangeRef.current = onQuoteChange;
@@ -915,7 +952,27 @@ export function ChartWorkbench({
   const content = (
     <div className="fixed inset-0 z-50 flex flex-col bg-white" data-chart-key={chartKey}>
       <div className="flex flex-wrap items-center gap-3 border-b border-ink-100 px-4 py-2.5">
-        <p className="text-sm font-semibold text-ink-900">{title}</p>
+        {/* Founder feature (2026-08-07) — the header title doubles as the
+            symbol-search trigger whenever `onSymbolPick` is wired (every
+            current caller — see this file's own module doc). Anchored via
+            the clicked button's own `getBoundingClientRect()`, same idiom
+            `handleOpenIndicatorSettings` already uses for its popover. */}
+        {onSymbolPick ? (
+          <button
+            type="button"
+            onClick={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              setSymbolSearchAnchor({ left: rect.left, top: rect.bottom + 6 });
+            }}
+            className="group flex items-center gap-1.5 rounded-lg px-1.5 py-1 text-sm font-semibold text-ink-900 hover:bg-ink-100"
+            title="Change symbol"
+          >
+            {title}
+            <Search className="h-3 w-3 text-ink-300 group-hover:text-ink-500" aria-hidden="true" />
+          </button>
+        ) : (
+          <p className="text-sm font-semibold text-ink-900">{title}</p>
+        )}
         {isPremiumMode ? (
           premiumLabel && (
             <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">{premiumLabel}</span>
@@ -1001,7 +1058,54 @@ export function ChartWorkbench({
           premiumMode={isPremiumMode}
         />
 
-        <div className="relative min-w-0 flex-1">
+        {/* Founder bug fix (2026-08-07) — structural fix for "the scripts
+            drawer overlaps the drawing-tools rail." The chart+panel row and
+            the Scripts drawer (below) are now both children of THIS shared
+            column, itself a SIBLING of `WorkbenchToolbar` above — not, as
+            before, all four (rail/chart/panel/drawer) siblings of one row
+            with the drawer living one level further up, outside that row
+            entirely. Under the old structure, opening the drawer shrank the
+            WHOLE row's height via flex distribution, including the rail's:
+            `workbench-toolbar.tsx`'s rail is itself a flex column whose
+            content (family buttons, search, magnet, favorites/recents) has
+            a content-driven `min-height: auto` that flexbox's stretch
+            algorithm cannot shrink below, so once the row got squeezed short
+            enough by an open drawer, the rail's real rendered height
+            exceeded its allotted box and overflowed DOWNWARD past it —
+            visually intruding into the drawer's own screen region. Worse,
+            because the rail's wrapper (`workbench-toolbar.tsx`'s `railRef`
+            div) is `position: relative` while the drawer's own wrapper
+            below was plain `position: static`, CSS stacking rules paint the
+            (relatively) positioned rail ABOVE the static drawer regardless
+            of DOM order — so the overflowing rail visually sat on top of
+            the drawer AND physically intercepted pointer events meant for
+            the drawer's resize handle (confirmed live via
+            `elementFromPoint` at the handle's own coordinates resolving to
+            the rail, not the handle) — one confirmed root cause of "the
+            drag handles show a cursor but nothing happens," not just the
+            visual overlap on its own.
+            Fixed structurally (chosen over a magic margin/z-index patch,
+            which would only mask the symptom and leave the rail's real
+            overflow — and the pointer interception it causes — intact): by
+            pulling the chart+panel row and the drawer into a column that
+            excludes the rail, the drawer's height only ever subtracts from
+            THIS column's own budget, never the row that sizes the rail.
+            `WorkbenchToolbar` now stretches to the FULL height of the outer
+            row (topbar to the very bottom of the workbench, unaffected by
+            whether the drawer is open or how tall it is) — TradingView's
+            own "rail keeps full height, bottom panel spans everything to
+            its right" convention, matching this ticket's explicit design
+            ask. The drawer (moved below, still sticky-mounted, still
+            gated on `hasOpenedScriptDrawer`) now spans exactly from the
+            rail's right edge to the workbench's right edge — the chart area
+            AND the ticket/chain/strategy panel both sit above it in this
+            SAME column, so both shrink to make room for the drawer, but the
+            rail never does. Rail flyouts (`tool-flyout.tsx`) are unaffected
+            — they already clamp against `window.innerHeight` directly, not
+            against this column's height. */}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <div className="flex min-h-0 flex-1">
+            <div className="relative min-w-0 flex-1">
           {status === "loading" && (
             <div className="flex h-full items-center justify-center text-sm text-ink-400">
               <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
@@ -1234,27 +1338,44 @@ export function ChartWorkbench({
             )}
           </div>
         )}
-      </div>
+          </div>
 
-      {/* User Strategy Scripting (SS2), D2/D4 — the script editor drawer.
-          Mounted once `hasOpenedScriptDrawer` goes true (sticky), then
-          purely CSS-toggled by `scriptDrawerOpen` so editor/console/list
-          state survives closing and reopening it — see the state's own doc
-          above. `display: none` rather than unmounting also means the
-          lazy-loaded CodeMirror chunk, once paid for, is never re-fetched. */}
-      {hasOpenedScriptDrawer && (
-        <div style={{ display: scriptDrawerOpen ? "flex" : "none" }} className="min-h-0">
-          <ScriptEditorDrawer
-            candles={candles}
-            interval={chartInterval}
-            isPremiumMode={isPremiumMode}
-            notional={strategyNotional}
-            onRunSignals={handleScriptSignals}
-            open={scriptDrawerOpen}
-            shortcutsSuppressed={Boolean(textPopover || intentPopover || contextMenu)}
-          />
+          {/* User Strategy Scripting (SS2), D2/D4 — the script editor
+              drawer. Mounted once `hasOpenedScriptDrawer` goes true
+              (sticky), then purely CSS-toggled by `scriptDrawerOpen` so
+              editor/console/list state survives closing and reopening it —
+              see the state's own doc above. `display: none` rather than
+              unmounting also means the lazy-loaded CodeMirror chunk, once
+              paid for, is never re-fetched.
+
+              Founder bug fix (2026-08-07) — moved from a sibling of the
+              rail+chart+panel row (one level up) to a sibling of ONLY the
+              chart+panel row, inside the new shared column
+              `WorkbenchToolbar` no longer participates in — see that
+              column wrapper's own doc, above, for the full mechanism (rail
+              overflow + CSS stacking caused a real pointer-interception
+              bug, not just a visual nit). Functionally identical
+              otherwise: still sticky-mounted, still purely CSS-toggled,
+              still spans the SAME full width it always rendered at
+              (`w-full` on this component's own root, per its module doc)
+              — that width is now measured from the rail's right edge
+              instead of the workbench's left edge, which is the whole
+              point of the fix. */}
+          {hasOpenedScriptDrawer && (
+            <div style={{ display: scriptDrawerOpen ? "flex" : "none" }} className="min-h-0">
+              <ScriptEditorDrawer
+                candles={candles}
+                interval={chartInterval}
+                isPremiumMode={isPremiumMode}
+                notional={strategyNotional}
+                onRunSignals={handleScriptSignals}
+                open={scriptDrawerOpen}
+                shortcutsSuppressed={Boolean(textPopover || intentPopover || contextMenu)}
+              />
+            </div>
+          )}
         </div>
-      )}
+      </div>
 
       {indicatorDialogOpen && (
         <IndicatorDialog
@@ -1283,6 +1404,17 @@ export function ChartWorkbench({
           editingItem={customSignalBuilder.editingItem}
           onSave={handleSaveCustomSignal}
           onClose={() => setCustomSignalBuilder(null)}
+        />
+      )}
+      {symbolSearchAnchor && onSymbolPick && (
+        <SymbolSearchPopover
+          left={symbolSearchAnchor.left}
+          top={symbolSearchAnchor.top}
+          onPick={(pick) => {
+            setSymbolSearchAnchor(null);
+            onSymbolPick(pick);
+          }}
+          onClose={() => setSymbolSearchAnchor(null)}
         />
       )}
     </div>

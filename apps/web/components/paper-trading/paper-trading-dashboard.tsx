@@ -148,6 +148,7 @@ import { TerminalHeader } from "@/components/paper-trading/terminal/terminal-hea
 import { TerminalShell } from "@/components/paper-trading/terminal/terminal-shell";
 import { useEodSeries } from "@/components/paper-trading/terminal/use-eod-series";
 import { DynamicChartWorkbench, WorkbenchMaximizeButton } from "@/components/paper-trading/workbench/workbench-maximize-button";
+import type { SymbolPick } from "@/components/paper-trading/workbench/use-symbol-search";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -617,10 +618,56 @@ export function PaperTradingDashboard() {
     focusedSymbol,
     workbenchParam === "1",
     () => setWorkbenchOpenState(true),
-    () => setWorkbenchOpen(false)
+    () => {
+      // Founder feature (2026-08-07) — live-verified regression: before the
+      // workbench's own symbol switcher existed, `focusedSymbol` could ONLY
+      // change via the small (non-maximized) search input/holdings-row
+      // clicks — both live in `TerminalShell`'s `chart` slot, which sits
+      // BEHIND the workbench's opaque `fixed inset-0 z-50` overlay while
+      // it's open and is therefore genuinely unreachable then; this
+      // no-op's PREVIOUS unconditional `setWorkbenchOpen(false)` was
+      // consequently dead code in that state (it could only ever fire while
+      // the workbench was already closed, where "closing" it is itself a
+      // no-op) — never actually observed until now. `chart-workbench.tsx`'s
+      // new header symbol-search popover is the first, and only, way
+      // `focusedSymbol` can change WHILE this workbench is open — a
+      // deliberate in-workbench browse, the exact same "new feed/chartKey
+      // props on the same still-mounted ChartWorkbench instance, no
+      // remount" case futures-page-client.tsx's/options-page-client.tsx's
+      // own identical no-op already documents for their embedded Chain/
+      // Contracts tabs. Verified live: the unconditional close version of
+      // this callback silently closed the workbench and stripped
+      // `?workbench=1` on every equity-to-equity in-place pick.
+    }
   );
 
   const eodSeries = useEodSeries(focusedSymbol);
+
+  /**
+   * Founder feature (2026-08-07) — the maximized workbench's symbol
+   * switcher (`chart-workbench.tsx`'s clickable header title). This
+   * terminal's workbench only ever charts `feed:{kind:"equity"}` (see the
+   * mount below) — an EQUITY pick switches it IN PLACE via the exact same
+   * `setFocusedSymbol` every other "focus this symbol" entry point already
+   * uses (search-select, a holdings-row click — see that function's own
+   * doc), so `focusedSymbol` changing is what drives the still-mounted
+   * `ChartWorkbench` instance's `feed`/`chartKey`/`title` props to the new
+   * symbol with no remount. An INDEX pick (one of the 5 F&O underlyings)
+   * has no in-place home here — this terminal has no index feed wiring at
+   * all — so it NAVIGATES to the futures terminal instead, with
+   * `?workbench=1` auto-maximizing that terminal's own workbench on
+   * arrival (see `use-workbench-url-param.ts`'s `useWorkbenchAutoRestore`
+   * for the mechanics: `underlying` resolves synchronously there, so the
+   * restore fires on the very first render). Never fakes an in-place
+   * switch with the wrong feed kind.
+   */
+  function handleWorkbenchSymbolPick(pick: SymbolPick) {
+    if (pick.kind === "equity") {
+      setFocusedSymbol(pick.symbol);
+    } else {
+      router.push(`/paper-trading/futures?underlying=${encodeURIComponent(pick.symbol)}&workbench=1`);
+    }
+  }
 
   if (state === "loading") {
     return (
@@ -871,6 +918,7 @@ export function PaperTradingDashboard() {
           onOrderLineCancel={handleOrderLineCancel}
           onQuoteChange={(q) => setChartQuote(q ? { price: q.price } : null)}
           ticket={ticketElement}
+          onSymbolPick={handleWorkbenchSymbolPick}
         />
       )}
 
