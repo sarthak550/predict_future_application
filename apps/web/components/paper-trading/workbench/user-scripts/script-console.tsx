@@ -75,9 +75,27 @@ export interface ScriptConsoleProps {
 export function ScriptConsole({ logs, error, collapsed, onToggleCollapsed, height, onHeightChange, getMaxHeight }: ScriptConsoleProps) {
   const hasContent = logs.length > 0 || error !== null;
   const contentRef = useRef<HTMLDivElement | null>(null);
+  /**
+   * Founder bug fix (2026-08-07) — the SAME authoritative-ref fix
+   * `script-editor-drawer.tsx` applies to the drawer/sidebar handles,
+   * localized here since THIS component owns its own imperative mid-drag
+   * DOM write (`contentRef.current.style.height`, in `onResize` below) but
+   * receives its settled value as a `height` PROP from the parent — a
+   * parent re-render for any unrelated reason mid-drag would otherwise
+   * reconcile `style={{height}}` back to a stale prop value, clobbering the
+   * live drag exactly like the drawer's own race. `draggingRef` gates when
+   * this ref tracks the incoming `height` prop (only while NOT actively
+   * dragging — synced unconditionally on every render below, a plain "ref
+   * mirrors the latest prop" assignment, same idiom `hasResultsRef` in
+   * `script-editor-drawer.tsx` already uses) versus when `onResize`'s own
+   * writes are authoritative instead (while dragging).
+   */
+  const draggingRef = useRef(false);
+  const liveHeightRef = useRef(height);
+  if (!draggingRef.current) liveHeightRef.current = height;
 
-  const { handlePointerDown, handlePointerMove, endDrag } = useDragResize({
-    getStartValue: () => height,
+  const { handlePointerDown: rawHandlePointerDown, handlePointerMove, endDrag } = useDragResize({
+    getStartValue: () => liveHeightRef.current,
     readCoord: (e) => e.clientY,
     // The handle sits on the console content panel's TOP edge (panel below
     // it, drawer chrome above) — dragging UP (negative dy) GROWS the
@@ -85,10 +103,29 @@ export function ScriptConsole({ logs, error, collapsed, onToggleCollapsed, heigh
     // top-edge handle.
     computeNext: (startHeight, dy) => clampConsoleHeight(startHeight - dy, getMaxHeight()),
     onResize: (next) => {
+      liveHeightRef.current = next;
       if (contentRef.current) contentRef.current.style.height = `${next}px`;
     },
-    onResizeEnd: (next) => onHeightChange(clampConsoleHeight(next, getMaxHeight()))
+    onResizeEnd: (next) => {
+      // `draggingRef` is cleared HERE, not by wrapping the hook's own
+      // `endDrag` — `onResizeEnd` is the one callback `use-drag-resize.ts`
+      // guarantees fires exactly once at the TRUE end of every drag
+      // regardless of which mechanism actually ended it (the window
+      // `pointerup` listener now added by that hook's own 2026-08-07
+      // cross-engine hardening, or the React `onPointerUp` JSX handler
+      // below) — wrapping `endDrag` itself would miss the window-listener
+      // path whenever `setPointerCapture` didn't succeed, leaving
+      // `draggingRef` stuck `true` and this console's displayed height
+      // permanently frozen against future `height`-prop changes (e.g. a
+      // force-collapse from the drawer shrinking).
+      draggingRef.current = false;
+      onHeightChange(clampConsoleHeight(next, getMaxHeight()));
+    }
   });
+  function handlePointerDown(e: React.PointerEvent<HTMLDivElement>) {
+    draggingRef.current = true;
+    rawHandlePointerDown(e);
+  }
 
   return (
     <div className="flex shrink-0 flex-col border-t border-ink-100">
@@ -120,12 +157,13 @@ export function ScriptConsole({ logs, error, collapsed, onToggleCollapsed, heigh
             onPointerUp={endDrag}
             onPointerCancel={endDrag}
             className="group relative h-1.5 shrink-0 touch-none select-none border-t border-ink-100 hover:cursor-row-resize"
+            style={{ touchAction: "none", WebkitUserSelect: "none", userSelect: "none" }}
           >
             <div className="pointer-events-none absolute inset-x-0 top-1/2 h-0.5 -translate-y-1/2 rounded-full bg-transparent group-hover:bg-sky-300" />
           </div>
           <div
             ref={contentRef}
-            style={{ height }}
+            style={{ height: liveHeightRef.current }}
             className="overflow-y-auto bg-ink-50 px-3 py-2 font-mono text-[11px] leading-5"
           >
             {!hasContent && <p className="text-ink-400">No output yet — click Run to see logs and errors here.</p>}

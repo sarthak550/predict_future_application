@@ -444,7 +444,8 @@ export function KlineChart({
   onIndicatorOpenSettings,
   onIndicatorRemove,
   indicatorStyleCommand,
-  onIndicatorFiguresChange
+  onIndicatorFiguresChange,
+  minHeightPx = 420
 }: {
   candles: Candle[];
   interval: string;
@@ -551,6 +552,31 @@ export function KlineChart({
    * actual line figure, discovered at runtime — no hand-built catalogue.
    */
   onIndicatorFiguresChange?: (figures: Map<string, IndicatorLineFigure[]>) => void;
+  /**
+   * Founder bug fix (2026-08-07) — "I can't adjust the script vertically."
+   * This container's floor used to be a hardcoded `min-h-[420px]` Tailwind
+   * class REGARDLESS of whether the Scripts drawer was open, which anchored
+   * `drawer-resize-handle.tsx`'s viewport-derived ceiling so tight that on a
+   * typical ~860px-tall laptop window the drawer's default height already
+   * SAT AT that ceiling — dragging taller was a correctly-clamped no-op that
+   * read as completely broken (`getEffectiveMaxDrawerHeight(860)` = 340,
+   * `DRAWER_DEFAULT_HEIGHT` also clamped to 340, zero px of real travel).
+   * `chart-workbench.tsx` now passes 200 here ONLY while the Scripts drawer
+   * is open (200px verified live to render klinecharts' canvas sanely —
+   * axis labels legible, indicators/drawings still paint correctly, no
+   * internal klinecharts assertion/crash) — the drawer's own viewport-aware
+   * ceiling in `drawer-resize-handle.tsx` was re-derived to match this exact
+   * number (`CHART_COMPACT_MIN_PX`, see that file's own doc). While the
+   * drawer is CLOSED, the caller omits this prop entirely and the chart
+   * keeps its original 420px floor — only an OPEN drawer justifies asking
+   * the chart to get this small; every other maximized-workbench state
+   * (drawer closed, chain/strategy tabs, etc.) is unaffected. Applied via
+   * inline `style`, not a second Tailwind arbitrary-value class, for the
+   * same reason `EDITOR_MIN_HEIGHT_PX` in `script-editor-drawer.tsx` uses
+   * inline style — Tailwind's JIT scanner needs a static class string, a
+   * runtime-computed value can't be expressed that way.
+   */
+  minHeightPx?: number;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<Chart | null>(null);
@@ -1502,5 +1528,5 @@ export function KlineChart({
     chart.overrideIndicator({ id: indicatorStyleCommand.id, name: live.name, styles: indicatorStyleCommand.styles });
   }, [indicatorStyleCommand]);
 
-  return <div ref={containerRef} className="h-full w-full min-h-[420px]" />;
+  return <div ref={containerRef} className="h-full w-full" style={{ minHeight: minHeightPx }} />;
 }

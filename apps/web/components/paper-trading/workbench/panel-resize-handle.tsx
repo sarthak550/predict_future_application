@@ -33,6 +33,23 @@
  * pinch-zoom gestures while dragging it) — same idiom this program already
  * uses for outside-dismiss listeners (`document.addEventListener(...,
  * true)`), just applied to `setPointerCapture` instead.
+ *
+ * **Cross-engine hardening (2026-08-07)** — a founder report that the
+ * Scripts drawer's OWN height handle (`drawer-resize-handle.tsx`) didn't
+ * drag at all in their browser, while every Playwright Chromium check
+ * showed it working, prompted hardening every handle in this drag family
+ * (this one included, for consistency — same class of bug, same fix)
+ * against relying on `setPointerCapture` semantics alone: `pointermove`/
+ * `pointerup`/`pointercancel` listeners are now attached to `window` at
+ * `pointerdown` (removed at drag-end), which drives the drag regardless of
+ * whether capture succeeded on a given engine — `setPointerCapture` is kept
+ * as a best-effort enhancement (wrapped in try/catch), not a dependency.
+ * `document.body.style.userSelect` is also suppressed for the drag's
+ * duration — belt-and-suspenders against an engine initiating a page-wide
+ * text-selection drag from this handle's own mousedown despite
+ * `select-none`/`touch-none` already being set on it. See
+ * `drawer-resize-handle.tsx`'s own doc for the full founder-report
+ * root-cause writeup this pattern responds to.
  */
 import { useRef } from "react";
 
@@ -64,6 +81,9 @@ export function PanelResizeHandle({
   const startWidthRef = useRef(0);
   const liveWidthRef = useRef(0);
   const rafRef = useRef<number | null>(null);
+  // Cross-engine hardening (2026-08-07) — see this file's own module doc.
+  const windowListenersRef = useRef<{ move: (e: PointerEvent) => void; up: (e: PointerEvent) => void } | null>(null);
+  const prevBodyUserSelectRef = useRef<string | null>(null);
 
   function scheduleFlush() {
     if (rafRef.current !== null) return;
@@ -73,33 +93,70 @@ export function PanelResizeHandle({
     });
   }
 
-  function handlePointerDown(e: React.PointerEvent<HTMLDivElement>) {
-    e.preventDefault();
-    draggingRef.current = true;
-    startXRef.current = e.clientX;
-    startWidthRef.current = getCurrentWidth();
-    liveWidthRef.current = startWidthRef.current;
-    e.currentTarget.setPointerCapture(e.pointerId);
-  }
-
-  function handlePointerMove(e: React.PointerEvent<HTMLDivElement>) {
-    if (!draggingRef.current) return;
+  function applyMove(clientX: number) {
     // The handle sits on the panel's LEFT edge (panel is to its right) —
     // dragging left (negative dx) WIDENS the panel, dragging right narrows it.
-    const dx = e.clientX - startXRef.current;
+    const dx = clientX - startXRef.current;
     liveWidthRef.current = clampPanelWidth(startWidthRef.current - dx);
     scheduleFlush();
   }
 
-  function endDrag(e: React.PointerEvent<HTMLDivElement>) {
+  function handlePointerDown(e: React.PointerEvent<HTMLDivElement>) {
+    e.preventDefault();
+    // Defensive cleanup (2026-08-07) — see `drawer-resize-handle.tsx`'s
+    // identical guard for the full reasoning: force-end any still-active
+    // previous drag first, so its window listeners can never be silently
+    // orphaned by this drag overwriting `windowListenersRef`.
+    if (draggingRef.current) endDragInternal();
+    draggingRef.current = true;
+    startXRef.current = e.clientX;
+    startWidthRef.current = getCurrentWidth();
+    liveWidthRef.current = startWidthRef.current;
+    // Enhancement, not a dependency — see this file's own module doc.
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // Ignored — window listeners below don't need capture to work.
+    }
+    prevBodyUserSelectRef.current = document.body.style.userSelect;
+    document.body.style.userSelect = "none";
+    const onWindowMove = (ev: PointerEvent) => {
+      if (!draggingRef.current) return;
+      applyMove(ev.clientX);
+    };
+    const onWindowUp = () => endDragInternal();
+    windowListenersRef.current = { move: onWindowMove, up: onWindowUp };
+    window.addEventListener("pointermove", onWindowMove);
+    window.addEventListener("pointerup", onWindowUp);
+    window.addEventListener("pointercancel", onWindowUp);
+  }
+
+  function handlePointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    if (!draggingRef.current) return;
+    applyMove(e.clientX);
+  }
+
+  function endDragInternal() {
     if (!draggingRef.current) return;
     draggingRef.current = false;
-    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+    const listeners = windowListenersRef.current;
+    if (listeners) {
+      window.removeEventListener("pointermove", listeners.move);
+      window.removeEventListener("pointerup", listeners.up);
+      window.removeEventListener("pointercancel", listeners.up);
+      windowListenersRef.current = null;
+    }
+    document.body.style.userSelect = prevBodyUserSelectRef.current ?? "";
     if (rafRef.current !== null) {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
     }
     onResizeEnd(liveWidthRef.current);
+  }
+
+  function endDrag(e: React.PointerEvent<HTMLDivElement>) {
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+    endDragInternal();
   }
 
   return (
@@ -114,7 +171,7 @@ export function PanelResizeHandle({
       onPointerCancel={endDrag}
       onDoubleClick={onDoubleClickReset}
       className="group relative w-2.5 shrink-0 touch-none select-none border-l border-ink-100 hover:cursor-col-resize"
-      style={{ cursor: "col-resize" }}
+      style={{ cursor: "col-resize", touchAction: "none", WebkitUserSelect: "none", userSelect: "none" }}
     >
       <div className="pointer-events-none absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 rounded-full bg-transparent group-hover:bg-sky-300" />
     </div>

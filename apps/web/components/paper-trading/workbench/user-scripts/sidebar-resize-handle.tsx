@@ -66,7 +66,7 @@ export function SidebarResizeHandle({
       onPointerCancel={endDrag}
       onDoubleClick={onDoubleClickReset}
       className="group relative hidden w-2.5 shrink-0 touch-none select-none border-r border-ink-100 hover:cursor-col-resize sm:block"
-      style={{ cursor: "col-resize" }}
+      style={{ cursor: "col-resize", touchAction: "none", WebkitUserSelect: "none", userSelect: "none" }}
     >
       <div className="pointer-events-none absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 rounded-full bg-transparent group-hover:bg-sky-300" />
     </div>

@@ -461,20 +461,45 @@ export function ChartWorkbench({
   // `panelWidth` (React state) is only committed at drag-end and drives the
   // panel's `style.width` on every NORMAL render, so the two are always back
   // in sync the instant a drag finishes (no visual snap).
-  const [panelWidth, setPanelWidth] = useState(PANEL_DEFAULT_WIDTH);
   const panelRef = useRef<HTMLDivElement | null>(null);
+  /**
+   * Founder bug fix (2026-08-07) — `panelWidth` used to be React STATE
+   * driving both `getCurrentWidth` and the panel's own rendered
+   * `style.width`. Live-reproduced (real DOM, prod standalone bundle, see
+   * `script-editor-drawer.tsx`'s `drawerHeightRef` doc for the full
+   * root-cause writeup on the Scripts drawer's own equivalent handle): an
+   * unrelated re-render landing MID-DRAG reconciles a `style` prop back to
+   * whatever React state last held, clobbering the drag's live imperative
+   * DOM write — and this component is an especially live risk for exactly
+   * that, since it re-renders on every live candle/quote tick
+   * (`useWorkbenchCandles` below polls every few seconds during market
+   * hours) while a user could easily still be mid-drag on this handle.
+   * Converted from `useState` to a plain ref outright (a strictly SIMPLER
+   * fix than mirroring state with a ref, which is what the drawer's own
+   * `drawerHeightRef` still has to do because that value ALSO drives a
+   * `[drawerHeight]`-keyed effect elsewhere — this value drives nothing but
+   * its own rendered width, so there is no reason to keep a parallel state
+   * copy around at all). The mount-restore effect below now does its own
+   * one-time imperative DOM write (matching `handlePanelResize`'s own
+   * pattern) instead of relying on a state-triggered re-render to apply the
+   * restored width on first paint.
+   */
+  const panelWidthRef = useRef(PANEL_DEFAULT_WIDTH);
   useEffect(() => {
-    setPanelWidth(loadStoredPanelWidth());
+    const restored = loadStoredPanelWidth();
+    panelWidthRef.current = restored;
+    if (panelRef.current) panelRef.current.style.width = `${restored}px`;
   }, []);
   function handlePanelResize(width: number) {
+    panelWidthRef.current = width;
     if (panelRef.current) panelRef.current.style.width = `${width}px`;
   }
   function handlePanelResizeEnd(width: number) {
-    setPanelWidth(width);
+    panelWidthRef.current = width;
     saveStoredPanelWidth(width);
   }
   function handlePanelReset() {
-    setPanelWidth(PANEL_DEFAULT_WIDTH);
+    handlePanelResize(PANEL_DEFAULT_WIDTH);
     saveStoredPanelWidth(PANEL_DEFAULT_WIDTH);
   }
 
@@ -1171,6 +1196,15 @@ export function ChartWorkbench({
               onIndicatorRemove={handleRemoveIndicator}
               indicatorStyleCommand={indicatorStyleCommand}
               onIndicatorFiguresChange={setIndicatorFigures}
+              // Founder bug fix (2026-08-07) — "I can't adjust the script
+              // vertically." Only shrink the chart's own floor while the
+              // Scripts drawer is actually open (`display:flex`, not merely
+              // sticky-mounted — see `scriptDrawerOpen` below) — a closed
+              // drawer keeps the chart's full 420px minimum, unchanged. See
+              // `kline-chart.tsx`'s own `minHeightPx` doc for the full
+              // mechanism and `drawer-resize-handle.tsx`'s `CHART_COMPACT_MIN_PX`
+              // for why 200 specifically.
+              minHeightPx={scriptDrawerOpen ? 200 : 420}
             />
           )}
 
@@ -1245,7 +1279,7 @@ export function ChartWorkbench({
 
         {!ticketCollapsed && (
           <PanelResizeHandle
-            getCurrentWidth={() => panelWidth}
+            getCurrentWidth={() => panelWidthRef.current}
             onResize={handlePanelResize}
             onResizeEnd={handlePanelResizeEnd}
             onDoubleClickReset={handlePanelReset}
@@ -1253,7 +1287,7 @@ export function ChartWorkbench({
         )}
 
         {!ticketCollapsed && (
-          <div ref={panelRef} className="flex shrink-0 flex-col" style={{ width: panelWidth }}>
+          <div ref={panelRef} className="flex shrink-0 flex-col" style={{ width: panelWidthRef.current }}>
             {/* TA Suite S3, T3 — [Ticket | Strategy] segmented control (D5), widened by the founder's Chain-in-
                 workbench feature (2026-08-04, futures 2026-08-09) to [Ticket | <chainLabel> | Strategy] whenever a
                 `chain` prop is supplied. Switching tabs NEVER unmounts any side (the single-mount rule) — every

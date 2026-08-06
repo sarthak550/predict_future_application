@@ -448,7 +448,6 @@ export function ScriptEditorDrawer({ candles, interval, isPremiumMode, notional,
   const [draftPrompt, setDraftPrompt] = useState<ScriptDraft | null>(null);
   const [toolbarError, setToolbarError] = useState<string | null>(null);
   const [drawerHeight, setDrawerHeight] = useState(DRAWER_DEFAULT_HEIGHT);
-  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH);
   const [consoleHeight, setConsoleHeight] = useState(CONSOLE_DEFAULT_HEIGHT);
   /** Founder-feedback pass — collapsible results block, see this file's own module doc for why (crushed-editor measurement). Session-only, not persisted — matches the console's own pre-existing collapse behavior. */
   const [resultsCollapsed, setResultsCollapsed] = useState(false);
@@ -477,6 +476,42 @@ export function ScriptEditorDrawer({ candles, interval, isPremiumMode, notional,
    * why a plain closure read is not safe here under React 18 StrictMode.
    */
   const drawerHeightRef = useRef(DRAWER_DEFAULT_HEIGHT);
+  /**
+   * Founder bug fix (2026-08-07) — a SECOND, independently-reproduced race
+   * (live-tested, real DOM, prod standalone bundle): two drags fired in very
+   * quick succession (~10ms apart — e.g. a user re-grabbing the handle to
+   * correct an overshoot) could have the SECOND drag's `pointerdown` read
+   * `getCurrentHeight()`'s closure (`() => drawerHeight`, the REACT STATE
+   * value) before React had actually finished committing the FIRST drag's
+   * `setDrawerHeight` — an async gap `drawerHeightRef` (JUST above) was
+   * originally written for a DIFFERENT purpose (a same-commit StrictMode
+   * replay) but was never wired into `getCurrentHeight` or the root div's
+   * OWN rendered `style.height` itself, so both still trusted the
+   * possibly-lagging `drawerHeight` STATE value directly. Confirmed live
+   * (Firefox, prod bundle): a delayed re-render from the first drag's
+   * settled `setDrawerHeight` landed MID-WAY through the second drag and
+   * silently overwrote the second drag's own live imperative
+   * `rootRef.current.style.height` write back to the FIRST drag's value —
+   * from the outside this looks exactly like "dragging just snaps back,"
+   * the founder's own reported symptom. Root-caused NOT to be
+   * engine-specific (reproduced once on Chromium too under the same rapid
+   * back-to-back timing, just less reliably) — it's a generic "an
+   * imperative mid-drag DOM write can be clobbered by ANY unrelated
+   * re-render that reconciles a stale `style` prop" hazard, not a
+   * WebKit/Firefox quirk. Fixed by making `drawerHeightRef` the SOLE
+   * authority for both: `handleDrawerResize` (the per-frame imperative
+   * callback) now ALSO writes this ref (previously only the DOM), and both
+   * `getCurrentHeight` and the root div's `style.height` below read
+   * `drawerHeightRef.current` instead of the `drawerHeight` state closure —
+   * every OTHER site that already wrote this ref (mount-restore,
+   * `handleDrawerResizeEnd`, `handleDrawerResizeReset`, the window-resize
+   * self-heal effect) keeps `drawerHeightRef` and `drawerHeight` state in
+   * sync at the SAME synchronous moment `setDrawerHeight` is called, so
+   * this change is a strict superset of correctness — a render triggered by
+   * a settled state change reads the identical value either way, while a
+   * render that lands MID-DRAG now reads the CURRENT true value instead of
+   * a stale one.
+   */
   /** Set true the instant the merged effect below has performed its one-time mount restore — everything after that is a genuine "drawerHeight changed" sync. */
   const hasRestoredRef = useRef(false);
   /**
@@ -490,6 +525,22 @@ export function ScriptEditorDrawer({ candles, interval, isPremiumMode, notional,
    */
   const hasResultsRef = useRef(false);
   hasResultsRef.current = scriptRunResult !== null;
+  /**
+   * Founder bug fix (2026-08-07) — `sidebarWidth` used to be React state,
+   * same live-reproduced clobber-on-mid-drag-re-render race as
+   * `panelWidthRef` in `chart-workbench.tsx` (see that ref's own doc for the
+   * full root-cause writeup — same mechanism, different handle). Converted
+   * to a plain ref outright rather than mirroring state with a ref: nothing
+   * else in this component ever reads `sidebarWidth`'s VALUE (only its own
+   * setter was ever called) — unlike `drawerHeightRef`, which still has to
+   * mirror real state because `drawerHeight` ALSO drives the
+   * `[drawerHeight]`-keyed console-resync effect below. The mount-restore
+   * branch of that same merged effect now does its own one-time imperative
+   * DOM write (matching `handleSidebarResize`'s own pattern) to apply the
+   * restored width on first paint, since there's no state change left to
+   * trigger a re-render for it.
+   */
+  const sidebarWidthRef = useRef(SIDEBAR_DEFAULT_WIDTH);
 
   const fetchScripts = useCallback(async () => {
     setScriptsLoading(true);
@@ -530,7 +581,9 @@ export function ScriptEditorDrawer({ candles, interval, isPremiumMode, notional,
       const restoredDrawerHeight = loadStoredDrawerHeight();
       drawerHeightRef.current = restoredDrawerHeight;
       setDrawerHeight(restoredDrawerHeight);
-      setSidebarWidth(loadStoredSidebarWidth());
+      const restoredSidebarWidth = loadStoredSidebarWidth();
+      sidebarWidthRef.current = restoredSidebarWidth;
+      sidebarRowRef.current?.style.setProperty("--script-sidebar-w", `${restoredSidebarWidth}px`);
       // Clamped against the JUST-restored drawer height (a local value, not
       // stale state) so a console height saved when the drawer was taller
       // doesn't reintroduce the editor-overlap bug `computeConsoleMaxHeight`/
@@ -790,6 +843,12 @@ export function ScriptEditorDrawer({ candles, interval, isPremiumMode, notional,
   }
 
   function handleDrawerResize(height: number) {
+    // Founder bug fix (2026-08-07) — this ref write is the whole fix for the
+    // rapid-re-drag race documented on `drawerHeightRef`'s own doc: every
+    // render (whatever triggers it) now reads THIS value, never a stale
+    // `drawerHeight` state closure, so a re-render landing mid-drag can no
+    // longer reconcile the DOM back to a stale height.
+    drawerHeightRef.current = height;
     if (rootRef.current) rootRef.current.style.height = `${height}px`;
   }
   function handleDrawerResizeEnd(height: number) {
@@ -809,15 +868,17 @@ export function ScriptEditorDrawer({ candles, interval, isPremiumMode, notional,
   }
 
   function handleSidebarResize(width: number) {
+    // Founder bug fix (2026-08-07) — same authoritative-ref fix as
+    // `handleDrawerResize` above, for the identical race on this handle.
+    sidebarWidthRef.current = width;
     sidebarRowRef.current?.style.setProperty("--script-sidebar-w", `${width}px`);
   }
   function handleSidebarResizeEnd(width: number) {
-    setSidebarWidth(width);
+    sidebarWidthRef.current = width;
     saveStoredSidebarWidth(width);
   }
   function handleSidebarResizeReset() {
     handleSidebarResize(SIDEBAR_DEFAULT_WIDTH);
-    setSidebarWidth(SIDEBAR_DEFAULT_WIDTH);
     saveStoredSidebarWidth(SIDEBAR_DEFAULT_WIDTH);
   }
 
@@ -910,9 +971,15 @@ export function ScriptEditorDrawer({ candles, interval, isPremiumMode, notional,
   }, [open]);
 
   return (
-    <div ref={rootRef} style={{ height: drawerHeight }} className="flex w-full shrink-0 flex-col border-t border-ink-200 bg-white">
+    // Founder bug fix (2026-08-07) — `drawerHeightRef.current`, not the
+    // `drawerHeight` state value, drives this style — see `drawerHeightRef`'s
+    // own doc for why: this ref is kept in sync with the true current height
+    // at every site that ever changes it (mid-drag included, now), so ANY
+    // render (whatever triggers it) always reconciles to the truth instead
+    // of a possibly-stale state closure.
+    <div ref={rootRef} style={{ height: drawerHeightRef.current }} className="flex w-full shrink-0 flex-col border-t border-ink-200 bg-white">
       <DrawerResizeHandle
-        getCurrentHeight={() => drawerHeight}
+        getCurrentHeight={() => drawerHeightRef.current}
         onResize={handleDrawerResize}
         onResizeEnd={handleDrawerResizeEnd}
         onDoubleClickReset={handleDrawerResizeReset}
@@ -959,9 +1026,13 @@ export function ScriptEditorDrawer({ candles, interval, isPremiumMode, notional,
           layout unchanged at desktop widths. Founder-feedback pass —
           `ref`+the `--script-sidebar-w` custom property is the sidebar
           width's live handle, see this component's own module doc. */}
+      {/* Founder bug fix (2026-08-07) — `sidebarWidthRef.current`, not the
+          `sidebarWidth` state value, drives this custom property, for the
+          identical "unrelated re-render clobbers a live drag" reason
+          `drawerHeightRef` fixes on the drawer's own root above. */}
       <div
         ref={sidebarRowRef}
-        style={{ "--script-sidebar-w": `${sidebarWidth}px` } as React.CSSProperties}
+        style={{ "--script-sidebar-w": `${sidebarWidthRef.current}px` } as React.CSSProperties}
         className="flex min-h-0 flex-1 flex-col sm:flex-row"
       >
         <ScriptListSidebar
@@ -978,7 +1049,7 @@ export function ScriptEditorDrawer({ candles, interval, isPremiumMode, notional,
         />
 
         <SidebarResizeHandle
-          getCurrentWidth={() => sidebarWidth}
+          getCurrentWidth={() => sidebarWidthRef.current}
           onResize={handleSidebarResize}
           onResizeEnd={handleSidebarResizeEnd}
           onDoubleClickReset={handleSidebarResizeReset}
