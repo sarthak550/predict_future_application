@@ -46,14 +46,21 @@ function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
 }
 
-/** Compact axis-tick money format — `formatRupees` is too verbose (full digit grouping) for a 4-tick gutter; this trims to `₹1.2L`/`₹3.4Cr`-style short units, matching the house's other axis-tick conventions (`combo-chart.tsx`'s own declared-once unit idea, simplified — no dual-axis need here). */
-function formatAxisTick(v: number): string {
+/** Compact axis-tick money format — `formatRupees` is too verbose (full digit grouping) for a 4-tick gutter; this trims to `₹1.2L`/`₹3.4Cr`-style short units, matching the house's other axis-tick conventions (`combo-chart.tsx`'s own declared-once unit idea, simplified — no dual-axis need here).
+ *
+ * `step` (the gap between adjacent ticks) drives ADAPTIVE precision: fixed
+ * 1-decimal rendering made every tick of a narrow equity range collapse to
+ * the same label (founder bug 2026-08-07: "why the points are repeated" —
+ * a ₹1L notional moving a few % put all 5 ticks at "₹1.0L"). Decimals are
+ * chosen so adjacent ticks always render distinctly, capped at 3. */
+function formatAxisTick(v: number, step: number): string {
   const sign = v < 0 ? "-" : "";
   const abs = Math.abs(v);
-  if (abs >= 1e7) return `${sign}₹${(abs / 1e7).toFixed(1)}Cr`;
-  if (abs >= 1e5) return `${sign}₹${(abs / 1e5).toFixed(1)}L`;
-  if (abs >= 1e3) return `${sign}₹${(abs / 1e3).toFixed(0)}k`;
-  return `${sign}₹${abs.toFixed(0)}`;
+  const unit = abs >= 1e7 ? 1e7 : abs >= 1e5 ? 1e5 : abs >= 1e3 ? 1e3 : 1;
+  const suffix = unit === 1e7 ? "Cr" : unit === 1e5 ? "L" : unit === 1e3 ? "k" : "";
+  const stepInUnit = step > 0 ? step / unit : 1;
+  const decimals = Math.min(3, Math.max(unit === 1 ? 0 : 1, Math.ceil(-Math.log10(stepInUnit))));
+  return `${sign}₹${(abs / unit).toFixed(decimals)}${suffix}`;
 }
 
 /** Running peak of a series — shared by the drawdown shading AND the tooltip's own DD readout, so the two can never disagree. */
@@ -184,7 +191,7 @@ export function EquityCurveChart({
             <g key={i}>
               <line x1={plotLeft} x2={plotRight} y1={yOf(tv)} y2={yOf(tv)} stroke="#f1f5f9" strokeWidth={1} />
               <text x={plotLeft - 6} y={yOf(tv) + 4} textAnchor="end" fontSize={11} fill="#64748b" className="tabular-nums">
-                {formatAxisTick(tv)}
+                {formatAxisTick(tv, ySpan / ticks)}
               </text>
             </g>
           ))}
