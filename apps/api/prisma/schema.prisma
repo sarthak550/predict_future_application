@@ -2273,15 +2273,24 @@ enum PaperSettlementBasis {
 
 /// Trading Terminal UI Overhaul (Sprint A, T1) — premium-history capture. Market
 /// data, NOT account data: one shared table across every account, same posture
-/// as StockEodQuote (no FK to PaperOrder/PaperTradingAccount). Populated every 5
-/// minutes during NSE market hours by the paper-trading-premium-capture cron for
-/// the union of (a) every (underlyingSymbol, expiryDate) with an open option
-/// position across any account and (b) every (underlyingSymbol, expiryDate)
-/// requested through the chain endpoint in roughly the last 15 minutes, ATM ± 5
-/// strikes each. Pruned after 45 days by a separate nightly cron
-/// (paper-trading-premium-snapshot-prune). See the Trading Terminal UI brief's
-/// "Data layer" section for the full spec — this table exists so premium
-/// history can start accruing well before the T10 chart UI that will read it.
+/// as StockEodQuote (no FK to PaperOrder/PaperTradingAccount). Populated by the
+/// paper-trading-premium-capture cron for the union of (a) every
+/// (underlyingSymbol, expiryDate) with an open option position across any
+/// account and (b) every (underlyingSymbol, expiryDate) requested through the
+/// chain endpoint in roughly the last 15 minutes, ATM ± 10 strikes each (widened
+/// from ± 5 by the interval-parity cadence project below).
+///
+/// Interval-parity cadence project (2026-08-07) — cadence is now TWO-TRACK, not
+/// a flat 5 minutes: index underlyings (NIFTY/BANKNIFTY/FINNIFTY/MIDCPNIFTY/
+/// NIFTYNXT50) capture every 1 minute, single-stock underlyings still every 5
+/// minutes (see premiumCapture.ts's module doc for the full write-volume
+/// reasoning). Retention is correspondingly TWO-TIER, not a flat 45 days: rows
+/// at fine-grained cadence (captureIntervalSec <= 60) are pruned after 10
+/// calendar days, everything else (including every legacy row written before
+/// this column existed) after 45 days — see paper-trading-premium-snapshot-
+/// prune's own module doc. See the Trading Terminal UI brief's "Data layer"
+/// section for the original spec — this table exists so premium history can
+/// start accruing well before the T10 chart UI that will read it.
 model OptionPremiumSnapshot {
   id               String              @id @default(cuid())
   capturedAt       DateTime            @default(now())
@@ -2296,9 +2305,25 @@ model OptionPremiumSnapshot {
   bidPrice         Float?
   askPrice         Float?
   underlyingValue  Float
+  /// Interval-parity capture cadence project (2026-08-07) — the ACTUAL
+  /// capture cadence in seconds this row was written at: 60 for index
+  /// underlyings (NIFTY/BANKNIFTY/FINNIFTY/MIDCPNIFTY/NIFTYNXT50, captured
+  /// every minute during market hours) or 300 for single-stock underlyings
+  /// (still captured every 5 minutes — see premiumCapture.ts's two-track
+  /// cadence split for the write-volume reasoning). Read by
+  /// premium-candles.ts's aggregation to decide, PER BUCKET and from the
+  /// row's own recorded truth (never inferred from the underlying's name
+  /// client-side), whether a bucket represents genuinely native-granularity
+  /// samples (1 row = 1 honest bar) or an aggregation that still needs the
+  /// pre-existing "≥3 samples" honesty floor. Defaults to 300 (the historical
+  /// cadence for every row written before this column existed, and the safe
+  /// conservative assumption for any future write path that forgets to set
+  /// it explicitly).
+  captureIntervalSec Int               @default(300)
 
   @@index([underlyingSymbol, expiryDate, strikePrice, optionType, capturedAt])
   @@index([capturedAt])
+  @@index([captureIntervalSec, capturedAt])
 }
 
 /// Instrument Page v2 — singleton-per-symbol cache for Yahoo-sourced

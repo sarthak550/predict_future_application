@@ -119,6 +119,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { isNseWeekdayMarketHours } from "@predict-future/business-rules/papertrading/marketHours";
+import { isIndexOptionUnderlying } from "@predict-future/business-rules/papertrading/optionContract";
 
 import { useVisiblePolling } from "@/components/paper-trading/use-visible-polling";
 import { useLiveQuoteTick, LIVE_QUOTE_POLL_MS, type LiveQuoteTick } from "@/components/paper-trading/use-live-quote-tick";
@@ -128,8 +129,33 @@ export type CandleInterval = "1m" | "5m" | "15m" | "30m" | "60m" | "1d";
 
 export const WORKBENCH_INTERVALS: CandleInterval[] = ["1m", "5m", "15m", "30m", "60m", "1d"];
 
-/** W3, T5/T6 — premium mode restricts the timeframe selector to 15m/30m only (option premium snapshots are captured every 5 minutes; anything finer than 15m would be mostly empty/sub-3-snapshot buckets). */
-export const PREMIUM_INTERVALS: CandleInterval[] = ["15m", "30m"];
+/**
+ * W3, T5/T6 — premium mode's offered timeframe set.
+ *
+ * **Interval-parity cadence project (2026-08-07)** — founder, verbatim:
+ * "why the fuck we do have onli 15m and 30 min sticks, why cant we have same
+ * as stocks." Widened from a flat 15m/30m-only set (built around a uniform
+ * 5-minute capture cadence) now that `apps/api`'s premiumCapture.ts captures
+ * INDEX underlyings every 1 minute and STOCK underlyings every 5 minutes
+ * (see that file's own module doc for the full cadence-split reasoning —
+ * the short version: full 1m-1d parity for every underlying would have
+ * meant either an unbounded write-volume risk or capturing data we can't
+ * honestly aggregate). `premiumIntervalsFor` below returns the set that's
+ * actually TRUE for a given contract's own native cadence — an index
+ * contract offers full 1m-1d parity; a stock contract offers 5m-1d (1m is
+ * deliberately withheld for stocks — offering it would either always
+ * resolve to `premium-candles.ts`'s native-granularity 1-sample-per-bar path
+ * misleadingly implying 1-minute PRECISION when the underlying capture is
+ * still only every 5 minutes, or render mostly-empty buckets; neither is
+ * honest).
+ */
+export const PREMIUM_INTERVALS_INDEX: CandleInterval[] = ["1m", "5m", "15m", "30m", "60m", "1d"];
+export const PREMIUM_INTERVALS_STOCK: CandleInterval[] = ["5m", "15m", "30m", "60m", "1d"];
+
+/** The offered timeframe set for a premium-mode contract, keyed on the SAME index/stock membership premiumCapture.ts uses server-side to decide capture cadence — see that constant's own doc. */
+export function premiumIntervalsFor(underlying: string): CandleInterval[] {
+  return isIndexOptionUnderlying(underlying) ? PREMIUM_INTERVALS_INDEX : PREMIUM_INTERVALS_STOCK;
+}
 
 export interface Candle {
   timestamp: number;
@@ -158,10 +184,22 @@ export type WorkbenchFeed =
   | { kind: "optionPremium"; underlying: string; expiry: string; strikePrice: number; optionType: "CE" | "PE"; livePremium: number | null };
 
 interface PremiumMeta {
-  /** Raw (pre-aggregation) snapshot count for this contract — drives the zero-snapshot accrual-note contract (T5): fewer than 3 EVER shows the accrual note, regardless of how the buckets aggregate. */
+  /** Raw (pre-aggregation) snapshot count for this contract (server-captured rows + in-session live ticks). */
   totalSnapshots: number;
-  /** The real earliest snapshot's ISO timestamp — feeds the mandatory "since {date}" label. Never hardcoded. */
+  /** The real earliest snapshot's ISO timestamp — feeds the "since {date}" label. Never hardcoded. */
   earliestCapturedAt: string | null;
+  /**
+   * Interval-parity cadence project (2026-08-07) — the real earliest point
+   * whose OWN `captureIntervalSec` is native-granularity for the currently
+   * selected interval (`<=60s`, i.e. the 1-minute index track or a
+   * finer in-session tick) — never a hardcoded ship date. `null` when no
+   * such point exists yet (every captured row so far is coarser than 1
+   * minute — normal for a stock contract, or for an index contract before
+   * this project's first 1-minute sample). Drives the honesty disclosure:
+   * "fine-grained history begins {date}," never implying continuity
+   * further back than what was genuinely captured at that cadence.
+   */
+  earliestFineGrainedCapturedAt: string | null;
 }
 
 type CandleFetchState =
@@ -299,9 +337,25 @@ function feedTitle(feed: WorkbenchFeed): string {
   return `${feed.underlying} ${feed.strikePrice} ${feed.optionType}`;
 }
 
+/** Bucket width for every premium-mode interval — widened 2026-08-07 from a 15m/30m-only mapping to the full set (see `PREMIUM_INTERVALS_INDEX`/`PREMIUM_INTERVALS_STOCK`'s own doc). */
+const PREMIUM_BUCKET_MS: Record<CandleInterval, number> = {
+  "1m": 60_000,
+  "5m": 5 * 60_000,
+  "15m": 15 * 60_000,
+  "30m": 30 * 60_000,
+  "60m": 60 * 60_000,
+  "1d": 24 * 60 * 60_000
+};
+
 function bucketMsForInterval(interval: CandleInterval): number {
-  return interval === "30m" ? 30 * 60_000 : 15 * 60_000; // premium mode only ever passes 15m/30m — anything else defaults to the 15m bucket rather than throwing.
+  return PREMIUM_BUCKET_MS[interval];
 }
+
+/** Native-granularity threshold for `earliestFineGrainedCapturedAt` — matches premiumCapture.ts's FAST_TRACK_CAPTURE_INTERVAL_SEC (60s, the index track) exactly. */
+const FINE_GRAINED_MAX_INTERVAL_SEC = 60;
+
+/** The cadence a live session tick is marked with — genuinely finer than any server capture track (~15s live poll, see `feed.livePremium`'s own doc), so it always qualifies as native-granularity in `aggregatePremiumCandles`. */
+const SESSION_TICK_CAPTURE_INTERVAL_SEC = 15;
 
 /** Honest-data chip label — a single, reused source string rather than each caller inventing its own wording (see the founder plan's "honest-data chip" requirement). */
 const SOURCE_LABEL = "Delayed market data (Yahoo)";
@@ -574,8 +628,15 @@ export function useWorkbenchCandles(
           if (latestPremiumKeyRef.current !== key) return; // superseded by a newer contract selection — drop silently.
           const points: PremiumSnapshotPoint[] = Array.isArray(data.points)
             ? data.points
-                .filter((p: { capturedAt?: string; lastPrice?: number }) => typeof p.capturedAt === "string" && Number.isFinite(p.lastPrice) && (p.lastPrice ?? 0) > 0)
-                .map((p: { capturedAt: string; lastPrice: number }) => ({ capturedAt: p.capturedAt, lastPrice: p.lastPrice }))
+                .filter(
+                  (p: { capturedAt?: string; lastPrice?: number }) =>
+                    typeof p.capturedAt === "string" && Number.isFinite(p.lastPrice) && (p.lastPrice ?? 0) > 0
+                )
+                .map((p: { capturedAt: string; lastPrice: number; captureIntervalSec?: number }) => ({
+                  capturedAt: p.capturedAt,
+                  lastPrice: p.lastPrice,
+                  captureIntervalSec: p.captureIntervalSec
+                }))
             : [];
           setRawPoints(points);
           setPremiumLoadState("ready");
@@ -607,7 +668,17 @@ export function useWorkbenchCandles(
     if (!isPremium || livePremium == null || livePremium <= 0) return;
     if (lastAppendedLivePrice.current === livePremium) return;
     lastAppendedLivePrice.current = livePremium;
-    setSessionTicks((prev) => [...prev, { capturedAt: new Date().toISOString(), lastPrice: livePremium }]);
+    // Interval-parity cadence project (2026-08-07) — a session tick is a
+    // REAL live poll result (~15s during market hours, see this file's own
+    // module doc on `feed.livePremium`'s freshness), genuinely finer than
+    // even the 1-minute index capture track. Marked explicitly (not left to
+    // the `captureIntervalSec` default) so `aggregatePremiumCandles` treats
+    // a bucket built entirely from session ticks as native-granularity —
+    // exactly the "session-tick machinery must still build the live chart
+    // from the moment they watch" requirement, for a contract with zero
+    // server-captured history (outside the capture window) or before its
+    // next scheduled capture run lands.
+    setSessionTicks((prev) => [...prev, { capturedAt: new Date().toISOString(), lastPrice: livePremium, captureIntervalSec: SESSION_TICK_CAPTURE_INTERVAL_SEC }]);
   }, [isPremium, livePremium]);
 
   const allPremiumPoints = useMemo(() => [...rawPoints, ...sessionTicks], [rawPoints, sessionTicks]);
@@ -625,11 +696,12 @@ export function useWorkbenchCandles(
     const bucketMs = bucketMsForInterval(interval);
     const candles = aggregatePremiumCandles(allPremiumPoints, bucketMs);
     const earliestCapturedAt = allPremiumPoints.length > 0 ? allPremiumPoints[0].capturedAt : null;
+    const earliestFineGrained = allPremiumPoints.find((p) => (p.captureIntervalSec ?? 300) <= FINE_GRAINED_MAX_INTERVAL_SEC);
     setState({
       status: "ready",
       candles: candles.map((c) => ({ ...c })),
       prevClose: null,
-      premiumMeta: { totalSnapshots: allPremiumPoints.length, earliestCapturedAt }
+      premiumMeta: { totalSnapshots: allPremiumPoints.length, earliestCapturedAt, earliestFineGrainedCapturedAt: earliestFineGrained?.capturedAt ?? null }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPremium, premiumLoadState, allPremiumPoints, interval]);

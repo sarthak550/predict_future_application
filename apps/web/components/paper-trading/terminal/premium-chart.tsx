@@ -6,8 +6,10 @@
  * brief). A NEW component, deliberately NOT a `PriceChart` prop-bag mode:
  * `PriceChart` is shared by four OTHER consumers (the equity/futures
  * terminals plus three non-terminal pages) with a 1D-intraday/EOD-series data
- * model that doesn't fit this chart's actual shape — 5-minute
- * `OptionPremiumSnapshot` history plus live in-session ticks appended from
+ * model that doesn't fit this chart's actual shape — `OptionPremiumSnapshot`
+ * history (1-minute cadence for index underlyings, 5-minute for single-stock
+ * underlyings as of the 2026-08-07 interval-parity project — see
+ * apps/api's premiumCapture.ts) plus live in-session ticks appended from
  * the options terminal's own chain-derived premium (~15s during NSE trading
  * hours as of the 2026-08-07b dedicated poll/TTL fix — see
  * options-page-client.tsx's own doc), no timeframe selector, denominated in
@@ -23,16 +25,20 @@
  *
  * Honest-data framing (decision 6 / Sprint A's decision 7, enforced here at
  * the render layer): a contract with populated `premium-history` snapshots
- * shows a "5-min snapshots since <date> · delayed" label and the real
- * historical series. A contract with ZERO snapshots yet — normal for a
- * freshly-browsed strike, the capture cron only reaches ATM±5 of browsed
- * chains — renders the live-tick-only session view (this chart's OWN
- * in-session ticks, appended from `livePremium` below) with an explicit
- * "history accrues as this contract is viewed" note. Absent data is NEVER
- * rendered as a flat/zero line.
+ * shows a "{1-minute|5-minute} snapshots since <date> · delayed" label (the
+ * cadence word reflects the ACTUAL track this contract's underlying
+ * captures on, not a hardcoded "5-min" — see `captureCadenceLabel` below)
+ * and the real historical series. A contract with ZERO snapshots yet —
+ * normal for a freshly-browsed strike outside the capture cron's ATM±10
+ * window of browsed chains — renders the live-tick-only session view (this
+ * chart's OWN in-session ticks, appended from `livePremium` below) with an
+ * explicit "history accrues as this contract is viewed" note. Absent data is
+ * NEVER rendered as a flat/zero line.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
+
+import { isIndexOptionUnderlying } from "@predict-future/business-rules/papertrading/optionContract";
 
 import {
   CANCEL_HIT_DIAMETER,
@@ -102,6 +108,13 @@ export function PremiumChart({
   onOrderLineCancel?: (id: string) => void;
 }) {
   const contractKey = `${underlying}::${expiry}::${strikePrice}::${optionType}`;
+  // Interval-parity cadence project (2026-08-07) — apps/api's premiumCapture.ts
+  // now captures index underlyings every 1 minute (was, and single-stock
+  // underlyings still every, 5 minutes — see that file's own module doc).
+  // This chart's copy below reflects whichever is actually true for THIS
+  // contract rather than a hardcoded "5-minute" — see chart-workbench.tsx's
+  // identical `captureCadenceLabel` for the sibling copy this deliberately matches.
+  const captureCadenceLabel = isIndexOptionUnderlying(underlying) ? "1-minute" : "5-minute";
 
   const [history, setHistory] = useState<HistoryState>({ status: "loading" });
   const [sessionTicks, setSessionTicks] = useState<PremiumTick[]>([]);
@@ -201,7 +214,7 @@ export function PremiumChart({
     return (
       <div className="rounded-xl border border-ink-100 bg-ink-50/40 p-6 text-sm text-ink-500">
         {historyPoints.length === 0
-          ? "No premium history captured for this contract yet — history accrues as this contract is viewed (5-minute snapshots while it's on someone's screen)."
+          ? `No premium history captured for this contract yet — history accrues as this contract is viewed (${captureCadenceLabel} snapshots while it's on someone's screen).`
           : "Not enough premium ticks yet — check back shortly."}
       </div>
     );
@@ -311,7 +324,7 @@ export function PremiumChart({
 
   const footerNote =
     historyPoints.length > 0
-      ? `5-min snapshots since ${formatIstDateShort(historyPoints[0].capturedAt)} · delayed`
+      ? `${captureCadenceLabel} snapshots since ${formatIstDateShort(historyPoints[0].capturedAt)} · delayed`
       : "Live session only · history accrues as this contract is viewed";
 
   return (

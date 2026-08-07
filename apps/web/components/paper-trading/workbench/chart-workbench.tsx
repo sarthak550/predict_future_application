@@ -102,6 +102,8 @@ import { createPortal } from "react-dom";
 import dynamic from "next/dynamic";
 import { ArrowLeftRight, Code2, Loader2, Minimize2, PanelRightClose, PanelRightOpen, Search } from "lucide-react";
 
+import { isIndexOptionUnderlying } from "@predict-future/business-rules/papertrading/optionContract";
+
 import { ChartOrderIntentPopover } from "@/components/finance/chart-order-intent-popover";
 import { ChartAxisPlusButton } from "@/components/finance/chart-axis-plus-button";
 import { ChartContextMenu } from "@/components/finance/chart-context-menu";
@@ -132,7 +134,7 @@ import { DrawingStyleToolbar } from "./drawing-style-toolbar";
 import { DrawingTextPopover } from "./drawing-text-popover";
 import { PanelResizeHandle, PANEL_DEFAULT_WIDTH, clampPanelWidth } from "./panel-resize-handle";
 import { useChartDrawings } from "./use-chart-drawings";
-import { useWorkbenchCandles, WORKBENCH_INTERVALS, PREMIUM_INTERVALS, type CandleInterval, type WorkbenchFeed } from "./use-workbench-candles";
+import { useWorkbenchCandles, WORKBENCH_INTERVALS, premiumIntervalsFor, type CandleInterval, type WorkbenchFeed } from "./use-workbench-candles";
 import {
   StrategyConfigPanel,
   StrategyDisclaimerFooter,
@@ -201,6 +203,16 @@ interface TextPopoverInfo {
 function formatIstDateShort(iso: string): string {
   return new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", timeZone: "Asia/Kolkata" }).format(new Date(iso));
 }
+
+/** Human label per interval for the premium honest-data chip — see this file's premiumLabel doc. */
+const PREMIUM_INTERVAL_LABEL: Record<CandleInterval, string> = {
+  "1m": "1-min",
+  "5m": "5-min",
+  "15m": "15-min",
+  "30m": "30-min",
+  "60m": "1-hour",
+  "1d": "1-day"
+};
 
 // Founder-feedback pass (2026-08-04) — resizable right panel width,
 // localStorage-persisted (same "restore once, after mount" posture as
@@ -279,7 +291,19 @@ export function ChartWorkbench({
   onSymbolPick?: (pick: SymbolPick) => void;
 }) {
   const isPremiumMode = feed.kind === "optionPremium";
-  const [chartInterval, setChartInterval] = useState<CandleInterval>(() => (isPremiumMode ? "15m" : "5m"));
+  // Interval-parity cadence project (2026-08-07) — the offered timeframe
+  // set now differs by contract type (index vs stock, see
+  // `premiumIntervalsFor`'s own doc); defaulting to that set's OWN fastest
+  // entry (1m for index, 5m for stock) is the interval most likely to show
+  // data immediately for a freshly-opened contract, matching this project's
+  // "build the live chart from the moment they watch" goal. Computed
+  // straight from `feed` rather than `isPremiumMode` so TypeScript narrows
+  // `feed.underlying` correctly inside this lazy initializer (it only runs
+  // once, at mount, same as before).
+  const [chartInterval, setChartInterval] = useState<CandleInterval>(() =>
+    feed.kind === "optionPremium" ? premiumIntervalsFor(feed.underlying)[0] : "5m"
+  );
+  const premiumIntervals = feed.kind === "optionPremium" ? premiumIntervalsFor(feed.underlying) : WORKBENCH_INTERVALS;
 
   // TA Suite S2 — indicator library state: a multi-instance selection (see
   // `indicator-registry.ts`'s own doc for why an instance, not a bare name,
@@ -871,6 +895,17 @@ export function ChartWorkbench({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chartKey]);
 
+  // Interval-parity cadence project (2026-08-07) — a chartKey change (e.g.
+  // the embedded Chain tab jumping from a STOCK premium contract to an INDEX
+  // one) can land on a `premiumIntervals` set that no longer contains the
+  // currently-selected `chartInterval` (index offers "1m", stock doesn't —
+  // see `premiumIntervalsFor`'s own doc). Falls back to the new set's own
+  // fastest entry, same choice the mount initializer makes.
+  useEffect(() => {
+    if (!premiumIntervals.includes(chartInterval)) setChartInterval(premiumIntervals[0]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [premiumIntervals]);
+
   // Body scroll lock while the workbench is open, restored on close.
   useEffect(() => {
     const prevOverflow = document.body.style.overflow;
@@ -954,21 +989,45 @@ export function ChartWorkbench({
   const currentPrice = candles.length > 0 ? candles[candles.length - 1].close : (isPremiumMode ? feed.livePremium : null);
 
   // W3, T5 — premium-mode honest-data framing, replacing the equity/index
-  // chip. Bucket size reflects the ACTUAL active interval (15 or 30) rather
-  // than a hardcoded "15-min" string — a 30m chart labeled "15-min" would
-  // itself be a dishonest label, contradicting the whole point of this
-  // feature (flagged as a deliberate deviation from the brief's literal
-  // fixed-string wording — see final report).
+  // chip.
+  //
+  // **Interval-parity cadence project (2026-08-07)** — this whole block was
+  // built around a flat 5-minute cadence and a fixed 15m/30m interval set;
+  // both are now per-contract (see `premiumIntervalsFor`'s own doc).
+  // `premiumTooSparse` used to gate on a raw "<3 total snapshots ever"
+  // count, which was only ever an approximation of "can ANY bucket render"
+  // — now that native-granularity buckets need just 1 sample (see
+  // `premium-candles.ts`'s own doc), that approximation would show the
+  // empty-state text even once a real bar exists. Gates on the ACTUAL
+  // aggregation result instead: `candles.length === 0` is the one true
+  // "nothing to plot yet" signal, whatever the interval or contract type.
+  const captureCadenceLabel = isPremiumMode && isIndexOptionUnderlying(feed.underlying) ? "1-minute" : "5-minute";
   const premiumSnapshotCount = premiumMeta?.totalSnapshots ?? 0;
-  const premiumTooSparse = isPremiumMode && premiumSnapshotCount < 3;
+  const premiumTooSparse = isPremiumMode && candles.length === 0;
+  // The current interval is "native" when it's this contract's own fastest
+  // offered timeframe (1m for index, 5m for stock) — at that width, a bar
+  // IS a real capture (or live tick), not an aggregation; see
+  // `premium-candles.ts`'s native-granularity doc.
+  const isNativePremiumInterval = isPremiumMode && premiumIntervals[0] === chartInterval;
+  const premiumSinceDate = isNativePremiumInterval
+    ? (premiumMeta?.earliestFineGrainedCapturedAt ?? premiumMeta?.earliestCapturedAt)
+    : premiumMeta?.earliestCapturedAt;
   const premiumLabel =
-    isPremiumMode && premiumMeta?.earliestCapturedAt
-      ? `${chartInterval === "30m" ? "30" : "15"}-min pseudo-candles from 5-min snapshots · delayed · since ${formatIstDateShort(premiumMeta.earliestCapturedAt)}`
+    isPremiumMode && premiumSinceDate
+      ? isNativePremiumInterval
+        ? `${PREMIUM_INTERVAL_LABEL[chartInterval]} snapshots · delayed · since ${formatIstDateShort(premiumSinceDate)}`
+        : `${PREMIUM_INTERVAL_LABEL[chartInterval]} pseudo-candles from ${captureCadenceLabel} snapshots · delayed · since ${formatIstDateShort(premiumSinceDate)}`
       : null;
-  // Reused verbatim from terminal/premium-chart.tsx's own copy (never invent new wording — the brief's explicit instruction).
+  // Cadence-aware update of terminal/premium-chart.tsx's original copy — a
+  // deliberate DEVIATION from that file's "never invent new wording"
+  // precedent, because the underlying truth it described (a flat 5-minute
+  // cadence for every contract) is no longer accurate for index contracts;
+  // repeating the old wording here would itself be the dishonest choice.
+  // Both files now derive the same cadence number from the same
+  // `isIndexOptionUnderlying` check rather than either hardcoding it.
   const premiumAccrualNote =
     premiumSnapshotCount === 0
-      ? "No premium history captured for this contract yet — history accrues as this contract is viewed (5-minute snapshots while it's on someone's screen)."
+      ? `No premium history captured for this contract yet — history accrues as this contract is viewed (${captureCadenceLabel} snapshots while it's on someone's screen; live ticks start building today's chart on this screen within the first minute).`
       : "Not enough premium ticks yet — check back shortly.";
 
   const activeColor = (selectedRow?.styles as { line?: { color?: string } } | undefined)?.line?.color ?? null;
@@ -1018,7 +1077,7 @@ export function ChartWorkbench({
                 : undefined
           }
         />
-        <TimeframeSelector intervals={isPremiumMode ? PREMIUM_INTERVALS : WORKBENCH_INTERVALS} value={chartInterval} onChange={setChartInterval} />
+        <TimeframeSelector intervals={premiumIntervals} value={chartInterval} onChange={setChartInterval} />
         <IndicatorActiveStrip
           instances={[...indicators.main, ...indicators.sub]}
           signals={instanceSignals}
