@@ -17,7 +17,7 @@
  * gets exactly the window that makes sense for it (a 1-minute chart showing
  * 5 years of bars would be both useless and a multi-megabyte response):
  *
- *   1m         → range=1d   (today's/last session's minute bars)
+ *   1m         → range=5d   (a full trading week of minute bars; was 1d — see INTERVAL_RANGE)
  *   5m         → range=5d
  *   15m / 30m  → range=1mo
  *   60m        → range=3mo
@@ -125,7 +125,12 @@ function zipYahooCandles(
 
 /** Server-owned `range` query param per intraday/short-daily interval — never accepted from the caller. */
 const INTERVAL_RANGE: Record<Exclude<CandleInterval, "1d">, string> = {
-  "1m": "1d",
+  // 1m was "1d" until 2026-08-07 (founder: "I choose 1 min candles then
+  // historical candles are not shown") — a single session of minute bars,
+  // which off-hours could render near-empty. 5d is Yahoo's practical
+  // single-request ceiling for 1m (hard API limit ~7d, but 5d = one full
+  // trading week and stays comfortably inside it).
+  "1m": "5d",
   "5m": "5d",
   "15m": "1mo",
   "30m": "1mo",
