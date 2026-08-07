@@ -8,8 +8,10 @@
  * terminals plus three non-terminal pages) with a 1D-intraday/EOD-series data
  * model that doesn't fit this chart's actual shape — 5-minute
  * `OptionPremiumSnapshot` history plus live in-session ticks appended from
- * the options terminal's own already-running 30s chain poll, no timeframe
- * selector, denominated in premium rather than spot. Forcing that shape into
+ * the options terminal's own chain-derived premium (~15s during NSE trading
+ * hours as of the 2026-08-07b dedicated poll/TTL fix — see
+ * options-page-client.tsx's own doc), no timeframe selector, denominated in
+ * premium rather than spot. Forcing that shape into
  * `PriceChart` would grow exactly the kind of branchy complexity the Sprint B
  * brief warns against for a component with this many existing consumers.
  *
@@ -90,7 +92,7 @@ export function PremiumChart({
   expiry: string;
   strikePrice: number;
   optionType: "CE" | "PE";
-  /** The contract's current premium, straight off the options terminal's own already-running ~30s chain poll (owned by the parent — this component does NOT poll on its own). A changed value appends one in-session tick; the SAME value re-rendering is a no-op (no duplicate ticks on every unrelated parent re-render). */
+  /** The contract's current premium, straight off the options terminal's own chain-derived poll (owned by the parent — this component does NOT poll on its own; ~15s during NSE trading hours as of the 2026-08-07b fix, see options-page-client.tsx's dedicated selected-contract poll). A changed value appends one in-session tick; the SAME value re-rendering is a no-op (no duplicate ticks on every unrelated parent re-render). */
   livePremium: number | null;
   orderLines?: ChartOrderLine[];
   /** Chart Trading + SL/TP (Sprint C, C2) — replaces Sprint B's `onPriceClick(price)`. Interaction-model rework (2026-08-04, founder complaint "I cant have buy/sell popup on every click, thats irritating") — see price-chart.tsx's identical prop for the full contract: a plain click never fires this any more; it fires only from the price-axis "+" button (via the popover) or the right-click compact menu. */
@@ -124,7 +126,7 @@ export function PremiumChart({
   // Fetches the 5-min snapshot history fresh whenever the CONTRACT identity
   // changes — never on a `livePremium` tick (the endpoint's own data only
   // advances every 5 minutes server-side regardless; re-fetching on every
-  // ~30s chain poll would be pure waste).
+  // ~15s chain-derived tick would be pure waste).
   useEffect(() => {
     let cancelled = false;
     setHistory({ status: "loading" });

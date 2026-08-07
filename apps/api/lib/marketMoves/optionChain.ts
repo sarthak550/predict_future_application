@@ -59,6 +59,7 @@
 
 import { primeNseSession, nseApiGet } from "./nse";
 import { fetchEquityNames } from "./nse";
+import { isNseWeekdayMarketHours } from "./marketHours";
 
 /**
  * Widened from a closed "NIFTY" | "BANKNIFTY" literal union (Phase 2) to a
@@ -125,8 +126,39 @@ const MKTLOTS_URL = `${NSE_ARCHIVES_ORIGIN}/content/fo/fo_mktlots.csv`;
 const BROWSER_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
-/** Same 60s in-module TTL convention as marketMoves/intraday.ts's fetchIntradaySeries cache — both fetchOptionChainExpiries and fetchOptionChain below are wrapped in this so the internal apps/api route (and, transitively, every apps/web caller polling through the loopback proxy) never hammers NSE more than once per underlying(+expiry) per minute. */
+/** Same 60s in-module TTL convention as marketMoves/intraday.ts's fetchIntradaySeries cache — fetchOptionChainExpiries below is wrapped in this unconditionally (an expiry LIST doesn't need to move faster than once a minute), and it's also fetchOptionChain's own OFF-HOURS throttle — see chainQuoteCacheTtlMs below for the market-hours-aware value fetchOptionChain actually uses. */
 const CHAIN_CACHE_TTL_MS = 60 * 1000;
+
+/**
+ * Founder bug fix (2026-08-07b) — "future and stocks are having live ticks
+ * but not options." Root cause: `fetchOptionChain`'s cache (below) reused
+ * the same flat 60s `CHAIN_CACHE_TTL_MS` as the expiry-list cache above, so
+ * the option chain's own quotes — and, transitively, every UI surface fed
+ * by them (the chain ladder, the docked ticket's premium pre-fill, the
+ * selected contract's live price on the underlying/premium charts) — could
+ * only ever move once a minute, regardless of how often a client polled.
+ * Equity/index quotes have no such server-side floor (Yahoo-backed,
+ * fetched fresh on every genuinely-due poll — see marketMoves/candles.ts),
+ * which is exactly why they visibly "ticked" while options didn't.
+ *
+ * `chainQuoteCacheTtlMs` tightens the THROTTLE `fetchOptionChain` reads
+ * from (below) to 15s during live NSE trading hours — still a real
+ * no-hammer floor against the unofficial upstream (see this file's own
+ * module doc on that fragility), just one four times tighter than before,
+ * matching the ~15s dedicated poll `options-page-client.tsx` now runs
+ * against this same endpoint for whichever contract is currently selected.
+ * Off-hours (market closed, weekends) keeps the original 60s — nothing is
+ * moving then, so there is no reason to poll NSE any harder. The
+ * `attemptedAt`-based no-hammer throttle itself, and the separate
+ * `allowStale`/`CHAIN_STALE_SERVE_MS` stale-serve machinery, are both
+ * UNTOUCHED — this only changes which TTL value the throttle check
+ * compares against.
+ */
+const CHAIN_CACHE_TTL_MARKET_HOURS_MS = 15 * 1000;
+
+function chainQuoteCacheTtlMs(): number {
+  return isNseWeekdayMarketHours() ? CHAIN_CACHE_TTL_MARKET_HOURS_MS : CHAIN_CACHE_TTL_MS;
+}
 
 // ─── Expiry list ──────────────────────────────────────────────────────────────
 
@@ -365,14 +397,15 @@ function parseNseChainTimestamp(raw: string | null | undefined): Date | null {
  * Founder complaint 2026-08-04 (9:15-9:30 IST market-open flake window):
  * chain fetches diagnosed healthy end-to-end, but a single transient upstream
  * miss used to blank the whole ladder. This entry now tracks the last
- * ATTEMPT (success or failure, for the 60s no-hammer throttle below) SEPARATE
+ * ATTEMPT (success or failure, for the no-hammer throttle below — see
+ * `chainQuoteCacheTtlMs`, 15s market hours / 60s off-hours) SEPARATE
  * from the last known-GOOD snapshot (never cleared by a failed re-fetch) —
  * the same never-overwrite-good-with-empty convention fetchOptionChainExpiries
  * already applies above, extended to the chain path with an explicit
  * `stale`-tagging contract instead of that function's implicit forever-cache.
  */
 interface ChainCacheEntry {
-  /** Wall-clock time of the last fetch ATTEMPT (success or failure) — governs the CHAIN_CACHE_TTL_MS no-hammer throttle. */
+  /** Wall-clock time of the last fetch ATTEMPT (success or failure) — governs the `chainQuoteCacheTtlMs()` no-hammer throttle. */
   attemptedAt: number;
   /** Whether the attempt at `attemptedAt` succeeded. When false, `lastGood`/`lastGoodAt` still hold the most recent PRIOR success untouched — callers must go through the allowStale gate in fetchOptionChain rather than trusting this entry's presence alone. */
   lastAttemptSucceeded: boolean;
@@ -433,11 +466,12 @@ function resolveStaleOrNull(entry: ChainCacheEntry, now: number, allowStale: boo
  * Trading Terminal UI Overhaul (Sprint A, T3) — "recently viewed" tracking for
  * the premium-capture cron's candidate set. A SEPARATE map from chainCache
  * (not a field bolted onto its entries): a contract stays "recently viewed"
- * for RECENTLY_VIEWED_WINDOW_MS regardless of the 60s chainCache TTL, and
- * recording a request must never be skipped just because chainCache already
- * had a fresh entry (a cache HIT is still a real view). Process-local, lost on
- * restart, single-instance-only — the same accepted limitation as
- * chainCache's own 60s TTL, not a new risk class.
+ * for RECENTLY_VIEWED_WINDOW_MS regardless of chainCache's own (now
+ * market-hours-aware, see `chainQuoteCacheTtlMs`) TTL, and recording a
+ * request must never be skipped just because chainCache already had a fresh
+ * entry (a cache HIT is still a real view). Process-local, lost on restart,
+ * single-instance-only — the same accepted limitation as chainCache itself,
+ * not a new risk class.
  */
 const recentlyViewedCache = new Map<string, { underlying: OptionUnderlying; expiry: string; lastRequestedAt: number }>();
 
@@ -484,9 +518,11 @@ export interface FetchOptionChainOptions {
  * contract month. Never throws — returns null on any upstream failure or an
  * empty/malformed response with no eligible stale fallback, so the route layer
  * can render an honest "unavailable" state rather than a 500 or an infinite
- * spinner. Cached in-module for CHAIN_CACHE_TTL_MS (60s, no-hammer throttle)
- * per (underlying, expiry) pair; see `allowStale` above for the serve-stale
- * behavior on a failed re-fetch.
+ * spinner. Cached in-module for `chainQuoteCacheTtlMs()` (15s during NSE
+ * trading hours, 60s off-hours — see that function's own doc, 2026-08-07b) —
+ * a no-hammer throttle per (underlying, expiry) pair, not a freshness
+ * guarantee; see `allowStale` above for the serve-stale behavior on a failed
+ * re-fetch.
  */
 export async function fetchOptionChain(
   underlying: string,
@@ -499,7 +535,7 @@ export async function fetchOptionChain(
   const cached = chainCache.get(cacheKey);
   const now = Date.now();
 
-  if (cached && now - cached.attemptedAt < CHAIN_CACHE_TTL_MS) {
+  if (cached && now - cached.attemptedAt < chainQuoteCacheTtlMs()) {
     // Within the no-hammer throttle window — don't re-hit NSE, but a THROTTLED
     // window after a FAILED attempt must still go through the same
     // allowStale gate as a live failure, not silently hand back lastGood to
@@ -516,7 +552,7 @@ export async function fetchOptionChain(
 
   // Live fetch failed. Never overwrite a good cached snapshot with null —
   // carry lastGood/lastGoodAt forward untouched, only bumping attemptedAt so
-  // we don't hammer NSE again for CHAIN_CACHE_TTL_MS.
+  // we don't hammer NSE again for chainQuoteCacheTtlMs().
   const survivingEntry: ChainCacheEntry = {
     attemptedAt: now,
     lastAttemptSucceeded: false,

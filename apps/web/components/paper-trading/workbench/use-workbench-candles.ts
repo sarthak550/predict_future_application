@@ -18,8 +18,11 @@
  * (15m/30m) only changes the CLIENT-side bucket width fed to
  * `aggregatePremiumCandles` (`premium-candles.ts`), so switching between
  * 15m/30m never re-fetches, only re-aggregates already-held raw points.
- * `feed.livePremium` (the options terminal's own ~30s chain-poll price,
- * threaded in by the caller) is folded in as an in-memory "session tick"
+ * `feed.livePremium` (the options terminal's own chain-derived price —
+ * ~15s during NSE trading hours as of the 2026-08-07b poll/TTL fix, 30-60s
+ * off-hours, see options-page-client.tsx's dedicated selected-contract poll
+ * and optionChain.ts's `chainQuoteCacheTtlMs` — threaded in by the caller)
+ * is folded in as an in-memory "session tick"
  * appended to the raw points before aggregation — same
  * "changed-value-only, never a duplicate tick" contract `premium-chart.tsx`
  * already implements for its own SVG view, reproduced here so the
@@ -58,10 +61,11 @@
  * closed the real gap — between polls the forming bar still didn't move.
  * `useLiveQuoteTick` (new, `use-live-quote-tick.ts`) adds a much faster
  * (~4-5s), market-hours-gated, visibility-gated last-price poll for the
- * equity/index branches only (never optionPremium — its own ~30s
- * `livePremium` chain poll is that feed's honest freshness ceiling, see
- * that hook's own doc). Every fresh tick is folded into the CURRENTLY
- * FORMING bar's close (extending high/low only if breached) by
+ * equity/index branches only (never optionPremium — its own chain-derived
+ * `livePremium` is that feed's honest freshness ceiling, ~15s during market
+ * hours as of 2026-08-07b, see this file's own doc above). Every fresh tick
+ * is folded into the CURRENTLY FORMING bar's close (extending high/low only
+ * if breached) by
  * `foldQuoteIntoCandles` below — a NEW `candles` array identity, same
  * mechanism the 60s/30s candle poll already relies on to reach
  * `kline-chart.tsx`'s data effect and the signals/rating pipeline
@@ -139,8 +143,9 @@ export interface Candle {
 /**
  * Charting Workbench (W2/W3) — which instrument/series the workbench is
  * charting. `optionPremium.livePremium` (W3) is the currently selected
- * contract's live premium, straight off the options terminal's own already-
- * running ~30s chain poll — the SAME value `PremiumChart`'s own
+ * contract's live premium, straight off the options terminal's own
+ * chain-derived price — ~15s during NSE trading hours as of the 2026-08-07b
+ * dedicated poll/TTL fix — the SAME value `PremiumChart`'s own
  * `livePremium` prop carries, passed through unmemoized at render time (the
  * caller rebuilds the `feed` object fresh every render, same "no memo, no
  * feedback loop" posture as every other `WorkbenchFeed`-consuming prop in

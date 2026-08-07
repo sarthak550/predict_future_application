@@ -248,8 +248,25 @@ function FuturesPageClientInner() {
    * wiring at all — so it NAVIGATES to the equity dashboard instead, with
    * `?workbench=1` auto-maximizing that terminal's own workbench on
    * arrival. Never fakes an in-place switch with the wrong feed kind.
+   *
+   * Founder bug fix (2026-08-07b) — action-chip targets. "Futures" on an
+   * index row here is a plain in-place switch (this terminal already IS the
+   * futures terminal — the chip is only reachable on an index row to begin
+   * with). "Chart"/"Option chain" ALWAYS navigate (a stock's chart lives on
+   * the equity dashboard, an index's option chain lives on the options
+   * terminal — neither has a home on this page). See
+   * symbol-search-popover.tsx's own doc for which chips a row actually
+   * gets.
    */
   function handleWorkbenchSymbolPick(pick: SymbolPick) {
+    if (pick.target === "chart") {
+      router.push(`/paper-trading?symbol=${encodeURIComponent(pick.symbol)}&workbench=1`);
+      return;
+    }
+    if (pick.target === "optionChain") {
+      router.push(`/paper-trading/options?underlying=${encodeURIComponent(pick.symbol)}&workbench=underlying`);
+      return;
+    }
     if (pick.kind === "index") {
       setUnderlying(pick.symbol);
     } else {

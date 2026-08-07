@@ -83,7 +83,7 @@ interface OptionTicketProps {
   cash: number;
   heldLots: number;
   linkedOpinionId?: string | null;
-  /** Bumped by the parent on every ladder [B]/[S] tap OR a premium-chart click (Sprint B) — the ticket syncs its local side/lots from presetSide/presetLots exactly when this changes, decoupled from `contract`'s own object identity (which changes on every ~30s poll tick even for the SAME selected contract). */
+  /** Bumped by the parent on every ladder [B]/[S] tap OR a premium-chart click (Sprint B) — the ticket syncs its local side/lots from presetSide/presetLots exactly when this changes, decoupled from `contract`'s own object identity (which now changes on TWO independent poll tickers for the SAME selected contract — the chain browser's own 30s poll and, as of 2026-08-07b, a dedicated ~15s selected-contract poll during market hours — see options-page-client.tsx's own doc). */
   selectionNonce: number;
   presetSide: "BUY" | "SELL";
   presetLots: number;
@@ -239,7 +239,8 @@ function OptionTicketBody({
   // selectionNonce — sync local side/lots from the parent's preset exactly
   // then, never on every re-render (which would wipe out a lots value the
   // user is mid-adjusting) and never merely because `contract`'s object
-  // identity changed on a routine ~30s chain poll.
+  // identity changed on a routine chain poll (the chain browser's own 30s
+  // poll, or the dedicated ~15s selected-contract poll — 2026-08-07b).
   //
   // Chart Trading + SL/TP (Sprint B) — a ladder tap never supplies
   // `presetOrderType` (undefined), so this keeps resetting to MARKET exactly

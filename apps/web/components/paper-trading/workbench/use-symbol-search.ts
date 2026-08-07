@@ -66,11 +66,28 @@ export interface SymbolSearchEntry {
   label: string;
 }
 
-/** The value a caller acts on once the user picks a row — carries just enough for the terminal-specific switch/navigate decision (see each terminal's own `handleWorkbenchSymbolPick`). */
+/**
+ * The value a caller acts on once the user picks a row — carries just enough
+ * for the terminal-specific switch/navigate decision (see each terminal's
+ * own `handleWorkbenchSymbolPick`).
+ *
+ * Founder bug fix (2026-08-07b) — "going from options to stock via search
+ * bar is not possible, and there is no way if I have stock open then I can
+ * search option chain." `target`, set ONLY by an explicit action-chip click
+ * in `symbol-search-popover.tsx` (never by the row's own primary click,
+ * which stays `undefined` and keeps every terminal's pre-existing
+ * kind-based in-place-vs-navigate behavior exactly as before), tells the
+ * receiving terminal's `handleWorkbenchSymbolPick` to skip that inference
+ * entirely and navigate to the EXPLICIT destination the user asked for —
+ * see symbol-search-popover.tsx's own doc for which chips a row gets and
+ * why.
+ */
 export interface SymbolPick {
   kind: SymbolSearchKind;
   symbol: string;
   label: string;
+  /** "chart" = the symbol's own dedicated chart surface (equity dashboard for a stock; the futures terminal's underlying chart for an index — there is no separate index-only chart page). "optionChain" = the options terminal, chain loaded for this underlying. "futures" = the futures terminal, ready to trade. Undefined on a plain row click (today's in-place-where-possible behavior, unchanged). */
+  target?: "chart" | "optionChain" | "futures";
 }
 
 export function useSymbolSearch(query: string): {

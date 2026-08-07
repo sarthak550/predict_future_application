@@ -23,6 +23,34 @@
  * both lists share ONE flat index (`indices` first, then `stocks`, matching
  * render order) so ArrowUp/ArrowDown/Enter/mouse-hover all agree on which
  * row is "highlighted" regardless of which branch is showing.
+ *
+ * **Founder bug fix (2026-08-07b) — per-row ACTION CHIPS.** Verbatim: "going
+ * from options to stock via search bar is not possible, and there is no way
+ * if I have stock open then I can search option chain." The row's PRIMARY
+ * click (the symbol/label button) keeps every terminal's existing
+ * in-place-where-possible behavior exactly as before (`pick.target` is
+ * `undefined`) — the chips are a SEPARATE, explicit "go here" action
+ * (`pick.target` set, see `use-symbol-search.ts`'s own doc), always
+ * navigating regardless of which terminal the popover happens to be open
+ * on. An F&O-eligible stock row gets `[Chart] [Option chain]`; a plain
+ * (non-F&O) stock row gets `[Chart]` only (no chain exists to open); an
+ * index row gets `[Options] [Futures]` — no separate index "Chart" chip: an
+ * index has no chart surface of its own outside the futures terminal, and
+ * both the Options and Futures chips already land on a maximized chart
+ * there (`&workbench=`), so a third, identically-destined button would be
+ * pure clutter, not a real third destination. (This is a deliberate,
+ * documented trim of the brief's literal "[Chart][Options][Futures]"
+ * 3-chip phrasing for indices — see the CTO final report.)
+ *
+ * `ResultRow` is a `<div>`, never a `<button>`, with the primary click
+ * target and each chip as SIBLING `<button>`s inside it — this codebase has
+ * a real prior bug from nesting an interactive element inside a `<button>`
+ * (the tool-flyout close bug, DOM click bubbling reopened the menu it just
+ * closed — see `project_ta_suite_founder_feedback_2026_08_03` memory), so a
+ * chip button living INSIDE the row's own `<button>` is not just invalid
+ * HTML here, it's a known bug shape. Being real `<button>`s also gives the
+ * chips native Tab reachability for free, satisfying the "reachable but
+ * don't over-engineer" keyboard bar without any custom focus management.
  */
 import { useEffect, useRef, useState } from "react";
 import { Search, X } from "lucide-react";
@@ -34,6 +62,26 @@ interface FlatEntry {
   symbol: string;
   label: string;
   badge: string;
+  /** Only meaningful for kind "equity" — drives whether the row gets an "Option chain" chip. Always false for an index row (indices get their own fixed [Options][Futures] pair regardless of this flag). */
+  isFno: boolean;
+}
+
+interface ActionChip {
+  label: string;
+  target: NonNullable<SymbolPick["target"]>;
+}
+
+/** See this file's own module doc for why indices get 2 chips, not the brief's literal 3. */
+function chipsFor(entry: FlatEntry): ActionChip[] {
+  if (entry.kind === "index") {
+    return [
+      { label: "Options", target: "optionChain" },
+      { label: "Futures", target: "futures" }
+    ];
+  }
+  const chips: ActionChip[] = [{ label: "Chart", target: "chart" }];
+  if (entry.isFno) chips.push({ label: "Option chain", target: "optionChain" });
+  return chips;
 }
 
 export function SymbolSearchPopover({
@@ -61,15 +109,28 @@ export function SymbolSearchPopover({
   const { indexResults, stockResults, fnoSymbols, loading } = useSymbolSearch(query);
 
   const flatResults: FlatEntry[] = showingRecents
-    ? recents.map((r) => ({ kind: r.kind, symbol: r.symbol, label: r.label, badge: r.kind === "index" ? "Index" : "Stock" }))
+    ? recents.map((r) => ({
+        kind: r.kind,
+        symbol: r.symbol,
+        label: r.label,
+        badge: r.kind === "index" ? "Index" : "Stock",
+        isFno: r.kind === "equity" && fnoSymbols.has(r.symbol)
+      }))
     : [
-        ...indexResults.map((r) => ({ kind: "index" as const, symbol: r.symbol, label: r.label, badge: "Index" })),
-        ...stockResults.map((r) => ({ kind: "equity" as const, symbol: r.symbol, label: r.label, badge: fnoSymbols.has(r.symbol) ? "F&O" : "Stock" }))
+        ...indexResults.map((r) => ({ kind: "index" as const, symbol: r.symbol, label: r.label, badge: "Index", isFno: false })),
+        ...stockResults.map((r) => ({
+          kind: "equity" as const,
+          symbol: r.symbol,
+          label: r.label,
+          badge: fnoSymbols.has(r.symbol) ? "F&O" : "Stock",
+          isFno: fnoSymbols.has(r.symbol)
+        }))
       ];
   const clampedHighlight = Math.min(highlightIdx, Math.max(0, flatResults.length - 1));
 
+  /** Primary row click (today's behavior, `target` undefined) AND every action-chip click (explicit `target`) both funnel through here — a chip pick is just as much a "recent" as a plain pick. */
   function pick(entry: SymbolPick) {
-    saveRecentSymbolPick(entry);
+    saveRecentSymbolPick({ kind: entry.kind, symbol: entry.symbol, label: entry.label });
     onPick(entry);
     onClose();
   }
@@ -121,20 +182,19 @@ export function SymbolSearchPopover({
 
         <div className="max-h-80 overflow-y-auto py-1">
           {showingRecents ? (
-            recents.length === 0 ? (
+            flatResults.length === 0 ? (
               <p className="px-3 py-4 text-center text-xs text-ink-400">Search a stock or index to switch this chart.</p>
             ) : (
               <>
                 <p className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-ink-400">Recent</p>
-                {recents.map((r, i) => (
+                {flatResults.map((entry, i) => (
                   <ResultRow
-                    key={`recent-${r.kind}-${r.symbol}`}
-                    symbol={r.symbol}
-                    label={r.label}
-                    badge={r.kind === "index" ? "Index" : "Stock"}
+                    key={`recent-${entry.kind}-${entry.symbol}`}
+                    entry={entry}
                     highlighted={i === clampedHighlight}
                     onMouseEnter={() => setHighlightIdx(i)}
-                    onClick={() => pick({ kind: r.kind, symbol: r.symbol, label: r.label })}
+                    onClick={() => pick({ kind: entry.kind, symbol: entry.symbol, label: entry.label })}
+                    onNavigate={(target) => pick({ kind: entry.kind, symbol: entry.symbol, label: entry.label, target })}
                   />
                 ))}
               </>
@@ -146,15 +206,14 @@ export function SymbolSearchPopover({
               {indexResults.length > 0 && (
                 <>
                   <p className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-ink-400">Indices</p>
-                  {indexResults.map((r, i) => (
+                  {flatResults.slice(0, indexResults.length).map((entry, i) => (
                     <ResultRow
-                      key={`index-${r.symbol}`}
-                      symbol={r.symbol}
-                      label={r.label}
-                      badge="Index"
+                      key={`index-${entry.symbol}`}
+                      entry={entry}
                       highlighted={i === clampedHighlight}
                       onMouseEnter={() => setHighlightIdx(i)}
-                      onClick={() => pick({ kind: "index", symbol: r.symbol, label: r.label })}
+                      onClick={() => pick({ kind: "index", symbol: entry.symbol, label: entry.label })}
+                      onNavigate={(target) => pick({ kind: "index", symbol: entry.symbol, label: entry.label, target })}
                     />
                   ))}
                 </>
@@ -162,15 +221,14 @@ export function SymbolSearchPopover({
               {stockResults.length > 0 && (
                 <>
                   <p className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-ink-400">Stocks</p>
-                  {stockResults.map((r, i) => (
+                  {flatResults.slice(indexResults.length).map((entry, i) => (
                     <ResultRow
-                      key={`stock-${r.symbol}`}
-                      symbol={r.symbol}
-                      label={r.label}
-                      badge={fnoSymbols.has(r.symbol) ? "F&O" : "Stock"}
+                      key={`stock-${entry.symbol}`}
+                      entry={entry}
                       highlighted={indexResults.length + i === clampedHighlight}
                       onMouseEnter={() => setHighlightIdx(indexResults.length + i)}
-                      onClick={() => pick({ kind: "equity", symbol: r.symbol, label: r.label })}
+                      onClick={() => pick({ kind: "equity", symbol: entry.symbol, label: entry.label })}
+                      onNavigate={(target) => pick({ kind: "equity", symbol: entry.symbol, label: entry.label, target })}
                     />
                   ))}
                 </>
@@ -183,33 +241,54 @@ export function SymbolSearchPopover({
   );
 }
 
+/**
+ * A `<div>`, never a `<button>` — the primary label and every action chip
+ * below are SIBLING `<button>`s inside it (see this file's own module doc
+ * for why nesting a chip button inside a row button is a known bug shape
+ * here, not just invalid HTML). `onMouseEnter` on the outer div keeps mouse
+ * hover highlighting the whole row (including while hovering a chip),
+ * matching the pre-chip behavior exactly.
+ */
 function ResultRow({
-  symbol,
-  label,
-  badge,
+  entry,
   highlighted,
   onClick,
+  onNavigate,
   onMouseEnter
 }: {
-  symbol: string;
-  label: string;
-  badge: string;
+  entry: FlatEntry;
   highlighted: boolean;
+  /** Primary-click: today's per-terminal in-place-where-possible behavior, unchanged. */
   onClick: () => void;
+  /** Chip click: explicit navigate, see use-symbol-search.ts's `SymbolPick.target` doc. */
+  onNavigate: (target: NonNullable<SymbolPick["target"]>) => void;
   onMouseEnter: () => void;
 }) {
+  const chips = chipsFor(entry);
   return (
-    <button
-      type="button"
-      onMouseDown={(e) => e.preventDefault()}
+    <div
       onMouseEnter={onMouseEnter}
-      onClick={onClick}
-      className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm ${highlighted ? "bg-signal-sky/10" : "hover:bg-ink-50"}`}
+      className={`flex w-full flex-col gap-1 px-3 py-1.5 text-sm ${highlighted ? "bg-signal-sky/10" : "hover:bg-ink-50"}`}
     >
-      <span className="min-w-0 truncate">
-        <span className="font-medium text-ink-900">{symbol}</span> <span className="text-ink-400">{label}</span>
-      </span>
-      <span className="shrink-0 rounded-md bg-ink-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-ink-400">{badge}</span>
-    </button>
+      <div className="flex items-center justify-between gap-3">
+        <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={onClick} className="min-w-0 flex-1 truncate text-left">
+          <span className="font-medium text-ink-900">{entry.symbol}</span> <span className="text-ink-400">{entry.label}</span>
+        </button>
+        <span className="shrink-0 rounded-md bg-ink-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-ink-400">{entry.badge}</span>
+      </div>
+      <div className="flex items-center gap-1.5">
+        {chips.map((chip) => (
+          <button
+            key={chip.target}
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => onNavigate(chip.target)}
+            className="rounded-full border border-ink-200 px-1.5 py-0.5 text-[10px] font-semibold text-ink-500 hover:border-signal-sky/60 hover:bg-signal-sky/10 hover:text-signal-sky"
+          >
+            {chip.label}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }

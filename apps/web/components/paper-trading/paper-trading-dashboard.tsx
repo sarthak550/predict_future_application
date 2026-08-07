@@ -660,8 +660,26 @@ export function PaperTradingDashboard() {
    * for the mechanics: `underlying` resolves synchronously there, so the
    * restore fires on the very first render). Never fakes an in-place
    * switch with the wrong feed kind.
+   *
+   * Founder bug fix (2026-08-07b) — action-chip targets. "Chart" on an
+   * equity row here is a plain in-place switch (already this terminal's own
+   * default equity behavior — the chip is only reachable on an equity row
+   * to begin with). "Option chain"/"Futures" ALWAYS navigate, even though
+   * `pick.symbol` could in principle already be `focusedSymbol` — this is a
+   * genuine cross-terminal jump, never something this page can satisfy
+   * in-place (no option-chain or futures-contract UI lives on the equity
+   * dashboard). See symbol-search-popover.tsx's own doc for which chips a
+   * row actually gets.
    */
   function handleWorkbenchSymbolPick(pick: SymbolPick) {
+    if (pick.target === "optionChain") {
+      router.push(`/paper-trading/options?underlying=${encodeURIComponent(pick.symbol)}&workbench=underlying`);
+      return;
+    }
+    if (pick.target === "futures") {
+      router.push(`/paper-trading/futures?underlying=${encodeURIComponent(pick.symbol)}&workbench=1`);
+      return;
+    }
     if (pick.kind === "equity") {
       setFocusedSymbol(pick.symbol);
     } else {

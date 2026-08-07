@@ -1012,7 +1012,7 @@ export function ChartWorkbench({
           pollIntervalMs={pollIntervalMs}
           cadenceNote={
             isPremiumMode
-              ? "Premium mode: live session ticks fold in as they arrive; full history re-polls every 60s (snapshots are captured every 5 minutes)."
+              ? "Premium mode: live session ticks fold in as they arrive (~15s during market hours, from the selected contract's own poll); full history re-polls every 60s (snapshots are captured every 5 minutes)."
               : liveTicksActive
                 ? "Price ticks fold in every ~5s during market hours; full candle bars re-sync every 30-60s. Also bounded by Yahoo's own delayed-data latency."
                 : undefined

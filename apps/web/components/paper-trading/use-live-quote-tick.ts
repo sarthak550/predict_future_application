@@ -20,11 +20,13 @@
  *     "session tick" pattern `premium-chart.tsx`/the workbench's
  *     `optionPremium` branch already established for `livePremium`.
  *
- * Never used for option premium — the options chain's own ~30s
- * `livePremium` poll is that feed's honest freshness ceiling (a 5-minute
- * server-side snapshot cadence sits underneath it); faking a faster tick
- * for premium would violate the honest-simulation law. Callers simply never
- * enable this hook for that feed.
+ * Never used for option premium — the options chain's own chain-derived
+ * `livePremium` poll (~15s during NSE trading hours as of the 2026-08-07b
+ * fix, see options-page-client.tsx's dedicated selected-contract poll) is
+ * that feed's honest freshness ceiling (a 5-minute server-side snapshot
+ * cadence sits underneath the PREMIUM CHART's own history, separately);
+ * faking a faster tick for premium would violate the honest-simulation law.
+ * Callers simply never enable this hook for that feed.
  *
  * Gating — "no background hammering" per the brief, all three real:
  *   - Visibility: `useVisiblePolling` already pauses entirely on a hidden

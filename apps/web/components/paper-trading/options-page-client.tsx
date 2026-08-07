@@ -40,9 +40,10 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import { formatNseExpiryDate, isIndexOptionUnderlying } from "@predict-future/business-rules/papertrading/optionContract";
+import { isNseWeekdayMarketHours } from "@predict-future/business-rules/papertrading/marketHours";
 
 import { PriceChart, type ChartOrderLine, type PricePoint } from "@/components/finance/price-chart";
 import { EMPTY_ORDER_LINES } from "@/components/finance/chart-order-lines";
@@ -74,6 +75,9 @@ import {
 } from "@/components/paper-trading/use-workbench-url-param";
 
 type LoadState = "loading" | "signed-out" | "ready";
+
+/** Founder bug fix (2026-08-07b) — dedicated selected-contract premium poll cadence, see that hook's own doc below. Matches optionChain.ts's market-hours `chainQuoteCacheTtlMs()` so this poll is never faster than the server can actually serve a genuinely new value. */
+const SELECTED_CONTRACT_PREMIUM_POLL_MS = 15_000;
 
 interface EquityPositionSummary {
   symbol: string;
@@ -175,6 +179,7 @@ function OptionsPageClientInner() {
   // `deepLinkOpinionId` is deliberately NOT stripped (see
   // useStripOneShotParams' call below) — reading it frozen here is just for
   // consistency with the rest of this group, not because it needs the fix.
+  const router = useRouter();
   const frozenParams = useFrozenSearchParams();
   useStripOneShotParams(["side"]);
   const deepLinkUnderlying = frozenParams.get("underlying");
@@ -219,9 +224,11 @@ function OptionsPageClientInner() {
   const [chartMode, setChartMode] = useState<"underlying" | "premium">("underlying");
   const hasSelectedContract = selectedContract != null;
   // Keyed on the PRIMITIVE "is anything selected" flag, never on
-  // `selectedContract`'s own object identity (which churns every ~30s chain
-  // poll even for the same contract) — falling back to "underlying" only
-  // needs to happen on the null<->non-null transition, not every poll tick.
+  // `selectedContract`'s own object identity (which churns on every chain
+  // poll tick — the chain browser's 30s poll AND, as of 2026-08-07b, the
+  // dedicated ~15s selected-contract poll — even for the same contract) —
+  // falling back to "underlying" only needs to happen on the
+  // null<->non-null transition, not every poll tick.
   useEffect(() => {
     if (!hasSelectedContract) setChartMode("underlying");
   }, [hasSelectedContract]);
@@ -286,8 +293,9 @@ function OptionsPageClientInner() {
   // Founder bug fix (2026-08-06) — refresh-persistence for `?workbench=
   // premium`. The routine "restore once resolved / close on real change"
   // half is `useWorkbenchAutoRestore` again, keyed on a composite
-  // contract-identity string (object identity itself churns every ~30s
-  // chain poll — see the effect this replaces). But a premium restore can
+  // contract-identity string (object identity itself churns on every chain
+  // poll tick, now as fast as ~15s during market hours as of 2026-08-07b —
+  // see the effect this replaces). But a premium restore can
   // ALSO be asked for on a URL with no way to ever resolve a contract (the
   // ladder-tap selection that put the page into premium mode originally was
   // never itself persisted to the URL — only a full contract deep-link
@@ -427,8 +435,40 @@ function OptionsPageClientInner() {
    * this is a true in-place switch (same still-mounted `ChartWorkbench`
    * instance, new `feed`/`chartKey` props only) — the mode-transition calls
    * below are then all inert no-ops (already in that state).
+   *
+   * Founder bug fix (2026-08-07b) — action-chip targets. "Chart" always
+   * NAVIGATES to the equity dashboard, even for a symbol this terminal
+   * could technically chart in place — the founder's own words draw a real
+   * distinction between "this terminal's underlying reference chart" and
+   * "the stock's actual chart" (the dashboard's full equity surface:
+   * holdings, order ticket, etc.), so the chip must not silently satisfy
+   * the request with the lesser view. "Option chain" ALSO always navigates
+   * via `router.push`, even when already on this exact terminal: verified
+   * against `option-chain-browser.tsx` that `OptionChainBrowser`'s
+   * `initialUnderlying` prop is read ONLY at mount (frozen into a ref) —
+   * `chainElement` is a single persistent instance for this page's whole
+   * lifetime (the single-mount rule), so calling `setChartUnderlying` alone
+   * (as the plain in-place branch below does) would move the CHART but
+   * leave the actual strike ladder showing the OLD underlying. Navigating
+   * instead changes `?underlying=`, which the outer `OptionsPageClient`
+   * wrapper's `remountKey` (excludes only `workbench`/`focus`/`side`) picks
+   * up as a genuinely new deep link and gives `OptionsPageClientInner` (and
+   * therefore a fresh `OptionChainBrowser`) a real fresh mount — the only
+   * way this page can actually change which chain is loaded.
    */
   function handleWorkbenchSymbolPick(pick: SymbolPick) {
+    if (pick.target === "chart") {
+      router.push(`/paper-trading?symbol=${encodeURIComponent(pick.symbol)}&workbench=1`);
+      return;
+    }
+    if (pick.target === "optionChain") {
+      router.push(`/paper-trading/options?underlying=${encodeURIComponent(pick.symbol)}&workbench=underlying`);
+      return;
+    }
+    if (pick.target === "futures") {
+      router.push(`/paper-trading/futures?underlying=${encodeURIComponent(pick.symbol)}&workbench=1`);
+      return;
+    }
     setChartUnderlying(pick.symbol);
     setChartMode("underlying");
     setPremiumWorkbenchOpenState(false);
@@ -488,6 +528,34 @@ function OptionsPageClientInner() {
   // guard.)
   const autoSelectedRef = useRef(false);
 
+  /**
+   * Founder bug fix (2026-08-07b) — "future and stocks are having live
+   * ticks but not options." Extracted out of `handleChainData` below so the
+   * dedicated selected-contract poll (further down) can reuse the EXACT
+   * same merge — matched by (underlying, expiry, strikePrice, optionType),
+   * change-deduped, `underlyingValue` carried alongside — WITHOUT also
+   * pulling in `handleChainData`'s other two effects (mirroring
+   * `chartUnderlying` off whatever chain happened to load, and the one-shot
+   * deep-link auto-select). Reusing `handleChainData` wholesale for a poll
+   * that only exists to keep `selectedContract.premium` fresh would have
+   * been a real bug: if the selected contract's underlying ever differs
+   * from whichever underlying's chart is currently on screen (e.g. the
+   * chain browser was used to browse a DIFFERENT underlying after a
+   * contract was already selected), a poll landing for the selected
+   * contract's own underlying would silently swap the visible chart out
+   * from under the user.
+   */
+  const updateSelectedContractPremium = useCallback((chain: OptionChainSnapshot) => {
+    setSelectedContract((selected) => {
+      if (!selected || selected.underlying !== chain.underlying || selected.expiry !== chain.expiry) return selected;
+      const row = chain.strikes.find((s) => s.strikePrice === selected.strikePrice);
+      const livePremium = row?.[selected.optionType]?.lastPrice;
+      if (livePremium == null || livePremium <= 0) return selected;
+      if (livePremium === selected.premium && chain.underlyingValue === selected.underlyingValue) return selected;
+      return { ...selected, premium: livePremium, underlyingValue: chain.underlyingValue };
+    });
+  }, []);
+
   const handleChainData = useCallback(
     (chain: OptionChainSnapshot) => {
       setChartUnderlying((prev) => (prev === chain.underlying ? prev : chain.underlying));
@@ -522,16 +590,55 @@ function OptionsPageClientInner() {
           return;
         }
       }
-      setSelectedContract((selected) => {
-        if (!selected || selected.underlying !== chain.underlying || selected.expiry !== chain.expiry) return selected;
-        const row = chain.strikes.find((s) => s.strikePrice === selected.strikePrice);
-        const livePremium = row?.[selected.optionType]?.lastPrice;
-        if (livePremium == null || livePremium <= 0) return selected;
-        if (livePremium === selected.premium && chain.underlyingValue === selected.underlyingValue) return selected;
-        return { ...selected, premium: livePremium, underlyingValue: chain.underlyingValue };
-      });
+      updateSelectedContractPremium(chain);
     },
-    [deepLinkUnderlying, deepLinkExpiry, deepLinkStrike, deepLinkOptionType, deepLinkSide]
+    [deepLinkUnderlying, deepLinkExpiry, deepLinkStrike, deepLinkOptionType, deepLinkSide, updateSelectedContractPremium]
+  );
+
+  /**
+   * Founder bug fix (2026-08-07b) — dedicated fast poll for the SELECTED
+   * contract's premium, independent of `OptionChainBrowser`'s own 30s
+   * chain poll. Root cause of the original complaint: `selectedContract.
+   * premium` only ever moved when `OptionChainBrowser`'s poll happened to
+   * land against a FRESH server-side chain cache entry — and that cache
+   * (apps/api's optionChain.ts) held a flat 60s TTL, so roughly every other
+   * 30s client poll re-served the same cached snapshot, an effective ~60s
+   * step for a value the founder expected to tick like a stock/futures
+   * quote. Fixed at the root by making that server cache market-hours-aware
+   * (15s during NSE hours — see optionChain.ts's own doc). This poll is an
+   * ADDITIONAL ~15s cadence on top of that fix, scoped to ONLY the contract
+   * actually selected (never the whole visible ladder) so the "hero" number
+   * a user is actually trading gets a genuinely tighter tick than the
+   * passive rows around it — matching use-live-quote-tick.ts's own
+   * market-hours-gated pattern for equity/index quotes.
+   *
+   * Deliberately does NOT dedupe against `OptionChainBrowser`'s own poll
+   * even when both target the exact same (underlying, expiry) — the two
+   * polls share the SAME server-side cache key, so a redundant hit here is
+   * just an extra same-process cache read, never a second real NSE fetch;
+   * see optionChain.ts's own `chainQuoteCacheTtlMs` doc. Deduping would
+   * require this component to know whether `OptionChainBrowser`'s poll (a
+   * completely separate, single-mount component) happens to currently be
+   * aimed at the same pair, which it is NOT always — the chain browser can
+   * be browsing an entirely different underlying/expiry than whatever
+   * contract is selected.
+   */
+  useVisiblePolling(
+    () => {
+      if (!selectedContract) return;
+      fetch(
+        `/api/paper-trading/options/chain?underlying=${encodeURIComponent(selectedContract.underlying)}&expiry=${encodeURIComponent(selectedContract.expiry)}`
+      )
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data: OptionChainSnapshot | null) => {
+          if (data) updateSelectedContractPremium(data);
+        })
+        .catch(() => {
+          // Best-effort — OptionChainBrowser's own 30s poll (and its error handling) remains the primary, user-visible freshness path.
+        });
+    },
+    SELECTED_CONTRACT_PREMIUM_POLL_MS,
+    Boolean(selectedContract) && isNseWeekdayMarketHours()
   );
 
   useEffect(() => {
