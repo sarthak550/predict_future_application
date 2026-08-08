@@ -5,6 +5,7 @@ import { ArrowUpRight, FileSearch, Gauge, ScrollText } from "lucide-react";
 import { BigCallCard } from "@/components/finance/big-call-card";
 import { DirectionChip, VerdictBadge } from "@/components/finance/analyst-badges";
 import { AnalystDisclaimerFooter } from "@/components/finance/disclaimer-footer";
+import { FirmLink } from "@/components/finance/firm-link";
 import { PublicHeader } from "@/components/finance/public-header";
 import { SentimentGauge } from "@/components/finance/sentiment-gauge";
 import { Avatar } from "@/components/ui/avatar";
@@ -12,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { fetchIndexableAnalysts, sortAnalysts } from "@/lib/finance/analysts";
 import { getTodaysBigCall } from "@/lib/finance/bigCall";
+import { canonicalizeOrgDisplay } from "@predict-future/business-rules/experts/firmAliases";
 import { getSentimentSplit } from "@/lib/finance/sentiment";
 import { prisma } from "@/lib/prisma";
 import { formatDateOnly, formatPercent } from "@/lib/utils";
@@ -150,16 +152,24 @@ function LatestGradedCalls({ calls }: { calls: Awaited<ReturnType<typeof fetchLa
               <div className="flex items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2">
                   <Avatar name={call.expert.name} src={call.expert.avatarUrl} className="h-8 w-8 text-xs" />
-                  {call.expert.slug ? (
-                    <Link
-                      href={`/analysts/${call.expert.slug}`}
-                      className="truncate text-sm font-semibold text-ink-900 hover:underline"
-                    >
-                      {call.expert.name}
-                    </Link>
-                  ) : (
-                    <p className="truncate text-sm font-semibold text-ink-900">{call.expert.name}</p>
-                  )}
+                  <div className="min-w-0">
+                    {call.expert.slug ? (
+                      <Link
+                        href={`/analysts/${call.expert.slug}`}
+                        className="block truncate text-sm font-semibold text-ink-900 hover:underline"
+                      >
+                        {call.expert.name}
+                      </Link>
+                    ) : (
+                      <p className="truncate text-sm font-semibold text-ink-900">{call.expert.name}</p>
+                    )}
+                    <p className="truncate text-xs text-ink-400">
+                      <FirmLink
+                        organization={canonicalizeOrgDisplay(call.expert.organization)}
+                        className="hover:underline"
+                      />
+                    </p>
+                  </div>
                 </div>
                 <VerdictBadge status={call.resolutionStatus} />
               </div>
@@ -205,24 +215,35 @@ function TopAnalysts({ analysts }: { analysts: Awaited<ReturnType<typeof fetchIn
 
       <div className="grid gap-4 sm:grid-cols-2">
         {analysts.map((analyst) => (
-          <Link key={analyst.id} href={`/analysts/${analyst.slug}`}>
-            <Card className="h-full transition hover:border-signal-sky/40">
-              <CardContent className="flex items-center gap-4 p-5">
-                <Avatar name={analyst.name} src={analyst.avatarUrl} />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <p className="truncate text-base font-semibold text-ink-900">{analyst.name}</p>
-                    {analyst.verified && <Badge variant="accent">Verified</Badge>}
-                  </div>
-                  <p className="truncate text-sm text-ink-500">{analyst.organization}</p>
+          // Stretched-link pattern (see app/analysts/page.tsx for the full
+          // rationale) — the firm name stays independently clickable rather
+          // than being nested inside the whole-card profile link.
+          <Card key={analyst.id} className="relative h-full transition hover:border-signal-sky/40">
+            <Link
+              href={`/analysts/${analyst.slug}`}
+              className="absolute inset-0 z-0"
+              aria-label={analyst.name}
+            />
+            <CardContent className="pointer-events-none relative z-10 flex items-center gap-4 p-5">
+              <Avatar name={analyst.name} src={analyst.avatarUrl} />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <p className="truncate text-base font-semibold text-ink-900">{analyst.name}</p>
+                  {analyst.verified && <Badge variant="accent">Verified</Badge>}
                 </div>
-                <div className="text-right">
-                  <p className="text-xl font-semibold text-ink-900">{formatPercent(analyst.stats.hitRate ?? 0)}</p>
-                  <p className="text-xs text-ink-400">{analyst.stats.resolvedCount} graded calls</p>
-                </div>
-              </CardContent>
-            </Card>
-          </Link>
+                <p className="truncate text-sm text-ink-500">
+                  <FirmLink
+                    organization={analyst.organization}
+                    className="pointer-events-auto relative z-20 hover:underline"
+                  />
+                </p>
+              </div>
+              <div className="text-right">
+                <p className="text-xl font-semibold text-ink-900">{formatPercent(analyst.stats.hitRate ?? 0)}</p>
+                <p className="text-xs text-ink-400">{analyst.stats.resolvedCount} graded calls</p>
+              </div>
+            </CardContent>
+          </Card>
         ))}
       </div>
     </section>

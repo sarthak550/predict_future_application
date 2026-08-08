@@ -40,6 +40,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { DirectionChip, VerdictBadge } from "@/components/finance/analyst-badges";
+import { firmHref } from "@/lib/finance/firmLink";
 import { PaperTradeCta } from "@/components/finance/paper-trade-cta";
 import { TakeASide } from "@/components/finance/take-a-side";
 
@@ -57,7 +58,7 @@ export type ExpandableCall = {
   resolutionNote: string | null;
   resolvedAtLabel: string | null;
   /** Present only when the table is rendering calls from more than one analyst. */
-  analyst?: { name: string; slug: string | null };
+  analyst?: { name: string; slug: string | null; organization?: string };
 };
 
 const QUOTE_PREVIEW_LENGTH = 120;
@@ -145,6 +146,15 @@ export function ExpandableCallsTable({ calls }: { calls: ExpandableCall[] }) {
                         <span className="block break-words text-ink-600">
                           {call.analyst?.name ?? "—"}
                         </span>
+                      )}
+                      {call.analyst?.organization && (
+                        <Link
+                          href={firmHref(call.analyst.organization)}
+                          onClick={(e) => e.stopPropagation()}
+                          className="block truncate text-xs text-ink-400 hover:underline"
+                        >
+                          {call.analyst.organization}
+                        </Link>
                       )}
                     </TableCell>
                   )}

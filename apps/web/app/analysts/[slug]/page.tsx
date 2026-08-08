@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 
 import { AnalystDisclaimerFooter } from "@/components/finance/disclaimer-footer";
 import { ExpandableCallsTable } from "@/components/finance/expandable-calls-table";
+import { FirmLink } from "@/components/finance/firm-link";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -163,7 +164,11 @@ export default async function AnalystProfilePage({
                 {expert.verified && <Badge className="bg-white/10 text-white">Verified</Badge>}
               </div>
               <CardDescription className="text-white/70">
-                {expert.isFirm ? "Market analysis from this source" : expert.organization}
+                {expert.isFirm ? (
+                  "Market analysis from this source"
+                ) : (
+                  <FirmLink organization={expert.organization} className="hover:underline" />
+                )}
               </CardDescription>
             </div>
           </div>

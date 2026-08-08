@@ -114,7 +114,19 @@ export function classifyExpertEntityKind(
   if (typeof opts.sourceAttributionRatio === "number" && opts.sourceAttributionRatio >= 0.6) return "FIRM";
 
   const trimmedName = name.trim();
-  if (!trimmedName) return "HUMAN"; // defensive — should not happen, never insult a blank
+  if (!trimmedName) {
+    // A blank name has no person-shaped identity to classify as HUMAN — if
+    // there's an organization to attribute to, that IS the FIRM/source-
+    // attribution shape (see expertMatch.ts's blank-name guard, which is the
+    // real fix: it forces a non-blank display name — "<Org> Analysis" —
+    // before ever reaching a classifier call, so this branch fires only for
+    // defensive/offline callers that pass a raw blank name straight
+    // through). Founder-reported prod bug, 2026-08-08: 7 legacy Expert rows
+    // were created with empty name strings when this used to default to
+    // HUMAN unconditionally ("never insult a blank") — that reasoning only
+    // holds when there's nothing to attribute to at all.
+    return organization.trim() ? "FIRM" : "HUMAN";
+  }
 
   const nameCore = stripTrailingAnalysis(trimmedName);
 

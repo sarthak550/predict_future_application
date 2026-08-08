@@ -7,7 +7,6 @@ import {
   Animated,
   AppState,
   type AppStateStatus,
-  Linking,
   Modal,
   PanResponder,
   Pressable,
@@ -1749,28 +1748,17 @@ function MarketBody({
         <View style={styles.infoGrid}>
           <InfoItem label="Volume" value={formatPoints(market.totalVolume ?? totalPool)} />
           <InfoItem label="Players" value={String(market.totalParticipants ?? 0)} />
-          {market.closeAt ? <InfoItem label="Closes" value={formatRelativeTime(market.closeAt)} /> : null}
-          {market.resolveAt ? <InfoItem label="Resolves" value={formatRelativeTime(market.resolveAt)} /> : null}
+          {market.closeAt ? <InfoItem label={new Date(market.closeAt).getTime() < Date.now() ? "Closed" : "Closes"} value={formatRelativeTime(market.closeAt)} /> : null}
+          {market.resolveAt ? <InfoItem label={new Date(market.resolveAt).getTime() < Date.now() ? "Resolved" : "Resolves"} value={formatRelativeTime(market.resolveAt)} /> : null}
         </View>
 
-        {/* Host line — only for native (non-imported) markets */}
-        {market.originPlatform == null && market.creator?.username ? (
+        {/* Host line — shown for every market, native or admin-imported, so all
+            content reads as fully in-house PredictFuture hosting (S-manifold-scrub). */}
+        {market.creator?.username ? (
           <View style={styles.hostRow}>
             <Text style={styles.hostLabel}>Hosted by @{market.creator.username}</Text>
             {market.creator.isVerifiedAnalyst === true && <VerifiedBadge compact />}
           </View>
-        ) : null}
-
-        {/* Source attribution for imported markets */}
-        {market.originPlatform != null && market.resolutionSourceUrl ? (
-          <Pressable
-            style={styles.hostRow}
-            onPress={() => void Linking.openURL(market.resolutionSourceUrl as string)}
-          >
-            <Text style={styles.sourceAttributionDetail}>
-              Source: {market.originPlatform.charAt(0).toUpperCase() + market.originPlatform.slice(1)} — tap to view original
-            </Text>
-          </Pressable>
         ) : null}
 
         {isOpen ? (
@@ -1926,8 +1914,6 @@ function MarketBody({
         <ResolutionSection
           resolution={market.resolution}
           winningSide={market.winningSide ?? null}
-          originPlatform={market.originPlatform ?? null}
-          resolutionSourceUrl={market.resolutionSourceUrl ?? null}
         />
       ) : null}
 
@@ -2102,13 +2088,9 @@ type ResolutionData = {
 function ResolutionSection({
   resolution,
   winningSide,
-  originPlatform,
-  resolutionSourceUrl,
 }: {
   resolution: ResolutionData;
   winningSide: string | null;
-  originPlatform?: string | null;
-  resolutionSourceUrl?: string | null;
 }) {
   const styles = useThemedStyles(makeStyles);
   const outcomeLabel = winningSide ? `Resolved ${winningSide}` : "Resolved";
@@ -2172,17 +2154,6 @@ function ResolutionSection({
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Resolution Rationale</Text>
           <Text style={styles.subtitle}>{resolution.rationale}</Text>
-          {/* View on origin platform (S31-T4) */}
-          {originPlatform != null && resolutionSourceUrl ? (
-            <Pressable
-              style={styles.manifoldLink}
-              onPress={() => void Linking.openURL(resolutionSourceUrl)}
-            >
-              <Text style={styles.manifoldLinkText}>
-                View on {originPlatform.charAt(0).toUpperCase() + originPlatform.slice(1)} →
-              </Text>
-            </Pressable>
-          ) : null}
         </View>
       ) : null}
     </>
@@ -3036,20 +3007,6 @@ const makeStyles = (t: ThemeContextValue) => StyleSheet.create({
   },
   hostLabel: {
     fontSize: 14,
-    fontWeight: "600",
-    color: t.colors.accent,
-  },
-  sourceAttributionDetail: {
-    fontSize: 12,
-    fontWeight: "500",
-    color: t.colors.textMuted,
-  },
-  manifoldLink: {
-    marginTop: spacing.sm,
-    alignSelf: "flex-start",
-  },
-  manifoldLinkText: {
-    fontSize: 13,
     fontWeight: "600",
     color: t.colors.accent,
   },

@@ -130,8 +130,17 @@ function selftest(): void {
     );
   }
 
-  // ── Default-safe on the empty/defensive edge ─────────────────────────────────
-  assert("blank name defaults HUMAN (defensive, should not occur)", classifyExpertEntityKind("", "Independent") === "HUMAN");
+  // ── Blank-name edge (founder-reported prod bug, 2026-08-08: 7 legacy Expert
+  // rows created with empty name strings — fixed on prod by converting them to
+  // FIRM rows named by their org) ───────────────────────────────────────────
+  assert(
+    "blank name + org present -> FIRM (attribute to the org, never a blank-named HUMAN)",
+    classifyExpertEntityKind("", "Goldman Sachs India") === "FIRM"
+  );
+  assert(
+    "blank name + blank org -> HUMAN (last-resort fallback; callers must reject this shape before classification — see expertMatch.ts's blank-blank guard)",
+    classifyExpertEntityKind("", "") === "HUMAN"
+  );
 
   console.log(`\n${pass} passed, ${fail} failed.`);
   if (fail > 0) process.exit(1);

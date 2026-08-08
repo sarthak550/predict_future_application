@@ -1,3 +1,5 @@
+import { canonicalizeOrgDisplay } from "@predict-future/business-rules/experts/firmAliases";
+
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -250,7 +252,10 @@ export async function getTodaysBigCall(): Promise<BigCallResult> {
       id: op.id,
       expertId: op.expert.id,
       expertName: op.expert.name,
-      expertOrganization: op.expert.organization,
+      // Canonicalized so a stray pre-merge acronym spelling never displays next
+      // to its spelled-out sibling elsewhere on the page (same belt-and-
+      // suspenders convention as lib/finance/analysts.ts).
+      expertOrganization: canonicalizeOrgDisplay(op.expert.organization),
       avatarUrl: op.expert.avatarUrl ?? null,
       expertSlug: op.expert.slug ?? null,
       quote: op.quote,

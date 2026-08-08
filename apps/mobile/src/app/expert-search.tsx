@@ -11,13 +11,14 @@ import {
   View,
 } from "react-native";
 
-import type { ApiExpertSearchResult } from "@predict-future/types";
+import type { ApiExpertFirmOption, ApiExpertSearchResult } from "@predict-future/types";
 import { radius, spacing } from "@predict-future/ui-tokens";
 import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 import { mobileApi } from "@/lib/api";
 import { getExpertInitials, getExpertInitialsColor } from "@/utils/expertAvatar";
 import { AnalystCredibilityBadge } from "@/components/analyst-credibility-badge";
+import { ALL_FIRMS, FirmFilterBar } from "@/components/firm-filter-bar";
 
 const makeSrStyles = (t: ThemeContextValue) => StyleSheet.create({
   searchBar: {
@@ -134,18 +135,27 @@ export default function ExpertSearchScreen() {
   const srStyles = useThemedStyles(makeSrStyles);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<ApiExpertSearchResult[]>([]);
+  const [firms, setFirms] = useState<ApiExpertFirmOption[]>([]);
+  const [selectedFirm, setSelectedFirm] = useState<string>(ALL_FIRMS);
   const [loading, setLoading] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<TextInput>(null);
 
-  const search = useCallback(async (q: string) => {
-    if (q.trim().length < 2) {
+  // A firm filter lets this screen browse a firm's whole roster with nothing
+  // typed — the 2-char gate only applies when no firm is selected (founder
+  // ask, 2026-08-08: a Firm filter alongside the expert list).
+  const search = useCallback(async (q: string, firm: string) => {
+    const trimmed = q.trim();
+    if (trimmed.length < 2 && firm === ALL_FIRMS) {
       setResults([]);
       return;
     }
     setLoading(true);
     try {
-      const data = await mobileApi.searchExperts(q.trim());
+      const data = await mobileApi.searchExperts(
+        trimmed,
+        firm === ALL_FIRMS ? undefined : { firm }
+      );
       setResults(data);
     } catch {
       setResults([]);
@@ -156,15 +166,24 @@ export default function ExpertSearchScreen() {
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => void search(query), 300);
+    debounceRef.current = setTimeout(() => void search(query, selectedFirm), 300);
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [query, search]);
+  }, [query, selectedFirm, search]);
+
+  useEffect(() => {
+    mobileApi
+      .getExpertFirms()
+      .then(setFirms)
+      .catch(() => setFirms([]));
+  }, []);
 
   useEffect(() => {
     setTimeout(() => inputRef.current?.focus(), 100);
   }, []);
+
+  const showingFirmBrowse = query.trim().length < 2 && selectedFirm !== ALL_FIRMS;
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
@@ -186,17 +205,25 @@ export default function ExpertSearchScreen() {
         />
       </View>
 
+      <FirmFilterBar firms={firms} selected={selectedFirm} onSelect={setSelectedFirm} />
+
       {loading ? (
         <View style={srStyles.center}>
           <ActivityIndicator size="small" color={colors.accent} />
         </View>
-      ) : query.trim().length < 2 ? (
+      ) : query.trim().length < 2 && selectedFirm === ALL_FIRMS ? (
         <View style={srStyles.center}>
-          <Text style={srStyles.hintText}>Type at least 2 characters to search</Text>
+          <Text style={srStyles.hintText}>
+            Type at least 2 characters, or pick a firm above, to search
+          </Text>
         </View>
       ) : results.length === 0 ? (
         <View style={srStyles.center}>
-          <Text style={srStyles.hintText}>No experts found for "{query}"</Text>
+          <Text style={srStyles.hintText}>
+            {showingFirmBrowse
+              ? `No experts found from ${selectedFirm}`
+              : `No experts found for "${query}"`}
+          </Text>
         </View>
       ) : (
         <FlatList

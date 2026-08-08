@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { getUserIdFromRequest } from "@/lib/auth";
 import { notifyGroupMembersOfNewMarket } from "@/lib/groups/group-request-push";
 import { createPredictionMarket } from "@/lib/markets/create";
+import { PUBLIC_MARKET_SCALAR_SELECT, sanitizeMarketSourceFields } from "@/lib/markets/publicSelect";
 import { computeMarketRankScore, rankMarkets } from "@/lib/markets/ranking";
 import { prisma } from "@/lib/prisma";
 import { getDisplayName } from "@/lib/users/displayName";
@@ -99,7 +100,8 @@ export async function GET(request: Request) {
     ...(cursorParam ? { cursor: { id: cursorParam }, skip: 1 } : {}),
     // Always fetch one extra to determine hasMore.
     take: limit + 1,
-    include: {
+    select: {
+      ...PUBLIC_MARKET_SCALAR_SELECT,
       creator: {
         select: {
           id: true,
@@ -168,14 +170,17 @@ export async function GET(request: Request) {
   }
 
   return NextResponse.json({
-    markets: sortedMarkets.map((market) => ({
-      ...market,
-      creator: market.creator
-        ? { ...market.creator, username: getDisplayName(market.creator) }
-        : market.creator,
-      marketRankScore: computeMarketRankScore(market),
-      ...(viewerId ? { iSaved: savedSet.has(market.id) } : {}),
-    })),
+    markets: sortedMarkets.map((market) => {
+      const sanitized = sanitizeMarketSourceFields(market);
+      return {
+        ...sanitized,
+        creator: sanitized.creator
+          ? { ...sanitized.creator, username: getDisplayName(sanitized.creator) }
+          : sanitized.creator,
+        marketRankScore: computeMarketRankScore(sanitized),
+        ...(viewerId ? { iSaved: savedSet.has(sanitized.id) } : {}),
+      };
+    }),
     nextCursor,
     hasMore,
   });

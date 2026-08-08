@@ -11,13 +11,14 @@ import {
   View,
 } from "react-native";
 
-import type { ApiExpertLeaderboardEntry } from "@predict-future/types";
+import type { ApiExpertFirmOption, ApiExpertLeaderboardEntry } from "@predict-future/types";
 import { radius, spacing } from "@predict-future/ui-tokens";
 import { useTheme, useThemedStyles, type ThemeContextValue } from "@/providers/theme-provider";
 
 import { mobileApi } from "@/lib/api";
 import { getExpertInitials, getExpertInitialsColor } from "@/utils/expertAvatar";
 import { AnalystCredibilityBadge } from "@/components/analyst-credibility-badge";
+import { ALL_FIRMS, FirmFilterBar } from "@/components/firm-filter-bar";
 
 const makeLbStyles = (t: ThemeContextValue) => StyleSheet.create({
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
@@ -162,14 +163,18 @@ export default function ExpertLeaderboardScreen() {
   const { colors } = useTheme();
   const lbStyles = useThemedStyles(makeLbStyles);
   const [entries, setEntries] = useState<ApiExpertLeaderboardEntry[]>([]);
+  const [firms, setFirms] = useState<ApiExpertFirmOption[]>([]);
+  const [selectedFirm, setSelectedFirm] = useState<string>(ALL_FIRMS);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const load = useCallback(async (isRefresh = false) => {
+  const load = useCallback(async (firm: string, isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
     try {
-      const data = await mobileApi.getExpertLeaderboard();
+      const data = await mobileApi.getExpertLeaderboard(
+        firm === ALL_FIRMS ? undefined : { firm }
+      );
       setEntries(data);
     } finally {
       setLoading(false);
@@ -178,8 +183,20 @@ export default function ExpertLeaderboardScreen() {
   }, []);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void load(selectedFirm);
+    // Only re-run on an explicit firm change or refresh trigger — `load`
+    // itself is stable (empty dep array) so including it is a no-op here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedFirm]);
+
+  // Firm options are fetched once — the chip list itself doesn't change as
+  // the user filters, only which experts qualify within a given firm does.
+  useEffect(() => {
+    mobileApi
+      .getExpertFirms()
+      .then(setFirms)
+      .catch(() => setFirms([]));
+  }, []);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
@@ -198,6 +215,7 @@ export default function ExpertLeaderboardScreen() {
           ),
         }}
       />
+      <FirmFilterBar firms={firms} selected={selectedFirm} onSelect={setSelectedFirm} />
       {loading ? (
         <View style={lbStyles.center}>
           <ActivityIndicator size="large" color={colors.accent} />
@@ -208,21 +226,25 @@ export default function ExpertLeaderboardScreen() {
           keyExtractor={(e) => e.expert.id}
           ListHeaderComponent={
             <Text style={lbStyles.subtitle}>
-              Ranked by verified accuracy (resolved calls only)
+              {selectedFirm === ALL_FIRMS
+                ? "Ranked by verified accuracy (resolved calls only)"
+                : `${selectedFirm} — ranked by verified accuracy (resolved calls only)`}
             </Text>
           }
           renderItem={({ item }) => <LeaderboardRow entry={item} />}
           ListEmptyComponent={
             <View style={lbStyles.emptyContainer}>
               <Text style={lbStyles.emptyText}>
-                No experts have enough resolved calls yet. Check back soon.
+                {selectedFirm === ALL_FIRMS
+                  ? "No experts have enough resolved calls yet. Check back soon."
+                  : `No experts from ${selectedFirm} have enough resolved calls yet.`}
               </Text>
             </View>
           }
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
-              onRefresh={() => void load(true)}
+              onRefresh={() => void load(selectedFirm, true)}
               tintColor={colors.accent}
             />
           }

@@ -25,6 +25,7 @@ import { TrendingDown, TrendingUp } from "lucide-react";
 
 import { DirectionChip, VerdictBadge } from "@/components/finance/analyst-badges";
 import { Card, CardContent } from "@/components/ui/card";
+import { firmHref } from "@/lib/finance/firmLink";
 import type { MoverRow, TopMovers } from "@/lib/finance/marketPulse";
 import { formatRelativeTime } from "@/lib/utils";
 
@@ -195,6 +196,12 @@ function MoverColumn({
                     ) : (
                       <span className="font-medium text-ink-600">{row.analystCall.analystName}</span>
                     )}
+                    <Link
+                      href={firmHref(row.analystCall.analystOrganization)}
+                      className="text-ink-400 hover:underline"
+                    >
+                      ({row.analystCall.analystOrganization})
+                    </Link>
                     <span className="text-ink-400">called</span>
                     <DirectionChip direction={row.analystCall.direction} />
                     {isGraded ? <VerdictBadge status={row.analystCall.resolutionStatus} /> : null}

@@ -16,6 +16,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { DirectionChip, VerdictBadge } from "@/components/finance/analyst-badges";
+import { FirmLink } from "@/components/finance/firm-link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 
@@ -27,7 +28,7 @@ interface CallTradeGroup {
     resolutionStatus: "PENDING" | "RESOLVED_HIT" | "RESOLVED_MISS" | "NOT_GRADED";
     instrument: string | null;
     sourceUrl: string;
-    expert: { name: string; slug: string | null };
+    expert: { name: string; slug: string | null; organization: string };
   };
   symbol: string;
   quantity: number;
@@ -142,6 +143,9 @@ export function CallsTradedList() {
               ) : (
                 <span className="font-medium text-ink-900">{group.opinion.expert.name}</span>
               )}
+              <span className="text-sm text-ink-400">
+                · <FirmLink organization={group.opinion.expert.organization} className="hover:underline" />
+              </span>
               <DirectionChip direction={group.opinion.direction} />
               <VerdictBadge status={group.opinion.resolutionStatus} />
             </div>

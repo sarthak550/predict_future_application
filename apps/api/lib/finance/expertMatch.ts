@@ -75,6 +75,22 @@ export async function findOrCreateExpert(
   organization: string,
   verified: boolean
 ): Promise<ExpertCandidate> {
+  // Hard guard: a blank name must never reach Expert.create — that's how 7
+  // legacy rows ended up with empty name strings in prod (founder-reported,
+  // 2026-08-08; fixed there by converting them to FIRM rows named by their
+  // org). The real fix lives in the caller: persistExpertOpinions
+  // (lib/ai/extractExpertOpinions.ts) always resolves a non-blank display
+  // name — "<Organization> Analysis" — before calling this function whenever
+  // the extractor didn't supply an analyst name, treating that shape as an
+  // effective source attribution even when the AI didn't flag it as one.
+  // This is the second, permanent guard directly at the write boundary, so a
+  // future caller can't silently regress the bug by skipping that step.
+  if (!name.trim()) {
+    throw new Error(
+      `findOrCreateExpert: refusing to create/reuse an Expert with a blank name (organization="${organization}")`
+    );
+  }
+
   const nameNormalized = normalizeExpertName(name);
   // `verified` is, at every call site today, literally `opinion.isSourceAttribution`
   // (see extractExpertOpinions.ts's persistExpertOpinions — "Source attributions are
@@ -96,10 +112,11 @@ export async function findOrCreateExpert(
       return match;
     }
   } else if (nameNormalized.length > 0) {
-    // A blank/unnormalizable name (should not happen — persistExpertOpinions always
-    // passes a non-empty displayName — but guard defensively) can't be safely fuzzy-
-    // matched: an empty nameNormalized would match every other blank-name row,
-    // which are near-certainly unrelated entities, not the same person.
+    // The blank-name guard above already rejects an empty `name`; this extra
+    // length check is defense-in-depth against the rare case where a
+    // non-blank name normalizes away to nothing (e.g. punctuation-only) — an
+    // empty nameNormalized would match every other blank-name row, which are
+    // near-certainly unrelated entities, not the same person.
     const candidates = await prisma.expert.findMany({
       where: { nameNormalized },
       select: CANDIDATE_SELECT,

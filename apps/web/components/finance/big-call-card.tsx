@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 
 import { DirectionChip } from "@/components/finance/analyst-badges";
+import { FirmLink } from "@/components/finance/firm-link";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -45,7 +46,9 @@ export function BigCallCard({ result }: { result: BigCallResult }) {
             ) : (
               <p className="text-base font-semibold text-white">{opinion.expertName}</p>
             )}
-            <p className="text-sm text-white/60">{opinion.expertOrganization}</p>
+            <p className="text-sm text-white/60">
+              <FirmLink organization={opinion.expertOrganization} className="hover:underline" />
+            </p>
           </div>
         </div>
 

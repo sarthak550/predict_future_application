@@ -1628,7 +1628,19 @@ model MarketMoveNews {
   dedupeKey    String   @unique
   publishedAt  DateTime
   ingestedAt   DateTime @default(now())
+  /// 2-3 sentence AI-generated summary of the source article (headline alone is never
+  /// enough — see lib/marketMoves/summarizeStockNews.ts). Null until generated or when
+  /// generation fails (article body fetch failed, AI budget exhausted, etc.) — the row
+  /// still displays fine as headline-only in that case, summary is additive, never
+  /// blocking. Never cleared by the fetch-loop's upsert `update` branch, only ever
+  /// written by the summarizer pass, so a re-fetched headline never wipes an existing
+  /// summary.
+  summary            String?
+  summaryGeneratedAt DateTime?
 
+  /// Composite index for the summarizer's straggler-sweep query: rows still missing a
+  /// summary within a recent lookback window, newest first.
+  @@index([summary, publishedAt(sort: Desc)])
   @@index([tickerSymbol, publishedAt(sort: Desc)])
   @@index([publishedAt(sort: Desc)])
 }

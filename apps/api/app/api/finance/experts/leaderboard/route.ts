@@ -16,7 +16,9 @@ const MAX_EXPERTS_SCANNED = 2000;
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const orgFilter = searchParams.get("org") ?? undefined;
+  // "firm" is the current param name (matches the mobile Firm filter, founder
+  // ask 2026-08-08); "org" is kept as a fallback for any existing caller.
+  const firmFilter = searchParams.get("firm") ?? searchParams.get("org") ?? undefined;
 
   // Fetch experts with their opinions — credibility is derived from
   // admin-set resolutionStatus, no vote data required.
@@ -24,8 +26,12 @@ export async function GET(request: Request) {
   // identities — see lib/finance/expertEntityKind.ts) from the personal-credibility
   // leaderboard, same reasoning as apps/web's /analysts directory: a publication
   // doesn't have an individual track record to rank.
+  //
+  // The firm filter is applied AFTER fetch, against the canonicalized display
+  // name (not a raw-column WHERE) — a raw exact match would miss legacy rows
+  // whose stored organization predates the firm-alias map.
   const experts = await prisma.expert.findMany({
-    where: { entityKind: "HUMAN", ...(orgFilter ? { organization: orgFilter } : {}) },
+    where: { entityKind: "HUMAN" },
     select: {
       id: true,
       name: true,
@@ -53,7 +59,7 @@ export async function GET(request: Request) {
     missCount: number;
   };
 
-  const qualified: ScoredExpert[] = [];
+  let qualified: ScoredExpert[] = [];
 
   for (const expert of experts) {
     const credibility = computeCredibilityScore(expert.opinions);
@@ -68,8 +74,15 @@ export async function GET(request: Request) {
     }
   }
 
-  // If fewer than MIN_THRESHOLD experts qualify, return empty list
-  if (qualified.length < MIN_THRESHOLD) {
+  if (firmFilter) {
+    qualified = qualified.filter((entry) => canonicalizeOrgDisplay(entry.expert.organization) === firmFilter);
+  }
+
+  // If fewer than MIN_THRESHOLD experts qualify, return empty list. Skipped
+  // when a firm filter is active — a single firm legitimately having 1-2
+  // qualified analysts is still a meaningful answer to "who's from this firm,"
+  // unlike the unfiltered top-of-market leaderboard this threshold protects.
+  if (qualified.length < MIN_THRESHOLD && !firmFilter) {
     const response = NextResponse.json([]);
     response.headers.set("Cache-Control", "public, max-age=300");
     return response;

@@ -148,7 +148,7 @@ export default async function InstrumentDetailPage({
                   resolutionStatus: o.resolutionStatus,
                   resolutionNote: o.resolutionNote,
                   resolvedAtLabel: o.resolvedAt ? formatIstSessionDate(o.resolvedAt) : null,
-                  analyst: { name: o.expert.name, slug: o.expert.slug },
+                  analyst: { name: o.expert.name, slug: o.expert.slug, organization: o.expert.organization },
                 }))}
               />
             </CardContent>

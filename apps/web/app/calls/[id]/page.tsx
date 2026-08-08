@@ -5,11 +5,13 @@ import { ArrowUpRight } from "lucide-react";
 
 import { AnalystDisclaimerFooter } from "@/components/finance/disclaimer-footer";
 import { DirectionChip, VerdictBadge } from "@/components/finance/analyst-badges";
+import { FirmLink } from "@/components/finance/firm-link";
 import { PaperTradeCta } from "@/components/finance/paper-trade-cta";
 import { TakeASide } from "@/components/finance/take-a-side";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { canonicalizeOrgDisplay } from "@predict-future/business-rules/experts/firmAliases";
 import { prisma } from "@/lib/prisma";
 import { formatDateOnly } from "@/lib/utils";
 
@@ -46,7 +48,10 @@ async function fetchResolvedCall(id: string) {
     return { kind: "unresolved" as const, expertSlug: opinion.expert.slug };
   }
 
-  return { kind: "resolved" as const, opinion };
+  return {
+    kind: "resolved" as const,
+    opinion: { ...opinion, expert: { ...opinion.expert, organization: canonicalizeOrgDisplay(opinion.expert.organization) } },
+  };
 }
 
 export async function generateMetadata({ params }: { params: { id: string } }): Promise<Metadata> {
@@ -116,7 +121,9 @@ export default async function CallSharePage({ params }: { params: { id: string }
                 ) : (
                   <p className="text-lg font-semibold text-white">{opinion.expert.name}</p>
                 )}
-                <p className="text-sm text-white/60">{opinion.expert.organization}</p>
+                <p className="text-sm text-white/60">
+                  <FirmLink organization={opinion.expert.organization} className="hover:underline" />
+                </p>
               </div>
             </div>
             <Badge variant={isHit ? "success" : "default"} className={isHit ? "" : "bg-white/10 text-white"}>

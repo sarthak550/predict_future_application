@@ -3,6 +3,7 @@ import Link from "next/link";
 
 import { AnalystFirmFilter } from "@/components/finance/analyst-firm-filter";
 import { AnalystDisclaimerFooter } from "@/components/finance/disclaimer-footer";
+import { FirmLink } from "@/components/finance/firm-link";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -79,26 +80,41 @@ export default async function AnalystsDirectoryPage({
       ) : (
         <div className="grid gap-4 sm:grid-cols-2">
           {visible.map((analyst) => (
-            <Link key={analyst.id} href={`/analysts/${analyst.slug}`}>
-              <Card className="h-full transition hover:border-signal-sky/40">
-                <CardContent className="flex items-center gap-4 p-5">
-                  <Avatar name={analyst.name} src={analyst.avatarUrl} />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <p className="truncate text-base font-semibold text-ink-900">{analyst.name}</p>
-                      {analyst.verified && <Badge variant="accent">Verified</Badge>}
-                    </div>
-                    <p className="truncate text-sm text-ink-500">{analyst.organization}</p>
+            // The card is a "stretched link" to the profile (Link positioned
+            // absolute+inset-0 under the content) rather than wrapping the
+            // whole card in a single <Link> — that would make the firm name
+            // below un-independently-clickable (nested <a> tags aren't valid
+            // HTML and browsers mis-render them). This way the card's default
+            // click still goes to the profile, but the firm name inside opens
+            // its own filtered-directory link instead.
+            <Card key={analyst.id} className="relative h-full transition hover:border-signal-sky/40">
+              <Link
+                href={`/analysts/${analyst.slug}`}
+                className="absolute inset-0 z-0"
+                aria-label={analyst.name}
+              />
+              <CardContent className="pointer-events-none relative z-10 flex items-center gap-4 p-5">
+                <Avatar name={analyst.name} src={analyst.avatarUrl} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <p className="truncate text-base font-semibold text-ink-900">{analyst.name}</p>
+                    {analyst.verified && <Badge variant="accent">Verified</Badge>}
                   </div>
-                  <div className="text-right">
-                    <p className="text-xl font-semibold text-ink-900">
-                      {formatPercent(analyst.stats.hitRate ?? 0)}
-                    </p>
-                    <p className="text-xs text-ink-400">{analyst.stats.resolvedCount} graded calls</p>
-                  </div>
-                </CardContent>
-              </Card>
-            </Link>
+                  <p className="truncate text-sm text-ink-500">
+                    <FirmLink
+                      organization={analyst.organization}
+                      className="pointer-events-auto relative z-20 hover:underline"
+                    />
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className="text-xl font-semibold text-ink-900">
+                    {formatPercent(analyst.stats.hitRate ?? 0)}
+                  </p>
+                  <p className="text-xs text-ink-400">{analyst.stats.resolvedCount} graded calls</p>
+                </div>
+              </CardContent>
+            </Card>
           ))}
         </div>
       )}

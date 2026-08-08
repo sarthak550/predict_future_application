@@ -98,7 +98,7 @@ export default async function OpinionsPage({ searchParams }: { searchParams: Sea
             resolutionStatus: call.resolutionStatus,
             resolutionNote: call.resolutionNote,
             resolvedAtLabel: call.resolvedAt ? formatDateOnly(call.resolvedAt) : null,
-            analyst: { name: call.expert.name, slug: call.expert.slug },
+            analyst: { name: call.expert.name, slug: call.expert.slug, organization: call.expert.organization },
           }))}
         />
       )}

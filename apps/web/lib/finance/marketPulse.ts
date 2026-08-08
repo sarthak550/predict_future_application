@@ -5,6 +5,7 @@ import {
   type TopHeadline,
 } from "@predict-future/business-rules";
 import type { OpinionDirection, OpinionResolutionStatus } from "@prisma/client";
+import { canonicalizeOrgDisplay } from "@predict-future/business-rules/experts/firmAliases";
 
 import { prisma } from "@/lib/prisma";
 
@@ -19,6 +20,7 @@ const ANALYST_CALL_LOOKBACK_DAYS = 14;
 export interface MoverAnalystCall {
   analystName: string;
   analystSlug: string | null;
+  analystOrganization: string;
   direction: OpinionDirection;
   resolutionStatus: OpinionResolutionStatus;
   publishedAt: Date;
@@ -116,7 +118,7 @@ export async function fetchTopMovers(universe: "popular" | "all" = "popular"): P
             direction: true,
             resolutionStatus: true,
             publishedAt: true,
-            expert: { select: { name: true, slug: true } },
+            expert: { select: { name: true, slug: true, organization: true } },
           },
         }),
       ]);
@@ -140,6 +142,7 @@ export async function fetchTopMovers(universe: "popular" | "all" = "popular"): P
         ? {
             analystName: analystCallRow.expert.name,
             analystSlug: analystCallRow.expert.slug,
+            analystOrganization: canonicalizeOrgDisplay(analystCallRow.expert.organization),
             direction: analystCallRow.direction,
             resolutionStatus: analystCallRow.resolutionStatus,
             publishedAt: analystCallRow.publishedAt,

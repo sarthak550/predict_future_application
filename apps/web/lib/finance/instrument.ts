@@ -1,6 +1,7 @@
 import { nseSymbolMatchesInstrumentTicker, refineStockNews } from "@predict-future/business-rules";
 import { computeReturnsStrip, type ReturnsStrip } from "@predict-future/business-rules/marketPulse/returns";
 import { isIndexOptionUnderlying } from "@predict-future/business-rules/papertrading/optionContract";
+import { canonicalizeOrgDisplay } from "@predict-future/business-rules/experts/firmAliases";
 import type { OpinionDirection, OpinionResolutionStatus } from "@prisma/client";
 
 import { EMPTY_INSTRUMENT_ENRICHMENT, getOrFetchInstrumentEnrichment, type InstrumentEnrichmentData } from "@/lib/finance/enrichment";
@@ -64,7 +65,7 @@ export interface InstrumentOpinionRow {
   resolutionStatus: OpinionResolutionStatus;
   resolutionNote: string | null;
   resolvedAt: Date | null;
-  expert: { name: string; slug: string | null };
+  expert: { name: string; slug: string | null; organization: string };
 }
 
 export interface InstrumentSentiment {
@@ -194,7 +195,7 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
         resolutionStatus: true,
         resolutionNote: true,
         resolvedAt: true,
-        expert: { select: { name: true, slug: true } },
+        expert: { select: { name: true, slug: true, organization: true } },
       },
     }),
   ]);
@@ -252,7 +253,7 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
       resolutionStatus: o.resolutionStatus,
       resolutionNote: o.resolutionNote,
       resolvedAt: o.resolvedAt,
-      expert: { name: o.expert.name, slug: o.expert.slug },
+      expert: { name: o.expert.name, slug: o.expert.slug, organization: canonicalizeOrgDisplay(o.expert.organization) },
     })),
     sentiment: {
       ...sentimentCounts,

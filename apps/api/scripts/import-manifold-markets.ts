@@ -2,23 +2,49 @@
  * import-manifold-markets.ts
  *
  * One-shot script that pages the Manifold Markets public API and imports
- * resolved BINARY markets into predict_future as read-only archived markets.
+ * markets into predict_future as native-presenting admin-generated markets.
+ *
+ * Two import modes, selected by CLI flag:
+ *   - Resolved (default): imports already-resolved BINARY/NUMERIC markets as
+ *     read-only archived RESOLVED markets. Unaffected by this file's S-manifold-scrub
+ *     changes — see the `isOpenImport` branches below.
+ *   - Open (--include-open / --open-only): imports still-open, long-dated markets
+ *     (closeTime >= now + --min-days-out, default 180 days) and auto-publishes them
+ *     as status OPEN (mirrors the admin bulk-approve transition — see
+ *     apps/api/app/api/admin/markets/bulk-approve/route.ts) so they appear in the feed
+ *     immediately with no PENDING_REVIEW step.
  *
  * Usage:
  *   cd apps/api
  *   npx tsx scripts/import-manifold-markets.ts [--dry-run] [--limit=500] [--min-traders=30]
+ *   npx tsx scripts/import-manifold-markets.ts --dry-run --open-only --min-days-out=180 --limit=200
  *
  * Flags:
- *   --dry-run        Print what would be imported without writing to the DB.
- *   --limit=N        Max markets to import (default: 500, max: 2000).
- *   --min-traders=N  Minimum uniqueBettorCount (default: 30).
+ *   --dry-run          Print what would be imported without writing to the DB.
+ *   --limit=N          Max markets to import (default: 500, max: 2000).
+ *   --min-traders=N    Minimum uniqueBettorCount (default: 10).
+ *   --include-open     Also import still-open markets (in addition to resolved).
+ *   --open-only        Import ONLY still-open markets (skip resolved).
+ *   --min-days-out=N   Open markets must close at least N days from now (default: 180).
+ *                       Markets closing sooner are skipped and counted separately.
+ *   --category-cap=N   Optional per-category cap on imports in a single run, to keep
+ *                       the seeded backlog diverse instead of front-loading whichever
+ *                       category the API happens to page through first.
+ *
+ * Zero-trace presentation:
+ *   Imported markets are stamped with a clean in-house creator identity (see
+ *   ensureBotUser below) and show "Hosted by @<that identity>" exactly like native
+ *   markets — see apps/mobile/src/app/market/[id].tsx. originPlatform/externalId are
+ *   retained as server-internal-only columns (never sent to clients — see
+ *   apps/api/lib/markets/publicSelect.ts) so the daily resolution-sync cron
+ *   (apps/api/app/api/cron/sync-manifold-resolutions) keeps working.
  *
  * Attribution / legal:
- *   Manifold data is CC BY-NC 4.0. Attribution is displayed via the
- *   "Archived · Manifold" badge (originPlatform='manifold') and the
- *   resolutionSourceUrl linking to the canonical market page.
- *   Only question text, resolution outcome, and metadata are imported —
- *   no user identities, bet amounts, or trading history.
+ *   Manifold data is CC BY-NC 4.0 (https://manifold.markets/terms). Only question
+ *   text, resolution outcome, and aggregate metadata are imported — no user
+ *   identities, bet amounts, or trading history. Attribution is retained
+ *   server-side (originPlatform/externalId/resolutionSourceUrl on resolved imports)
+ *   for internal audit and sync purposes even though it is not user-facing.
  */
 
 import { prisma } from "../lib/prisma";
@@ -39,7 +65,15 @@ import {
 // CLI argument parsing
 // ---------------------------------------------------------------------------
 
-function parseArgs(): { dryRun: boolean; limit: number; minTraders: number; includeOpen: boolean; openOnly: boolean } {
+function parseArgs(): {
+  dryRun: boolean;
+  limit: number;
+  minTraders: number;
+  includeOpen: boolean;
+  openOnly: boolean;
+  minDaysOut: number;
+  categoryCap: number | null;
+} {
   const args = process.argv.slice(2);
   const dryRun = args.includes("--dry-run");
   const includeOpen = args.includes("--include-open") || args.includes("--open-only");
@@ -55,7 +89,15 @@ function parseArgs(): { dryRun: boolean; limit: number; minTraders: number; incl
     : 10;
   const minTraders = Math.max(0, isNaN(rawMinTraders) ? 10 : rawMinTraders);
 
-  return { dryRun, limit, minTraders, includeOpen, openOnly };
+  const minDaysOutArg = args.find((a) => a.startsWith("--min-days-out="));
+  const rawMinDaysOut = minDaysOutArg ? parseInt(minDaysOutArg.split("=")[1], 10) : 180;
+  const minDaysOut = Math.max(0, isNaN(rawMinDaysOut) ? 180 : rawMinDaysOut);
+
+  const categoryCapArg = args.find((a) => a.startsWith("--category-cap="));
+  const rawCategoryCap = categoryCapArg ? parseInt(categoryCapArg.split("=")[1], 10) : NaN;
+  const categoryCap = !isNaN(rawCategoryCap) && rawCategoryCap > 0 ? rawCategoryCap : null;
+
+  return { dryRun, limit, minTraders, includeOpen, openOnly, minDaysOut, categoryCap };
 }
 
 // ---------------------------------------------------------------------------
@@ -194,17 +236,49 @@ function sleep(ms: number): Promise<void> {
 // Bot user upsert
 // ---------------------------------------------------------------------------
 
+// Clean in-house identity — this is the creator shown as "Hosted by @predictfuture"
+// on every imported market (mirrors the native market host-attribution UI). Never
+// attributes to Manifold or any external platform.
+const IN_HOUSE_USERNAME = "predictfuture";
+const IN_HOUSE_EMAIL = "desk@predictfuture.app";
+// Pre-S-manifold-scrub identity. If found, it is renamed in place (not duplicated) so
+// existing FK references (WalletTransaction rows, previously-imported markets, etc.)
+// keep resolving correctly instead of pointing at an orphaned platform-branded account.
+const LEGACY_USERNAMES = ["manifold-archive"];
+
 async function ensureBotUser(): Promise<string> {
-  // bcrypt hash of "ManifoldArchive1!" — pre-computed to avoid bcrypt dep at runtime.
-  // The bot user never actually logs in; the password is a placeholder.
+  const existing = await prisma.user.findUnique({
+    where: { username: IN_HOUSE_USERNAME },
+    select: { id: true },
+  });
+  if (existing) return existing.id;
+
+  for (const legacyUsername of LEGACY_USERNAMES) {
+    const legacy = await prisma.user.findUnique({
+      where: { username: legacyUsername },
+      select: { id: true },
+    });
+    if (legacy) {
+      const renamed = await prisma.user.update({
+        where: { id: legacy.id },
+        data: { username: IN_HOUSE_USERNAME, email: IN_HOUSE_EMAIL },
+        select: { id: true },
+      });
+      console.log(`  Renamed legacy bot identity "${legacyUsername}" → "${IN_HOUSE_USERNAME}"`);
+      return renamed.id;
+    }
+  }
+
+  // bcrypt hash of a placeholder password — pre-computed to avoid bcrypt dep at runtime.
+  // The bot user never actually logs in; the password is never used.
   const { default: bcrypt } = await import("bcryptjs");
-  const passwordHash = await bcrypt.hash("ManifoldArchive1!", 10);
+  const passwordHash = await bcrypt.hash("PfResearchDesk-1!", 10);
 
   const bot = await prisma.user.upsert({
-    where: { username: "manifold-archive" },
+    where: { username: IN_HOUSE_USERNAME },
     create: {
-      email: "archive@manifold.internal",
-      username: "manifold-archive",
+      email: IN_HOUSE_EMAIL,
+      username: IN_HOUSE_USERNAME,
       passwordHash,
       role: "ADMIN",
       wallet: {
@@ -229,13 +303,18 @@ async function ensureBotUser(): Promise<string> {
 // ---------------------------------------------------------------------------
 
 async function main() {
-  const { dryRun, limit, minTraders, includeOpen, openOnly } = parseArgs();
+  const { dryRun, limit, minTraders, includeOpen, openOnly, minDaysOut, categoryCap } = parseArgs();
+  const minCloseTime = Date.now() + minDaysOut * 24 * 60 * 60 * 1000;
 
   console.log("=== Manifold Markets Import ===");
-  console.log(`  mode:        ${dryRun ? "DRY RUN (no writes)" : "LIVE"}`);
-  console.log(`  limit:       ${limit}`);
-  console.log(`  min-traders: ${minTraders}`);
+  console.log(`  mode:         ${dryRun ? "DRY RUN (no writes)" : "LIVE"}`);
+  console.log(`  limit:        ${limit}`);
+  console.log(`  min-traders:  ${minTraders}`);
   console.log(`  include-open: ${includeOpen ? (openOnly ? "OPEN-ONLY" : "yes") : "no"}`);
+  if (includeOpen) {
+    console.log(`  min-days-out: ${minDaysOut} (closeTime >= ${new Date(minCloseTime).toISOString()})`);
+  }
+  console.log(`  category-cap: ${categoryCap ?? "none"}`);
   console.log("");
 
   const botUserId = dryRun ? "<dry-run>" : await ensureBotUser();
@@ -249,7 +328,10 @@ async function main() {
   let skippedResolution = 0;
   let skippedTraders = 0;
   let skippedTitle = 0;
+  let skippedTooSoon = 0;
+  let skippedCategoryCap = 0;
 
+  const categoryCounts = new Map<string, number>();
   const dryRunSample: Array<{ title: string; category: string; traders: number; resolution: string }> = [];
 
   let cursor: string | undefined;
@@ -302,10 +384,16 @@ async function main() {
           continue;
         }
       }
-      // For OPEN markets, require a closeTime in the future (else stale)
+      // For OPEN markets, require a closeTime at least --min-days-out in the future.
+      // This is the long-dated backlog requirement: short-fuse imports would just
+      // recreate the stale-backlog problem this reseed is meant to fix.
       if (!m.isResolved) {
         if (!m.closeTime || m.closeTime < Date.now()) {
           skippedResolution++;
+          continue;
+        }
+        if (m.closeTime < minCloseTime) {
+          skippedTooSoon++;
           continue;
         }
       }
@@ -335,7 +423,15 @@ async function main() {
         continue;
       }
 
+      // Filter: optional per-category cap, so a single category doesn't crowd out
+      // the rest of the seeded backlog just because the API paged through it first.
+      if (categoryCap != null && (categoryCounts.get(category) ?? 0) >= categoryCap) {
+        skippedCategoryCap++;
+        continue;
+      }
+
       passed++;
+      categoryCounts.set(category, (categoryCounts.get(category) ?? 0) + 1);
 
       const externalId = `manifold:${m.id}`;
       const sourceUrl = `https://manifold.markets/${m.creatorUsername}/${m.slug}`;
@@ -370,8 +466,23 @@ async function main() {
           ? (m.resolution === "YES" ? MarketOutcome.YES : MarketOutcome.NO)
           : undefined;
       const actualValue = !isOpenImport && isNumeric ? m.resolutionValue ?? null : null;
+      const now = new Date();
 
-      // Upsert market — RESOLVED for resolved imports, PENDING_REVIEW for open imports (admin approves)
+      // Resolution metadata: RESOLVED (archived) imports keep the existing
+      // Manifold-attributed copy untouched (server-internal historical record — this
+      // path is not part of the long-dated reseed and is out of scope for the
+      // zero-trace scrub). OPEN imports — the long-dated auto-published backlog this
+      // ticket adds — get platform-neutral copy since resolutionSourceName/RuleText
+      // ARE sent to clients (see apps/api/app/api/markets/[marketId]/route.ts) and
+      // must never mention the sourcing platform.
+      const resolutionSourceName = isOpenImport ? "PredictFuture Research Desk" : "Manifold Markets";
+      const resolutionSourceUrl = isOpenImport ? null : sourceUrl;
+      const resolutionRuleText = isOpenImport
+        ? "Resolves according to the outcome of the real-world event described above, as determined by PredictFuture's research desk from publicly available information."
+        : "Resolved by Manifold Markets on original platform.";
+
+      // Upsert market — RESOLVED for resolved imports; OPEN (auto-published, same
+      // transition as admin bulk-approve) for open imports — no PENDING_REVIEW step.
       const market = await prisma.market.upsert({
         where: { externalId },
         create: {
@@ -385,22 +496,20 @@ async function main() {
           maxValue: isNumeric ? m.max ?? null : null,
           actualValue,
           creatorId: botUserId,
-          status: isOpenImport ? MarketStatus.PENDING_REVIEW : MarketStatus.RESOLVED,
+          status: isOpenImport ? MarketStatus.OPEN : MarketStatus.RESOLVED,
           resolutionStatus: isOpenImport ? ResolutionStatus.OPEN : ResolutionStatus.FINALIZED,
           resolutionMode: ResolutionMode.SOURCE_BASED,
           resolutionSourceType: ResolutionSourceType.PRESS_RELEASE,
-          resolutionSourceName: "Manifold Markets",
-          resolutionSourceUrl: sourceUrl,
-          resolutionRuleText: isOpenImport
-            ? "Will sync with Manifold Markets on resolution."
-            : "Resolved by Manifold Markets on original platform.",
+          resolutionSourceName,
+          resolutionSourceUrl,
+          resolutionRuleText,
           visibility: MarketVisibility.PUBLIC,
           poolRewardMode: PoolRewardMode.COMMISSION_BASED,
           outcome,
           closeAt,
           resolveAt: closeAt,
-          approvedAt: isOpenImport ? null : new Date(),
-          approvedById: isOpenImport ? null : botUserId,
+          approvedAt: now,
+          approvedById: botUserId,
           finalizationAt: isOpenImport ? null : resolvedAt,
           originPlatform: "manifold",
           externalId,
@@ -464,16 +573,42 @@ async function main() {
   } else {
     console.log("Import complete:");
   }
-  console.log(`  Fetched from API:     ${fetched} markets`);
-  console.log(`  Passed filters:        ${passed} markets`);
+  console.log(`  Fetched from API:       ${fetched} markets`);
+  console.log(`  Passed filters:         ${passed} markets`);
   if (!dryRun) {
-    console.log(`  Imported (new):        ${imported} markets`);
-    console.log(`  Skipped (duplicate):   ${skippedDuplicate} markets`);
+    console.log(`  Imported (new):         ${imported} markets`);
+    console.log(`  Skipped (duplicate):    ${skippedDuplicate} markets`);
   }
-  console.log(`  Skipped (category):    ${skippedCategory} markets`);
-  console.log(`  Skipped (resolution):  ${skippedResolution} markets`);
-  console.log(`  Skipped (min-traders): ${skippedTraders} markets`);
-  console.log(`  Skipped (title len):   ${skippedTitle} markets`);
+  console.log(`  Skipped (category):     ${skippedCategory} markets`);
+  console.log(`  Skipped (resolution):   ${skippedResolution} markets`);
+  console.log(`  Skipped (min-traders):  ${skippedTraders} markets`);
+  console.log(`  Skipped (title len):    ${skippedTitle} markets`);
+  if (includeOpen) {
+    console.log(`  Skipped (too soon):     ${skippedTooSoon} markets (closeTime < ${minDaysOut}d out)`);
+  }
+  if (categoryCap != null) {
+    console.log(`  Skipped (category cap): ${skippedCategoryCap} markets`);
+  }
+
+  console.log("");
+  console.log("Category distribution of markets that passed all filters:");
+  const sortedCategories = [...categoryCounts.entries()].sort((a, b) => b[1] - a[1]);
+  for (const [cat, count] of sortedCategories) {
+    console.log(`  ${cat.padEnd(16)} ${count}`);
+  }
+
+  if (passed < limit) {
+    console.log("");
+    console.log(
+      `WARNING: only ${passed}/${limit} markets passed filters — the qualifying pool is smaller than the target.`
+    );
+    console.log(
+      "  Per coordinator instruction: do NOT relax other filters (min-traders/title/category) to hit the target."
+    );
+    console.log(
+      "  If more volume is needed, re-run with a larger --limit against a fresh cursor, or accept the smaller pool."
+    );
+  }
 
   if (dryRun && dryRunSample.length > 0) {
     console.log("");

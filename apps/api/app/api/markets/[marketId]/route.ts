@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getUserIdFromRequest } from "@/lib/auth";
 import { canManageMarket, canViewMarket } from "@/lib/markets/access";
+import { PUBLIC_MARKET_SCALAR_SELECT, sanitizeMarketSourceFields, sanitizeRationale } from "@/lib/markets/publicSelect";
 import { finalizeMarketResolution } from "@/lib/markets/resolution";
 import { prisma } from "@/lib/prisma";
 import { getDisplayName } from "@/lib/users/displayName";
@@ -24,7 +25,8 @@ export async function GET(
 
   const market = await prisma.market.findUnique({
     where: { id: params.marketId },
-    include: {
+    select: {
+      ...PUBLIC_MARKET_SCALAR_SELECT,
       group: viewer?.id
         ? {
             select: {
@@ -231,10 +233,12 @@ export async function GET(
         })
       : null;
 
-  // Shape the resolution field: rename explanation → rationale, add wasOverturned
+  // Shape the resolution field: rename explanation → rationale, add wasOverturned.
+  // sanitizeRationale is a defensive last-resort guard against leaking third-party
+  // platform names into resolution copy shown to end users (see publicSelect.ts).
   const shapedResolution = market.resolution
     ? {
-        rationale: market.resolution.explanation,
+        rationale: sanitizeRationale(market.resolution.explanation, market.id),
         resolvedBy: market.resolution.resolvedBy ?? null,
         createdAt: market.resolution.createdAt,
         wasOverturned: Boolean(market.overturnedReason),
@@ -257,8 +261,10 @@ export async function GET(
     },
   }));
 
+  const sanitizedMarket = sanitizeMarketSourceFields(market);
+
   const responseMarket = {
-    ...market,
+    ...sanitizedMarket,
     creator: shapedCreator,
     comments: shapedComments,
     resolution: shapedResolution,

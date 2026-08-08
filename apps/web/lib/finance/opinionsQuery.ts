@@ -1,5 +1,6 @@
 import type { OpinionDirection, OpinionResolutionStatus, Prisma } from "@prisma/client";
 import { canonicalizeInstrument } from "@predict-future/business-rules";
+import { canonicalizeOrgDisplay } from "@predict-future/business-rules/experts/firmAliases";
 
 import { prisma } from "@/lib/prisma";
 import { buildInstrumentWhereOr } from "@/lib/finance/instruments";
@@ -88,12 +89,15 @@ export async function fetchOpinionsPage(filters: OpinionsFilters) {
       resolutionStatus: true,
       resolutionNote: true,
       resolvedAt: true,
-      expert: { select: { name: true, slug: true } },
+      expert: { select: { name: true, slug: true, organization: true } },
     },
   });
 
   const hasMore = rows.length > OPINIONS_PAGE_SIZE;
-  const items = hasMore ? rows.slice(0, OPINIONS_PAGE_SIZE) : rows;
+  const items = (hasMore ? rows.slice(0, OPINIONS_PAGE_SIZE) : rows).map((row) => ({
+    ...row,
+    expert: { ...row.expert, organization: canonicalizeOrgDisplay(row.expert.organization) },
+  }));
 
   return { items, hasMore, page: filters.page };
 }

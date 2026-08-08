@@ -132,14 +132,19 @@ export async function POST(request: Request) {
                 finalizationAt: resolvedAt,
               },
             });
+            // NOTE: sourceName/explanation are user-facing (explanation is returned to
+            // clients as the market's resolution "rationale" — see
+            // apps/api/app/api/markets/[marketId]/route.ts). Keep this copy platform-neutral;
+            // sourceUrl stays as the canonical external record for internal audit only
+            // (never selected/returned by any client-facing route).
             await tx.marketResolution.upsert({
               where: { marketId: m.id },
               create: {
                 marketId: m.id,
                 outcome,
-                sourceName: "Manifold Markets",
+                sourceName: "External Market Data",
                 sourceUrl: `https://manifold.markets/market/${manifoldId}`,
-                explanation: `Synced from Manifold. Original resolution: ${detail.resolution}`,
+                explanation: `Resolved based on external market data. Outcome: ${detail.resolution}.`,
                 resolvedAt,
               },
               update: {},

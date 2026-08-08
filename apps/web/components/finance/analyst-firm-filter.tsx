@@ -35,18 +35,25 @@ export function AnalystFirmFilter({ firmOptions }: { firmOptions: FirmOption[] }
   };
 
   return (
-    <Select
-      aria-label="Filter by firm"
-      value={searchParams.get("firm") ?? ""}
-      onChange={(e) => setFirm(e.target.value)}
-      className="w-auto min-w-[14rem]"
-    >
-      <option value="">All firms</option>
-      {firmOptions.map((opt) => (
-        <option key={opt.firm} value={opt.firm}>
-          {opt.firm} ({opt.count})
-        </option>
-      ))}
-    </Select>
+    // Labeled explicitly ("Firm:") rather than relying on the select's own
+    // "All firms" default text to communicate what this control does — a
+    // primary, visible filter next to the analyst list (founder ask,
+    // 2026-08-08), not a control someone has to discover by opening it.
+    <label className="flex items-center gap-2 text-sm font-medium text-ink-600">
+      Firm
+      <Select
+        aria-label="Filter by firm"
+        value={searchParams.get("firm") ?? ""}
+        onChange={(e) => setFirm(e.target.value)}
+        className="w-auto min-w-[14rem]"
+      >
+        <option value="">All firms</option>
+        {firmOptions.map((opt) => (
+          <option key={opt.firm} value={opt.firm}>
+            {opt.firm} ({opt.count})
+          </option>
+        ))}
+      </Select>
+    </label>
   );
 }

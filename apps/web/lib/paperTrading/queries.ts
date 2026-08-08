@@ -25,6 +25,7 @@ import {
 import { daysToExpiry, formatNseExpiryDate } from "@predict-future/business-rules/papertrading/optionContract";
 import { computeFuturesMarginRequired, INDEX_FUTURES_MARGIN_RATE } from "@predict-future/business-rules/papertrading/futuresMargin";
 import { derivePendingBlockedCash } from "@predict-future/business-rules/papertrading/pendingOrders";
+import { canonicalizeOrgDisplay } from "@predict-future/business-rules/experts/firmAliases";
 
 import { getOrCreateActiveAccount, getResetEligibility, type PaperAccountRow } from "@/lib/paperTrading/account";
 import { fetchDelayedLtp } from "@/lib/paperTrading/ltp";
@@ -606,7 +607,7 @@ export interface CallTradeGroup {
     resolutionStatus: "PENDING" | "RESOLVED_HIT" | "RESOLVED_MISS" | "NOT_GRADED";
     instrument: string | null;
     sourceUrl: string;
-    expert: { name: string; slug: string | null };
+    expert: { name: string; slug: string | null; organization: string };
   };
   symbol: string;
   quantity: number;
@@ -652,7 +653,7 @@ export async function getCallsTraded(userId: string): Promise<CallTradeGroup[]> 
       resolutionStatus: true,
       instrument: true,
       sourceUrl: true,
-      expert: { select: { name: true, slug: true } }
+      expert: { select: { name: true, slug: true, organization: true } }
     }
   });
   const opinionById = new Map(opinions.map((o) => [o.id, o]));
@@ -685,7 +686,7 @@ export async function getCallsTraded(userId: string): Promise<CallTradeGroup[]> 
         resolutionStatus: opinion.resolutionStatus,
         instrument: opinion.instrument,
         sourceUrl: opinion.sourceUrl,
-        expert: opinion.expert
+        expert: { ...opinion.expert, organization: canonicalizeOrgDisplay(opinion.expert.organization) }
       },
       symbol,
       quantity: position.quantity,

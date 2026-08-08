@@ -807,6 +807,50 @@ function collapseDuplicateOpinions(enriched: EnrichedRawOpinion[]): EnrichedRawO
   return survivors;
 }
 
+export type OpinionAttribution =
+  | { reject: true }
+  | { reject: false; displayName: string; isEffectivelySourceAttribution: boolean };
+
+/**
+ * Resolves the Expert display name + effective isSourceAttribution flag for a
+ * single opinion, given the raw (possibly blank) expertName/expertOrganization
+ * fields the AI extractor produced. Pure — no DB access — so it's unit-
+ * testable without prisma (see scripts/selftest-opinion-attribution.ts).
+ *
+ * Two guarded branches (founder-reported prod bug, 2026-08-08: 7 legacy
+ * Expert rows were created with empty name strings before this guard
+ * existed — fixed on prod by converting them to FIRM rows named by their
+ * org):
+ *
+ *  1. Both name and organization blank -> `reject: true`. Nothing to
+ *     attribute the opinion to. validateRawOpinions's `effectiveOrg` gate
+ *     already drops this shape upstream in the normal AI pipeline; this is a
+ *     second guard directly at the write boundary.
+ *  2. Blank name, organization present -> treated as an effective source
+ *     attribution ("<Organization> Analysis") even when the AI didn't set
+ *     isSourceAttribution=true, rather than ever falling back to a blank
+ *     display name. findOrCreateExpert (lib/finance/expertMatch.ts)
+ *     additionally hard-rejects a blank name reaching it at all, as a
+ *     second, permanent guard against this same failure mode.
+ */
+export function resolveOpinionAttribution(
+  expertName: string,
+  expertOrganization: string,
+  isSourceAttribution: boolean | undefined
+): OpinionAttribution {
+  const trimmedName = (expertName ?? "").trim();
+  const trimmedOrg = (expertOrganization ?? "").trim();
+
+  if (!trimmedName && !trimmedOrg) {
+    return { reject: true };
+  }
+
+  const isEffectivelySourceAttribution = isSourceAttribution === true || !trimmedName;
+  const displayName = isEffectivelySourceAttribution ? `${trimmedOrg} Analysis` : expertName;
+
+  return { reject: false, displayName, isEffectivelySourceAttribution };
+}
+
 export async function persistExpertOpinions(
   prisma: PrismaClient,
   storyId: string,
@@ -870,12 +914,18 @@ export async function persistExpertOpinions(
   }
 
   // ── Phase 3: persist survivors ─────────────────────────────────────────────
+  let rejectedBlankCount = 0;
   for (const opinion of survivors) {
     try {
-      // For source attributions, use publication as name; for analyst attributions, use analyst name
-      const displayName = opinion.isSourceAttribution
-        ? `${opinion.expertOrganization} Analysis`
-        : opinion.expertName;
+      const attribution = resolveOpinionAttribution(opinion.expertName, opinion.expertOrganization, opinion.isSourceAttribution);
+
+      if (attribution.reject) {
+        rejectedBlankCount++;
+        console.warn(`[Finance AI] Rejecting opinion — no analyst name and no organization (story ${storyId})`);
+        continue;
+      }
+
+      const { displayName, isEffectivelySourceAttribution } = attribution;
 
       // Find-or-create: reuses an existing Expert when (name, organization) matches
       // exactly OR is a confident org-spelling variant of an existing profile for
@@ -889,7 +939,7 @@ export async function persistExpertOpinions(
         opinion.expertOrganization,
         // Source attributions are pre-verified (trusted publications), named analysts are not.
         // Only applied on CREATE — findOrCreateExpert never touches verified on reuse.
-        opinion.isSourceAttribution ?? false
+        isEffectivelySourceAttribution
       );
 
       // Compute dedup key — SHA-256 of normalised quote to keep the B-tree index small
@@ -908,7 +958,7 @@ export async function persistExpertOpinions(
             publishedAt,
             analystCallAt: opinion.analystCallAt ? new Date(opinion.analystCallAt) : null,
             resolutionStatus: "PENDING",
-            isSourceAttribution: opinion.isSourceAttribution ?? false,
+            isSourceAttribution: isEffectivelySourceAttribution,
             instrument: opinion.resolvedInstrument,
             instrumentTicker: opinion.resolvedTicker,
           },
@@ -923,7 +973,7 @@ export async function persistExpertOpinions(
         throw createErr;
       }
 
-      const typeLabel = opinion.isSourceAttribution ? "Market Analysis from" : "Expert Opinion by";
+      const typeLabel = isEffectivelySourceAttribution ? "Market Analysis from" : "Expert Opinion by";
       console.info(
         `[Finance AI] Persisted ${typeLabel} "${displayName}" — ${opinion.direction}`
       );
@@ -941,5 +991,11 @@ export async function persistExpertOpinions(
       );
       // Continue to next opinion — don't block the batch
     }
+  }
+
+  if (rejectedBlankCount > 0) {
+    console.warn(
+      `[Finance AI] Story ${storyId}: rejected ${rejectedBlankCount} opinion(s) with neither an analyst name nor an organization`
+    );
   }
 }
