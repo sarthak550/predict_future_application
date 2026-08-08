@@ -10,8 +10,9 @@ import { createHash } from "crypto";
 import { OpinionDirection, type PrismaClient } from "@prisma/client";
 
 import { checkTickerMap, extractInstrumentFromQuote, normalizeYahooTicker } from "@/lib/ai/extractInstrument";
+import { checkAndIncrementFinanceAiDailyCap } from "@/lib/ai/financeAiDailyCap";
 import { callGeminiAI } from "@/lib/ai/gemini";
-import { generateUniqueExpertSlug } from "@/lib/finance/expertSlug";
+import { findOrCreateExpert } from "@/lib/finance/expertMatch";
 import { notifyExpertFollowersOnNewOpinion } from "@/lib/notifyExpertFollowersOnNewOpinion";
 
 /**
@@ -559,37 +560,6 @@ async function callGeminiForExtraction(
   return validateRawOpinions(parsed);
 }
 
-// ─── Daily AI call cap (in-memory) ────────────────────────────────────────────
-// NOTE: This counter resets on server restart. Use a Redis counter or DB record
-// for production-grade enforcement across multiple instances or restarts.
-let _dailyCallCount = 0;
-let _dailyCallDate = new Date().toISOString().slice(0, 10); // 'YYYY-MM-DD'
-
-function getDailyCallCap(): number {
-  const raw = process.env.FINANCE_AI_DAILY_CAP;
-  if (!raw) return 50;
-  const parsed = parseInt(raw, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 50;
-}
-
-function checkAndIncrementDailyCap(storyId: string): boolean {
-  const todayUtc = new Date().toISOString().slice(0, 10);
-  if (_dailyCallDate !== todayUtc) {
-    // UTC date has rolled over — reset counter
-    _dailyCallCount = 0;
-    _dailyCallDate = todayUtc;
-  }
-  const cap = getDailyCallCap();
-  if (_dailyCallCount >= cap) {
-    console.warn(
-      `[extractExpertOpinions] Daily AI cap reached (${_dailyCallCount}/${cap}). Skipping extraction for story ${storyId}.`
-    );
-    return false;
-  }
-  _dailyCallCount++;
-  return true;
-}
-
 /**
  * Extracts expert opinions from a finance news article using Groq (primary) or Gemini (fallback).
  *
@@ -614,8 +584,10 @@ export async function extractExpertOpinionsFromStory(story: {
     return [];
   }
 
-  // Enforce daily call cap before making any AI request
-  if (!checkAndIncrementDailyCap(story.id)) {
+  // Enforce the shared finance-AI daily call cap before making any AI request.
+  // Shared with the auto-resolve-opinions pipeline (lib/ai/evaluateOpinionResolution.ts)
+  // — see lib/ai/financeAiDailyCap.ts for why this is no longer extraction-only.
+  if (!checkAndIncrementFinanceAiDailyCap(`extract:${story.id}`)) {
     return [];
   }
 
@@ -905,27 +877,20 @@ export async function persistExpertOpinions(
         ? `${opinion.expertOrganization} Analysis`
         : opinion.expertName;
 
-      // Pre-compute a collision-checked slug for a *new* expert. Wasted if this turns out
-      // to be an upsert-update (expert already exists), but cheap — one indexed lookup.
-      const candidateSlug = await generateUniqueExpertSlug(prisma, displayName, opinion.expertOrganization);
-
-      // Upsert expert: if (name, organization) pair doesn't exist, create with appropriate verified flag
-      const expert = await prisma.expert.upsert({
-        where: {
-          name_organization: {
-            name: displayName,
-            organization: opinion.expertOrganization,
-          },
-        },
-        update: {}, // Don't overwrite verified=true experts (or their existing slug)
-        create: {
-          name: displayName,
-          organization: opinion.expertOrganization,
-          // Source attributions are pre-verified (trusted publications), named analysts are not
-          verified: opinion.isSourceAttribution,
-          slug: candidateSlug,
-        },
-      });
+      // Find-or-create: reuses an existing Expert when (name, organization) matches
+      // exactly OR is a confident org-spelling variant of an existing profile for
+      // the same normalized name (e.g. "Geojit Investments" vs "Geojit Investments
+      // Limited") — see lib/finance/expertMatch.ts. This is the extraction-time half
+      // of duplicate-expert prevention; scripts/merge-duplicate-experts.ts is the
+      // offline cleanup for dupes that already exist.
+      const expert = await findOrCreateExpert(
+        prisma,
+        displayName,
+        opinion.expertOrganization,
+        // Source attributions are pre-verified (trusted publications), named analysts are not.
+        // Only applied on CREATE — findOrCreateExpert never touches verified on reuse.
+        opinion.isSourceAttribution ?? false
+      );
 
       // Compute dedup key — SHA-256 of normalised quote to keep the B-tree index small
       const quoteHash = computeQuoteHash(opinion.paraphrasedQuote);

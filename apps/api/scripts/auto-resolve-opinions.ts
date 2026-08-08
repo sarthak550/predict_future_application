@@ -18,6 +18,9 @@
  *   DRY_RUN=true   — print decisions but do NOT write to DB (default: false)
  *   LIMIT=200      — max opinions to process per run (default: 200)
  *   DELAY_MS=600   — ms to sleep between opinions to respect Groq rate limits (default: 600)
+ *
+ * Shares the FINANCE_AI_DAILY_CAP daily AI-call budget with extraction and the preprocess
+ * pass (lib/ai/financeAiDailyCap.ts) — LIMIT above bounds rows considered, not AI calls.
  */
 
 import { prisma } from "../lib/prisma";

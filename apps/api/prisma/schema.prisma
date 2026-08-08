@@ -859,6 +859,15 @@ model Expert {
   /// see apps/api/scripts/backfill-expert-slugs.ts. New experts get one at creation time via
   /// apps/api/lib/finance/expertSlug.ts (called from lib/ai/extractExpertOpinions.ts).
   slug         String?         @unique
+  /// Duplicate-expert prevention (2026-08). normalizeExpertName(name) — lowercase, NFKC,
+  /// punctuation-stripped, whitespace-collapsed — see apps/api/lib/finance/expertDedup.ts.
+  /// Indexed so lib/finance/expertMatch.ts can do a cheap exact lookup at extraction time
+  /// before deciding whether a new (name, organization) pair is really a new person or an
+  /// org-spelling variant of an existing Expert. Defaults to "" so the column is additive
+  /// (no required backfill in the same deploy); apps/api/scripts/backfill-expert-name-
+  /// normalized.ts populates it for pre-existing rows. Never left "" for a row with a
+  /// non-empty name after that backfill has run.
+  nameNormalized String        @default("")
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt
   followers    ExpertFollow[]
@@ -867,6 +876,7 @@ model Expert {
   portfolios   Portfolio[]     @relation("PortfolioOwnerExpert")
 
   @@unique([name, organization])
+  @@index([nameNormalized])
 }
 
 model ExpertFollow {

@@ -16,6 +16,7 @@
  */
 
 import { getPriceWindow } from "../finance/priceHistory";
+import { checkAndIncrementFinanceAiDailyCap } from "./financeAiDailyCap";
 import { callGeminiAI } from "./gemini";
 
 // ─── Public types ────────────────────────────────────────────────────────────
@@ -302,6 +303,17 @@ async function aiCall<T>(
   // Reset the rate-limit sentinel at the start of each discrete AI call so a stale
   // flag from a prior invocation doesn't pollute the next one's result.
   _lastCallRateLimited = false;
+
+  // Shared finance-AI daily budget (lib/ai/financeAiDailyCap.ts) — this pipeline used
+  // to make Groq/Gemini calls with NO daily ceiling of its own, bounded only by
+  // CRON_PREPROCESS_LIMIT/CRON_RESOLVE_LIMIT (row counts, not AI-call counts). Treated
+  // like a rate-limit from the caller's point of view (wasLastCallRateLimited()) —
+  // "couldn't get an answer this run, don't burn a retry attempt, try again next run" —
+  // so the existing skip-don't-fail logic in the cron route and scripts just works.
+  if (!checkAndIncrementFinanceAiDailyCap("resolve")) {
+    _lastCallRateLimited = true;
+    return null;
+  }
 
   const groqKey = process.env.GROQ_API_KEY;
   const geminiKey = process.env.GEMINI_API_KEY;

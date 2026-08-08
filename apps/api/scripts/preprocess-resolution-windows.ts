@@ -13,6 +13,9 @@
  *   LIMIT=200     — max opinions to process per run (default: 200)
  *   DELAY_MS=400  — ms to sleep between AI calls (default: 400)
  *   DRY_RUN=true  — print decisions but do NOT write to DB (default: false)
+ *
+ * Shares the FINANCE_AI_DAILY_CAP daily AI-call budget with extraction and the resolve
+ * pass (lib/ai/financeAiDailyCap.ts) — LIMIT above bounds rows considered, not AI calls.
  */
 
 import { prisma } from "../lib/prisma";

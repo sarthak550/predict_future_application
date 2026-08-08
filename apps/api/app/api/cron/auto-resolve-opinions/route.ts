@@ -32,7 +32,27 @@
  * from concurrent sweeps. The coordinator should stagger these crontab entries (see the
  * runbook delivered alongside this change) rather than firing them simultaneously.
  *
- * Schedule recommendation: daily, staggered from the other opinion-pipeline crons.
+ * Schedule: currently daily (`0 3 * * *` in vercel.json; the EC2 crontab is the actual
+ * source of truth for what's live — see project_ec2_prod_ops memory). If this moves to
+ * a tighter cadence (e.g. every 2h / 12 runs a day, for faster HIT/MISS turnaround
+ * instead of one nightly batch), that's an EC2 crontab change made outside this repo.
+ *
+ * AI-call budget (2026-08): parseOpinionTimeframe (Phase 1) and evaluateOpinionResolution
+ * (Phase 2) both call through lib/ai/evaluateOpinionResolution.ts#aiCall, which now
+ * enforces the SAME FINANCE_AI_DAILY_CAP daily budget that lib/ai/extractExpertOpinions.ts
+ * uses — see lib/ai/financeAiDailyCap.ts. Previously this pipeline had no daily AI-call
+ * ceiling of its own at all (only the row-count limits below), so raising
+ * CRON_PREPROCESS_LIMIT/CRON_RESOLVE_LIMIT, or running this cron more often, could not
+ * have been bounded against the shared budget. Now it's safe to do either: once the
+ * shared daily count hits FINANCE_AI_DAILY_CAP, further aiCall()s this UTC day return
+ * null immediately (surfaced to callers exactly like a rate-limit — skipped, attempt
+ * counter NOT incremented, retried automatically next run) regardless of how many rows
+ * were fetched. Worked example at a hypothetical 12-runs/day cadence: each preprocessed
+ * opinion costs 1 AI call; each resolved opinion costs 1 call if Pass 1 was already
+ * cached from an earlier preprocess run (the common case) or 2 if not — so even at the
+ * CURRENT row limits (250 preprocess + 120 resolve) × 12 runs/day, the shared cap simply
+ * throttles actual AI usage to FINANCE_AI_DAILY_CAP (500 in prod) once the backlog is
+ * large enough to reach it; it does not need the row limits shrunk to stay safe.
  */
 
 import { NextResponse } from "next/server";
