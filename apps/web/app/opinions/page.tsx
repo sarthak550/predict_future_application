@@ -11,6 +11,7 @@ import { getSentimentSplit } from "@/lib/finance/sentiment";
 import {
   fetchAnalystOptions,
   fetchInstrumentOptions,
+  fetchOpinionFirmOptions,
   fetchOpinionsPage,
   hasActiveOpinionsQuery,
   parseOpinionsFilters,
@@ -57,10 +58,11 @@ function buildPageHref(searchParams: SearchParams, page: number): string {
 export default async function OpinionsPage({ searchParams }: { searchParams: SearchParams }) {
   const filters = parseOpinionsFilters(searchParams);
 
-  const [{ items, hasMore, page }, instrumentOptions, analystOptions, sentiment] = await Promise.all([
+  const [{ items, hasMore, page }, instrumentOptions, analystOptions, firmOptions, sentiment] = await Promise.all([
     fetchOpinionsPage(filters),
     fetchInstrumentOptions(),
     fetchAnalystOptions(),
+    fetchOpinionFirmOptions(),
     getSentimentSplit(filters.instrument),
   ]);
 
@@ -69,14 +71,18 @@ export default async function OpinionsPage({ searchParams }: { searchParams: Sea
       <div>
         <h1 className="text-3xl font-semibold text-ink-900">Every analyst call</h1>
         <p className="mt-3 max-w-2xl text-sm leading-6 text-ink-500">
-          Every public market call we&rsquo;ve tracked, newest first. Filter by instrument, direction, or
-          grading status — every combination is a shareable link.
+          Every public market call we&rsquo;ve tracked, newest first. Filter by instrument, direction,
+          grading status, analyst, or firm — every combination is a shareable link.
         </p>
       </div>
 
       <SentimentGauge split={sentiment} />
 
-      <OpinionsFilterBar instrumentOptions={instrumentOptions} analystOptions={analystOptions} />
+      <OpinionsFilterBar
+        instrumentOptions={instrumentOptions}
+        analystOptions={analystOptions}
+        firmOptions={firmOptions}
+      />
 
       {items.length === 0 ? (
         <Card>
@@ -86,6 +92,7 @@ export default async function OpinionsPage({ searchParams }: { searchParams: Sea
         </Card>
       ) : (
         <ExpandableCallsTable
+          firmLinkBasePath="/opinions"
           calls={items.map((call) => ({
             id: call.id,
             quote: call.quote,

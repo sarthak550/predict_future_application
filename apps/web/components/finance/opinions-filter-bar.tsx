@@ -7,11 +7,19 @@
  * the browser back button works as expected. Resets `page` to 1 whenever a
  * filter changes (a stale page number past the new filtered result count
  * would otherwise render an empty page silently).
+ *
+ * Firm filter (founder ask, 2026-08-08: "the firm based search is available
+ * on Analyst page but not on Opinion page — we need that filter there as
+ * well") mirrors /analysts' AnalystFirmFilter — same `?firm=` param, same
+ * canonical-firm value shape (lib/finance/firmLink.ts, opinionsQuery.ts's
+ * fetchOpinionFirmOptions) — but composes with this bar's other filters via
+ * setParam rather than living as its own standalone control.
  */
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { Select } from "@/components/ui/select";
+import type { OpinionFirmOption } from "@/lib/finance/opinionsQuery";
 
 const DIRECTION_OPTIONS = [
   { value: "", label: "All directions" },
@@ -29,9 +37,11 @@ const STATUS_OPTIONS = [
 export function OpinionsFilterBar({
   instrumentOptions,
   analystOptions,
+  firmOptions,
 }: {
   instrumentOptions: string[];
   analystOptions: { slug: string | null; name: string }[];
+  firmOptions: OpinionFirmOption[];
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -105,6 +115,20 @@ export function OpinionsFilterBar({
               {analyst.name}
             </option>
           ))}
+      </Select>
+
+      <Select
+        aria-label="Filter by firm"
+        value={searchParams.get("firm") ?? ""}
+        onChange={(e) => setParam("firm", e.target.value)}
+        className="w-auto min-w-[14rem]"
+      >
+        <option value="">All firms</option>
+        {firmOptions.map((opt) => (
+          <option key={opt.firm} value={opt.firm}>
+            {opt.firm} ({opt.count})
+          </option>
+        ))}
       </Select>
     </div>
   );

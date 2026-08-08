@@ -63,7 +63,20 @@ export type ExpandableCall = {
 
 const QUOTE_PREVIEW_LENGTH = 120;
 
-export function ExpandableCallsTable({ calls }: { calls: ExpandableCall[] }) {
+export function ExpandableCallsTable({
+  calls,
+  firmLinkBasePath = "/analysts",
+}: {
+  calls: ExpandableCall[];
+  /**
+   * Where the Analyst column's firm link points. Defaults to the global
+   * /analysts directory (used by /instruments/[symbol] and the analyst
+   * profile page). /opinions passes "/opinions" instead so clicking a firm
+   * filters the feed the reader is already on rather than navigating away
+   * from it — founder ask, 2026-08-08 (see lib/finance/firmLink.ts).
+   */
+  firmLinkBasePath?: "/analysts" | "/opinions";
+}) {
   const [openId, setOpenId] = useState<string | null>(null);
   const showAnalystColumn = calls.some((call) => call.analyst);
   const columnCount = showAnalystColumn ? 7 : 6;
@@ -149,7 +162,7 @@ export function ExpandableCallsTable({ calls }: { calls: ExpandableCall[] }) {
                       )}
                       {call.analyst?.organization && (
                         <Link
-                          href={firmHref(call.analyst.organization)}
+                          href={firmHref(call.analyst.organization, firmLinkBasePath)}
                           onClick={(e) => e.stopPropagation()}
                           className="block truncate text-xs text-ink-400 hover:underline"
                         >
