@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { canonicalizeOrgDisplay } from "@predict-future/business-rules/experts/firmAliases";
 import { prisma } from "@/lib/prisma";
 import { computeCredibilityScore } from "@/lib/finance/credibility";
 
@@ -19,8 +20,12 @@ export async function GET(request: Request) {
 
   // Fetch experts with their opinions — credibility is derived from
   // admin-set resolutionStatus, no vote data required.
+  // entityKind: "HUMAN" excludes FIRM entities (publication/desk "org-as-analyst"
+  // identities — see lib/finance/expertEntityKind.ts) from the personal-credibility
+  // leaderboard, same reasoning as apps/web's /analysts directory: a publication
+  // doesn't have an individual track record to rank.
   const experts = await prisma.expert.findMany({
-    where: orgFilter ? { organization: orgFilter } : undefined,
+    where: { entityKind: "HUMAN", ...(orgFilter ? { organization: orgFilter } : {}) },
     select: {
       id: true,
       name: true,
@@ -79,7 +84,7 @@ export async function GET(request: Request) {
     expert: {
       id: entry.expert.id,
       name: entry.expert.name,
-      organization: entry.expert.organization,
+      organization: canonicalizeOrgDisplay(entry.expert.organization),
       verified: entry.expert.verified,
       bio: entry.expert.bio ?? null,
       avatarUrl: entry.expert.avatarUrl ?? null,

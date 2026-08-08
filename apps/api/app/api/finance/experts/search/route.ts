@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { canonicalizeOrgDisplay } from "@predict-future/business-rules/experts/firmAliases";
 import { prisma } from "@/lib/prisma";
 import { computeCredibilityScore } from "@/lib/finance/credibility";
 
@@ -40,7 +41,10 @@ export async function GET(request: Request) {
     return {
       id: expert.id,
       name: expert.name,
-      organization: expert.organization,
+      // Canonicalized through the firm-alias map (lib/finance/firmAliases.ts) so a
+      // stray pre-merge acronym spelling (e.g. "MOFSL") never displays next to its
+      // spelled-out sibling elsewhere in search results.
+      organization: canonicalizeOrgDisplay(expert.organization),
       verified: expert.verified,
       avatarUrl: expert.avatarUrl ?? null,
       totalOpinions: expert.opinions.length,

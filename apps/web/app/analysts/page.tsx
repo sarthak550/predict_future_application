@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import { AnalystFirmFilter } from "@/components/finance/analyst-firm-filter";
 import { AnalystDisclaimerFooter } from "@/components/finance/disclaimer-footer";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { fetchIndexableAnalysts, sortAnalysts, type AnalystSortMode } from "@/lib/finance/analysts";
+import { buildFirmOptions, fetchIndexableAnalysts, sortAnalysts, type AnalystSortMode } from "@/lib/finance/analysts";
 import { formatPercent } from "@/lib/utils";
 
 export const revalidate = 3600;
@@ -28,14 +29,20 @@ export const metadata: Metadata = {
 export default async function AnalystsDirectoryPage({
   searchParams,
 }: {
-  searchParams?: { sort?: string };
+  searchParams?: { sort?: string; firm?: string };
 }) {
   // Default sort is descending accuracy — a "worst analyst" default ordering is a hard
   // legal-framing requirement, never build one, not even as an available option.
   const sort: SortMode = searchParams?.sort === "volume" ? "volume" : "accuracy";
+  const firmFilter = searchParams?.firm ?? "";
 
   const analysts = await fetchIndexableAnalysts();
-  const sorted = sortAnalysts(analysts, sort);
+  // Firm options are built from the FULL (unfiltered) analyst list so counts and
+  // the dropdown itself stay stable regardless of which firm is currently
+  // selected — filtering happens after, on a copy.
+  const firmOptions = buildFirmOptions(analysts);
+  const filtered = firmFilter ? analysts.filter((a) => a.organization === firmFilter) : analysts;
+  const sorted = sortAnalysts(filtered, sort);
   const visible = sorted.slice(0, 100);
 
   return (
@@ -49,19 +56,24 @@ export default async function AnalystsDirectoryPage({
         </p>
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        <Link href="/analysts?sort=accuracy">
-          <Badge variant={sort === "accuracy" ? "accent" : "default"}>Highest accuracy</Badge>
-        </Link>
-        <Link href="/analysts?sort=volume">
-          <Badge variant={sort === "volume" ? "accent" : "default"}>Most graded calls</Badge>
-        </Link>
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap gap-2">
+          <Link href={{ pathname: "/analysts", query: { sort: "accuracy", ...(firmFilter ? { firm: firmFilter } : {}) } }}>
+            <Badge variant={sort === "accuracy" ? "accent" : "default"}>Highest accuracy</Badge>
+          </Link>
+          <Link href={{ pathname: "/analysts", query: { sort: "volume", ...(firmFilter ? { firm: firmFilter } : {}) } }}>
+            <Badge variant={sort === "volume" ? "accent" : "default"}>Most graded calls</Badge>
+          </Link>
+        </div>
+        <AnalystFirmFilter firmOptions={firmOptions} />
       </div>
 
       {visible.length === 0 ? (
         <Card>
           <CardContent className="p-8 text-center text-sm text-ink-500">
-            No analysts have enough graded calls yet to appear here. Check back soon.
+            {firmFilter
+              ? `No analysts from ${firmFilter} have enough graded calls yet to appear here.`
+              : "No analysts have enough graded calls yet to appear here. Check back soon."}
           </CardContent>
         </Card>
       ) : (

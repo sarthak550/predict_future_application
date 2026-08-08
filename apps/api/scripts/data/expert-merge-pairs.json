@@ -1,0 +1,57 @@
+[
+  {
+    "canonicalId": "cmp4ia5hr0070akvudzegrsks",
+    "dupeIds": ["cmp4il80w00gcakvu2r3tufh1"],
+    "note": "Sandip Sabharwal: Independent (51 opinions, verified) absorbs asksandipsabharwal.com (3). Not auto-caught: 'Independent' never auto-matches by the hard law (even against a personal-brand domain that IS his own name) — human-reviewed, founder-approved."
+  },
+  {
+    "canonicalId": "cmp4ldnxt02mlakvufcl5kgbp",
+    "dupeIds": ["cmqwwej8r006xg3lybigrdnlf"],
+    "note": "Siddhartha Khemka: 'Motilal Oswal Financial Services Ltd.' (post round-2 auto-merge, which already folded in the bare 'MOSL' row via the alias map) absorbs 'Independent' (1). Only the Independent leg needed a manual pair — the MOFSL/MOSL leg is now caught automatically."
+  },
+  {
+    "canonicalId": "cmp4ipmzu00loakvu8g4b8jvt",
+    "dupeIds": ["cmp4m1cru0340akvuk0lme8gn"],
+    "note": "Swaminathan Aiyar: ET Now (4) absorbs Independent (3). Independent-vs-named-org, human-reviewed."
+  },
+  {
+    "canonicalId": "cmp4jyx1z01kfakvuffowkknt",
+    "dupeIds": ["cmp4jko8t0196akvueax25laj"],
+    "note": "KV Kamath: Independent (3, most opinions) absorbs Jio Financial Services (1). bestOrg resolves to 'Jio Financial Services' automatically (pickBestOrgString picks the longer string) — the more informative org survives even though the Independent row is canonical, per founder's explicit profile-richness tiebreak."
+  },
+  {
+    "canonicalId": "cmp4izex900slakvuh6c9jgdu",
+    "dupeIds": ["cmp4iyv5u00s3akvusfv9oo1w"],
+    "note": "Sunil Singhania: Abakkus Asset Management (5) absorbs Independent (3)."
+  },
+  {
+    "canonicalId": "cmoyg59zs001l104gnki55uv8",
+    "dupeIds": ["cmp4n6e3r03z3akvuckwuerpu"],
+    "note": "Sunil Subramaniam: Independent (35, most opinions) absorbs Sense and Simplicity (6). bestOrg resolves to 'Sense and Simplicity' automatically (longer string) per founder's explicit ask."
+  },
+  {
+    "canonicalId": "cmp4ie0nw00bcakvujukp86dw",
+    "dupeIds": ["cmp4krdzw0246akvuqawkwdor"],
+    "note": "CA Rudramurthy BV: Vachana Investments (30, verified) absorbs Independent (3, verified)."
+  },
+  {
+    "canonicalId": "cmp4ld59102lxakvudws2nlp8",
+    "dupeIds": ["cmp4h0fpn002orp445efsxbd4"],
+    "note": "Dinesh Kumar Khara: Independent (3, most opinions) absorbs State Bank of India (1). bestOrg resolves to 'State Bank of India' automatically (longer string) — the named org, with NO invented title, per founder's explicit instruction."
+  },
+  {
+    "canonicalId": "cmp4jfr650150akvuy2oweeq8",
+    "dupeIds": ["cmp4gk4t1000crp44veykyvqg"],
+    "note": "Rohit Srivastava: Strike Money Analytics and Indiacharts (31) absorbs the Independent singleton (1)."
+  },
+  {
+    "canonicalId": "cmp4jj565017xakvuz7vbuodt",
+    "dupeIds": ["cmp4idgmt00a6akvufwy6bmcu"],
+    "note": "Siddharth Vora: PL Asset Management (5) absorbs Independent (7) — canonical is DELIBERATELY the row with FEWER opinions here, an explicit founder override of the usual most-opinions default, because a named firm is a stronger identity anchor than an Independent attribution for this analyst."
+  },
+  {
+    "canonicalId": "cmp4jkxer0199akvugmnd5ngm",
+    "dupeIds": ["cmp4k0xbc01luakvu5qj4u1dn"],
+    "note": "Sahil Kapoor, career move: canonical is DSP Mutual Fund, NOT the higher-opinion-count row. Determined by latest opinion publishedAt per founder's instruction: DSP Mutual Fund's latest call is 2026-03-27 vs 360 ONE Wealth's latest 2026-03-18 — DSP is the more recently active attribution, so it is treated as the current firm despite 360 ONE Wealth having 5 opinions vs DSP's 4. (bestOrg also independently resolves to 'DSP Mutual Fund' via the longer-string heuristic, so the two rules agree here.)"
+  }
+]

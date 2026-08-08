@@ -15,6 +15,7 @@ export default async function AnalystOpengraphImage({ params }: { params: { slug
     select: {
       name: true,
       organization: true,
+      entityKind: true,
       opinions: {
         where: { suppressedAt: null },
         select: { resolutionStatus: true, instrument: true, instrumentTicker: true },
@@ -22,8 +23,11 @@ export default async function AnalystOpengraphImage({ params }: { params: { slug
     },
   });
 
-  const name = expert?.name ?? "Analyst";
-  const organization = expert?.organization ?? "";
+  const isFirm = expert?.entityKind === "FIRM";
+  // FIRM entities (publication/desk attributions) never pretend personhood — the
+  // headline is the organization, not a synthetic "X Analysis" name.
+  const name = isFirm ? (expert?.organization ?? "Market Analysis") : (expert?.name ?? "Analyst");
+  const organization = isFirm ? "Market analysis from this source" : (expert?.organization ?? "");
   const stats = expert ? getPublicProfileStats(expert.opinions) : null;
   const hasTrackRecord = stats !== null && stats.resolvedCount >= 3;
   const hitRateLabel = hasTrackRecord ? `${Math.round((stats!.hitRate ?? 0) * 100)}%` : "—";

@@ -868,6 +868,13 @@ model Expert {
   /// normalized.ts populates it for pre-existing rows. Never left "" for a row with a
   /// non-empty name after that backfill has run.
   nameNormalized String        @default("")
+  /// Human-vs-firm classification (round 2, 2026-08-08). Additive, defaults HUMAN so
+  /// existing rows need no required backfill in the same deploy — see
+  /// apps/api/scripts/backfill-expert-entity-kind.ts for the one-time classification
+  /// pass and apps/api/lib/finance/expertEntityKind.ts for the classifier + full
+  /// rationale. New experts are classified at creation time by
+  /// lib/finance/expertMatch.ts#findOrCreateExpert.
+  entityKind   ExpertEntityKind @default(HUMAN)
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt
   followers    ExpertFollow[]
@@ -877,6 +884,7 @@ model Expert {
 
   @@unique([name, organization])
   @@index([nameNormalized])
+  @@index([entityKind])
 }
 
 model ExpertFollow {
@@ -1134,6 +1142,15 @@ enum OpinionDirection {
   BULLISH
   BEARISH
   NEUTRAL
+}
+
+/// Human-vs-firm classification for Expert rows (2026-08-08 round-2 dedup work).
+/// See apps/api/lib/finance/expertEntityKind.ts for the classifier + full rationale.
+/// FIRM = an "org-as-analyst" identity (a publication/desk attributed opinion,
+/// displayed as "Market analysis from X", never presented as a person).
+enum ExpertEntityKind {
+  HUMAN
+  FIRM
 }
 
 enum OpinionResolutionStatus {
