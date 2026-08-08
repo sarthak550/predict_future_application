@@ -14,12 +14,32 @@
  * canonical-firm value shape (lib/finance/firmLink.ts, opinionsQuery.ts's
  * fetchOpinionFirmOptions) — but composes with this bar's other filters via
  * setParam rather than living as its own standalone control.
+ *
+ * Cascading firm <-> analyst (founder ask, 2026-08-08: "once user selects
+ * the firm name, can we make sure the analyst names should be accordingly
+ * shown there"): `analystOptions`/`firmOptions` arrive PRE-NARROWED from the
+ * server (opinionsQuery.ts's fetchOpinionAnalystOptions/fetchOpinionFirmOptions)
+ * based on whichever of the two is currently active — this component just
+ * renders whatever list it's given. The one thing it owns is transition
+ * coherence when FIRM changes: the analyst dropdown's narrowing only takes
+ * effect after the navigation completes, so a stale ?analyst= from a
+ * different (or no) firm scope could otherwise ride along in the URL. Rather
+ * than trying to verify client-side whether the still-selected analyst
+ * happens to belong to the newly-picked firm (the unscoped analyst list
+ * carries no organization field to check against), we simply clear ?analyst=
+ * on every firm change — a superset of "clear when incompatible" that's
+ * cheap, always correct, and never leaves a stale/invalid pair in the URL.
+ * Clearing FIRM back to "All firms" deliberately leaves ?analyst= alone —
+ * an analyst filter alone is unambiguous regardless of firm scope.
+ * The reverse direction needs no such handling: whenever a firm is active,
+ * the analyst dropdown is already narrowed to that firm's roster by the
+ * server, so every option a user can click is guaranteed compatible.
  */
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { Select } from "@/components/ui/select";
-import type { OpinionFirmOption } from "@/lib/finance/opinionsQuery";
+import type { OpinionAnalystOption, OpinionFirmOption } from "@/lib/finance/opinionsQuery";
 
 const DIRECTION_OPTIONS = [
   { value: "", label: "All directions" },
@@ -40,7 +60,7 @@ export function OpinionsFilterBar({
   firmOptions,
 }: {
   instrumentOptions: string[];
-  analystOptions: { slug: string | null; name: string }[];
+  analystOptions: OpinionAnalystOption[];
   firmOptions: OpinionFirmOption[];
 }) {
   const router = useRouter();
@@ -53,6 +73,23 @@ export function OpinionsFilterBar({
       next.set(key, value);
     } else {
       next.delete(key);
+    }
+    next.delete("page");
+    const query = next.toString();
+    router.push(query ? `${pathname}?${query}` : pathname);
+  };
+
+  // See the file-level note above: picking a NEW firm drops any already-
+  // selected analyst outright, since we can't cheaply confirm client-side
+  // that they still belong to it. Clearing firm back to "All firms" leaves
+  // ?analyst= untouched.
+  const setFirm = (value: string) => {
+    const next = new URLSearchParams(searchParams.toString());
+    if (value) {
+      next.set("firm", value);
+      next.delete("analyst");
+    } else {
+      next.delete("firm");
     }
     next.delete("page");
     const query = next.toString();
@@ -108,19 +145,17 @@ export function OpinionsFilterBar({
         className="w-auto min-w-[10rem]"
       >
         <option value="">All analysts</option>
-        {analystOptions
-          .filter((a): a is { slug: string; name: string } => Boolean(a.slug))
-          .map((analyst) => (
-            <option key={analyst.slug} value={analyst.slug}>
-              {analyst.name}
-            </option>
-          ))}
+        {analystOptions.map((analyst) => (
+          <option key={analyst.slug} value={analyst.slug}>
+            {analyst.count !== undefined ? `${analyst.name} (${analyst.count})` : analyst.name}
+          </option>
+        ))}
       </Select>
 
       <Select
         aria-label="Filter by firm"
         value={searchParams.get("firm") ?? ""}
-        onChange={(e) => setParam("firm", e.target.value)}
+        onChange={(e) => setFirm(e.target.value)}
         className="w-auto min-w-[14rem]"
       >
         <option value="">All firms</option>

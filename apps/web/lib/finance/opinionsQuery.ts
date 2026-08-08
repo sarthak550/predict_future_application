@@ -110,8 +110,29 @@ export type OpinionFirmOption = { firm: string; count: number };
  * /analysts' buildFirmOptions), sorted by count desc then name. Same
  * `?firm=` value shape as /analysts' options so a link built from either
  * page's dropdown is interoperable with the other.
+ *
+ * Cascading (founder ask, 2026-08-08: "once user selects the firm name, can
+ * we make sure the analyst names should be accordingly shown there" — and
+ * symmetrically, an analyst pick narrows the firm dropdown too): pass
+ * `narrowToAnalystSlug` when an analyst is selected and no firm is active yet
+ * to collapse the list to that analyst's own (single) firm, with the count
+ * being that analyst's own opinion count rather than the whole firm's. This
+ * is intentionally NOT called with an analyst when a firm is already active
+ * — the firm is the more specific/dominant filter in that case (see
+ * fetchOpinionsPage's mismatched-pair handling below), so its own dropdown
+ * always shows the full firm list rather than collapsing to one option a
+ * user might then feel stuck with.
  */
-export async function fetchOpinionFirmOptions(): Promise<OpinionFirmOption[]> {
+export async function fetchOpinionFirmOptions(narrowToAnalystSlug?: string): Promise<OpinionFirmOption[]> {
+  if (narrowToAnalystSlug) {
+    const expert = await prisma.expert.findFirst({
+      where: { slug: narrowToAnalystSlug, entityKind: "HUMAN" },
+      select: { organization: true, _count: { select: { opinions: { where: { suppressedAt: null } } } } },
+    });
+    if (!expert || expert._count.opinions === 0) return [];
+    return [{ firm: canonicalizeOrgDisplay(expert.organization), count: expert._count.opinions }];
+  }
+
   const groups = await fetchOpinionOrgGroups();
   return [...groups.entries()]
     .map(([firm, { count }]) => ({ firm, count }))
@@ -143,7 +164,31 @@ export async function fetchOpinionsPage(filters: OpinionsFilters) {
   // value resolves to an empty array, which Prisma's `organization: { in: [] }`
   // correctly turns into zero rows rather than an error.
   const firmOrganizations = filters.firm ? (await fetchOpinionOrgGroups()).get(filters.firm)?.rawOrganizations : undefined;
-  const where = buildWhere(filters, firmOrganizations);
+
+  // Mismatched-pair guard: the filter bar's cascading dropdowns are supposed
+  // to make an incompatible firm+analyst combination unreachable by clicking
+  // (picking a firm clears an analyst outside it, and picking an analyst
+  // narrows the firm list to theirs), but a hand-built or stale-bookmarked
+  // URL can still land here with both set and disagreeing. That pair would
+  // otherwise silently resolve to zero rows (analyst.slug = X AND
+  // organization IN <firm's orgs>, which never both hold). Rather than
+  // serving a confusing "no calls match" page — or erroring — we drop the
+  // analyst and treat it as firm-only: the firm is the more specific/dominant
+  // signal when the two disagree, same precedence fetchOpinionFirmOptions'
+  // narrowToAnalystSlug skip (above) already encodes.
+  let effectiveAnalyst = filters.analyst;
+  if (filters.firm && filters.analyst) {
+    const analystExpert = await prisma.expert.findFirst({
+      where: { slug: filters.analyst },
+      select: { organization: true },
+    });
+    const analystFirm = analystExpert ? canonicalizeOrgDisplay(analystExpert.organization) : undefined;
+    if (analystFirm !== filters.firm) {
+      effectiveAnalyst = undefined;
+    }
+  }
+
+  const where = buildWhere({ ...filters, analyst: effectiveAnalyst }, firmOrganizations);
   const skip = (filters.page - 1) * OPINIONS_PAGE_SIZE;
 
   const rows = await prisma.expertOpinion.findMany({
@@ -176,13 +221,54 @@ export async function fetchOpinionsPage(filters: OpinionsFilters) {
   return { items, hasMore, page: filters.page };
 }
 
-/** For the analyst filter select — every indexable-or-not expert with at least one public opinion. */
-export async function fetchAnalystOptions() {
-  return prisma.expert.findMany({
-    where: { slug: { not: null }, opinions: { some: { suppressedAt: null } } },
-    select: { slug: true, name: true },
+export type OpinionAnalystOption = { slug: string; name: string; count?: number };
+
+/**
+ * Analyst filter dropdown options for /opinions.
+ *
+ * Cascading (founder ask, 2026-08-08): when `firm` is set, narrows to
+ * opinion-having HUMAN experts belonging to that canonical firm — same
+ * HUMAN + canonical-org resolution fetchOpinionOrgGroups already uses to
+ * build the firm dropdown itself, so every narrowed option is guaranteed
+ * selectable — each with its OWN opinion count (cheap: scoped to one firm's
+ * raw org variants). When no firm is set, this preserves the page's
+ * original unscoped behavior (every expert — HUMAN or FIRM entityKind —
+ * with >=1 public opinion, no per-analyst counts) so the common unfiltered
+ * browse is unchanged.
+ */
+export async function fetchOpinionAnalystOptions(firm?: string): Promise<OpinionAnalystOption[]> {
+  if (!firm) {
+    const experts = await prisma.expert.findMany({
+      where: { slug: { not: null }, opinions: { some: { suppressedAt: null } } },
+      select: { slug: true, name: true },
+      orderBy: { name: "asc" },
+    });
+    return experts
+      .filter((e): e is { slug: string; name: string } => Boolean(e.slug))
+      .map((e) => ({ slug: e.slug, name: e.name }));
+  }
+
+  const rawOrganizations = (await fetchOpinionOrgGroups()).get(firm)?.rawOrganizations ?? [];
+  if (rawOrganizations.length === 0) return [];
+
+  const experts = await prisma.expert.findMany({
+    where: {
+      slug: { not: null },
+      entityKind: "HUMAN",
+      organization: { in: rawOrganizations },
+      opinions: { some: { suppressedAt: null } },
+    },
+    select: {
+      slug: true,
+      name: true,
+      _count: { select: { opinions: { where: { suppressedAt: null } } } },
+    },
     orderBy: { name: "asc" },
   });
+
+  return experts
+    .filter((e): e is typeof e & { slug: string } => Boolean(e.slug))
+    .map((e) => ({ slug: e.slug, name: e.name, count: e._count.opinions }));
 }
 
 /**

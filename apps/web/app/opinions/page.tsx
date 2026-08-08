@@ -9,8 +9,8 @@ import { SentimentGauge } from "@/components/finance/sentiment-gauge";
 import { Card, CardContent } from "@/components/ui/card";
 import { getSentimentSplit } from "@/lib/finance/sentiment";
 import {
-  fetchAnalystOptions,
   fetchInstrumentOptions,
+  fetchOpinionAnalystOptions,
   fetchOpinionFirmOptions,
   fetchOpinionsPage,
   hasActiveOpinionsQuery,
@@ -58,11 +58,16 @@ function buildPageHref(searchParams: SearchParams, page: number): string {
 export default async function OpinionsPage({ searchParams }: { searchParams: SearchParams }) {
   const filters = parseOpinionsFilters(searchParams);
 
+  // Cascading dropdowns (founder ask, 2026-08-08): the analyst list narrows
+  // to the selected firm; the firm list narrows to the selected analyst's
+  // own firm — but only when a firm ISN'T already active, since the firm is
+  // the more specific/dominant filter when both are set (see
+  // fetchOpinionFirmOptions' and fetchOpinionsPage's own notes on this).
   const [{ items, hasMore, page }, instrumentOptions, analystOptions, firmOptions, sentiment] = await Promise.all([
     fetchOpinionsPage(filters),
     fetchInstrumentOptions(),
-    fetchAnalystOptions(),
-    fetchOpinionFirmOptions(),
+    fetchOpinionAnalystOptions(filters.firm),
+    fetchOpinionFirmOptions(filters.firm ? undefined : filters.analyst),
     getSentimentSplit(filters.instrument),
   ]);
 
