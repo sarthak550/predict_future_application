@@ -51,6 +51,8 @@ export type ExpandableCall = {
   instrument: string | null;
   /** Yahoo Finance ticker, e.g. "RELIANCE.NS" — feeds the "Paper trade this call" CTA (see components/finance/paper-trade-cta.tsx). Null/index/non-NSE tickers hide the CTA. */
   instrumentTicker: string | null;
+  /** Bare symbol for /instruments/[symbol] (e.g. "RELIANCE", "NIFTY") — set only when that page would actually resolve (lib/finance/instrumentLink.ts). Absent → the Instrument cell renders as plain text, never a link that could 404. Callers on the instrument's OWN page should leave this undefined for every row (every row would otherwise self-link to the page the reader is already on). */
+  instrumentPageSymbol?: string | null;
   direction: OpinionDirection;
   sourceUrl: string;
   publishedAtLabel: string;
@@ -172,7 +174,17 @@ export function ExpandableCallsTable({
                     </TableCell>
                   )}
                   <TableCell className="pr-3 text-ink-600">
-                    <span className="block break-words">{call.instrument ?? "—"}</span>
+                    {call.instrumentPageSymbol ? (
+                      <Link
+                        href={`/instruments/${call.instrumentPageSymbol}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="block break-words font-medium text-ink-700 hover:text-signal-sky hover:underline"
+                      >
+                        {call.instrument ?? call.instrumentPageSymbol}
+                      </Link>
+                    ) : (
+                      <span className="block break-words">{call.instrument ?? "—"}</span>
+                    )}
                   </TableCell>
                   <TableCell>
                     <DirectionChip direction={call.direction} />

@@ -952,6 +952,87 @@ model ExpertOpinion {
   @@index([resolutionStatus, resolutionEligibleAt])
 }
 
+/// Which authoritative source proved an InstrumentAlias resolution — ordered
+/// most- to least-authoritative, mirroring PaperSettlementBasis's disclosure
+/// convention (every resolved row states exactly which tier of verification
+/// backs it, not just the result).
+enum InstrumentResolutionSource {
+  /// A hardcoded, hand-verified index identity (NIFTY 50 / NIFTY BANK spot
+  /// tickers) — small, stable, non-equity set no data source below covers.
+  KNOWN_INDEX
+  /// A real end-of-day traded quote row exists for this exact NSE symbol
+  /// (StockEodQuote) — the strongest equity proof: it actually traded, and
+  /// we hold its real company name straight from the exchange feed.
+  STOCK_EOD_QUOTE
+  /// NSE's own full equity master (apps/api/lib/marketMoves/nse.ts's
+  /// fetchEquityNames — the same CSV nseSymbolResolver.ts uses for BSE-name
+  /// matching) carries this exact symbol + company name. Used when no EOD
+  /// quote row exists yet, e.g. a freshly-listed symbol our bhavcopy
+  /// ingestion hasn't caught up to.
+  NSE_EQUITY_MASTER
+}
+
+/// Persistent instrument-identity resolution — the instrument-side mirror of
+/// Expert.nameNormalized + findOrCreateExpert (see expertMatch.ts,
+/// expertDedup.ts). ExpertOpinion.instrument/instrumentTicker are AI-extracted
+/// (extractInstrument.ts) and can be wrong, stale, or hallucinated — this
+/// table is the durable record of "we checked this raw name/ticker against a
+/// REAL authoritative source and here is what it actually is," populated
+/// lookup-first + self-extending by resolveInstrumentAlias
+/// (lib/finance/instrumentAlias.ts), consulted at extraction time
+/// (extractExpertOpinions.ts's persistExpertOpinions) and read directly by
+/// apps/web for instrument links, dropdown dedup, and filter cascading — no
+/// per-request re-resolution there (see apps/web/lib/finance/opinionsQuery.ts).
+///
+/// Founder ask, 2026-08-09: "mapping of names we found in article and what
+/// is the exact instrument they refer to... if there is any new name then it
+/// needs to be identified correctly and added to that mapping."
+///
+/// ADDITIVE, NOT YET PUSHED: this model was added to the schema file but has
+/// deliberately NOT been applied via `prisma db push` to any database (dev or
+/// prod) — that stays the founder's call, same convention as every other
+/// dedup/schema change. Every reader of this table (apps/web in particular)
+/// must degrade gracefully — never 500 — if the table doesn't exist yet.
+model InstrumentAlias {
+  id String @id @default(cuid())
+
+  /// The extracted ticker (preferred) or a normalized instrument label
+  /// (fallback, only when no ticker was extracted) — see the SHARED
+  /// normalizeInstrumentRawName (@predict-future/business-rules/instruments/
+  /// instrumentDedup), used identically by apps/api (writes here) and
+  /// apps/web (reads here) so both sides derive the same lookup key from an
+  /// ExpertOpinion row.
+  rawName String @unique
+
+  /// False rows are DELIBERATELY KEPT, not deleted or omitted — they record
+  /// "we checked, this is genuinely unresolvable" (a commodity future, an FX
+  /// pair, a sectoral index we don't canonicalize, or a stale/hallucinated
+  /// ticker), so resolveInstrumentAlias never re-attempts a known-failing
+  /// lookup, and callers can tell "not yet resolved" (row absent — pre-dates
+  /// this table, or the backfill hasn't reached it) apart from "resolved and
+  /// found nothing" (row present, resolved=false).
+  resolved Boolean
+
+  /// Bare NSE symbol for /instruments/[symbol] ("RELIANCE", "NIFTY"). Null
+  /// when resolved=false.
+  symbol String?
+
+  /// Authoritative display name — StockEodQuote.companyName or the NSE
+  /// equity master's company name, NEVER the raw AI-extracted string. Null
+  /// when resolved=false.
+  canonicalName String?
+
+  resolutionSource InstrumentResolutionSource?
+
+  firstSeenAt DateTime  @default(now())
+  resolvedAt  DateTime?
+  updatedAt   DateTime  @updatedAt
+
+  @@index([resolved])
+  @@index([symbol])
+  @@index([canonicalName])
+}
+
 model ExpertOpinionVote {
   id        String                @id @default(cuid())
   userId    String

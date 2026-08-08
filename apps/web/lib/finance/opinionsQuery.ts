@@ -1,9 +1,11 @@
 import type { OpinionDirection, OpinionResolutionStatus, Prisma } from "@prisma/client";
 import { canonicalizeInstrument } from "@predict-future/business-rules";
 import { canonicalizeOrgDisplay } from "@predict-future/business-rules/experts/firmAliases";
+import { normalizeInstrumentRawName } from "@predict-future/business-rules/instruments/instrumentDedup";
 
 import { prisma } from "@/lib/prisma";
 import { buildInstrumentWhereOr } from "@/lib/finance/instruments";
+import { isMissingTableError } from "@/lib/finance/instrumentLink";
 import { computeDominantLean, computeSentimentPercentages, type DominantLean } from "@/lib/finance/sentiment";
 import { getNseIndustryMap } from "@/lib/finance/nseSectorMaster";
 import { resolveSectorLabel } from "@/lib/finance/sectorTaxonomy";
@@ -20,10 +22,14 @@ export interface OpinionsFilters {
   analyst?: string;
   /** Canonical org display string, e.g. "Motilal Oswal Financial Services" — the SAME ?firm= value shape /analysts uses (see lib/finance/firmLink.ts, buildFirmOptions). */
   firm?: string;
-  /** One of CANONICAL_SECTOR_LABELS (sectorTaxonomy.ts), e.g. "Banking", "Automobile and Auto Components" — the ticker's underlying instrument's sector, NOT an expert/firm attribute. Composes as an independent AND filter alongside firm/analyst — see buildSectorIndex's doc comment for why it deliberately does not cascade with them. */
+  /** One of CANONICAL_SECTOR_LABELS (sectorTaxonomy.ts), e.g. "Banking", "Automobile and Auto Components" — the ticker's underlying instrument's sector, NOT an expert/firm attribute. */
   sector?: string;
   page: number;
 }
+
+/** The four filter dimensions that cascade against one another — see buildOptionsWhere's doc comment. Order is significant: DROP_PRECEDENCE below relies on it. `direction` and `status` are deliberately excluded from this list (and from every option-builder query) — see fetchOpinionsSentimentSplit's doc comment for `direction`; `status` was never part of the founder's cascade ask and stays a plain independent AND. */
+const CASCADE_DIMENSIONS = ["firm", "analyst", "sector", "instrument"] as const;
+type CascadeDimension = (typeof CASCADE_DIMENSIONS)[number];
 
 const VALID_DIRECTIONS: readonly OpinionDirection[] = ["BULLISH", "BEARISH", "NEUTRAL"];
 
@@ -83,20 +89,13 @@ const GRADED_STATUSES: OpinionResolutionStatus[] = ["RESOLVED_HIT", "RESOLVED_MI
 
 /**
  * Distinct raw `organization` strings used by opinion-having HUMAN experts,
- * grouped by their canonical display form (canonicalizeOrgDisplay — the SAME
- * canonicalization /analysts applies via lib/finance/analysts.ts). Backs
- * BOTH the /opinions firm filter's dropdown counts (fetchOpinionFirmOptions)
- * and its server-side WHERE resolution (a canonical firm like "Motilal Oswal
- * Financial Services" isn't a column value — it's a display-time merge of
- * one or more raw org strings, e.g. "MOFSL" — so filtering by it means
- * resolving back to every raw variant first). One query shared by both so
- * the dropdown's counts and the actual filterable set can never drift apart.
- *
- * Scoped to entityKind=HUMAN with a public (non-suppressed) opinion, mirroring
- * fetchIndexableAnalysts' HUMAN-only convention (entityKind=FIRM rows are
- * publication/desk identities displayed as "Market Analysis from X", not a
- * person with a firm — see analysts.ts's own note on this) and this page's
- * own suppressedAt exclusion.
+ * grouped by their canonical display form (canonicalizeOrgDisplay). This is
+ * a NAME-RESOLUTION lookup (canonical firm -> its raw org spelling variants),
+ * unfiltered by design — the same reason fetchOpinionOrgGroups was already
+ * unfiltered before the N-way cascade generalization: it answers "what raw
+ * strings does this canonical firm name expand to," not "how many opinions
+ * currently match." The FILTERED, cascade-aware firm dropdown counts now
+ * live in fetchOpinionFirmOptions below, built on top of this lookup.
  */
 async function fetchOpinionOrgGroups(): Promise<Map<string, { count: number; rawOrganizations: string[] }>> {
   const rows = await prisma.expertOpinion.findMany({
@@ -120,75 +119,7 @@ async function fetchOpinionOrgGroups(): Promise<Map<string, { count: number; raw
   return groups;
 }
 
-export type OpinionFirmOption = { firm: string; count: number };
-
-/**
- * Firm filter dropdown options for /opinions — canonical firms present among
- * opinion-having HUMAN experts, counted by OPINIONS (not analysts, unlike
- * /analysts' buildFirmOptions), sorted by count desc then name. Same
- * `?firm=` value shape as /analysts' options so a link built from either
- * page's dropdown is interoperable with the other.
- *
- * Cascading (founder ask, 2026-08-08: "once user selects the firm name, can
- * we make sure the analyst names should be accordingly shown there" — and
- * symmetrically, an analyst pick narrows the firm dropdown too): pass
- * `narrowToAnalystSlug` when an analyst is selected and no firm is active yet
- * to collapse the list to that analyst's own (single) firm, with the count
- * being that analyst's own opinion count rather than the whole firm's. This
- * is intentionally NOT called with an analyst when a firm is already active
- * — the firm is the more specific/dominant filter in that case (see
- * fetchOpinionsPage's mismatched-pair handling below), so its own dropdown
- * always shows the full firm list rather than collapsing to one option a
- * user might then feel stuck with.
- */
-export async function fetchOpinionFirmOptions(narrowToAnalystSlug?: string): Promise<OpinionFirmOption[]> {
-  if (narrowToAnalystSlug) {
-    const expert = await prisma.expert.findFirst({
-      where: { slug: narrowToAnalystSlug, entityKind: "HUMAN" },
-      select: { organization: true, _count: { select: { opinions: { where: { suppressedAt: null } } } } },
-    });
-    if (!expert || expert._count.opinions === 0) return [];
-    return [{ firm: canonicalizeOrgDisplay(expert.organization), count: expert._count.opinions }];
-  }
-
-  const groups = await fetchOpinionOrgGroups();
-  return [...groups.entries()]
-    .map(([firm, { count }]) => ({ firm, count }))
-    .sort((a, b) => b.count - a.count || a.firm.localeCompare(b.firm));
-}
-
-export type OpinionSectorOption = { sector: string; count: number };
-
-/**
- * Ticker <-> sector index for every distinct instrumentTicker among public
- * opinions, built fresh per call (no manual module cache — this is a DB
- * aggregate, the same convention fetchOpinionOrgGroups already follows;
- * the only piece worth caching, the NSE CSV fetch itself, is cached inside
- * getNseIndustryMap). Combines both sources from sectorTaxonomy.ts:
- *
- *   1. NSE's own Industry (nseSectorMaster.ts) — bare-symbol keyed, so
- *      Yahoo-style tickers ("RELIANCE.NS") are stripped to their NSE symbol
- *      first. Covers ~90% of real opinion-referenced equities (verified
- *      2026-08-09).
- *   2. Yahoo sector+industry (InstrumentEnrichment.keyStats) as fallback for
- *      whatever NSE's list doesn't cover, mapped to the same label
- *      vocabulary via mapYahooToSectorLabel.
- *
- * Tickers that are neither an NSE-symbol-shaped ".NS" ticker (index symbols
- * like "^NSEI", commodity futures like "GC=F", FX pairs like "INR=X" all
- * fail this shape check) nor resolvable via either source are simply absent
- * from the returned maps — they never show up under any sector, which is the
- * honest answer for "what sector is the NIFTY 50 index in."
- *
- * CASCADING DECISION: sector is NOT wired into the firm<->analyst cascade
- * (fetchOpinionFirmOptions/fetchOpinionAnalystOptions) in either direction —
- * a brokerage covers every sector its analysts write about, so "narrow the
- * firm list to Energy" would incorrectly hide firms that publish energy
- * calls only occasionally, and an analyst pick shouldn't collapse the sector
- * list either (an analyst covers many stocks/sectors, not one). Sector
- * composes as a plain independent AND alongside whatever else is active —
- * same as `instrument` and `direction` already do.
- */
+/** Ticker <-> sector index — see buildSectorIndex below for the full doc comment. Unfiltered NAME-RESOLUTION lookup (canonical sector -> its ticker set), same role as fetchOpinionOrgGroups above. */
 async function buildSectorIndex(): Promise<{
   tickerToSector: Map<string, string>;
   sectorToTickers: Map<string, string[]>;
@@ -200,8 +131,6 @@ async function buildSectorIndex(): Promise<{
   });
   const tickers = rows.map((r) => r.instrumentTicker).filter((t): t is string => Boolean(t));
 
-  // Yahoo-style NSE equity ticker only ("RELIANCE.NS" → "RELIANCE") — indices,
-  // commodity futures, and FX pairs never match and are left unclassified.
   const bareSymbol = (ticker: string): string | null => {
     const m = /^([A-Z0-9&-]+)\.NS$/i.exec(ticker);
     return m ? m[1].toUpperCase() : null;
@@ -246,67 +175,132 @@ async function buildSectorIndex(): Promise<{
   return { tickerToSector, sectorToTickers };
 }
 
-/**
- * Sector filter dropdown options for /opinions — every sector with >=1
- * public opinion, counted by OPINIONS (matching fetchOpinionFirmOptions'
- * own convention), sorted by count desc then name. Unscoped by design — see
- * buildSectorIndex's cascading note above.
- */
-export async function fetchOpinionSectorOptions(): Promise<OpinionSectorOption[]> {
-  const { tickerToSector } = await buildSectorIndex();
-  if (tickerToSector.size === 0) return [];
-
-  const counts = await prisma.expertOpinion.groupBy({
-    by: ["instrumentTicker"],
-    where: { suppressedAt: null, instrumentTicker: { in: [...tickerToSector.keys()] } },
-    _count: { _all: true },
-  });
-
-  const bySector = new Map<string, number>();
-  for (const row of counts) {
-    const sector = row.instrumentTicker ? tickerToSector.get(row.instrumentTicker) : undefined;
-    if (!sector) continue;
-    bySector.set(sector, (bySector.get(sector) ?? 0) + row._count._all);
-  }
-
-  return [...bySector.entries()]
-    .map(([sector, count]) => ({ sector, count }))
-    .sort((a, b) => b.count - a.count || a.sector.localeCompare(b.sector));
-}
-
 /** Resolves a ?sector= value to the instrumentTicker set buildWhere filters on. An unrecognized/stale value resolves to [], which Prisma's `in: []` correctly turns into zero rows. */
 async function resolveSectorTickers(sector: string): Promise<string[]> {
   const { sectorToTickers } = await buildSectorIndex();
   return sectorToTickers.get(sector) ?? [];
 }
 
-function buildWhere(
-  filters: OpinionsFilters,
-  firmOrganizations: string[] | undefined,
-  sectorTickers: string[] | undefined,
-): Prisma.ExpertOpinionWhereInput {
+/**
+ * Resolves a ?instrument= value to the InstrumentAlias.rawName set (always
+ * tickers — see instrumentLink.ts's doc comment: a `resolved: true` row only
+ * ever exists for a ticker-keyed rawName) sharing that canonical display
+ * name. Returns undefined when the value ISN'T a resolved canonical name
+ * (either a legacy free-text value, or InstrumentAlias doesn't exist yet) —
+ * callers fall back to the legacy fuzzy-text OR match in that case. See
+ * buildWhere's own comment for how the two modes compose with `sector`'s
+ * ticker constraint.
+ */
+async function resolveInstrumentFilterTickers(instrument: string): Promise<string[] | undefined> {
+  try {
+    const rows = await prisma.instrumentAlias.findMany({
+      where: { canonicalName: instrument, resolved: true },
+      select: { rawName: true },
+    });
+    return rows.length > 0 ? rows.map((r) => r.rawName) : undefined;
+  } catch (err) {
+    if (isMissingTableError(err)) return undefined;
+    throw err;
+  }
+}
+
+/** Resolution context threaded alongside `filters` into buildWhere/buildWhereExcluding — the values that back each active filter's WHERE-clause meaning. Populated once per request by resolveEffectiveFilters. */
+interface FilterResolutionContext {
+  firmOrganizations?: string[];
+  sectorTickers?: string[];
+  /** Set only when filters.instrument resolved against InstrumentAlias (ticker-equality mode). Absent => filters.instrument (if set) falls back to legacy fuzzy-text matching. */
+  instrumentTickers?: string[];
+}
+
+/**
+ * The shared WHERE-builder EVERY consumer of these filters goes through —
+ * the table (fetchOpinionsPage), the sentiment bar (fetchOpinionsSentimentSplit),
+ * and all four dropdown option-builders below (via buildWhereExcluding).
+ * Single source of truth: nothing computes "what matches these filters"
+ * except this function, so the dropdowns' cascade and the table's own result
+ * set can never drift apart.
+ */
+function buildWhere(filters: OpinionsFilters, ctx: FilterResolutionContext): Prisma.ExpertOpinionWhereInput {
   // Both `analyst` and `firm` constrain `expert`, so they're merged into a
   // single expert sub-object rather than two separate spreads — two object-
   // literal spreads under the same `expert` key would silently let the
   // second clobber the first, dropping whichever filter lost.
   const expertWhere: Prisma.ExpertWhereInput = {};
   if (filters.analyst) expertWhere.slug = filters.analyst;
-  if (filters.firm) expertWhere.organization = { in: firmOrganizations ?? [] };
+  if (filters.firm) expertWhere.organization = { in: ctx.firmOrganizations ?? [] };
+
+  // `sector` and a RESOLVED `instrument` both constrain instrumentTicker —
+  // merge via intersection rather than two top-level `instrumentTicker` keys
+  // (the second object-spread would silently clobber the first, same class
+  // of bug the expertWhere merge above guards against). A resolved
+  // instrument is always the more specific of the two in practice (one
+  // ticker vs a sector's whole ticker set), so the intersection naturally
+  // reduces to "that instrument, if it's actually in the selected sector" —
+  // correctly empty when it isn't, which the mismatch-degrade retry in
+  // resolveEffectiveFilters handles.
+  const tickerSets: string[][] = [];
+  if (filters.sector) tickerSets.push(ctx.sectorTickers ?? []);
+  if (filters.instrument && ctx.instrumentTickers) tickerSets.push(ctx.instrumentTickers);
+  let instrumentTickerWhere: Prisma.ExpertOpinionWhereInput = {};
+  if (tickerSets.length === 1) {
+    instrumentTickerWhere = { instrumentTicker: { in: tickerSets[0] } };
+  } else if (tickerSets.length > 1) {
+    const intersection = tickerSets.reduce((a, b) => a.filter((t) => b.includes(t)));
+    instrumentTickerWhere = { instrumentTicker: { in: intersection } };
+  }
 
   return {
     suppressedAt: null,
-    ...(filters.instrument ? { OR: buildInstrumentWhereOr(filters.instrument) } : {}),
+    // Legacy fuzzy-text OR match — only when `instrument` is set AND it did
+    // NOT resolve against InstrumentAlias (see resolveInstrumentFilterTickers).
+    ...(filters.instrument && !ctx.instrumentTickers ? { OR: buildInstrumentWhereOr(filters.instrument) } : {}),
     ...(filters.direction ? { direction: filters.direction } : {}),
     ...(filters.status === "graded" ? { resolutionStatus: { in: GRADED_STATUSES } } : {}),
     ...(filters.status === "pending" ? { resolutionStatus: "PENDING" as const } : {}),
     ...(Object.keys(expertWhere).length > 0 ? { expert: expertWhere } : {}),
-    // Sector constrains the OPINION's instrument, not the expert — a sibling
-    // top-level AND condition, never nested under `expert`. Deliberately
-    // independent of firm/analyst (see buildSectorIndex's doc comment: a
-    // brokerage isn't sector-scoped, so sector neither narrows nor is
-    // narrowed by them — unlike the firm<->analyst cascade above).
-    ...(filters.sector ? { instrumentTicker: { in: sectorTickers ?? [] } } : {}),
+    ...instrumentTickerWhere,
   };
+}
+
+/**
+ * The natural shared abstraction the founder's "generalize, don't
+ * special-case" ask calls for: EVERY dropdown's options reflect "what values
+ * would produce non-empty results given every OTHER currently-active filter
+ * dimension" — i.e. buildWhere with that ONE dimension's own param stripped,
+ * everything else (now including sector, and a resolved instrument) applied.
+ * Replaces the old bespoke narrowToAnalystSlug/firm-only params on
+ * fetchOpinionFirmOptions/fetchOpinionAnalystOptions — those two, plus
+ * sector and instrument, now all go through this single call.
+ *
+ * BEHAVIOR CHANGE from the prior firm<->analyst cascade: previously, firm's
+ * own dropdown deliberately stayed UNNARROWED even when an analyst was
+ * active ("so its own dropdown always shows the full firm list rather than
+ * collapsing to one option a user might feel stuck with"). Under a true
+ * symmetric N-way cascade this asymmetry doesn't generalize cleanly to 4
+ * dimensions, and — since an analyst deterministically belongs to exactly
+ * one firm — collapsing the firm dropdown to that one firm when an analyst
+ * is active is actually the CORRECT answer, not a UX trap: the user can
+ * still broaden by clearing the analyst filter first (one click), and every
+ * other cascading facet UI (e-commerce category/brand filters, etc.) behaves
+ * this same way. Flagged here explicitly since it's a deliberate, considered
+ * reversal of prior documented behavior, not an oversight.
+ *
+ * `direction` is ALWAYS stripped here too, regardless of `exclude` — same
+ * law as fetchOpinionsSentimentSplit's own direction exclusion (existing,
+ * pre-dates this generalization): filtering a dropdown's OPTIONS by
+ * direction would mean picking "Bearish" silently hides every firm/analyst/
+ * sector/instrument that happens to have zero bearish calls, which is not
+ * what "narrow by Banking" means and was never true of the original
+ * firm<->analyst cascade (whose bespoke queries never referenced direction
+ * at all). `status` is NOT stripped — it was never part of the cascade ask
+ * and stays a plain filter on the option-building query, same as before.
+ */
+function buildWhereExcluding(
+  filters: OpinionsFilters,
+  ctx: FilterResolutionContext,
+  exclude: CascadeDimension,
+): Prisma.ExpertOpinionWhereInput {
+  return buildWhere({ ...filters, [exclude]: undefined, direction: undefined }, ctx);
 }
 
 /**
@@ -316,16 +310,12 @@ function buildWhere(
  * narrows the firm list to theirs), but a hand-built or stale-bookmarked URL
  * can still land here with both set and disagreeing. That pair would
  * otherwise silently resolve to zero rows (analyst.slug = X AND organization
- * IN <firm's orgs>, which never both hold). Rather than serving a confusing
- * "no calls match" page — or erroring — we drop the analyst and treat it as
- * firm-only: the firm is the more specific/dominant signal when the two
- * disagree, same precedence fetchOpinionFirmOptions' narrowToAnalystSlug skip
- * already encodes.
- *
- * Shared by fetchOpinionsPage (the table) AND fetchOpinionsSentimentSplit
- * (the sentiment bar above it) — both MUST resolve to the identical
- * effective analyst, or the bar's "n" could disagree with the table's total
- * on exactly this edge case.
+ * IN <firm's orgs>, which never both hold — a STRUCTURAL impossibility, not
+ * sparse data: an analyst's organization is fixed, so no opinion can ever
+ * satisfy both). Rather than serving a confusing "no calls match" page — or
+ * erroring — we drop the analyst and treat it as firm-only: the firm is the
+ * more specific/dominant signal when the two disagree, the base case
+ * DROP_PRECEDENCE (below) generalizes to sector/instrument.
  */
 async function resolveEffectiveAnalyst(filters: OpinionsFilters): Promise<string | undefined> {
   if (!filters.firm || !filters.analyst) return filters.analyst;
@@ -337,16 +327,90 @@ async function resolveEffectiveAnalyst(filters: OpinionsFilters): Promise<string
   return analystFirm === filters.firm ? filters.analyst : undefined;
 }
 
-export async function fetchOpinionsPage(filters: OpinionsFilters) {
-  // Resolved once, only when a firm filter is active — an unfiltered browse
-  // (the common case) pays no extra query. An unrecognized/stale ?firm=
-  // value resolves to an empty array, which Prisma's `organization: { in: [] }`
-  // correctly turns into zero rows rather than an error.
-  const firmOrganizations = filters.firm ? (await fetchOpinionOrgGroups()).get(filters.firm)?.rawOrganizations : undefined;
-  const effectiveAnalyst = await resolveEffectiveAnalyst(filters);
-  const sectorTickers = filters.sector ? await resolveSectorTickers(filters.sector) : undefined;
+/**
+ * Precedence for DROPPING a filter when the full active combination would
+ * otherwise produce a false-empty result (see resolveEffectiveFilters) —
+ * earlier entries are KEPT longer; the LAST entry still active is dropped
+ * first. One consistent rule generalizes the founder's example (sector +
+ * a pharma-only firm) and the pre-existing firm/analyst precedent:
+ *   - expert-axis (who said it: firm/analyst) outranks subject-axis (what
+ *     it's about: sector/instrument) — this preserves the existing,
+ *     already-shipped firm-over-analyst precedent as the base case.
+ *   - within each axis, the BROADER dimension outranks the narrower one it
+ *     contains (a firm has many analysts; a sector has many instruments) —
+ *     so firm > analyst and, symmetrically, sector > instrument.
+ */
+const DROP_PRECEDENCE: readonly CascadeDimension[] = ["firm", "analyst", "sector", "instrument"];
 
-  const where = buildWhere({ ...filters, analyst: effectiveAnalyst }, firmOrganizations, sectorTickers);
+export interface ResolvedOpinionsFilters {
+  /** The EFFECTIVE filters after any structural/false-empty degradation — use this (never the raw parsed filters) for every downstream query and for the sentiment bar's scope label. */
+  filters: OpinionsFilters;
+  ctx: FilterResolutionContext;
+  /** Which cascade dimensions were dropped and why the combination reached this page needing it — empty in the overwhelming common case (0-1 filters, or a combination that's simply, legitimately narrow). Surfaced for the (currently silent) case a future UI wants to disclose "X was cleared because it couldn't be combined with Y." */
+  droppedFilters: CascadeDimension[];
+}
+
+/**
+ * Resolves parsed URL filters into the EFFECTIVE filters + WHERE-clause
+ * context every other function in this file consumes — computed ONCE per
+ * request (opinions/page.tsx calls this, then passes the result to
+ * fetchOpinionsPage/fetchOpinionsSentimentSplit/the four option-fetchers) so
+ * the table, the sentiment bar, and every dropdown can never disagree on
+ * what "the current filters" actually mean.
+ *
+ * Two layers of degradation, applied in order:
+ *   1. STRUCTURAL: firm/analyst — a deterministic identity check, no query
+ *      needed beyond one small lookup (resolveEffectiveAnalyst).
+ *   2. FALSE-EMPTY RETRY: only entered when 2+ cascade dimensions are active
+ *      (0-1 filters can never conflict with anything). One indexed,
+ *      LIMIT-1 existence check (`findFirst`) on the fully-combined WHERE
+ *      clause; if it comes back empty, drop the lowest-precedence active
+ *      filter (DROP_PRECEDENCE) and recheck — bounded to at most
+ *      (active dimension count) extra existence checks, and ONLY reached by
+ *      a hand-built/stale URL (the cascading dropdowns make this
+ *      combination unreachable by clicking through the UI). The common
+ *      path — 0, 1, or a legitimately-narrow-but-nonzero combination of
+ *      filters — pays exactly one extra `findFirst` (only when 2+ filters
+ *      are active), or zero when 0-1 are.
+ */
+export async function resolveEffectiveFilters(filters: OpinionsFilters): Promise<ResolvedOpinionsFilters> {
+  const firmOrganizations = filters.firm
+    ? (await fetchOpinionOrgGroups()).get(filters.firm)?.rawOrganizations
+    : undefined;
+
+  const droppedFilters: CascadeDimension[] = [];
+  const effectiveAnalyst = await resolveEffectiveAnalyst(filters);
+  if (filters.analyst && effectiveAnalyst === undefined) droppedFilters.push("analyst");
+
+  let current: OpinionsFilters = { ...filters, analyst: effectiveAnalyst };
+  const sectorTickers = current.sector ? await resolveSectorTickers(current.sector) : undefined;
+  const instrumentTickers = current.instrument ? await resolveInstrumentFilterTickers(current.instrument) : undefined;
+
+  let ctx: FilterResolutionContext = { firmOrganizations, sectorTickers, instrumentTickers };
+
+  const activeCascadeDims = CASCADE_DIMENSIONS.filter((d) => Boolean(current[d]));
+  if (activeCascadeDims.length >= 2) {
+    for (let i = 0; i < activeCascadeDims.length; i++) {
+      const exists = await prisma.expertOpinion.findFirst({ where: buildWhere(current, ctx), select: { id: true } });
+      if (exists) break;
+
+      const stillActive = DROP_PRECEDENCE.filter((d) => Boolean(current[d]));
+      const drop = stillActive[stillActive.length - 1];
+      if (!drop) break;
+
+      droppedFilters.push(drop);
+      current = { ...current, [drop]: undefined };
+      if (drop === "firm") ctx = { ...ctx, firmOrganizations: undefined };
+      if (drop === "sector") ctx = { ...ctx, sectorTickers: undefined };
+      if (drop === "instrument") ctx = { ...ctx, instrumentTickers: undefined };
+    }
+  }
+
+  return { filters: current, ctx, droppedFilters };
+}
+
+export async function fetchOpinionsPage(filters: OpinionsFilters, ctx: FilterResolutionContext) {
+  const where = buildWhere(filters, ctx);
   const skip = (filters.page - 1) * OPINIONS_PAGE_SIZE;
 
   const rows = await prisma.expertOpinion.findMany({
@@ -400,18 +464,18 @@ export interface OpinionsSentimentSplit {
 }
 
 /**
- * Sentiment split for /opinions, recomputed against the SAME filters as the
- * table rendered below it (instrument, firm, analyst, grading status) — with
- * one deliberate exception: `direction`. Filtering the bar's own aggregate by
- * direction would be a tautology (picking "Bullish" would always render a
- * 100% bullish bar), so direction is dropped before building the WHERE
- * clause here — the bar always shows the FULL bullish/bearish/neutral split
- * within whatever OTHER filters are active. It's the caller's job
- * (opinions/page.tsx) to only invoke this function when a non-direction
- * filter is active in the first place; when direction is the only active
- * filter (or nothing is), the caller falls back to the unfiltered
- * getSentimentSplit (lib/finance/sentiment.ts)'s 7-day market-wide split
- * instead, unchanged from before this filter-aware bar existed.
+ * Sentiment split for /opinions, recomputed against the SAME EFFECTIVE
+ * filters as the table rendered below it — with one deliberate exception:
+ * `direction`. Filtering the bar's own aggregate by direction would be a
+ * tautology (picking "Bullish" would always render a 100% bullish bar), so
+ * direction is dropped before building the WHERE clause here — the bar
+ * always shows the FULL bullish/bearish/neutral split within whatever OTHER
+ * filters are active. It's the caller's job (opinions/page.tsx) to only
+ * invoke this function when a non-direction filter is active in the first
+ * place; when direction is the only active filter (or nothing is), the
+ * caller falls back to the unfiltered getSentimentSplit (lib/finance/
+ * sentiment.ts)'s 7-day market-wide split instead, unchanged from before
+ * this filter-aware bar existed.
  *
  * Deliberately ALL-TIME (no 7-day window), unlike getSentimentSplit — the
  * whole point of this function is for `totalCount` to equal the table's own
@@ -420,26 +484,19 @@ export interface OpinionsSentimentSplit {
  * "this bar is built from exactly the N calls in the table below," not a
  * silently different, time-boxed subset of them.
  *
- * Reuses buildWhere (the same private where-builder fetchOpinionsPage uses)
- * and resolveEffectiveAnalyst (the same mismatched firm+analyst-pair guard)
- * so the two can never disagree on what counts as "the filtered set." One
- * groupBy for the counts, run in parallel with the (only-when-needed) label
- * lookup — no per-opinion queries.
+ * Takes the SAME already-resolved `filters`/`ctx` as fetchOpinionsPage
+ * (both computed once by resolveEffectiveFilters) so the two can never
+ * disagree on what counts as "the filtered set."
  */
-export async function fetchOpinionsSentimentSplit(filters: OpinionsFilters): Promise<OpinionsSentimentSplit> {
-  const firmOrganizations = filters.firm ? (await fetchOpinionOrgGroups()).get(filters.firm)?.rawOrganizations : undefined;
-  const effectiveAnalyst = await resolveEffectiveAnalyst(filters);
-  const sectorTickers = filters.sector ? await resolveSectorTickers(filters.sector) : undefined;
-
-  const where = buildWhere(
-    { ...filters, analyst: effectiveAnalyst, direction: undefined },
-    firmOrganizations,
-    sectorTickers,
-  );
+export async function fetchOpinionsSentimentSplit(
+  filters: OpinionsFilters,
+  ctx: FilterResolutionContext,
+): Promise<OpinionsSentimentSplit> {
+  const where = buildWhere({ ...filters, direction: undefined }, ctx);
 
   const [directionCounts, analystExpert] = await Promise.all([
     prisma.expertOpinion.groupBy({ by: ["direction"], where, _count: { _all: true } }),
-    effectiveAnalyst ? prisma.expert.findFirst({ where: { slug: effectiveAnalyst }, select: { name: true } }) : null,
+    filters.analyst ? prisma.expert.findFirst({ where: { slug: filters.analyst }, select: { name: true } }) : null,
   ]);
 
   const bullishCount = directionCounts.find((c) => c.direction === "BULLISH")?._count._all ?? 0;
@@ -457,13 +514,10 @@ export async function fetchOpinionsSentimentSplit(filters: OpinionsFilters): Pro
   // Scope label parts, most-specific first. An analyst filter implies a firm
   // (they only ever belong to one), so when both resolve to the same person
   // we show ONLY the analyst's name rather than stacking "Firm · Analyst" —
-  // shorter, and the firm is one click away on their profile anyway. If the
-  // mismatched-pair guard above dropped the analyst, `effectiveAnalyst` is
-  // undefined and we correctly fall back to the firm alone, matching what
-  // the WHERE clause actually filtered on.
+  // shorter, and the firm is one click away on their profile anyway.
   const scopeParts: string[] = [];
-  if (effectiveAnalyst) {
-    scopeParts.push(analystExpert?.name ?? filters.analyst ?? "");
+  if (filters.analyst) {
+    scopeParts.push(analystExpert?.name ?? filters.analyst);
   } else if (filters.firm) {
     scopeParts.push(filters.firm);
   }
@@ -487,47 +541,102 @@ export async function fetchOpinionsSentimentSplit(filters: OpinionsFilters): Pro
   };
 }
 
+export type OpinionFirmOption = { firm: string; count: number };
+
+/**
+ * Firm filter dropdown options for /opinions — canonical firms present among
+ * opinion-having HUMAN experts, counted by OPINIONS (not analysts, unlike
+ * /analysts' buildFirmOptions) within the current cascade scope (every OTHER
+ * active dimension applied via buildWhereExcluding — see that function's own
+ * doc comment for the behavior-change note on firm<->analyst), sorted by
+ * count desc then name.
+ */
+export async function fetchOpinionFirmOptions(
+  filters: OpinionsFilters,
+  ctx: FilterResolutionContext,
+): Promise<OpinionFirmOption[]> {
+  const where = buildWhereExcluding(filters, ctx, "firm");
+  const rows = await prisma.expertOpinion.findMany({
+    where: { ...where, expert: { ...(where.expert as Prisma.ExpertWhereInput | undefined), entityKind: "HUMAN" } },
+    select: { expert: { select: { organization: true } } },
+  });
+
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    const canonical = canonicalizeOrgDisplay(row.expert.organization);
+    counts.set(canonical, (counts.get(canonical) ?? 0) + 1);
+  }
+
+  return [...counts.entries()]
+    .map(([firm, count]) => ({ firm, count }))
+    .sort((a, b) => b.count - a.count || a.firm.localeCompare(b.firm));
+}
+
+export type OpinionSectorOption = { sector: string; count: number };
+
+/**
+ * Sector filter dropdown options for /opinions — every sector with >=1
+ * public opinion within the current cascade scope (firm/analyst/instrument
+ * applied via buildWhereExcluding — sector NO LONGER stands independent of
+ * firm/analyst, per the founder's 2026-08-09 "Banking should narrow firms
+ * too" ask, which supersedes the prior "sector doesn't cascade" decision
+ * recorded in buildSectorIndex's history), counted by OPINIONS, sorted by
+ * count desc then name.
+ */
+export async function fetchOpinionSectorOptions(
+  filters: OpinionsFilters,
+  ctx: FilterResolutionContext,
+): Promise<OpinionSectorOption[]> {
+  const { tickerToSector } = await buildSectorIndex();
+  if (tickerToSector.size === 0) return [];
+
+  const where = buildWhereExcluding(filters, ctx, "sector");
+  const counts = await prisma.expertOpinion.groupBy({
+    by: ["instrumentTicker"],
+    where: { ...where, instrumentTicker: { in: [...tickerToSector.keys()] } },
+    _count: { _all: true },
+  });
+
+  const bySector = new Map<string, number>();
+  for (const row of counts) {
+    const sector = row.instrumentTicker ? tickerToSector.get(row.instrumentTicker) : undefined;
+    if (!sector) continue;
+    bySector.set(sector, (bySector.get(sector) ?? 0) + row._count._all);
+  }
+
+  return [...bySector.entries()]
+    .map(([sector, count]) => ({ sector, count }))
+    .sort((a, b) => b.count - a.count || a.sector.localeCompare(b.sector));
+}
+
 export type OpinionAnalystOption = { slug: string; name: string; count?: number };
 
 /**
- * Analyst filter dropdown options for /opinions.
- *
- * Cascading (founder ask, 2026-08-08): when `firm` is set, narrows to
- * opinion-having HUMAN experts belonging to that canonical firm — same
- * HUMAN + canonical-org resolution fetchOpinionOrgGroups already uses to
- * build the firm dropdown itself, so every narrowed option is guaranteed
- * selectable — each with its OWN opinion count (cheap: scoped to one firm's
- * raw org variants). When no firm is set, this preserves the page's
- * original unscoped behavior (every expert — HUMAN or FIRM entityKind —
- * with >=1 public opinion, no per-analyst counts) so the common unfiltered
- * browse is unchanged.
+ * Analyst filter dropdown options for /opinions, within the current cascade
+ * scope (firm/sector/instrument applied via buildWhereExcluding). Scoped to
+ * entityKind=HUMAN only when `firm` is active — a canonical firm is a
+ * HUMAN-only concept here (fetchOpinionOrgGroups' own HUMAN scoping), so a
+ * FIRM-kind "desk" expert can never legitimately belong to one; with no firm
+ * active, every expert kind is eligible, matching the page's original
+ * unscoped behavior. Counts are now ALWAYS included (previously only when
+ * firm-narrowed) — free to compute once the query is already scoped, and
+ * strictly better dropdown UX.
  */
-export async function fetchOpinionAnalystOptions(firm?: string): Promise<OpinionAnalystOption[]> {
-  if (!firm) {
-    const experts = await prisma.expert.findMany({
-      where: { slug: { not: null }, opinions: { some: { suppressedAt: null } } },
-      select: { slug: true, name: true },
-      orderBy: { name: "asc" },
-    });
-    return experts
-      .filter((e): e is { slug: string; name: string } => Boolean(e.slug))
-      .map((e) => ({ slug: e.slug, name: e.name }));
-  }
-
-  const rawOrganizations = (await fetchOpinionOrgGroups()).get(firm)?.rawOrganizations ?? [];
-  if (rawOrganizations.length === 0) return [];
-
+export async function fetchOpinionAnalystOptions(
+  filters: OpinionsFilters,
+  ctx: FilterResolutionContext,
+): Promise<OpinionAnalystOption[]> {
+  const where = buildWhereExcluding(filters, ctx, "analyst");
   const experts = await prisma.expert.findMany({
     where: {
       slug: { not: null },
-      entityKind: "HUMAN",
-      organization: { in: rawOrganizations },
-      opinions: { some: { suppressedAt: null } },
+      ...(filters.firm ? { entityKind: "HUMAN" as const } : {}),
+      opinions: { some: where },
     },
     select: {
       slug: true,
       name: true,
-      _count: { select: { opinions: { where: { suppressedAt: null } } } },
+      _count: { select: { opinions: { where } } },
     },
     orderBy: { name: "asc" },
   });
@@ -537,24 +646,77 @@ export async function fetchOpinionAnalystOptions(firm?: string): Promise<Opinion
     .map((e) => ({ slug: e.slug, name: e.name, count: e._count.opinions }));
 }
 
+export type OpinionInstrumentOption = {
+  /** The exact string used as ?instrument= and shown in the dropdown. */
+  value: string;
+  count: number;
+  /** True when `value` resolved against InstrumentAlias (authoritative-source-backed, ticker-equality matched, and clickable elsewhere on the page); false for the legacy free-text fallback (fuzzy substring matched, never linked, deduped only by canonicalizeInstrument's small static map). */
+  resolved: boolean;
+};
+
 /**
- * For the instrument filter select — the set of raw `instrument` labels is
- * effectively free text (AI-extracted per call), so we canonicalize +
- * dedupe rather than exposing every raw variant as its own option. Bounded
- * by the number of distinct instruments ever called (small in practice).
+ * Instrument filter dropdown options for /opinions, within the current
+ * cascade scope (firm/analyst/sector applied via buildWhereExcluding).
+ *
+ * Two-tier grouping, per the founder's 2026-08-09 identity-resolution ask:
+ *   - RESOLVED: grouped by InstrumentAlias.canonicalName (authoritative —
+ *     StockEodQuote / NSE's equity master, never a guess) whenever the raw
+ *     (instrument, instrumentTicker) pair has a resolved alias. This is what
+ *     collapses "Adani Ports and Special Economic Zone Limited (APSEZ)" and
+ *     "Adani Ports" into ONE dropdown entry (both extract to instrumentTicker
+ *     "ADANIPORTS.NS", which InstrumentAlias resolves to a single canonical
+ *     company name) instead of the old raw-text canonicalizeInstrument dedup
+ *     colliding two DIFFERENT strings by coincidence.
+ *   - UNRESOLVED (legacy fallback): the pre-existing canonicalizeInstrument
+ *     text dedup, for whatever InstrumentAlias hasn't resolved yet
+ *     (commodities/FX/sectoral indices out of resolution scope by design, or
+ *     a raw name the backfill/extraction pipeline hasn't reached).
  */
-export async function fetchInstrumentOptions(): Promise<string[]> {
+export async function fetchOpinionInstrumentOptions(
+  filters: OpinionsFilters,
+  ctx: FilterResolutionContext,
+): Promise<OpinionInstrumentOption[]> {
+  const where = buildWhereExcluding(filters, ctx, "instrument");
   const rows = await prisma.expertOpinion.findMany({
-    where: { instrument: { not: null }, suppressedAt: null },
-    distinct: ["instrument"],
-    select: { instrument: true },
+    where: { ...where, OR: [{ instrument: { not: null } }, { instrumentTicker: { not: null } }] },
+    select: { instrument: true, instrumentTicker: true },
   });
 
-  const canonical = new Set<string>();
-  for (const row of rows) {
-    if (row.instrument) {
-      canonical.add(canonicalizeInstrument(row.instrument.trim()));
+  const rawNames = [
+    ...new Set(
+      rows
+        .map((r) => normalizeInstrumentRawName(r.instrumentTicker, r.instrument))
+        .filter((r): r is string => Boolean(r)),
+    ),
+  ];
+
+  let canonicalByRawName = new Map<string, string>();
+  if (rawNames.length > 0) {
+    try {
+      const aliases = await prisma.instrumentAlias.findMany({
+        where: { rawName: { in: rawNames }, resolved: true },
+        select: { rawName: true, canonicalName: true },
+      });
+      canonicalByRawName = new Map(
+        aliases.filter((a): a is typeof a & { canonicalName: string } => Boolean(a.canonicalName)).map((a) => [a.rawName, a.canonicalName]),
+      );
+    } catch (err) {
+      if (!isMissingTableError(err)) throw err;
     }
   }
-  return [...canonical].sort((a, b) => a.localeCompare(b));
+
+  const counts = new Map<string, { count: number; resolved: boolean }>();
+  for (const row of rows) {
+    const rawName = normalizeInstrumentRawName(row.instrumentTicker, row.instrument);
+    const canonicalName = rawName ? canonicalByRawName.get(rawName) : undefined;
+    const value = canonicalName ?? (row.instrument ? canonicalizeInstrument(row.instrument.trim()) : undefined);
+    if (!value) continue;
+    const entry = counts.get(value);
+    if (entry) entry.count += 1;
+    else counts.set(value, { count: 1, resolved: Boolean(canonicalName) });
+  }
+
+  return [...counts.entries()]
+    .map(([value, { count, resolved }]) => ({ value, count, resolved }))
+    .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value));
 }

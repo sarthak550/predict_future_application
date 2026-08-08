@@ -13,6 +13,7 @@ import { checkTickerMap, extractInstrumentFromQuote, normalizeYahooTicker } from
 import { checkAndIncrementFinanceAiDailyCap } from "@/lib/ai/financeAiDailyCap";
 import { callGeminiAI } from "@/lib/ai/gemini";
 import { findOrCreateExpert } from "@/lib/finance/expertMatch";
+import { resolveInstrumentAlias } from "@/lib/finance/instrumentAlias";
 import { notifyExpertFollowersOnNewOpinion } from "@/lib/notifyExpertFollowersOnNewOpinion";
 
 /**
@@ -899,6 +900,23 @@ export async function persistExpertOpinions(
     // 3. Fall back to the AI's clean label as the instrument name when no ticker resolved.
     if (!resolvedInstrument && opinion.instrumentLabel && opinion.instrumentLabel.trim().length > 0) {
       resolvedInstrument = opinion.instrumentLabel.trim();
+    }
+    // Instrument-identity resolution (lookup-first, self-extending — see
+    // lib/finance/instrumentAlias.ts). This is a SIDE EFFECT only: it
+    // populates/consults InstrumentAlias so apps/web's links/dropdown/
+    // cascade have a durable, authoritative-source-backed identity to read
+    // — it never rewrites resolvedInstrument/resolvedTicker themselves,
+    // which stay exactly what the extractor produced (the analyst's/
+    // extractor's own phrasing, left alone, same convention the old
+    // per-request instrumentLink.ts documented). Never allowed to block
+    // opinion persistence — a resolution hiccup degrades to "not resolved
+    // this pass," not a lost opinion.
+    try {
+      await resolveInstrumentAlias(prisma, resolvedInstrument, resolvedTicker);
+    } catch (err) {
+      console.warn(
+        `[Finance AI] Instrument alias resolution failed for "${resolvedInstrument ?? resolvedTicker ?? "(none)"}": ${err instanceof Error ? err.message : err}`
+      );
     }
     enriched.push({ ...opinion, resolvedInstrument, resolvedTicker });
   }

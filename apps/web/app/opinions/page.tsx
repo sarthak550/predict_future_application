@@ -9,16 +9,18 @@ import { SentimentGauge } from "@/components/finance/sentiment-gauge";
 import { Card, CardContent } from "@/components/ui/card";
 import { getSentimentSplit } from "@/lib/finance/sentiment";
 import {
-  fetchInstrumentOptions,
   fetchOpinionAnalystOptions,
   fetchOpinionFirmOptions,
+  fetchOpinionInstrumentOptions,
   fetchOpinionSectorOptions,
   fetchOpinionsPage,
   fetchOpinionsSentimentSplit,
   hasActiveOpinionsQuery,
   hasNonDirectionOpinionsFilter,
   parseOpinionsFilters,
+  resolveEffectiveFilters,
 } from "@/lib/finance/opinionsQuery";
+import { resolveInstrumentPageSymbols } from "@/lib/finance/instrumentLink";
 import { formatDateOnly } from "@/lib/utils";
 
 export const revalidate = 900;
@@ -59,7 +61,16 @@ function buildPageHref(searchParams: SearchParams, page: number): string {
 }
 
 export default async function OpinionsPage({ searchParams }: { searchParams: SearchParams }) {
-  const filters = parseOpinionsFilters(searchParams);
+  const rawFilters = parseOpinionsFilters(searchParams);
+
+  // N-way cascade (founder ask, 2026-08-08 for firm<->analyst, generalized
+  // 2026-08-09 to include sector + instrument: "if I click on Banking then
+  // only firms or analysts or instruments which are relevant should be
+  // shown in dropdown"). resolveEffectiveFilters is the SINGLE per-request
+  // resolution pass — it also degrades a hand-built/stale URL's incompatible
+  // filter combination (see its own doc comment) — so every query below,
+  // and every dropdown, agrees on exactly what "the current filters" mean.
+  const { filters, ctx } = await resolveEffectiveFilters(rawFilters);
 
   // Sentiment bar (founder ask, 2026-08-08: "I want the Market-wide
   // Sentiment bar to be adjusted based on the filters we apply below"): once
@@ -71,20 +82,20 @@ export default async function OpinionsPage({ searchParams }: { searchParams: Sea
   // path below, unchanged.
   const isSentimentFiltered = hasNonDirectionOpinionsFilter(filters);
 
-  // Cascading dropdowns (founder ask, 2026-08-08): the analyst list narrows
-  // to the selected firm; the firm list narrows to the selected analyst's
-  // own firm — but only when a firm ISN'T already active, since the firm is
-  // the more specific/dominant filter when both are set (see
-  // fetchOpinionFirmOptions' and fetchOpinionsPage's own notes on this).
   const [{ items, hasMore, page }, instrumentOptions, analystOptions, firmOptions, sectorOptions, sentiment] =
     await Promise.all([
-      fetchOpinionsPage(filters),
-      fetchInstrumentOptions(),
-      fetchOpinionAnalystOptions(filters.firm),
-      fetchOpinionFirmOptions(filters.firm ? undefined : filters.analyst),
-      fetchOpinionSectorOptions(),
-      isSentimentFiltered ? fetchOpinionsSentimentSplit(filters) : getSentimentSplit(),
+      fetchOpinionsPage(filters, ctx),
+      fetchOpinionInstrumentOptions(filters, ctx),
+      fetchOpinionAnalystOptions(filters, ctx),
+      fetchOpinionFirmOptions(filters, ctx),
+      fetchOpinionSectorOptions(filters, ctx),
+      isSentimentFiltered ? fetchOpinionsSentimentSplit(filters, ctx) : getSentimentSplit(),
     ]);
+
+  // Instrument cell -> /instruments/[symbol] (founder ask, 2026-08-09): one
+  // batched lookup for exactly this page's rows, run after `items` resolves
+  // (its own instrumentTicker list isn't known ahead of fetchOpinionsPage).
+  const instrumentPageSymbols = await resolveInstrumentPageSymbols(items.map((call) => call.instrumentTicker));
 
   return (
     <div className="space-y-8">
@@ -133,6 +144,7 @@ export default async function OpinionsPage({ searchParams }: { searchParams: Sea
             headline: call.headline,
             instrument: call.instrument,
             instrumentTicker: call.instrumentTicker,
+            instrumentPageSymbol: call.instrumentTicker ? instrumentPageSymbols.get(call.instrumentTicker) : null,
             direction: call.direction,
             sourceUrl: call.sourceUrl,
             publishedAtLabel: formatDateOnly(call.publishedAt),

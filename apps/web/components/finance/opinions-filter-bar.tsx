@@ -15,31 +15,48 @@
  * fetchOpinionFirmOptions) — but composes with this bar's other filters via
  * setParam rather than living as its own standalone control.
  *
- * Cascading firm <-> analyst (founder ask, 2026-08-08: "once user selects
- * the firm name, can we make sure the analyst names should be accordingly
- * shown there"): `analystOptions`/`firmOptions` arrive PRE-NARROWED from the
- * server (opinionsQuery.ts's fetchOpinionAnalystOptions/fetchOpinionFirmOptions)
- * based on whichever of the two is currently active — this component just
- * renders whatever list it's given. The one thing it owns is transition
- * coherence when FIRM changes: the analyst dropdown's narrowing only takes
- * effect after the navigation completes, so a stale ?analyst= from a
- * different (or no) firm scope could otherwise ride along in the URL. Rather
- * than trying to verify client-side whether the still-selected analyst
- * happens to belong to the newly-picked firm (the unscoped analyst list
- * carries no organization field to check against), we simply clear ?analyst=
- * on every firm change — a superset of "clear when incompatible" that's
- * cheap, always correct, and never leaves a stale/invalid pair in the URL.
- * Clearing FIRM back to "All firms" deliberately leaves ?analyst= alone —
- * an analyst filter alone is unambiguous regardless of firm scope.
- * The reverse direction needs no such handling: whenever a firm is active,
- * the analyst dropdown is already narrowed to that firm's roster by the
- * server, so every option a user can click is guaranteed compatible.
+ * N-way cascade across firm/analyst/sector/instrument (founder ask,
+ * 2026-08-08 for firm<->analyst, generalized 2026-08-09: "if I click on
+ * Banking then only firms or analysts or instruments which are relevant
+ * should be shown in dropdown"): every option list arrives PRE-NARROWED from
+ * the server (opinionsQuery.ts's buildWhereExcluding, applied per dimension)
+ * against whichever OTHER dimensions are currently active — this component
+ * just renders whatever list it's given. In NORMAL one-dropdown-at-a-time use
+ * this is self-maintaining and never produces an incompatible combination:
+ * every option in a rendered list was already computed against every OTHER
+ * currently-active filter, so picking any one of them keeps the whole set
+ * mutually consistent by construction.
+ *
+ * The one thing this component owns is transition coherence for the two
+ * BROADER-scoped dimensions (firm on the expert axis, sector on the subject
+ * axis — see opinionsQuery.ts's DROP_PRECEDENCE for why these two outrank
+ * their narrower siblings): changing either one's narrowing of its dependent
+ * (analyst under firm; instrument under sector) only takes effect after the
+ * navigation completes, so a stale, now-incompatible dependent value could
+ * otherwise ride along in the URL until the next unrelated change. Rather
+ * than verifying client-side whether the still-selected dependent happens to
+ * remain valid (the unscoped lists carry no organization/sector field to
+ * check against), we simply clear it on every firm/sector change — a
+ * superset of "clear when incompatible" that's cheap, always correct, and
+ * never leaves a stale pair riding in the URL. Clearing FIRM or SECTOR back
+ * to "All ..." deliberately leaves the dependent alone — an analyst or
+ * instrument filter alone is unambiguous regardless of firm/sector scope.
+ * Firm<->sector and analyst<->instrument (cross-axis pairs) are NOT given
+ * this treatment — they're less tightly coupled in practice, and the
+ * server's own false-empty degrade (resolveEffectiveFilters' DROP_PRECEDENCE
+ * retry) already handles the rare case a cross-axis pair does go stale,
+ * without needing every dropdown to reset every other on each change.
  */
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { Select } from "@/components/ui/select";
-import type { OpinionAnalystOption, OpinionFirmOption, OpinionSectorOption } from "@/lib/finance/opinionsQuery";
+import type {
+  OpinionAnalystOption,
+  OpinionFirmOption,
+  OpinionInstrumentOption,
+  OpinionSectorOption,
+} from "@/lib/finance/opinionsQuery";
 
 const DIRECTION_OPTIONS = [
   { value: "", label: "All directions" },
@@ -60,10 +77,10 @@ export function OpinionsFilterBar({
   firmOptions,
   sectorOptions,
 }: {
-  instrumentOptions: string[];
+  instrumentOptions: OpinionInstrumentOption[];
   analystOptions: OpinionAnalystOption[];
   firmOptions: OpinionFirmOption[];
-  /** Independent of firm/analyst — a sector filter on the CALLED INSTRUMENT, not the expert. See opinionsQuery.ts's buildSectorIndex for why it deliberately doesn't cascade with the firm<->analyst pair below. */
+  /** All four dropdowns now cascade against one another (founder ask, 2026-08-09) — see opinionsQuery.ts's buildWhereExcluding for the shared mechanism. */
   sectorOptions: OpinionSectorOption[];
 }) {
   const router = useRouter();
@@ -82,17 +99,17 @@ export function OpinionsFilterBar({
     router.push(query ? `${pathname}?${query}` : pathname);
   };
 
-  // See the file-level note above: picking a NEW firm drops any already-
-  // selected analyst outright, since we can't cheaply confirm client-side
-  // that they still belong to it. Clearing firm back to "All firms" leaves
-  // ?analyst= untouched.
-  const setFirm = (value: string) => {
+  // See the file-level note above: picking a NEW value for a broader-scoped
+  // dimension drops its dependent's already-selected value outright, since
+  // we can't cheaply confirm client-side that it still belongs. Clearing the
+  // broader dimension back to "All ..." leaves the dependent untouched.
+  const setParamAndClearDependent = (key: string, value: string, dependentKey: string) => {
     const next = new URLSearchParams(searchParams.toString());
     if (value) {
-      next.set("firm", value);
-      next.delete("analyst");
+      next.set(key, value);
+      next.delete(dependentKey);
     } else {
-      next.delete("firm");
+      next.delete(key);
     }
     next.delete("page");
     const query = next.toString();
@@ -108,9 +125,9 @@ export function OpinionsFilterBar({
         className="w-auto min-w-[10rem]"
       >
         <option value="">All instruments</option>
-        {instrumentOptions.map((instrument) => (
-          <option key={instrument} value={instrument}>
-            {instrument}
+        {instrumentOptions.map((opt) => (
+          <option key={opt.value} value={opt.value}>
+            {opt.value} ({opt.count})
           </option>
         ))}
       </Select>
@@ -158,7 +175,7 @@ export function OpinionsFilterBar({
       <Select
         aria-label="Filter by firm"
         value={searchParams.get("firm") ?? ""}
-        onChange={(e) => setFirm(e.target.value)}
+        onChange={(e) => setParamAndClearDependent("firm", e.target.value, "analyst")}
         className="w-auto min-w-[14rem]"
       >
         <option value="">All firms</option>
@@ -172,7 +189,7 @@ export function OpinionsFilterBar({
       <Select
         aria-label="Filter by sector"
         value={searchParams.get("sector") ?? ""}
-        onChange={(e) => setParam("sector", e.target.value)}
+        onChange={(e) => setParamAndClearDependent("sector", e.target.value, "instrument")}
         className="w-auto min-w-[12rem]"
       >
         <option value="">All sectors</option>

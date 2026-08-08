@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { canonicalizeOrgDisplay } from "@predict-future/business-rules/experts/firmAliases";
 import { getPublicProfileStats } from "@/lib/finance/publicProfile";
+import { resolveInstrumentPageSymbols } from "@/lib/finance/instrumentLink";
 import { prisma } from "@/lib/prisma";
 import { formatDateOnly, formatPercent } from "@/lib/utils";
 
@@ -124,6 +125,10 @@ export default async function AnalystProfilePage({
 
   const { stats, recentCalls } = expert;
   const hasProvisionalTrackRecord = stats.resolvedCount < 3;
+
+  // Instrument cell -> /instruments/[symbol] (founder ask, 2026-08-09), same
+  // as /opinions — see lib/finance/instrumentLink.ts's doc comment.
+  const instrumentPageSymbols = await resolveInstrumentPageSymbols(recentCalls.map((call) => call.instrumentTicker));
 
   // FIRM entities are never described as a Person in structured data — never
   // pretend personhood for a publication/desk attribution (founder requirement,
@@ -243,6 +248,7 @@ export default async function AnalystProfilePage({
                 headline: call.headline,
                 instrument: call.instrument,
                 instrumentTicker: call.instrumentTicker,
+                instrumentPageSymbol: call.instrumentTicker ? instrumentPageSymbols.get(call.instrumentTicker) : null,
                 direction: call.direction,
                 sourceUrl: call.sourceUrl,
                 publishedAtLabel: formatDateOnly(call.publishedAt),
