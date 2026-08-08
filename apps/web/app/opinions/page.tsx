@@ -13,7 +13,9 @@ import {
   fetchOpinionAnalystOptions,
   fetchOpinionFirmOptions,
   fetchOpinionsPage,
+  fetchOpinionsSentimentSplit,
   hasActiveOpinionsQuery,
+  hasNonDirectionOpinionsFilter,
   parseOpinionsFilters,
 } from "@/lib/finance/opinionsQuery";
 import { formatDateOnly } from "@/lib/utils";
@@ -58,6 +60,16 @@ function buildPageHref(searchParams: SearchParams, page: number): string {
 export default async function OpinionsPage({ searchParams }: { searchParams: SearchParams }) {
   const filters = parseOpinionsFilters(searchParams);
 
+  // Sentiment bar (founder ask, 2026-08-08: "I want the Market-wide
+  // Sentiment bar to be adjusted based on the filters we apply below"): once
+  // any filter OTHER than direction is active, swap the default 7-day
+  // market-wide split for one recomputed against exactly the table's own
+  // filtered, all-time set. `direction` itself is deliberately excluded —
+  // see hasNonDirectionOpinionsFilter and fetchOpinionsSentimentSplit's own
+  // doc comments — so a direction-only filter leaves the bar on the default
+  // path below, unchanged.
+  const isSentimentFiltered = hasNonDirectionOpinionsFilter(filters);
+
   // Cascading dropdowns (founder ask, 2026-08-08): the analyst list narrows
   // to the selected firm; the firm list narrows to the selected analyst's
   // own firm — but only when a firm ISN'T already active, since the firm is
@@ -68,7 +80,7 @@ export default async function OpinionsPage({ searchParams }: { searchParams: Sea
     fetchInstrumentOptions(),
     fetchOpinionAnalystOptions(filters.firm),
     fetchOpinionFirmOptions(filters.firm ? undefined : filters.analyst),
-    getSentimentSplit(filters.instrument),
+    isSentimentFiltered ? fetchOpinionsSentimentSplit(filters) : getSentimentSplit(),
   ]);
 
   return (
@@ -81,7 +93,20 @@ export default async function OpinionsPage({ searchParams }: { searchParams: Sea
         </p>
       </div>
 
-      <SentimentGauge split={sentiment} />
+      {"scopeLabel" in sentiment ? (
+        <SentimentGauge
+          split={sentiment}
+          title={sentiment.scopeLabel}
+          metaLabel={
+            sentiment.isSmallSample
+              ? `Based on ${sentiment.totalCount} call${sentiment.totalCount === 1 ? "" : "s"}`
+              : `${sentiment.totalCount} call${sentiment.totalCount === 1 ? "" : "s"} matching these filters`
+          }
+          emptyMessage="No calls match these filters yet — clear one to see a sentiment split."
+        />
+      ) : (
+        <SentimentGauge split={sentiment} />
+      )}
 
       <OpinionsFilterBar
         instrumentOptions={instrumentOptions}

@@ -8,20 +8,40 @@ const LEAN_COPY: Record<SentimentSplit["dominantLean"], string> = {
   MIXED: "Analysts are split",
 };
 
+/** Structural subset both SentimentSplit (7-day) and OpinionsSentimentSplit (all-time, filtered — lib/finance/opinionsQuery.ts) satisfy, so this component stays agnostic to which time-window semantics produced it. */
+type SentimentGaugeSplit = Pick<
+  SentimentSplit,
+  "bullishCount" | "bearishCount" | "neutralCount" | "totalCount" | "bullishPercent" | "bearishPercent" | "neutralPercent" | "dominantLean"
+>;
+
 /**
- * Live market-wide (or instrument-scoped) sentiment split — last 7 days of
- * ExpertOpinion calls, PENDING and RESOLVED both counted. Shared between the
- * homepage hero and /opinions (scoped to the active instrument filter there).
- * Pure presentational component; the server component that renders it owns
- * the data fetch (getSentimentSplit).
+ * Live sentiment split, rendered by whichever server component owns the data
+ * fetch — market-wide/instrument-scoped 7-day (getSentimentSplit, homepage +
+ * /opinions when no non-direction filter is active) or /opinions' own
+ * filtered, all-time split (fetchOpinionsSentimentSplit) once a filter is
+ * active. Pure presentational component: `title`, `metaLabel`, and
+ * `emptyMessage` are caller-supplied overrides so the "last 7 days" framing
+ * (true for the default split) doesn't leak into the filtered, all-time case
+ * — each caller states its own basis rather than this component guessing it
+ * from the data shape.
  */
-export function SentimentGauge({ split, title }: { split: SentimentSplit; title?: string }) {
+export function SentimentGauge({
+  split,
+  title,
+  metaLabel,
+  emptyMessage,
+}: {
+  split: SentimentGaugeSplit & { scopedInstrument?: string | null };
+  title?: string;
+  metaLabel?: string;
+  emptyMessage?: string;
+}) {
   if (split.totalCount === 0) {
     return (
       <Card>
         <CardContent className="p-6 text-sm text-ink-500">
-          Not enough calls in the last 7 days
-          {split.scopedInstrument ? ` on ${split.scopedInstrument}` : ""} to show a sentiment split yet.
+          {emptyMessage ??
+            `Not enough calls in the last 7 days${split.scopedInstrument ? ` on ${split.scopedInstrument}` : ""} to show a sentiment split yet.`}
         </CardContent>
       </Card>
     );
@@ -38,7 +58,7 @@ export function SentimentGauge({ split, title }: { split: SentimentSplit; title?
             <p className="mt-1 text-lg font-semibold text-ink-900">{LEAN_COPY[split.dominantLean]}</p>
           </div>
           <p className="text-xs text-ink-400">
-            {split.totalCount} call{split.totalCount === 1 ? "" : "s"} · last 7 days
+            {metaLabel ?? `${split.totalCount} call${split.totalCount === 1 ? "" : "s"} · last 7 days`}
           </p>
         </div>
 

@@ -17,6 +17,40 @@ export interface SentimentSplit {
 }
 
 /**
+ * Shared by every sentiment aggregator in the app — the homepage/instrument-
+ * unfiltered 7-day split here AND /opinions' filtered, all-time split
+ * (lib/finance/opinionsQuery.ts's fetchOpinionsSentimentSplit) — so the
+ * percent-rounding and "what counts as a lean" rules can never drift apart
+ * between the two.
+ */
+export function computeSentimentPercentages(
+  bullishCount: number,
+  bearishCount: number,
+  neutralCount: number,
+): { bullishPercent: number; bearishPercent: number; neutralPercent: number } {
+  const totalCount = bullishCount + bearishCount + neutralCount;
+  if (totalCount === 0) {
+    return { bullishPercent: 0, bearishPercent: 0, neutralPercent: 0 };
+  }
+  return {
+    bullishPercent: Math.round((bullishCount / totalCount) * 1000) / 10,
+    bearishPercent: Math.round((bearishCount / totalCount) * 1000) / 10,
+    neutralPercent: Math.round((neutralCount / totalCount) * 1000) / 10,
+  };
+}
+
+export function computeDominantLean(
+  bullishPercent: number,
+  bearishPercent: number,
+  neutralPercent: number,
+): DominantLean {
+  if (bullishPercent > 55) return "BULLISH";
+  if (bearishPercent > 55) return "BEARISH";
+  if (neutralPercent > 55) return "NEUTRAL";
+  return "MIXED";
+}
+
+/**
  * Portable port of apps/api/app/api/finance/expert-sentiment/route.ts — apps/web
  * renders this server-side (SSR/ISR) rather than fetching the API route over
  * HTTP, so the math is reimplemented here against the same Prisma models. KEEP
@@ -42,25 +76,12 @@ export async function getSentimentSplit(instrument?: string): Promise<SentimentS
   const neutralCount = directionCounts.find((c) => c.direction === "NEUTRAL")?._count._all ?? 0;
 
   const totalCount = bullishCount + bearishCount + neutralCount;
-
-  let bullishPercent = 0;
-  let bearishPercent = 0;
-  let neutralPercent = 0;
-
-  if (totalCount > 0) {
-    bullishPercent = Math.round((bullishCount / totalCount) * 1000) / 10;
-    bearishPercent = Math.round((bearishCount / totalCount) * 1000) / 10;
-    neutralPercent = Math.round((neutralCount / totalCount) * 1000) / 10;
-  }
-
-  let dominantLean: DominantLean = "MIXED";
-  if (bullishPercent > 55) {
-    dominantLean = "BULLISH";
-  } else if (bearishPercent > 55) {
-    dominantLean = "BEARISH";
-  } else if (neutralPercent > 55) {
-    dominantLean = "NEUTRAL";
-  }
+  const { bullishPercent, bearishPercent, neutralPercent } = computeSentimentPercentages(
+    bullishCount,
+    bearishCount,
+    neutralCount,
+  );
+  const dominantLean = computeDominantLean(bullishPercent, bearishPercent, neutralPercent);
 
   return {
     bullishCount,

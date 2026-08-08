@@ -4,6 +4,7 @@ import { canonicalizeOrgDisplay } from "@predict-future/business-rules/experts/f
 
 import { prisma } from "@/lib/prisma";
 import { buildInstrumentWhereOr } from "@/lib/finance/instruments";
+import { computeDominantLean, computeSentimentPercentages, type DominantLean } from "@/lib/finance/sentiment";
 
 export const OPINIONS_PAGE_SIZE = 25;
 
@@ -59,6 +60,18 @@ export function hasActiveOpinionsQuery(filters: OpinionsFilters): boolean {
     Boolean(filters.instrument || filters.direction || filters.status || filters.analyst || filters.firm) ||
     filters.page > 1
   );
+}
+
+/**
+ * True if a filter OTHER than direction (or page, which doesn't change the
+ * matched set) is active. Deliberately excludes `direction` — see
+ * fetchOpinionsSentimentSplit's doc comment: the sentiment bar drops
+ * direction from its own aggregate, so a direction-ONLY filter shouldn't
+ * switch it out of the default market-wide/7-day view either. Used by
+ * opinions/page.tsx to decide which sentiment data source to render.
+ */
+export function hasNonDirectionOpinionsFilter(filters: OpinionsFilters): boolean {
+  return Boolean(filters.instrument || filters.status || filters.analyst || filters.firm);
 }
 
 const GRADED_STATUSES: OpinionResolutionStatus[] = ["RESOLVED_HIT", "RESOLVED_MISS"];
@@ -158,35 +171,41 @@ function buildWhere(filters: OpinionsFilters, firmOrganizations: string[] | unde
   };
 }
 
+/**
+ * Mismatched-pair guard: the filter bar's cascading dropdowns are supposed to
+ * make an incompatible firm+analyst combination unreachable by clicking
+ * (picking a firm clears an analyst outside it, and picking an analyst
+ * narrows the firm list to theirs), but a hand-built or stale-bookmarked URL
+ * can still land here with both set and disagreeing. That pair would
+ * otherwise silently resolve to zero rows (analyst.slug = X AND organization
+ * IN <firm's orgs>, which never both hold). Rather than serving a confusing
+ * "no calls match" page — or erroring — we drop the analyst and treat it as
+ * firm-only: the firm is the more specific/dominant signal when the two
+ * disagree, same precedence fetchOpinionFirmOptions' narrowToAnalystSlug skip
+ * already encodes.
+ *
+ * Shared by fetchOpinionsPage (the table) AND fetchOpinionsSentimentSplit
+ * (the sentiment bar above it) — both MUST resolve to the identical
+ * effective analyst, or the bar's "n" could disagree with the table's total
+ * on exactly this edge case.
+ */
+async function resolveEffectiveAnalyst(filters: OpinionsFilters): Promise<string | undefined> {
+  if (!filters.firm || !filters.analyst) return filters.analyst;
+  const analystExpert = await prisma.expert.findFirst({
+    where: { slug: filters.analyst },
+    select: { organization: true },
+  });
+  const analystFirm = analystExpert ? canonicalizeOrgDisplay(analystExpert.organization) : undefined;
+  return analystFirm === filters.firm ? filters.analyst : undefined;
+}
+
 export async function fetchOpinionsPage(filters: OpinionsFilters) {
   // Resolved once, only when a firm filter is active — an unfiltered browse
   // (the common case) pays no extra query. An unrecognized/stale ?firm=
   // value resolves to an empty array, which Prisma's `organization: { in: [] }`
   // correctly turns into zero rows rather than an error.
   const firmOrganizations = filters.firm ? (await fetchOpinionOrgGroups()).get(filters.firm)?.rawOrganizations : undefined;
-
-  // Mismatched-pair guard: the filter bar's cascading dropdowns are supposed
-  // to make an incompatible firm+analyst combination unreachable by clicking
-  // (picking a firm clears an analyst outside it, and picking an analyst
-  // narrows the firm list to theirs), but a hand-built or stale-bookmarked
-  // URL can still land here with both set and disagreeing. That pair would
-  // otherwise silently resolve to zero rows (analyst.slug = X AND
-  // organization IN <firm's orgs>, which never both hold). Rather than
-  // serving a confusing "no calls match" page — or erroring — we drop the
-  // analyst and treat it as firm-only: the firm is the more specific/dominant
-  // signal when the two disagree, same precedence fetchOpinionFirmOptions'
-  // narrowToAnalystSlug skip (above) already encodes.
-  let effectiveAnalyst = filters.analyst;
-  if (filters.firm && filters.analyst) {
-    const analystExpert = await prisma.expert.findFirst({
-      where: { slug: filters.analyst },
-      select: { organization: true },
-    });
-    const analystFirm = analystExpert ? canonicalizeOrgDisplay(analystExpert.organization) : undefined;
-    if (analystFirm !== filters.firm) {
-      effectiveAnalyst = undefined;
-    }
-  }
+  const effectiveAnalyst = await resolveEffectiveAnalyst(filters);
 
   const where = buildWhere({ ...filters, analyst: effectiveAnalyst }, firmOrganizations);
   const skip = (filters.page - 1) * OPINIONS_PAGE_SIZE;
@@ -219,6 +238,108 @@ export async function fetchOpinionsPage(filters: OpinionsFilters) {
   }));
 
   return { items, hasMore, page: filters.page };
+}
+
+const STATUS_SCOPE_LABELS: Record<OpinionStatusFilter, string> = {
+  graded: "graded calls",
+  pending: "pending calls",
+};
+
+export interface OpinionsSentimentSplit {
+  bullishCount: number;
+  bearishCount: number;
+  neutralCount: number;
+  totalCount: number;
+  bullishPercent: number;
+  bearishPercent: number;
+  neutralPercent: number;
+  dominantLean: DominantLean;
+  /** Short, truncation-safe scope description, e.g. "Sentiment · Rahul Shah". Always non-empty — callers only invoke this when at least one non-direction filter is active. */
+  scopeLabel: string;
+  /** totalCount is small enough (<5) that the bar should disclose its basis rather than read as authoritative. */
+  isSmallSample: boolean;
+}
+
+/**
+ * Sentiment split for /opinions, recomputed against the SAME filters as the
+ * table rendered below it (instrument, firm, analyst, grading status) — with
+ * one deliberate exception: `direction`. Filtering the bar's own aggregate by
+ * direction would be a tautology (picking "Bullish" would always render a
+ * 100% bullish bar), so direction is dropped before building the WHERE
+ * clause here — the bar always shows the FULL bullish/bearish/neutral split
+ * within whatever OTHER filters are active. It's the caller's job
+ * (opinions/page.tsx) to only invoke this function when a non-direction
+ * filter is active in the first place; when direction is the only active
+ * filter (or nothing is), the caller falls back to the unfiltered
+ * getSentimentSplit (lib/finance/sentiment.ts)'s 7-day market-wide split
+ * instead, unchanged from before this filter-aware bar existed.
+ *
+ * Deliberately ALL-TIME (no 7-day window), unlike getSentimentSplit — the
+ * whole point of this function is for `totalCount` to equal the table's own
+ * total-matching-rows count (every row has exactly one direction, so
+ * bullish+bearish+neutral IS that total) so the bar's basis stays legible:
+ * "this bar is built from exactly the N calls in the table below," not a
+ * silently different, time-boxed subset of them.
+ *
+ * Reuses buildWhere (the same private where-builder fetchOpinionsPage uses)
+ * and resolveEffectiveAnalyst (the same mismatched firm+analyst-pair guard)
+ * so the two can never disagree on what counts as "the filtered set." One
+ * groupBy for the counts, run in parallel with the (only-when-needed) label
+ * lookup — no per-opinion queries.
+ */
+export async function fetchOpinionsSentimentSplit(filters: OpinionsFilters): Promise<OpinionsSentimentSplit> {
+  const firmOrganizations = filters.firm ? (await fetchOpinionOrgGroups()).get(filters.firm)?.rawOrganizations : undefined;
+  const effectiveAnalyst = await resolveEffectiveAnalyst(filters);
+
+  const where = buildWhere({ ...filters, analyst: effectiveAnalyst, direction: undefined }, firmOrganizations);
+
+  const [directionCounts, analystExpert] = await Promise.all([
+    prisma.expertOpinion.groupBy({ by: ["direction"], where, _count: { _all: true } }),
+    effectiveAnalyst ? prisma.expert.findFirst({ where: { slug: effectiveAnalyst }, select: { name: true } }) : null,
+  ]);
+
+  const bullishCount = directionCounts.find((c) => c.direction === "BULLISH")?._count._all ?? 0;
+  const bearishCount = directionCounts.find((c) => c.direction === "BEARISH")?._count._all ?? 0;
+  const neutralCount = directionCounts.find((c) => c.direction === "NEUTRAL")?._count._all ?? 0;
+  const totalCount = bullishCount + bearishCount + neutralCount;
+
+  const { bullishPercent, bearishPercent, neutralPercent } = computeSentimentPercentages(
+    bullishCount,
+    bearishCount,
+    neutralCount,
+  );
+  const dominantLean = computeDominantLean(bullishPercent, bearishPercent, neutralPercent);
+
+  // Scope label parts, most-specific first. An analyst filter implies a firm
+  // (they only ever belong to one), so when both resolve to the same person
+  // we show ONLY the analyst's name rather than stacking "Firm · Analyst" —
+  // shorter, and the firm is one click away on their profile anyway. If the
+  // mismatched-pair guard above dropped the analyst, `effectiveAnalyst` is
+  // undefined and we correctly fall back to the firm alone, matching what
+  // the WHERE clause actually filtered on.
+  const scopeParts: string[] = [];
+  if (effectiveAnalyst) {
+    scopeParts.push(analystExpert?.name ?? filters.analyst ?? "");
+  } else if (filters.firm) {
+    scopeParts.push(filters.firm);
+  }
+  if (filters.instrument) scopeParts.push(filters.instrument);
+  if (filters.status) scopeParts.push(STATUS_SCOPE_LABELS[filters.status]);
+
+  const scopeLabel = scopeParts.length > 0 ? `Sentiment · ${scopeParts.filter(Boolean).join(" · ")}` : "Market-wide sentiment";
+
+  return {
+    bullishCount,
+    bearishCount,
+    neutralCount,
+    totalCount,
+    bullishPercent,
+    bearishPercent,
+    neutralPercent,
+    dominantLean,
+    scopeLabel,
+    isSmallSample: totalCount > 0 && totalCount < 5,
+  };
 }
 
 export type OpinionAnalystOption = { slug: string; name: string; count?: number };
