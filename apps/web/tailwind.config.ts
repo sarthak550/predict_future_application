@@ -25,7 +25,13 @@ const config: Config = {
           teal: "#14b8a6",
           amber: "#f59e0b",
           coral: "#f97316",
-          sky: "#0ea5e9"
+          sky: "#0ea5e9",
+          // Markets/Pulse pillar accent (Indigo Futures direction: Analysts=blue/sky,
+          // Markets=emerald). Matches the emerald-600 already used ad hoc for
+          // "gainer" tone in top-movers-card.tsx — named here so new Markets-pillar
+          // surfaces (homepage redesign, 2026-08-09) reference one token instead of
+          // repeating the raw hex.
+          emerald: "#059669"
         }
       },
       boxShadow: {

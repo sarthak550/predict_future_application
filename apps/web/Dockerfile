@@ -63,6 +63,12 @@ RUN addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 nextjs
 # Standalone output mirrors the monorepo layout; server entry = apps/web/server.js.
 COPY --from=builder --chown=nextjs:nodejs /app/apps/web/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/apps/web/.next/static ./apps/web/.next/static
+# Next's standalone output does NOT copy the public/ dir on its own (documented
+# Next.js behavior, not a bug) — homepage redesign (2026-08-09) added this repo's
+# FIRST-EVER apps/web/public asset (the workbench screenshot), which silently
+# 404s in prod without this line. Guard against the directory not existing yet
+# in a future rebase/branch that predates it.
+COPY --from=builder --chown=nextjs:nodejs /app/apps/web/public ./apps/web/public
 # Guarantee the Prisma query engine ships even if Next's file tracing missed the .so.
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/.prisma ./node_modules/.prisma
 
