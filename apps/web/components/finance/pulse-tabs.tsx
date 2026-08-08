@@ -27,6 +27,7 @@ export type PulseNewsItem = {
   publisher: string;
   sourceUrl: string;
   timeLabel: string;
+  summary: string | null;
 };
 
 export type PulseFilingItem = {
@@ -64,36 +65,72 @@ export function PulseTabs({ news, filings }: { news: PulseNewsItem[]; filings: P
         ) : (
           <Card>
             <CardContent className="divide-y divide-ink-100 p-0">
-              {news.slice(0, newsCount).map((item) => (
-                <a
-                  key={item.id}
-                  href={item.sourceUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex items-start gap-3 px-5 py-4 transition hover:bg-ink-50/60"
-                >
-                  {/* NSE-symbol rows tap through to the instrument detail page; "BSE:<code>"
-                      rows have no reliable NSE mapping, so they stay a plain (non-linking) badge. */}
-                  {item.tickerSymbol.startsWith("BSE:") ? (
-                    <Badge className="mt-0.5 shrink-0">{item.tickerSymbol.replace(/^BSE:/i, "")}</Badge>
-                  ) : (
-                    <Link
-                      href={`/instruments/${item.tickerSymbol}`}
-                      onClick={(e) => e.stopPropagation()}
-                      className="mt-0.5 shrink-0"
-                    >
-                      <Badge className="transition-colors hover:bg-ink-200">{item.tickerSymbol}</Badge>
-                    </Link>
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm leading-6 text-ink-900">{item.headline}</p>
-                    <p className="mt-1 text-xs text-ink-400">
-                      {item.publisher} · {item.timeLabel}
-                    </p>
-                  </div>
-                  <ArrowUpRight className="mt-1 h-3.5 w-3.5 shrink-0 text-ink-300" />
-                </a>
-              ))}
+              {news.slice(0, newsCount).map((item) => {
+                const tickerBadge = item.tickerSymbol.startsWith("BSE:") ? (
+                  // "BSE:<code>" rows have no reliable NSE mapping, so they stay a plain
+                  // (non-linking) badge — NSE-symbol rows tap through to the instrument page.
+                  <Badge className="mt-0.5 shrink-0">{item.tickerSymbol.replace(/^BSE:/i, "")}</Badge>
+                ) : (
+                  <Link
+                    href={`/instruments/${item.tickerSymbol}`}
+                    onClick={(e) => e.stopPropagation()}
+                    className="mt-0.5 shrink-0"
+                  >
+                    <Badge className="transition-colors hover:bg-ink-200">{item.tickerSymbol}</Badge>
+                  </Link>
+                );
+
+                // Rows with a summary: the summary supplements the headline, it never
+                // replaces the source attribution — publisher name + an explicit
+                // "Read at <publisher>" link stay visible below it. The whole row is
+                // NOT a single <a> in this case (a summary makes the row too tall for
+                // "anywhere in the row opens the link" to be the obvious affordance).
+                // Rows without a summary yet keep the original whole-row-is-a-link
+                // behavior — unchanged UX for headline-only stories.
+                if (item.summary) {
+                  return (
+                    <div key={item.id} className="flex items-start gap-3 px-5 py-4">
+                      {tickerBadge}
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm leading-6 text-ink-900">{item.headline}</p>
+                        <p className="mt-1 text-sm leading-6 text-ink-500">{item.summary}</p>
+                        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-ink-400">
+                          <span>{item.timeLabel}</span>
+                          <span>·</span>
+                          <a
+                            href={item.sourceUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 font-medium text-signal-sky hover:underline"
+                          >
+                            Read at {item.publisher}
+                            <ArrowUpRight className="h-3 w-3" />
+                          </a>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+
+                return (
+                  <a
+                    key={item.id}
+                    href={item.sourceUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-start gap-3 px-5 py-4 transition hover:bg-ink-50/60"
+                  >
+                    {tickerBadge}
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm leading-6 text-ink-900">{item.headline}</p>
+                      <p className="mt-1 text-xs text-ink-400">
+                        {item.publisher} · {item.timeLabel}
+                      </p>
+                    </div>
+                    <ArrowUpRight className="mt-1 h-3.5 w-3.5 shrink-0 text-ink-300" />
+                  </a>
+                );
+              })}
               <ShowMoreFooter
                 shown={Math.min(newsCount, news.length)}
                 total={news.length}

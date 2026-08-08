@@ -40,6 +40,7 @@ export interface InstrumentNewsRow {
   publisher: string;
   sourceUrl: string;
   publishedAt: Date;
+  summary: string | null;
 }
 
 export interface InstrumentFilingRow {
@@ -152,6 +153,7 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
         publisher: true,
         sourceUrl: true,
         publishedAt: true,
+        summary: true,
       },
     }),
     prisma.marketMoveEvent.findMany({

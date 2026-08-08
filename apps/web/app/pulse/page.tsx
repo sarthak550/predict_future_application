@@ -64,6 +64,7 @@ export default async function MarketPulsePage() {
           publisher: item.publisher,
           sourceUrl: item.sourceUrl,
           timeLabel: formatRelativeTime(item.publishedAt),
+          summary: item.summary,
         }))}
         filings={filings.map((filing) => ({
           id: filing.id,

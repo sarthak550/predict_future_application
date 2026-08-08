@@ -557,6 +557,7 @@ function MoverCard({ mover, onPress }: { mover: ApiMarketMover; onPress: () => v
 
 function NewsCard({ item }: { item: ApiMarketMoveNews }) {
   const styles = useThemedStyles(makeMarketMovesStyles);
+  const { colors } = useTheme();
 
   return (
     <Pressable style={styles.newsCard} onPress={() => void Linking.openURL(item.sourceUrl)}>
@@ -565,7 +566,19 @@ function NewsCard({ item }: { item: ApiMarketMoveNews }) {
         <Text style={styles.newsPublisher} numberOfLines={1}>{item.publisher}</Text>
       </View>
       <Text style={styles.newsHeadline} numberOfLines={4}>{item.headline}</Text>
-      <Text style={styles.footerMeta}>{formatRelativeTime(item.publishedAt)}</Text>
+      {/* Summary supplements the headline, never replaces the source link —
+          publisher + "Read at" attribution stays visible either way. */}
+      {item.summary && (
+        <Text style={styles.newsSummary} numberOfLines={3}>{item.summary}</Text>
+      )}
+      <View style={styles.newsTopRow}>
+        <Text style={styles.footerMeta}>{formatRelativeTime(item.publishedAt)}</Text>
+        {item.summary && (
+          <Text style={[styles.newsPublisher, { color: colors.accent }]} numberOfLines={1}>
+            Read at {item.publisher}
+          </Text>
+        )}
+      </View>
     </Pressable>
   );
 }
@@ -802,6 +815,9 @@ function InstrumentDetailSheet({
                     style={styles.instrumentNewsRow}
                   >
                     <Text style={styles.instrumentNewsHeadline} numberOfLines={2}>{item.headline}</Text>
+                    {item.summary && (
+                      <Text style={styles.instrumentNewsSummary} numberOfLines={2}>{item.summary}</Text>
+                    )}
                     <Text style={styles.footerMeta}>
                       {item.publisher} · {formatRelativeTime(item.publishedAt)}
                     </Text>
@@ -1056,6 +1072,12 @@ const makeMarketMovesStyles = (t: ThemeContextValue) =>
       color: t.colors.text,
       lineHeight: 21,
     },
+    newsSummary: {
+      fontSize: 13,
+      fontWeight: "400" as const,
+      color: t.colors.textMuted,
+      lineHeight: 18,
+    },
     // Stock News / Filings & announcements peer-tab bar — mirrors the
     // finance-mode.tsx scope-tab pill pattern (controlsStyles.tab/tabActive)
     // for visual consistency with the rest of the Finance section.
@@ -1308,6 +1330,12 @@ const makeMarketMovesStyles = (t: ThemeContextValue) =>
       fontWeight: "600" as const,
       color: t.colors.text,
       lineHeight: 18,
+    },
+    instrumentNewsSummary: {
+      fontSize: 12,
+      fontWeight: "400" as const,
+      color: t.colors.textMuted,
+      lineHeight: 16,
     },
     instrumentOpinionRow: {
       flexDirection: "row",

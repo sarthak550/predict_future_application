@@ -19,6 +19,18 @@ const FINANCE_SOURCE_DOMAINS = [
   "seekingalpha.com",
   "bloomberg.com",
   "reuters.com",
+  // Added 2026-08-08 alongside the 4 new Indian finance RSS sources in
+  // rssSources.ts (ndtv-profit, gnews-business-standard, gnews-zeebiz,
+  // gnews-financial-express) — without a FINANCE_SOURCE_DOMAINS entry these
+  // sources' stories would fetch fine but never tag FINANCE, so they'd never
+  // reach the Feed's Finance surface or the finance-scoped summarizer. NOT
+  // added to extractExpertOpinions.ts's ANALYST_OPINION_SOURCES (extraction's
+  // separate, narrower allowlist) — that pipeline is owned separately; these
+  // domains being FINANCE-tagged doesn't make them extraction-eligible.
+  "business-standard.com",
+  "zeebiz.com",
+  "financialexpress.com",
+  "ndtvprofit.com",
 ] as const;
 
 /** India-market keywords. Any match (case-insensitive) qualifies a story for FINANCE tagging. */
@@ -92,14 +104,52 @@ const KEYWORD_PATTERNS = INDIA_MARKET_KEYWORDS.map((kw) => ({
 }));
 
 /**
- * Returns true if the source URL belongs to an approved Indian finance source.
+ * Google-News-routed sources (gnews-business-standard, gnews-zeebiz,
+ * gnews-financial-express in rssSources.ts, and the pre-existing
+ * gnews-in-business/-sports/-entertainment) always store `source_url` as the
+ * `news.google.com/rss/articles/...` redirect link, NEVER the resolved
+ * publisher URL — decodeGoogleNewsSource() only splits the *title*, not the
+ * link (see rssProvider.ts). A hostname check against FINANCE_SOURCE_DOMAINS
+ * alone would therefore never match these, silently defeating the point of
+ * adding them. Fall back to matching the decoded publisher DISPLAY NAME
+ * (sourceName) against a small trusted-name allowlist for exactly this case —
+ * same precedent as MarketMoveNews's TRUSTED_PUBLISHER_TIERS name-substring
+ * matching in packages/business-rules/src/marketPulse/newsQuality.ts, applied
+ * here to the separate Story/FINANCE-tagging pipeline. Substring match
+ * (case-insensitive) because Google News decodes publisher names
+ * inconsistently (observed: "Business Standard", "Zee Business",
+ * "financialexpress.com" verbatim, "NDTV Profit").
  */
-function isIndianFinanceSource(sourceUrl: string): boolean {
+const GOOGLE_NEWS_TRUSTED_PUBLISHER_NAMES = [
+  "business standard",
+  "zee business",
+  "financialexpress",
+  "financial express",
+  "ndtv profit",
+] as const;
+
+function isGoogleNewsRedirectUrl(hostname: string): boolean {
+  return hostname === "news.google.com" || hostname.endsWith(".news.google.com");
+}
+
+/**
+ * Returns true if the source URL belongs to an approved Indian finance
+ * source, OR (for Google-News-routed items only) the decoded publisher
+ * display name matches a trusted name — see doc comment above.
+ */
+function isIndianFinanceSource(sourceUrl: string, sourceName?: string): boolean {
   try {
     const hostname = new URL(sourceUrl).hostname.toLowerCase().replace(/^www\./, "");
-    return FINANCE_SOURCE_DOMAINS.some(
-      (domain) => hostname === domain || hostname.endsWith(`.${domain}`)
-    );
+    if (FINANCE_SOURCE_DOMAINS.some((domain) => hostname === domain || hostname.endsWith(`.${domain}`))) {
+      return true;
+    }
+
+    if (isGoogleNewsRedirectUrl(hostname) && sourceName) {
+      const nameLower = sourceName.toLowerCase();
+      return GOOGLE_NEWS_TRUSTED_PUBLISHER_NAMES.some((trusted) => nameLower.includes(trusted));
+    }
+
+    return false;
   } catch {
     return false;
   }
@@ -130,14 +180,19 @@ export type FinanceTagDecision =
  * @param title - Story headline
  * @param summary - Story summary / description
  * @param sourceUrl - Original article URL
+ * @param sourceName - Decoded publisher display name (used as a fallback signal
+ *   for Google-News-routed sources, whose sourceUrl is always a news.google.com
+ *   redirect — see isIndianFinanceSource doc comment). Optional for backward
+ *   compatibility with any other caller that doesn't have it handy.
  * @returns FinanceTagDecision with tagging outcome and matched keyword or reason
  */
 export function evaluateFinanceTag(
   title: string,
   summary: string,
-  sourceUrl: string
+  sourceUrl: string,
+  sourceName?: string
 ): FinanceTagDecision {
-  if (!isIndianFinanceSource(sourceUrl)) {
+  if (!isIndianFinanceSource(sourceUrl, sourceName)) {
     return { isFinance: false, reason: "source not in approved Indian finance source list" };
   }
 

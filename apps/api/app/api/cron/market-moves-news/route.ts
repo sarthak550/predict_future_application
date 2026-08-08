@@ -27,6 +27,16 @@
  * try/catch — one blocked/failed ticker logs and is skipped, the rest of the
  * run continues. This route itself never throws past the batch loop.
  *
+ * After the fetch/upsert loop, runs a short-summary generation pass (2-3
+ * sentence AI summaries, NEWS_SUMMARY_DAILY_CAP-gated, OFF unless that env
+ * var is set — see lib/ai/newsSummaryDailyCap.ts and
+ * lib/marketMoves/summarizeStockNewsBatch.ts) over rows just upserted this
+ * run, then a straggler sweep over any row still missing a summary in the
+ * last 3 days. Adds roughly 30-90s to the run when the lane is enabled
+ * (bounded by MAX_NEW_SUMMARIES_PER_RUN + MAX_STRAGGLER_SUMMARIES_PER_RUN,
+ * each doing a body-fetch + AI call) — still comfortably inside the 30-min
+ * cadence window. Never blocks or fails the fetch/upsert result above.
+ *
  * Prod note: run `prisma db push` to land the MarketMoveNews model before
  * activating this cron.
  */
@@ -36,6 +46,7 @@ import { NextResponse } from "next/server";
 import { fetchGoogleNewsForTicker, type GoogleNewsItem } from "@/lib/marketMoves/googleNews";
 import { buildNewsUniverse } from "@/lib/marketMoves/newsUniverse";
 import { isNewsRefreshWindow } from "@/lib/marketMoves/marketHours";
+import { summarizeNewStockNews, summarizeStockNewsStragglers } from "@/lib/marketMoves/summarizeStockNewsBatch";
 import { prisma } from "@/lib/prisma";
 
 const INTER_REQUEST_DELAY_MS = 400;
@@ -73,6 +84,7 @@ async function run(request: Request) {
   let fetched = 0;
   let upserted = 0;
   let failed = 0;
+  const upsertedIds: string[] = [];
 
   for (let i = 0; i < universe.length; i++) {
     const ticker = universe[i];
@@ -90,7 +102,10 @@ async function run(request: Request) {
 
     for (const item of items) {
       try {
-        await prisma.marketMoveNews.upsert({
+        // NOTE: `update` deliberately never touches `summary`/`summaryGeneratedAt` —
+        // a re-fetched/refreshed headline must never wipe a previously-generated
+        // summary. Only the summarizer batch below writes those fields.
+        const row = await prisma.marketMoveNews.upsert({
           where: { dedupeKey: item.dedupeKey },
           update: {
             headline: item.headline,
@@ -107,8 +122,10 @@ async function run(request: Request) {
             dedupeKey: item.dedupeKey,
             publishedAt: item.publishedAt,
           },
+          select: { id: true },
         });
         upserted++;
+        upsertedIds.push(row.id);
       } catch (err) {
         failed++;
         console.error(`[cron/market-moves-news] upsert failed for ${item.dedupeKey}:`, err);
@@ -120,12 +137,34 @@ async function run(request: Request) {
     }
   }
 
+  // ---- Summary generation (Stock News short-summary lane, NEWS_SUMMARY_DAILY_CAP) ----
+  // New-batch pass over rows just upserted this run, THEN (sequential, not
+  // concurrent — see below) a straggler sweep over ANY row (this cron's universe
+  // or apps/web's on-demand refresh) still missing a summary within the last 3
+  // days. Sequential is deliberate: a row just upserted this run is itself within
+  // the straggler sweep's 3-day window, so running both passes concurrently could
+  // race the same row through two summarize calls at once (double AI spend, wasted
+  // budget). Running the new-batch pass to completion first means its writes make
+  // those rows fall out of the straggler query's `summary: null` filter before it
+  // runs. Awaited here (EC2 crontab route, no serverless timeout to respect), but
+  // every failure mode inside is non-throwing and headline-only display is always
+  // the safe fallback. See lib/marketMoves/summarizeStockNewsBatch.ts.
+  let summarized = 0;
+  try {
+    const newBatch = await summarizeNewStockNews(upsertedIds);
+    const stragglers = await summarizeStockNewsStragglers();
+    summarized = newBatch.summarized + stragglers.summarized;
+  } catch (err) {
+    console.error("[cron/market-moves-news] summary batch failed:", err);
+  }
+
   return NextResponse.json({
     ok: true,
     tickers: universe.length,
     fetched,
     upserted,
     failed,
+    summarized,
   });
 }
 

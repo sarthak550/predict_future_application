@@ -5,9 +5,10 @@
  * from its headline and body text. Intended to replace headline-only summaries
  * that RSS feeds produce when no article description is provided.
  *
- * AI chain: Groq (llama-3.3-70b-versatile → llama-3.1-8b-instant) primary,
- * Gemini (env-pinned model, shared callGeminiAIText helper) fallback. Mirrors
- * the pattern used by extractExpertOpinions and generatePollWithAI.
+ * AI chain: Gemini (env-pinned model, shared callGeminiAIText helper) primary,
+ * Groq (llama-3.3-70b-versatile → llama-3.1-8b-instant) fallback — mirrors
+ * extractExpertOpinions.ts's provider order exactly (swapped from Groq-first
+ * 2026-08-08 per the "expand stock news" CTO assignment brief).
  *
  * Returns null on any failure — callers must treat null as "keep existing summary".
  *
@@ -165,57 +166,53 @@ export async function summarizeNewsStory(
     return null;
   }
 
-  // Try each Groq model in sequence
-  if (groqKey) {
-    for (let i = 0; i < GROQ_MODELS.length; i++) {
-      try {
-        const raw = await callGroqSummarize(groqKey, headline, bodyText, i);
-        const summary = raw.trim();
-        if (isValidSummary(summary, headline)) {
-          console.debug(`[news:summarizer] Groq ${GROQ_MODELS[i]} succeeded for "${headline.slice(0, 60)}"`);
-          return summary;
-        }
-        console.warn(
-          `[news:summarizer] Groq ${GROQ_MODELS[i]} returned invalid summary for "${headline.slice(0, 60)}" — trying next`
-        );
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        const isRateLimit = msg.includes("429") || msg.toLowerCase().includes("rate limit");
-        console.warn(
-          `[news:summarizer] Groq ${GROQ_MODELS[i]} failed for "${headline.slice(0, 60)}": ${msg.slice(0, 120)}`
-        );
-        if (!isRateLimit) {
-          // Non-rate-limit error — try next model
-        }
-        // On rate limit or any error, try next model
+  // Gemini first (mirrors extractExpertOpinions.ts's provider order — paid
+  // tier, avoids Groq free-tier 429/413 limits). Swapped from the prior
+  // Groq-first order 2026-08-08 per the "expand stock news" CTO assignment
+  // brief, which asked this lane to mirror extraction's provider selection.
+  if (geminiKey) {
+    try {
+      const raw = await callGeminiSummarize(headline, bodyText);
+      const summary = raw.trim();
+      if (isValidSummary(summary, headline)) {
+        console.debug(`[news:summarizer] Gemini succeeded for "${headline.slice(0, 60)}"`);
+        return summary;
       }
+      console.warn(
+        `[news:summarizer] Gemini returned invalid summary for "${headline.slice(0, 60)}" — falling back to Groq`
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(
+        `[news:summarizer] Gemini failed for "${headline.slice(0, 60)}", falling back to Groq: ${msg.slice(0, 200)}`
+      );
     }
-
-    // All Groq models failed
-    if (!geminiKey) {
-      console.warn(`[news:summarizer] All Groq models failed and no Gemini key — returning null`);
-      return null;
-    }
-    console.warn(`[news:summarizer] All Groq models failed for "${headline.slice(0, 60)}" — falling back to Gemini`);
   }
 
-  // Gemini fallback
-  if (!geminiKey) return null;
+  // Fall back to Groq (free tier — may rate-limit; only reached if Gemini
+  // errored, returned invalid output, or no Gemini key is configured).
+  if (!groqKey) return null;
 
-  try {
-    const raw = await callGeminiSummarize(headline, bodyText);
-    const summary = raw.trim();
-    if (isValidSummary(summary, headline)) {
-      console.debug(`[news:summarizer] Gemini succeeded for "${headline.slice(0, 60)}"`);
-      return summary;
+  for (let i = 0; i < GROQ_MODELS.length; i++) {
+    try {
+      const raw = await callGroqSummarize(groqKey, headline, bodyText, i);
+      const summary = raw.trim();
+      if (isValidSummary(summary, headline)) {
+        console.debug(`[news:summarizer] Groq ${GROQ_MODELS[i]} succeeded for "${headline.slice(0, 60)}"`);
+        return summary;
+      }
+      console.warn(
+        `[news:summarizer] Groq ${GROQ_MODELS[i]} returned invalid summary for "${headline.slice(0, 60)}" — trying next`
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(
+        `[news:summarizer] Groq ${GROQ_MODELS[i]} failed for "${headline.slice(0, 60)}": ${msg.slice(0, 120)}`
+      );
+      // On rate limit or any other error, try next model
     }
-    console.warn(
-      `[news:summarizer] Gemini returned invalid summary for "${headline.slice(0, 60)}" — returning null`
-    );
-    return null;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error(`[news:summarizer] Gemini fallback also failed for "${headline.slice(0, 60)}": ${msg.slice(0, 200)}`);
-    return null;
   }
+
+  console.warn(`[news:summarizer] All providers failed for "${headline.slice(0, 60)}" — returning null`);
+  return null;
 }

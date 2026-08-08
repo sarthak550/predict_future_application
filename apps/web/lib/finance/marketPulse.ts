@@ -168,6 +168,7 @@ export interface NewsRow {
   publisher: string;
   sourceUrl: string;
   publishedAt: Date;
+  summary: string | null;
 }
 
 /**
@@ -192,6 +193,7 @@ export async function fetchLatestNews(limit = NEWS_LIMIT): Promise<NewsRow[]> {
       publisher: true,
       sourceUrl: true,
       publishedAt: true,
+      summary: true,
     },
   });
 

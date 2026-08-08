@@ -815,17 +815,24 @@ export function createApiClient(options: ApiClientOptions) {
       );
     },
 
-    getExpertLeaderboard(params?: { org?: string }) {
+    getExpertLeaderboard(params?: { firm?: string }) {
       return request<ApiExpertLeaderboardEntry[]>(
         `/api/finance/experts/leaderboard`,
         params
       );
     },
 
-    searchExperts(q: string) {
+    searchExperts(q: string, params?: { firm?: string }) {
       return request<import("@predict-future/types").ApiExpertSearchResult[]>(
         `/api/finance/experts/search`,
-        { q }
+        { q, ...params }
+      );
+    },
+
+    /** Canonical firm list + analyst counts, for the mobile "Firm" filter chip row. */
+    getExpertFirms() {
+      return request<import("@predict-future/types").ApiExpertFirmOption[]>(
+        `/api/finance/experts/firms`
       );
     },
 

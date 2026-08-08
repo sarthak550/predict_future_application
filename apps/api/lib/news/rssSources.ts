@@ -187,6 +187,58 @@ const defaultRssSources: RssSource[] = [
     isActive: true,
     maxItems: 20,
   },
+  {
+    // Direct RSS verified live 2026-08-08 (200, 20 items, real NDTV Profit
+    // headlines). NDTV Profit's own www.ndtvprofit.com/*.rss endpoints all
+    // 403 (Akamai edge block, same signature as Moneycontrol's block below) —
+    // this Feedburner mirror is the one that actually works.
+    id: "ndtv-profit",
+    name: "NDTV Profit",
+    url: "https://feeds.feedburner.com/ndtvprofit-latest",
+    categoryHint: "BUSINESS",
+    fallbackCategory: "BUSINESS",
+    isActive: true,
+    maxItems: 20,
+  },
+  // ── Additional Indian finance sources via Google News site: search ──────
+  // Business Standard, Zee Business, and Financial Express all Akamai-block
+  // their direct RSS endpoints (403 "Access Denied", verified 2026-08-08,
+  // several URL variants each — same failure signature already documented
+  // for Moneycontrol below). Google News' `site:` search operator is the
+  // same proven workaround already used for gnews-in-business/-sports/
+  // -entertainment above: verified live 2026-08-08, 100 items each, real
+  // headlines correctly attributed ("... - Business Standard" etc.), decoded
+  // by the same decodeGoogleNewsSource() split every other Google News
+  // source in this file already relies on. `when:1d` (not :2d) keeps volume
+  // reasonable at the 2h ingestion cadence — the ingestion pipeline's own
+  // externalId/sourceUrl/dedupeKey checks drop anything already stored.
+  {
+    id: "gnews-business-standard",
+    name: "Business Standard",
+    url: "https://news.google.com/rss/search?q=site:business-standard.com%20markets%20when:1d&hl=en-IN&gl=IN&ceid=IN:en",
+    categoryHint: "BUSINESS",
+    fallbackCategory: "BUSINESS",
+    isActive: true,
+    maxItems: 20,
+  },
+  {
+    id: "gnews-zeebiz",
+    name: "Zee Business",
+    url: "https://news.google.com/rss/search?q=site:zeebiz.com%20markets%20when:1d&hl=en-IN&gl=IN&ceid=IN:en",
+    categoryHint: "BUSINESS",
+    fallbackCategory: "BUSINESS",
+    isActive: true,
+    maxItems: 20,
+  },
+  {
+    id: "gnews-financial-express",
+    name: "Financial Express",
+    url: "https://news.google.com/rss/search?q=site:financialexpress.com%20market%20when:1d&hl=en-IN&gl=IN&ceid=IN:en",
+    categoryHint: "BUSINESS",
+    fallbackCategory: "BUSINESS",
+    isActive: true,
+    maxItems: 20,
+  },
 
   // ── Curated Expert Opinion Feeds (highest extraction quality) ──
   // These feeds are specifically designed for analyst opinions and market strategy.

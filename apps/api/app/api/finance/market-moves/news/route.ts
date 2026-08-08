@@ -99,6 +99,7 @@ export async function GET(request: Request) {
       publisher: n.publisher,
       sourceUrl: n.sourceUrl,
       publishedAt: n.publishedAt.toISOString(),
+      summary: n.summary,
     })),
     nextCursor,
     hasMore,

@@ -1124,6 +1124,16 @@ export interface ApiExpertSearchResult {
   followerCount: number;
 }
 
+/**
+ * A canonical firm name + how many HUMAN experts belong to it — feeds the
+ * "Firm" filter on the expert search and leaderboard screens (GET
+ * /api/finance/experts/firms).
+ */
+export interface ApiExpertFirmOption {
+  firm: string;
+  count: number;
+}
+
 // ─── Finance: Expert Sentiment Aggregate ──────────────────────────────────────
 
 export interface ApiFinanceExpertSentiment {
@@ -1921,6 +1931,8 @@ export type ApiMarketMoveNews = {
   sourceUrl: string;
   /** ISO timestamp — the story's own publish time, not ingestion time. */
   publishedAt: string;
+  /** 2-3 sentence AI-generated summary, or null if not yet generated / generation failed. */
+  summary: string | null;
 };
 
 /** Response shape for GET /api/finance/market-moves/news. */

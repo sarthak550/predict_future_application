@@ -3,6 +3,7 @@ import { type MarketCategory, type MarketType, StoryStatus } from "@prisma/clien
 
 import { generatePollWithAI } from "@/lib/ai/gemini";
 import { summarizeNewsStory } from "@/lib/ai/summarizeNews";
+import { checkAndIncrementNewsSummaryDailyCap, isNewsSummaryLaneEnabled } from "@/lib/ai/newsSummaryDailyCap";
 import {
   extractExpertOpinionsFromStory,
   hasPlausibleAnalystSignal,
@@ -411,7 +412,10 @@ type SummarizeOneStoryInput = {
  */
 async function summarizeOneStory(
   story: SummarizeOneStoryInput
-): Promise<"summarized" | "body-failed" | "ai-failed" | "rate-limited"> {
+): Promise<"summarized" | "body-failed" | "ai-failed" | "rate-limited" | "cap-reached"> {
+  if (!checkAndIncrementNewsSummaryDailyCap(`storyFinance:${story.id}`)) {
+    return "cap-reached";
+  }
   try {
     const { text: bodyText, error: bodyError } = await fetchArticleBody(story.sourceUrl);
     if (!bodyText) {
@@ -471,26 +475,41 @@ async function runSummarizerBatch(
     const outcomes = await Promise.all(batch.map(summarizeOneStory));
     for (const outcome of outcomes) {
       if (outcome === "summarized") summarized++;
-      if (outcome === "rate-limited") rateLimited = true;
+      // "cap-reached" also stops the batch early — the daily budget is
+      // exhausted for every remaining item too, no point burning body-fetch
+      // network calls on items that will just be skipped by the cap check.
+      if (outcome === "rate-limited" || outcome === "cap-reached") rateLimited = true;
     }
   }
 
   return { summarized };
 }
 
-function aiSummariesEnabled(): boolean {
-  // Finance pivot (founder 2026-08-04): AI display-summaries for the Feed are
-  // an optional spend, OFF in prod via NEWS_AI_SUMMARIES=false — opinion
-  // extraction (the moat) is a SEPARATE pipeline and is never gated by this.
-  const v = (process.env.NEWS_AI_SUMMARIES ?? "").trim().toLowerCase();
-  return !(v === "0" || v === "false" || v === "no" || v === "off");
+/**
+ * Finance pivot (founder 2026-08-04) narrowed further 2026-08-08 ("expand
+ * stock news" CTO assignment brief): AI display-summaries are now scoped to
+ * FINANCE-category stories ONLY (previously ran across all 5 ingestion
+ * categories whenever NEWS_AI_SUMMARIES was left at its true-by-default
+ * value) and gated by the SEPARATE NEWS_SUMMARY_DAILY_CAP budget lane
+ * (lib/ai/newsSummaryDailyCap.ts) instead of the old on/off-only
+ * NEWS_AI_SUMMARIES flag. NEWS_AI_SUMMARIES is no longer read anywhere in
+ * this file — one env var (NEWS_SUMMARY_DAILY_CAP) now controls both
+ * on/off (unset or <= 0 = off, the safe default) and the daily ceiling,
+ * instead of two overlapping switches. This lane is shared with the
+ * Market Pulse stock-news summarizer (lib/marketMoves/summarizeStockNewsBatch.ts)
+ * — see newsSummaryDailyCap.ts's doc comment for why that sharing is
+ * deliberate, and FINANCE_AI_DAILY_CAP (opinion extraction/resolution) is
+ * never touched by either.
+ */
+function financeSummaryLaneEnabled(): boolean {
+  return isNewsSummaryLaneEnabled();
 }
 
 export async function generateSummariesInBackground(
   items: NormalizedNewsItem[]
 ): Promise<void> {
-  if (!aiSummariesEnabled()) {
-    console.info("[news:summarizer] NEWS_AI_SUMMARIES=false -- skipping (finance pivot)");
+  if (!financeSummaryLaneEnabled()) {
+    console.info("[news:summarizer] NEWS_SUMMARY_DAILY_CAP unset/0 -- lane disabled");
     return;
   }
   if (!process.env.GROQ_API_KEY && !process.env.GEMINI_API_KEY) {
@@ -498,12 +517,13 @@ export async function generateSummariesInBackground(
     return;
   }
 
-  // Resolve source URLs to DB story records; filter to those needing a summary.
+  // Resolve source URLs to DB story records; filter to FINANCE stories needing a summary.
   const sourceUrls = items.map((i) => i.source_url);
   const stories = await prisma.story.findMany({
     where: {
       sourceUrl: { in: sourceUrls },
       status: { in: ["PUBLISHED", "APPROVED"] },
+      category: "FINANCE",
     },
     select: { id: true, headline: true, summary: true, sourceUrl: true },
     orderBy: { publishedAt: "desc" },
@@ -514,24 +534,25 @@ export async function generateSummariesInBackground(
   const eligible = stories.filter((s) => needsBetterSummary(s.summary, s.headline));
 
   if (eligible.length === 0) {
-    console.info("[news:summarizer] no stories need AI summaries");
+    console.info("[news:summarizer] no FINANCE stories need AI summaries");
     return;
   }
 
-  console.info(`[news:summarizer] summarizing ${eligible.length} new-batch stories`);
+  console.info(`[news:summarizer] summarizing ${eligible.length} new-batch FINANCE stories`);
   const { summarized } = await runSummarizerBatch(eligible, "[news:summarizer]");
   console.info(`[news:summarizer] done -- ${summarized}/${eligible.length} summaries written`);
 }
 
 /**
- * Retry sweep: re-attempt summarization for recent stories (last 3 days) that
- * still have summaryReady=false. Stories that permanently fail body fetch
- * (e.g. Seeking Alpha 403) stay summaryReady=false and remain hidden -- that
- * is the desired outcome. Runs fire-and-forget from the ingestion job after
- * the new-batch pass so the per-cron retry budget is consumed there.
+ * Retry sweep: re-attempt summarization for recent FINANCE stories (last 3
+ * days) that still have summaryReady=false. Stories that permanently fail
+ * body fetch (e.g. Seeking Alpha 403) stay summaryReady=false and remain
+ * hidden (when FEED_FILTER_SUMMARY_READY is on) -- that is the desired
+ * outcome. Runs fire-and-forget from the ingestion job after the new-batch
+ * pass so the per-cron retry budget is consumed there.
  */
 export async function resummarizeRecentStragglers(): Promise<void> {
-  if (!aiSummariesEnabled()) {
+  if (!financeSummaryLaneEnabled()) {
     return;
   }
   if (!process.env.GROQ_API_KEY && !process.env.GEMINI_API_KEY) {
@@ -544,6 +565,7 @@ export async function resummarizeRecentStragglers(): Promise<void> {
       summaryReady: false,
       status: { in: ["PUBLISHED", "APPROVED"] },
       publishedAt: { gte: since3Days },
+      category: "FINANCE",
     },
     select: { id: true, headline: true, summary: true, sourceUrl: true },
     orderBy: { publishedAt: "desc" },
@@ -551,11 +573,11 @@ export async function resummarizeRecentStragglers(): Promise<void> {
   });
 
   if (stragglers.length === 0) {
-    console.info("[news:straggler] no recent stragglers to re-summarize");
+    console.info("[news:straggler] no recent FINANCE stragglers to re-summarize");
     return;
   }
 
-  console.info(`[news:straggler] re-summarizing ${stragglers.length} recent stragglers`);
+  console.info(`[news:straggler] re-summarizing ${stragglers.length} recent FINANCE stragglers`);
   const { summarized } = await runSummarizerBatch(stragglers, "[news:straggler]");
   console.info(`[news:straggler] done -- ${summarized}/${stragglers.length} stragglers resolved`);
 }
@@ -813,7 +835,7 @@ export class RSSIngestionService {
       // Apply FINANCE category override: if the source is an approved Indian finance source
       // AND the title/summary contains India-market keywords, tag as FINANCE.
       // Otherwise fall back to the RSS-inferred category.
-      const financeDecision = evaluateFinanceTag(item.title, item.summary, item.source_url);
+      const financeDecision = evaluateFinanceTag(item.title, item.summary, item.source_url, item.source_name);
       const resolvedCategory: MarketCategory = financeDecision.isFinance
         ? "FINANCE"
         : (item.category as MarketCategory);

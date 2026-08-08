@@ -186,6 +186,7 @@ export default async function InstrumentDetailPage({
           publisher: item.publisher,
           sourceUrl: item.sourceUrl,
           timeLabel: formatRelativeTime(item.publishedAt),
+          summary: item.summary,
         }))}
         filings={instrument.filings.map((filing) => ({
           id: filing.id,
