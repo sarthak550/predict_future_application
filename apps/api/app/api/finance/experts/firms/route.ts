@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import { canonicalizeOrgDisplay } from "@predict-future/business-rules/experts/firmAliases";
 import { prisma } from "@/lib/prisma";
 
+// Param-less GET → Next tries to STATICALLY prerender this at build time,
+// executing the Prisma query inside the build container (no DATABASE_URL)
+// and failing the whole image build. Same idiom as finance/indices/route.ts.
+export const dynamic = "force-dynamic";
+
 /**
  * GET /api/finance/experts/firms
  *
