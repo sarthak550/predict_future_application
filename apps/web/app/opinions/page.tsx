@@ -12,6 +12,7 @@ import {
   fetchInstrumentOptions,
   fetchOpinionAnalystOptions,
   fetchOpinionFirmOptions,
+  fetchOpinionSectorOptions,
   fetchOpinionsPage,
   fetchOpinionsSentimentSplit,
   hasActiveOpinionsQuery,
@@ -75,13 +76,15 @@ export default async function OpinionsPage({ searchParams }: { searchParams: Sea
   // own firm — but only when a firm ISN'T already active, since the firm is
   // the more specific/dominant filter when both are set (see
   // fetchOpinionFirmOptions' and fetchOpinionsPage's own notes on this).
-  const [{ items, hasMore, page }, instrumentOptions, analystOptions, firmOptions, sentiment] = await Promise.all([
-    fetchOpinionsPage(filters),
-    fetchInstrumentOptions(),
-    fetchOpinionAnalystOptions(filters.firm),
-    fetchOpinionFirmOptions(filters.firm ? undefined : filters.analyst),
-    isSentimentFiltered ? fetchOpinionsSentimentSplit(filters) : getSentimentSplit(),
-  ]);
+  const [{ items, hasMore, page }, instrumentOptions, analystOptions, firmOptions, sectorOptions, sentiment] =
+    await Promise.all([
+      fetchOpinionsPage(filters),
+      fetchInstrumentOptions(),
+      fetchOpinionAnalystOptions(filters.firm),
+      fetchOpinionFirmOptions(filters.firm ? undefined : filters.analyst),
+      fetchOpinionSectorOptions(),
+      isSentimentFiltered ? fetchOpinionsSentimentSplit(filters) : getSentimentSplit(),
+    ]);
 
   return (
     <div className="space-y-8">
@@ -89,7 +92,7 @@ export default async function OpinionsPage({ searchParams }: { searchParams: Sea
         <h1 className="text-3xl font-semibold text-ink-900">Every analyst call</h1>
         <p className="mt-3 max-w-2xl text-sm leading-6 text-ink-500">
           Every public market call we&rsquo;ve tracked, newest first. Filter by instrument, direction,
-          grading status, analyst, or firm — every combination is a shareable link.
+          grading status, analyst, firm, or sector — every combination is a shareable link.
         </p>
       </div>
 
@@ -112,6 +115,7 @@ export default async function OpinionsPage({ searchParams }: { searchParams: Sea
         instrumentOptions={instrumentOptions}
         analystOptions={analystOptions}
         firmOptions={firmOptions}
+        sectorOptions={sectorOptions}
       />
 
       {items.length === 0 ? (

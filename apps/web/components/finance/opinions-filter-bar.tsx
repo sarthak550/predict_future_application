@@ -39,7 +39,7 @@
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { Select } from "@/components/ui/select";
-import type { OpinionAnalystOption, OpinionFirmOption } from "@/lib/finance/opinionsQuery";
+import type { OpinionAnalystOption, OpinionFirmOption, OpinionSectorOption } from "@/lib/finance/opinionsQuery";
 
 const DIRECTION_OPTIONS = [
   { value: "", label: "All directions" },
@@ -58,10 +58,13 @@ export function OpinionsFilterBar({
   instrumentOptions,
   analystOptions,
   firmOptions,
+  sectorOptions,
 }: {
   instrumentOptions: string[];
   analystOptions: OpinionAnalystOption[];
   firmOptions: OpinionFirmOption[];
+  /** Independent of firm/analyst — a sector filter on the CALLED INSTRUMENT, not the expert. See opinionsQuery.ts's buildSectorIndex for why it deliberately doesn't cascade with the firm<->analyst pair below. */
+  sectorOptions: OpinionSectorOption[];
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -162,6 +165,20 @@ export function OpinionsFilterBar({
         {firmOptions.map((opt) => (
           <option key={opt.firm} value={opt.firm}>
             {opt.firm} ({opt.count})
+          </option>
+        ))}
+      </Select>
+
+      <Select
+        aria-label="Filter by sector"
+        value={searchParams.get("sector") ?? ""}
+        onChange={(e) => setParam("sector", e.target.value)}
+        className="w-auto min-w-[12rem]"
+      >
+        <option value="">All sectors</option>
+        {sectorOptions.map((opt) => (
+          <option key={opt.sector} value={opt.sector}>
+            {opt.sector} ({opt.count})
           </option>
         ))}
       </Select>

@@ -5,6 +5,8 @@ import { canonicalizeOrgDisplay } from "@predict-future/business-rules/experts/f
 import { prisma } from "@/lib/prisma";
 import { buildInstrumentWhereOr } from "@/lib/finance/instruments";
 import { computeDominantLean, computeSentimentPercentages, type DominantLean } from "@/lib/finance/sentiment";
+import { getNseIndustryMap } from "@/lib/finance/nseSectorMaster";
+import { resolveSectorLabel } from "@/lib/finance/sectorTaxonomy";
 
 export const OPINIONS_PAGE_SIZE = 25;
 
@@ -18,6 +20,8 @@ export interface OpinionsFilters {
   analyst?: string;
   /** Canonical org display string, e.g. "Motilal Oswal Financial Services" — the SAME ?firm= value shape /analysts uses (see lib/finance/firmLink.ts, buildFirmOptions). */
   firm?: string;
+  /** One of CANONICAL_SECTOR_LABELS (sectorTaxonomy.ts), e.g. "Banking", "Automobile and Auto Components" — the ticker's underlying instrument's sector, NOT an expert/firm attribute. Composes as an independent AND filter alongside firm/analyst — see buildSectorIndex's doc comment for why it deliberately does not cascade with them. */
+  sector?: string;
   page: number;
 }
 
@@ -47,17 +51,18 @@ export function parseOpinionsFilters(searchParams: Record<string, string | strin
   const instrument = get("instrument")?.trim() || undefined;
   const analyst = get("analyst")?.trim() || undefined;
   const firm = get("firm")?.trim() || undefined;
+  const sector = get("sector")?.trim() || undefined;
 
   const pageRaw = Number.parseInt(get("page") ?? "1", 10);
   const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
 
-  return { instrument, direction, status, analyst, firm, page };
+  return { instrument, direction, status, analyst, firm, sector, page };
 }
 
 /** True if any filter/pagination param beyond the bare unfiltered first page is active. */
 export function hasActiveOpinionsQuery(filters: OpinionsFilters): boolean {
   return (
-    Boolean(filters.instrument || filters.direction || filters.status || filters.analyst || filters.firm) ||
+    Boolean(filters.instrument || filters.direction || filters.status || filters.analyst || filters.firm || filters.sector) ||
     filters.page > 1
   );
 }
@@ -71,7 +76,7 @@ export function hasActiveOpinionsQuery(filters: OpinionsFilters): boolean {
  * opinions/page.tsx to decide which sentiment data source to render.
  */
 export function hasNonDirectionOpinionsFilter(filters: OpinionsFilters): boolean {
-  return Boolean(filters.instrument || filters.status || filters.analyst || filters.firm);
+  return Boolean(filters.instrument || filters.status || filters.analyst || filters.firm || filters.sector);
 }
 
 const GRADED_STATUSES: OpinionResolutionStatus[] = ["RESOLVED_HIT", "RESOLVED_MISS"];
@@ -152,7 +157,134 @@ export async function fetchOpinionFirmOptions(narrowToAnalystSlug?: string): Pro
     .sort((a, b) => b.count - a.count || a.firm.localeCompare(b.firm));
 }
 
-function buildWhere(filters: OpinionsFilters, firmOrganizations: string[] | undefined): Prisma.ExpertOpinionWhereInput {
+export type OpinionSectorOption = { sector: string; count: number };
+
+/**
+ * Ticker <-> sector index for every distinct instrumentTicker among public
+ * opinions, built fresh per call (no manual module cache — this is a DB
+ * aggregate, the same convention fetchOpinionOrgGroups already follows;
+ * the only piece worth caching, the NSE CSV fetch itself, is cached inside
+ * getNseIndustryMap). Combines both sources from sectorTaxonomy.ts:
+ *
+ *   1. NSE's own Industry (nseSectorMaster.ts) — bare-symbol keyed, so
+ *      Yahoo-style tickers ("RELIANCE.NS") are stripped to their NSE symbol
+ *      first. Covers ~90% of real opinion-referenced equities (verified
+ *      2026-08-09).
+ *   2. Yahoo sector+industry (InstrumentEnrichment.keyStats) as fallback for
+ *      whatever NSE's list doesn't cover, mapped to the same label
+ *      vocabulary via mapYahooToSectorLabel.
+ *
+ * Tickers that are neither an NSE-symbol-shaped ".NS" ticker (index symbols
+ * like "^NSEI", commodity futures like "GC=F", FX pairs like "INR=X" all
+ * fail this shape check) nor resolvable via either source are simply absent
+ * from the returned maps — they never show up under any sector, which is the
+ * honest answer for "what sector is the NIFTY 50 index in."
+ *
+ * CASCADING DECISION: sector is NOT wired into the firm<->analyst cascade
+ * (fetchOpinionFirmOptions/fetchOpinionAnalystOptions) in either direction —
+ * a brokerage covers every sector its analysts write about, so "narrow the
+ * firm list to Energy" would incorrectly hide firms that publish energy
+ * calls only occasionally, and an analyst pick shouldn't collapse the sector
+ * list either (an analyst covers many stocks/sectors, not one). Sector
+ * composes as a plain independent AND alongside whatever else is active —
+ * same as `instrument` and `direction` already do.
+ */
+async function buildSectorIndex(): Promise<{
+  tickerToSector: Map<string, string>;
+  sectorToTickers: Map<string, string[]>;
+}> {
+  const rows = await prisma.expertOpinion.findMany({
+    where: { suppressedAt: null, instrumentTicker: { not: null } },
+    distinct: ["instrumentTicker"],
+    select: { instrumentTicker: true },
+  });
+  const tickers = rows.map((r) => r.instrumentTicker).filter((t): t is string => Boolean(t));
+
+  // Yahoo-style NSE equity ticker only ("RELIANCE.NS" → "RELIANCE") — indices,
+  // commodity futures, and FX pairs never match and are left unclassified.
+  const bareSymbol = (ticker: string): string | null => {
+    const m = /^([A-Z0-9&-]+)\.NS$/i.exec(ticker);
+    return m ? m[1].toUpperCase() : null;
+  };
+
+  const symbolByTicker = new Map<string, string>();
+  for (const ticker of tickers) {
+    const symbol = bareSymbol(ticker);
+    if (symbol) symbolByTicker.set(ticker, symbol);
+  }
+  const bareSymbols = [...new Set(symbolByTicker.values())];
+
+  const [nseIndustryMap, enrichmentRows] = await Promise.all([
+    getNseIndustryMap(),
+    bareSymbols.length > 0
+      ? prisma.instrumentEnrichment.findMany({
+          where: { symbol: { in: bareSymbols } },
+          select: { symbol: true, keyStats: true },
+        })
+      : Promise.resolve([]),
+  ]);
+  const keyStatsBySymbol = new Map(
+    enrichmentRows.map((r) => [r.symbol, r.keyStats as { sector?: string; industry?: string } | null]),
+  );
+
+  const tickerToSector = new Map<string, string>();
+  const sectorToTickers = new Map<string, string[]>();
+  for (const [ticker, symbol] of symbolByTicker) {
+    const ks = keyStatsBySymbol.get(symbol);
+    const label = resolveSectorLabel({
+      nseIndustry: nseIndustryMap.get(symbol),
+      yahooSector: ks?.sector,
+      yahooIndustry: ks?.industry,
+    });
+    if (!label) continue;
+    tickerToSector.set(ticker, label);
+    const bucket = sectorToTickers.get(label);
+    if (bucket) bucket.push(ticker);
+    else sectorToTickers.set(label, [ticker]);
+  }
+
+  return { tickerToSector, sectorToTickers };
+}
+
+/**
+ * Sector filter dropdown options for /opinions — every sector with >=1
+ * public opinion, counted by OPINIONS (matching fetchOpinionFirmOptions'
+ * own convention), sorted by count desc then name. Unscoped by design — see
+ * buildSectorIndex's cascading note above.
+ */
+export async function fetchOpinionSectorOptions(): Promise<OpinionSectorOption[]> {
+  const { tickerToSector } = await buildSectorIndex();
+  if (tickerToSector.size === 0) return [];
+
+  const counts = await prisma.expertOpinion.groupBy({
+    by: ["instrumentTicker"],
+    where: { suppressedAt: null, instrumentTicker: { in: [...tickerToSector.keys()] } },
+    _count: { _all: true },
+  });
+
+  const bySector = new Map<string, number>();
+  for (const row of counts) {
+    const sector = row.instrumentTicker ? tickerToSector.get(row.instrumentTicker) : undefined;
+    if (!sector) continue;
+    bySector.set(sector, (bySector.get(sector) ?? 0) + row._count._all);
+  }
+
+  return [...bySector.entries()]
+    .map(([sector, count]) => ({ sector, count }))
+    .sort((a, b) => b.count - a.count || a.sector.localeCompare(b.sector));
+}
+
+/** Resolves a ?sector= value to the instrumentTicker set buildWhere filters on. An unrecognized/stale value resolves to [], which Prisma's `in: []` correctly turns into zero rows. */
+async function resolveSectorTickers(sector: string): Promise<string[]> {
+  const { sectorToTickers } = await buildSectorIndex();
+  return sectorToTickers.get(sector) ?? [];
+}
+
+function buildWhere(
+  filters: OpinionsFilters,
+  firmOrganizations: string[] | undefined,
+  sectorTickers: string[] | undefined,
+): Prisma.ExpertOpinionWhereInput {
   // Both `analyst` and `firm` constrain `expert`, so they're merged into a
   // single expert sub-object rather than two separate spreads — two object-
   // literal spreads under the same `expert` key would silently let the
@@ -168,6 +300,12 @@ function buildWhere(filters: OpinionsFilters, firmOrganizations: string[] | unde
     ...(filters.status === "graded" ? { resolutionStatus: { in: GRADED_STATUSES } } : {}),
     ...(filters.status === "pending" ? { resolutionStatus: "PENDING" as const } : {}),
     ...(Object.keys(expertWhere).length > 0 ? { expert: expertWhere } : {}),
+    // Sector constrains the OPINION's instrument, not the expert — a sibling
+    // top-level AND condition, never nested under `expert`. Deliberately
+    // independent of firm/analyst (see buildSectorIndex's doc comment: a
+    // brokerage isn't sector-scoped, so sector neither narrows nor is
+    // narrowed by them — unlike the firm<->analyst cascade above).
+    ...(filters.sector ? { instrumentTicker: { in: sectorTickers ?? [] } } : {}),
   };
 }
 
@@ -206,8 +344,9 @@ export async function fetchOpinionsPage(filters: OpinionsFilters) {
   // correctly turns into zero rows rather than an error.
   const firmOrganizations = filters.firm ? (await fetchOpinionOrgGroups()).get(filters.firm)?.rawOrganizations : undefined;
   const effectiveAnalyst = await resolveEffectiveAnalyst(filters);
+  const sectorTickers = filters.sector ? await resolveSectorTickers(filters.sector) : undefined;
 
-  const where = buildWhere({ ...filters, analyst: effectiveAnalyst }, firmOrganizations);
+  const where = buildWhere({ ...filters, analyst: effectiveAnalyst }, firmOrganizations, sectorTickers);
   const skip = (filters.page - 1) * OPINIONS_PAGE_SIZE;
 
   const rows = await prisma.expertOpinion.findMany({
@@ -290,8 +429,13 @@ export interface OpinionsSentimentSplit {
 export async function fetchOpinionsSentimentSplit(filters: OpinionsFilters): Promise<OpinionsSentimentSplit> {
   const firmOrganizations = filters.firm ? (await fetchOpinionOrgGroups()).get(filters.firm)?.rawOrganizations : undefined;
   const effectiveAnalyst = await resolveEffectiveAnalyst(filters);
+  const sectorTickers = filters.sector ? await resolveSectorTickers(filters.sector) : undefined;
 
-  const where = buildWhere({ ...filters, analyst: effectiveAnalyst, direction: undefined }, firmOrganizations);
+  const where = buildWhere(
+    { ...filters, analyst: effectiveAnalyst, direction: undefined },
+    firmOrganizations,
+    sectorTickers,
+  );
 
   const [directionCounts, analystExpert] = await Promise.all([
     prisma.expertOpinion.groupBy({ by: ["direction"], where, _count: { _all: true } }),
@@ -324,6 +468,7 @@ export async function fetchOpinionsSentimentSplit(filters: OpinionsFilters): Pro
     scopeParts.push(filters.firm);
   }
   if (filters.instrument) scopeParts.push(filters.instrument);
+  if (filters.sector) scopeParts.push(filters.sector);
   if (filters.status) scopeParts.push(STATUS_SCOPE_LABELS[filters.status]);
 
   const scopeLabel = scopeParts.length > 0 ? `Sentiment · ${scopeParts.filter(Boolean).join(" · ")}` : "Market-wide sentiment";
