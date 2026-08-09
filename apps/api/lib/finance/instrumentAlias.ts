@@ -22,6 +22,7 @@
 import type { InstrumentAlias, InstrumentResolutionSource, PrismaClient } from "@prisma/client";
 
 import { normalizeInstrumentRawName } from "@predict-future/business-rules/instruments/instrumentDedup";
+import { sanitizeExtractedValue } from "@/lib/ai/sanitizeExtractedValue";
 import { fetchEquityNames } from "@/lib/marketMoves/nse";
 
 /**
@@ -120,8 +121,14 @@ export async function previewInstrumentResolution(
   instrumentLabel: string | null | undefined,
   ticker: string | null | undefined,
 ): Promise<{ rawName: string | null; resolution: Awaited<ReturnType<typeof resolveAuthoritatively>> }> {
-  const rawName = normalizeInstrumentRawName(ticker, instrumentLabel);
-  const resolution = await resolveAuthoritatively(prisma, ticker?.trim() || null);
+  // Guard against AI junk sentinels ("null"/"NULL"/"None"/"N/A"/"undefined")
+  // ever becoming a rawName lookup key — see sanitizeExtractedValue's doc
+  // comment for the founder-reported prod bug this closes (a junk
+  // rawName="NULL" InstrumentAlias row).
+  const sanitizedLabel = sanitizeExtractedValue(instrumentLabel);
+  const sanitizedTicker = sanitizeExtractedValue(ticker);
+  const rawName = normalizeInstrumentRawName(sanitizedTicker, sanitizedLabel);
+  const resolution = await resolveAuthoritatively(prisma, sanitizedTicker);
   return { rawName, resolution };
 }
 
@@ -142,13 +149,22 @@ export async function resolveInstrumentAlias(
   instrumentLabel: string | null | undefined,
   ticker: string | null | undefined,
 ): Promise<InstrumentAliasResolution | null> {
-  const rawName = normalizeInstrumentRawName(ticker, instrumentLabel);
+  // Permanent write-boundary guard (founder-reported prod bug, 2026-08-09): a
+  // junk rawName="NULL" InstrumentAlias row was created here because callers
+  // could pass through an AI-emitted literal "null" string uncaught. Callers
+  // now sanitize before calling this function too (extractExpertOpinions.ts),
+  // but this is the permanent stop, mirroring findOrCreateExpert's hard guard
+  // for blank Expert names — this function must never persist a junk rawName
+  // even if a future caller regresses the upstream sanitization.
+  const sanitizedLabel = sanitizeExtractedValue(instrumentLabel);
+  const sanitizedTicker = sanitizeExtractedValue(ticker);
+  const rawName = normalizeInstrumentRawName(sanitizedTicker, sanitizedLabel);
   if (!rawName) return null;
 
   const existing = await prisma.instrumentAlias.findUnique({ where: { rawName } });
   if (existing) return toResolution(existing);
 
-  const resolution = await resolveAuthoritatively(prisma, ticker?.trim() || null);
+  const resolution = await resolveAuthoritatively(prisma, sanitizedTicker);
   const now = new Date();
 
   // Upsert, not create+catch — a concurrent extraction can race this exact

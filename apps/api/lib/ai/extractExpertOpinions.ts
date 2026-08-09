@@ -12,6 +12,7 @@ import { OpinionDirection, type PrismaClient } from "@prisma/client";
 import { checkTickerMap, extractInstrumentFromQuote, normalizeYahooTicker } from "@/lib/ai/extractInstrument";
 import { checkAndIncrementFinanceAiDailyCap } from "@/lib/ai/financeAiDailyCap";
 import { callGeminiAI } from "@/lib/ai/gemini";
+import { sanitizeExtractedValue } from "@/lib/ai/sanitizeExtractedValue";
 import { findOrCreateExpert } from "@/lib/finance/expertMatch";
 import { resolveInstrumentAlias } from "@/lib/finance/instrumentAlias";
 import { notifyExpertFollowersOnNewOpinion } from "@/lib/notifyExpertFollowersOnNewOpinion";
@@ -901,6 +902,18 @@ export async function persistExpertOpinions(
     if (!resolvedInstrument && opinion.instrumentLabel && opinion.instrumentLabel.trim().length > 0) {
       resolvedInstrument = opinion.instrumentLabel.trim();
     }
+    // Permanent write-boundary guard (founder-reported prod bug, 2026-08-09):
+    // sanitize AI junk sentinels ("null", "NULL", "None", "N/A", "undefined",
+    // whitespace) to a real null HERE, before either the alias side-effect
+    // below or the ExpertOpinion.instrument/instrumentTicker write in phase 3
+    // can see them. extractInstrument.ts's own guard was fixed at its source
+    // (callGroqForInstrument), but this is the second, defense-in-depth layer
+    // directly at the write boundary — mirrors findOrCreateExpert's hard guard
+    // for blank Expert names, except junk here degrades to null rather than
+    // rejecting the opinion (instrument/instrumentTicker are legitimately
+    // nullable; the opinion itself is still valid without one).
+    resolvedInstrument = sanitizeExtractedValue(resolvedInstrument);
+    resolvedTicker = sanitizeExtractedValue(resolvedTicker);
     // Instrument-identity resolution (lookup-first, self-extending — see
     // lib/finance/instrumentAlias.ts). This is a SIDE EFFECT only: it
     // populates/consults InstrumentAlias so apps/web's links/dropdown/

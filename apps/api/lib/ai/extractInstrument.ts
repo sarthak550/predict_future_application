@@ -11,6 +11,8 @@
  * 3. Return null when no confident instrument can be identified.
  */
 
+import { sanitizeExtractedValue } from "@/lib/ai/sanitizeExtractedValue";
+
 export type InstrumentResult = {
   instrument: string;
   ticker: string;
@@ -118,6 +120,16 @@ const STOCK_MAP: Record<string, InstrumentResult> = {
   " sbi": { instrument: "SBI", ticker: "SBIN.NS" },
   // IT services
   "tcs": { instrument: "TCS", ticker: "TCS.NS" },
+  // Gemstone/jewellery certification — added 2026-08-09 after a founder-reported
+  // prod bug where an opinion explicitly naming this company fell through to
+  // the Groq AI fallback (see callGroqForInstrument / sanitizeExtractedValue's
+  // doc comment) and came back unresolved. Both the standard and the British
+  // ("Gemmological", double-M — the spelling the source article actually used)
+  // spellings are listed so a deterministic keyword-map hit covers this
+  // company regardless of which spelling a given article uses, without ever
+  // reaching the AI fallback path.
+  "gemological institute": { instrument: "International Gemological Institute", ticker: "IGIL.NS" },
+  "gemmological institute": { instrument: "International Gemological Institute", ticker: "IGIL.NS" },
 };
 
 /**
@@ -416,8 +428,16 @@ Return JSON or null.`;
 
     if (!candidate) return null;
 
-    const instrument = (candidate.instrument as string).trim();
-    const ticker = (candidate.ticker as string).trim();
+    // BUG FIXED 2026-08-09: this used to be a plain `.trim()` here, which only
+    // catches empty strings — it does NOT catch the AI literally emitting the
+    // sentinel string "null" for instrument/ticker (forced by response_format
+    // json_object; see sanitizeExtractedValue's doc comment for the full root
+    // cause). The `val === "null"` check a few lines above only fires when the
+    // response is a NESTED object being unwrapped; this direct `{instrument,
+    // ticker}` shape skipped it entirely. sanitizeExtractedValue is the single
+    // guard now applied uniformly regardless of which branch produced `candidate`.
+    const instrument = sanitizeExtractedValue(candidate.instrument as string);
+    const ticker = sanitizeExtractedValue(candidate.ticker as string);
 
     if (!instrument || !ticker) return null;
 
