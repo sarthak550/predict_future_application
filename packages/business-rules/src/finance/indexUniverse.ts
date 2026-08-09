@@ -269,6 +269,56 @@ export const INDEX_UNIVERSE: readonly IndexUniverseEntry[] = [
     symbol: "NIFTYINFRASTRUCTURE",
     yahooTicker: "^CNXINFRA",
   },
+
+  // --- Index Identity Audit (2026-08-10), founder ask: "did you look for all
+  // other indices as well and see if any other is mismatched or not there
+  // with us." Five more entries verified live against Yahoo's chart API
+  // (real intraday 1-minute series, 376 bars) AND cross-checked against NSE
+  // /api/allIndices `last` value to an exact match — same bar as every entry
+  // above. Real, non-trivial prod ExpertOpinion demand existed for each
+  // BEFORE this audit (opinions carrying either the correct ticker with no
+  // page to link to, or a dead/wrong ticker for the same real index) — see
+  // this ticket's audit table (.scratch/index-audit-verdicts.md) for the
+  // exact rows. THEMATIC/SECTORAL grouping below is NSE's own
+  // classification, not re-derived — kept loose since (per the module doc
+  // above) NIFTY INFRASTRUCTURE's own group was already found to be
+  // mis-assumed by an earlier brief; treat the section comments as
+  // organizational, not load-bearing.
+  {
+    name: "NIFTY ENERGY",
+    displayName: "Nifty Energy",
+    slug: "NIFTY-ENERGY",
+    symbol: "NIFTYENERGY",
+    yahooTicker: "^CNXENERGY",
+  },
+  {
+    name: "NIFTY INDIA CONSUMPTION",
+    displayName: "Nifty India Consumption",
+    slug: "NIFTY-INDIA-CONSUMPTION",
+    symbol: "NIFTYINDIACONSUMPTION",
+    yahooTicker: "^CNXCONSUM",
+  },
+  {
+    name: "NIFTY INDIA MANUFACTURING",
+    displayName: "Nifty India Manufacturing",
+    slug: "NIFTY-INDIA-MANUFACTURING",
+    symbol: "NIFTYINDIAMANUFACTURING",
+    yahooTicker: "NIFTY_INDIA_MFG.NS",
+  },
+  {
+    name: "NIFTY INDIA DEFENCE",
+    displayName: "Nifty India Defence",
+    slug: "NIFTY-INDIA-DEFENCE",
+    symbol: "NIFTYINDIADEFENCE",
+    yahooTicker: "NIFTY_IND_DEFENCE.NS",
+  },
+  {
+    name: "NIFTY SMALLCAP 250",
+    displayName: "Nifty Smallcap 250",
+    slug: "NIFTY-SMALLCAP-250",
+    symbol: "NIFTYSMALLCAP250",
+    yahooTicker: "NIFTYSMLCAP250.NS",
+  },
 ] as const;
 
 // Defensive at-import assertions — same convention as

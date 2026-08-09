@@ -34,6 +34,12 @@ const LIVE = process.argv.includes("--live");
 const TICKER_IDENTITIES: Record<string, { symbol: string; canonicalName: string }> = {
   "^NSEI": { symbol: "NIFTY", canonicalName: "NIFTY 50" },
   "^NSEBANK": { symbol: "BANKNIFTY", canonicalName: "NIFTY BANK" },
+  // Index Identity Audit (2026-08-10) — mirrors the same 3-entry addition to
+  // apps/api's lib/finance/instrumentAlias.ts KNOWN_INDEX_IDENTITIES (see
+  // that file's comment for the live verification evidence).
+  "NIFTY_FIN_SERVICE.NS": { symbol: "FINNIFTY", canonicalName: "NIFTY FINANCIAL SERVICES" },
+  "NIFTY_MID_SELECT.NS": { symbol: "MIDCPNIFTY", canonicalName: "NIFTY MIDCAP SELECT" },
+  "^NSMIDCP": { symbol: "NIFTYNXT50", canonicalName: "NIFTY NEXT 50" },
   ...Object.fromEntries(
     INDEX_UNIVERSE.map((e) => [e.yahooTicker, { symbol: e.symbol, canonicalName: e.displayName }]),
   ),

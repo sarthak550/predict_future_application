@@ -134,6 +134,22 @@ const INDEX_DISPLAY_NAME: Record<string, string> = {
 const INDEX_OPINION_TICKER: Record<string, string> = {
   NIFTY: "^NSEI",
   BANKNIFTY: "^NSEBANK",
+  // Index Identity Audit (2026-08-10) — FINNIFTY/MIDCPNIFTY/NIFTYNXT50 are
+  // 3 of the 5 tradable underlyings (isIndexOptionUnderlying) and already
+  // have their own page treatment (same as NIFTY/BANKNIFTY above), so they
+  // deliberately stay OUT of INDEX_UNIVERSE (see that registry's own doc
+  // comment on the decoupling rule) — but were missing from THIS map
+  // entirely, meaning their opinions carried a ticker with nowhere to
+  // resolve. Verified live against Yahoo's chart API (376 intraday 1m bars)
+  // and cross-checked against NSE /api/allIndices exact `last` value
+  // 2026-08-10: "NIFTY FINANCIAL SERVICES" = NIFTY_FIN_SERVICE.NS (26466.0
+  // both sides — NOT "^CNXFIN", which is the DIFFERENT "NIFTY FINANCIAL
+  // SERVICES 25/50" sub-index, 28901.8 both sides), "NIFTY MIDCAP SELECT" =
+  // NIFTY_MID_SELECT.NS (14875.0), "NIFTY NEXT 50" = "^NSMIDCP" (74697.55 —
+  // a misleadingly-named Yahoo ticker; verified by data match, not by name).
+  FINNIFTY: "NIFTY_FIN_SERVICE.NS",
+  MIDCPNIFTY: "NIFTY_MID_SELECT.NS",
+  NIFTYNXT50: "^NSMIDCP",
   // Index Universe Expansion (Sprint A, 2026-08-09) — extends opinion-ticker
   // resolution to every qualifying index, inheriting the caret-ticker
   // matcher bypass below for free (see fetchInstrumentDetail's own comment

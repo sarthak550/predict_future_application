@@ -42,6 +42,38 @@ const TICKER_REMAP: Record<string, string> = {
   "^NIFTYHLTH": "NIFTY_HEALTHCARE.NS",
   "^NSEPSUBK": "^CNXPSUBANK",
   "^NSEPSUBANK": "^CNXPSUBANK",
+  // Index Identity Audit (2026-08-10, founder ask: "did you look for all
+  // other indices as well") — dead/malformed tickers for indices we ALREADY
+  // serve correctly under a different, verified ticker. Each entry checked
+  // that the raw instrument TEXT in prod names this same index (never a
+  // "closest proxy" guess — see the founder-correction note above).
+  "^NIFTYIT": "^CNXIT",
+  "^NIFTYREAL": "^CNXREALTY",
+  "^NIFTY200": "^CNX200",
+  "^NSEMDCP100": "NIFTY_MIDCAP_100.NS",
+  "^NSE MIDCAP 100": "NIFTY_MIDCAP_100.NS",
+  "^NSE MIDCAP50": "^NSEMDCP50",
+  "^NSEMIDCAP": "^NSEMDCP50",
+  "NIFTY_FMCG.NS": "^CNXFMCG",
+  // "^CNXFIN" is NOT a dead ticker — it resolves live to the DIFFERENT
+  // "NIFTY FINANCIAL SERVICES 25/50" sub-index (verified 2026-08-10:
+  // ^CNXFIN's live price exactly matches NSE's own "NIFTY FINANCIAL
+  // SERVICES 25/50" `last`, not its plain "NIFTY FINANCIAL SERVICES").
+  // Every prod row carrying ^CNXFIN has instrument text reading "Nifty
+  // Financial Services" / "...Index" — never the 25/50 variant — so the
+  // AI's ticker guess (plausible-looking, wrong index) gets corrected to
+  // the index the text actually names. "^NSEFIN" is separately dead
+  // (confirmed 404 on Yahoo 2026-08-10) and was used for the same broad
+  // financial-services/NBFC theme — same correction target.
+  "^CNXFIN": "NIFTY_FIN_SERVICE.NS",
+  "^NSEFIN": "NIFTY_FIN_SERVICE.NS",
+  "NIFTYENERGY.NS": "^CNXENERGY",
+  "NIFTYDEFENCE.NS": "NIFTY_IND_DEFENCE.NS",
+  // Non-Indian, but a plain missing-caret typo for the same real Yahoo
+  // series ("TYX" alone resolves to an unrelated stub with no price data;
+  // "^TYX" is the real CBOE 30-Year Treasury Yield index) — safe same-
+  // identity fix regardless of India-market scope.
+  "TYX": "^TYX",
   // Renamed / re-listed equities
   "ZOMATO.NS": "ETERNAL.NS",
   "IDFCFIRSTBANK.NS": "IDFCFIRSTB.NS",
@@ -167,6 +199,11 @@ const INDEX_SECTOR_COMMODITY_MAP: Record<string, InstrumentResult> = {
   // would otherwise mis-tag every Midcap 100/150 mention as Midcap 50).
   "nifty midcap 150": { instrument: "Nifty Midcap 150", ticker: "NIFTYMIDCAP150.NS" },
   "nifty midcap 100": { instrument: "Nifty Midcap 100", ticker: "NIFTY_MIDCAP_100.NS" },
+  // Index Identity Audit (2026-08-10) — MIDCPNIFTY (tradable underlying,
+  // deliberately NOT in INDEX_UNIVERSE) also matches "midcap" below unless
+  // caught first; same swallowing risk as "nifty midcap 100/150" above.
+  "nifty midcap select": { instrument: "Nifty Midcap Select", ticker: "NIFTY_MID_SELECT.NS" },
+  "midcpnifty": { instrument: "Nifty Midcap Select", ticker: "NIFTY_MID_SELECT.NS" },
   "midcap": { instrument: "Nifty Midcap 50", ticker: "^NSEMDCP50" },
   // "Nifty <sector>" phrases MUST be matched before the bare "nifty" key below,
   // otherwise the bare-"nifty" substring mis-tags them all as Nifty 50 (^NSEI) and
@@ -203,6 +240,24 @@ const INDEX_SECTOR_COMMODITY_MAP: Record<string, InstrumentResult> = {
   "nifty microcap 250": { instrument: "Nifty Microcap 250", ticker: "NIFTY_MICROCAP250.NS" },
   "nifty total market": { instrument: "Nifty Total Market", ticker: "NIFTY_TOTAL_MKT.NS" },
   "nifty india fpi 150": { instrument: "Nifty India FPI 150", ticker: "NIFTY_FPI_150.NS" },
+  // Index Identity Audit (2026-08-10) — 5 newly-verified INDEX_UNIVERSE
+  // entries (business-rules) + 3 tradable-underlying wirings (FINNIFTY/
+  // NIFTYNXT50), same "specific before the bare nifty catchall" placement.
+  // "nifty smallcap 250" MUST precede a future bare "smallcap" key for the
+  // identical reason "nifty midcap 100/150" precedes bare "midcap" above.
+  "nifty smallcap 250": { instrument: "Nifty Smallcap 250", ticker: "NIFTYSMLCAP250.NS" },
+  "nifty india consumption": { instrument: "Nifty India Consumption", ticker: "^CNXCONSUM" },
+  "nifty consumption": { instrument: "Nifty India Consumption", ticker: "^CNXCONSUM" },
+  "nifty india manufacturing": { instrument: "Nifty India Manufacturing", ticker: "NIFTY_INDIA_MFG.NS" },
+  "nifty india defence": { instrument: "Nifty India Defence", ticker: "NIFTY_IND_DEFENCE.NS" },
+  "nifty defence": { instrument: "Nifty India Defence", ticker: "NIFTY_IND_DEFENCE.NS" },
+  // "nifty financial services" MUST precede bare "financial services" below
+  // (added to the generic-sector cluster) for the same reason every other
+  // "nifty <sector>" key precedes its bare counterpart in this file.
+  "nifty financial services": { instrument: "Nifty Financial Services", ticker: "NIFTY_FIN_SERVICE.NS" },
+  "finnifty": { instrument: "Nifty Financial Services", ticker: "NIFTY_FIN_SERVICE.NS" },
+  "nifty next 50": { instrument: "Nifty Next 50", ticker: "^NSMIDCP" },
+  "niftynxt50": { instrument: "Nifty Next 50", ticker: "^NSMIDCP" },
   "nifty 500": { instrument: "Nifty 500", ticker: "^CRSLDX" },
   "nifty 200": { instrument: "Nifty 200", ticker: "^CNX200" },
   "nifty 100": { instrument: "Nifty 100", ticker: "^CNX100" },
@@ -238,15 +293,27 @@ const INDEX_SECTOR_COMMODITY_MAP: Record<string, InstrumentResult> = {
   // sentinels sanitized) and the opinion stays correctly unlinked.
   "private banks": { instrument: "Nifty Private Bank", ticker: "NIFTY_PVT_BANK.NS" },
   "private bank": { instrument: "Nifty Private Bank", ticker: "NIFTY_PVT_BANK.NS" },
+  // Index Identity Audit (2026-08-10) — found live in prod: "Private Sector
+  // Banks" / "Public Sector Banks" (word "sector" INSIDE the phrase) do NOT
+  // match "private bank(s)"/"public sector bank" above — wordIncludes
+  // requires an unbroken substring, and "sector" breaks it. These are
+  // additive, not replacements; both phrasings now resolve.
+  "private sector banks": { instrument: "Nifty Private Bank", ticker: "NIFTY_PVT_BANK.NS" },
+  "private sector bank": { instrument: "Nifty Private Bank", ticker: "NIFTY_PVT_BANK.NS" },
   "psu banks": { instrument: "Nifty PSU Bank", ticker: "^CNXPSUBANK" },
   "psu bank": { instrument: "Nifty PSU Bank", ticker: "^CNXPSUBANK" },
   "public sector bank": { instrument: "Nifty PSU Bank", ticker: "^CNXPSUBANK" },
+  // Plural companion to "public sector bank" above — same word-boundary gap
+  // as "private sector bank(s)" ("banks" trailing 's' fails the singular
+  // key's boundary check).
+  "public sector banks": { instrument: "Nifty PSU Bank", ticker: "^CNXPSUBANK" },
   "fmcg": { instrument: "Nifty FMCG", ticker: "^CNXFMCG" },
   "metals": { instrument: "Nifty Metal", ticker: "^CNXMETAL" },
   "metal sector": { instrument: "Nifty Metal", ticker: "^CNXMETAL" },
   "auto sector": { instrument: "Nifty Auto", ticker: "^CNXAUTO" },
   "auto stocks": { instrument: "Nifty Auto", ticker: "^CNXAUTO" },
   "it sector": { instrument: "Nifty IT", ticker: "^CNXIT" },
+  "it services": { instrument: "Nifty IT", ticker: "^CNXIT" },
   "tech sector": { instrument: "Nifty IT", ticker: "^CNXIT" },
   "pharma sector": { instrument: "Nifty Pharma", ticker: "^CNXPHARMA" },
   "pharma stocks": { instrument: "Nifty Pharma", ticker: "^CNXPHARMA" },
@@ -254,6 +321,13 @@ const INDEX_SECTOR_COMMODITY_MAP: Record<string, InstrumentResult> = {
   "real estate": { instrument: "Nifty Realty", ticker: "^CNXREALTY" },
   "infrastructure": { instrument: "Nifty Infra", ticker: "^CNXINFRA" },
   "energy sector": { instrument: "Nifty Energy", ticker: "^CNXENERGY" },
+  // Index Identity Audit (2026-08-10) — new qualifying/wired indices, same
+  // "bare-sector fallback after the nifty-prefixed cluster above" pattern.
+  "manufacturing sector": { instrument: "Nifty India Manufacturing", ticker: "NIFTY_INDIA_MFG.NS" },
+  "defence sector": { instrument: "Nifty India Defence", ticker: "NIFTY_IND_DEFENCE.NS" },
+  "financial services": { instrument: "Nifty Financial Services", ticker: "NIFTY_FIN_SERVICE.NS" },
+  "nbfc": { instrument: "Nifty Financial Services", ticker: "NIFTY_FIN_SERVICE.NS" },
+  "nbfcs": { instrument: "Nifty Financial Services", ticker: "NIFTY_FIN_SERVICE.NS" },
   // Index Universe Expansion (Sprint A, 2026-08-09) — generic bare-sector
   // fallbacks for the new qualifying indices, same "no nifty prefix" style
   // as the cluster above. Placed AFTER the top "nifty <sector>" cluster (so

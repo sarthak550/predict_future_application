@@ -42,6 +42,15 @@ import { fetchEquityNames } from "@/lib/marketMoves/nse";
 const KNOWN_INDEX_IDENTITIES: Record<string, { symbol: string; canonicalName: string }> = {
   "^NSEI": { symbol: "NIFTY", canonicalName: "NIFTY 50" },
   "^NSEBANK": { symbol: "BANKNIFTY", canonicalName: "NIFTY BANK" },
+  // Index Identity Audit (2026-08-10) — mirrors apps/web's
+  // lib/finance/instrument.ts INDEX_OPINION_TICKER addition of the same 3
+  // tradable-underlying symbols (see that file's comment for the live
+  // Yahoo-vs-NSE verification evidence). Keys are the verified Yahoo
+  // tickers (this map is keyed by ticker, same as ^NSEI/^NSEBANK above —
+  // NOT by the F&O symbol code, which is a different string entirely).
+  "NIFTY_FIN_SERVICE.NS": { symbol: "FINNIFTY", canonicalName: "NIFTY FINANCIAL SERVICES" },
+  "NIFTY_MID_SELECT.NS": { symbol: "MIDCPNIFTY", canonicalName: "NIFTY MIDCAP SELECT" },
+  "^NSMIDCP": { symbol: "NIFTYNXT50", canonicalName: "NIFTY NEXT 50" },
   ...Object.fromEntries(
     INDEX_UNIVERSE.map((e) => [e.yahooTicker, { symbol: e.symbol, canonicalName: e.displayName }]),
   ),
