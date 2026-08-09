@@ -7,12 +7,16 @@
  * proxy routes (those exist for client-side fetches; going through them
  * here would add an unnecessary extra hop for a server component).
  *
- * Deliberately does NOT set `cache: "no-store"` on these fetches — the
- * /indices and /indices/[slug] pages are ISR (`export const revalidate`),
- * and Next.js automatically applies that segment-level revalidate window to
- * any `fetch()` call inside the render that doesn't specify its own cache
- * option. Setting no-store here would silently opt the whole route out of
- * static generation.
+ * Uses `cache: "no-store"` — the prior version of this comment argued for
+ * relying on the page's ISR revalidate window instead, but that's wrong for
+ * an internal-only loopback target: apps/web's Docker build statically
+ * prerenders ISR pages during `next build`, BEFORE the two containers are
+ * networked together, so `pf-api` doesn't resolve yet. Without no-store, the
+ * resulting build-time fetch failure gets baked permanently into the built
+ * image — no runtime restart or on-demand revalidation can undo it
+ * afterward. Found and fixed 2026-08-09 (see lib/finance/marketSummary.ts's
+ * doc comment for the full incident writeup — same bug, same root cause,
+ * this file's own comment is what that new code mistakenly copied from).
  */
 
 const DEFAULT_API_INTERNAL_URL = "http://127.0.0.1:3001";
@@ -53,7 +57,8 @@ export async function fetchAllIndices(): Promise<AllIndicesResult | null> {
   try {
     const res = await fetch(`${apiBaseUrl()}/api/finance/indices`, {
       signal: controller.signal,
-      headers: { Accept: "application/json" }
+      headers: { Accept: "application/json" },
+      cache: "no-store",
     });
     if (!res.ok) return null;
     const data = (await res.json().catch(() => null)) as AllIndicesResult | null;
@@ -78,7 +83,8 @@ export async function fetchIndexBySlug(slug: string): Promise<(IndexRow & { asOf
   try {
     const res = await fetch(`${apiBaseUrl()}/api/finance/indices/${encodeURIComponent(slug)}`, {
       signal: controller.signal,
-      headers: { Accept: "application/json" }
+      headers: { Accept: "application/json" },
+      cache: "no-store",
     });
     if (!res.ok) return null;
     const data = (await res.json().catch(() => null)) as (IndexRow & { asOf: string }) | null;

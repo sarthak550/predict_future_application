@@ -35,6 +35,12 @@ export async function fetchMacroSnapshot(): Promise<MacroSnapshotResult | null> 
     const res = await fetch(`${apiBaseUrl()}/api/finance/macro`, {
       signal: controller.signal,
       headers: { Accept: "application/json" },
+      // no-store: see lib/finance/marketSummary.ts's doc comment — a fetch
+      // to an internal-only hostname (pf-api) without this gets permanently
+      // baked as a failed/null result during the Docker build's static
+      // prerender pass (pf-api isn't network-reachable at build time), and
+      // no runtime restart or revalidation can undo it afterward.
+      cache: "no-store",
     });
     if (!res.ok) return null; // includes the 404 "no snapshot seeded yet" case
     const data = (await res.json().catch(() => null)) as MacroSnapshotResult | null;
