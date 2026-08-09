@@ -121,48 +121,47 @@ export default async function InstrumentDetailPage({
         </CardContent>
       </Card>
 
-      {/* 2026-08-09 sitewide layout-width pass: sentiment moves into a
-          sticky sidebar next to Analyst opinions (the wide table column) —
-          a real 2-column detail-page layout at this page's now-wider
-          max-w-6xl shell, rather than two stacked full-width blocks. */}
-      <div className="grid gap-6 lg:grid-cols-[1fr_320px] lg:items-start">
-        <section className="space-y-4">
-          <h2 className="text-xl font-semibold text-ink-900">Analyst opinions</h2>
-          {instrument.opinions.length === 0 ? (
-            <Card>
-              <CardContent className="p-6 text-sm text-ink-500">
-                No analyst calls on {instrument.companyName} in the last {instrument.sentiment.lookbackDays} days.
-              </CardContent>
-            </Card>
-          ) : (
-            <Card>
-              {/* Founder 2026-07-26: every call visible — the card scrolls instead of truncating at 10. */}
-              <CardContent className="max-h-[560px] overflow-y-auto">
-                <ExpandableCallsTable
-                  calls={instrument.opinions.map((o) => ({
-                    id: o.id,
-                    quote: o.quote,
-                    headline: o.headline,
-                    instrument: o.instrument,
-                    instrumentTicker: o.instrumentTicker,
-                    direction: o.direction,
-                    sourceUrl: o.sourceUrl,
-                    publishedAtLabel: formatIstSessionDate(o.publishedAt),
-                    resolutionStatus: o.resolutionStatus,
-                    resolutionNote: o.resolutionNote,
-                    resolvedAtLabel: o.resolvedAt ? formatIstSessionDate(o.resolvedAt) : null,
-                    analyst: { name: o.expert.name, slug: o.expert.slug, organization: o.expert.organization },
-                  }))}
-                />
-              </CardContent>
-            </Card>
-          )}
-        </section>
+      {/* Founder correction 2026-08-09: the 2026-08-09 layout-width pass had
+          moved sentiment into a sticky sidebar next to Analyst opinions
+          (side-by-side). Reverted per explicit feedback ("why Analyst
+          opinion and analyst sentiment are side by side on instrument,
+          previous one was good") — back to stacked full-width blocks,
+          sentiment first, opinions below. Do not re-introduce the sidebar
+          layout here without an explicit founder ask. */}
+      <InstrumentSentimentGauge sentiment={instrument.sentiment} />
 
-        <div className="lg:sticky lg:top-6">
-          <InstrumentSentimentGauge sentiment={instrument.sentiment} />
-        </div>
-      </div>
+      <section className="space-y-4">
+        <h2 className="text-xl font-semibold text-ink-900">Analyst opinions</h2>
+        {instrument.opinions.length === 0 ? (
+          <Card>
+            <CardContent className="p-6 text-sm text-ink-500">
+              No analyst calls on {instrument.companyName} in the last {instrument.sentiment.lookbackDays} days.
+            </CardContent>
+          </Card>
+        ) : (
+          <Card>
+            {/* Founder 2026-07-26: every call visible — the card scrolls instead of truncating at 10. */}
+            <CardContent className="max-h-[560px] overflow-y-auto">
+              <ExpandableCallsTable
+                calls={instrument.opinions.map((o) => ({
+                  id: o.id,
+                  quote: o.quote,
+                  headline: o.headline,
+                  instrument: o.instrument,
+                  instrumentTicker: o.instrumentTicker,
+                  direction: o.direction,
+                  sourceUrl: o.sourceUrl,
+                  publishedAtLabel: formatIstSessionDate(o.publishedAt),
+                  resolutionStatus: o.resolutionStatus,
+                  resolutionNote: o.resolutionNote,
+                  resolvedAtLabel: o.resolvedAt ? formatIstSessionDate(o.resolvedAt) : null,
+                  analyst: { name: o.expert.name, slug: o.expert.slug, organization: o.expert.organization },
+                }))}
+              />
+            </CardContent>
+          </Card>
+        )}
+      </section>
 
       {/* Instrument Page v2 — commodity context ("is this analyst's thesis
           backed by real earnings growth?"), deliberately placed AFTER

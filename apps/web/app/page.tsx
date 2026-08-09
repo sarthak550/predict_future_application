@@ -7,7 +7,6 @@ import { DirectionChip, VerdictBadge } from "@/components/finance/analyst-badges
 import { AnalystDisclaimerFooter } from "@/components/finance/disclaimer-footer";
 import { EconomySection } from "@/components/finance/economy-section";
 import { FirmLink } from "@/components/finance/firm-link";
-import { HomepageLiveChart } from "@/components/finance/homepage-live-chart";
 import { InstrumentSparkline } from "@/components/finance/instrument-sparkline";
 import { PublicHeader } from "@/components/finance/public-header";
 import { SentimentGauge } from "@/components/finance/sentiment-gauge";
@@ -512,19 +511,21 @@ function PaperTradingSection({ instruments }: { instruments: InstrumentDetail[] 
 }
 
 /**
- * Charting Workbench + Strategy Scripting (T5). Founder feedback
- * (2026-08-09): the section's old static screenshot capture
- * (`public/homepage/workbench-screenshot.png`) read as inert — "it needs
- * ... to be dynamic instead of just image." Replaced with
- * `HomepageLiveChart`, a genuinely live, real-data candlestick strip (see
- * that component's own doc for the full data-path/honesty rationale) —
- * lightweight (no klinecharts import here), so the workbench's own heavy
- * bundle still only loads inside `/paper-trading`.
+ * Charting Workbench + Strategy Scripting (T5). The static screenshot
+ * capture (`public/homepage/workbench-screenshot.png`) is deliberate, per
+ * founder correction 2026-08-09: an earlier pass swapped it for a live
+ * chart based on a misreading of "make the charts feel dynamic, not a
+ * static image" — that feedback was about the Indian Economy / Instrument
+ * Research sparklines' PRESENTATION, not this section, and the founder
+ * confirmed this screenshot itself was correct as originally shipped
+ * ("it was perfect, I just wanted to remove the trading-view name from
+ * there"). Do not swap this back to a live embed without an explicit
+ * founder ask — this is now a settled decision, not an open question.
  *
- * Also fixes a real brand/legal issue flagged the same day: the old
- * headline literally named a competitor ("A TradingView-grade workbench").
- * User-facing copy never names a competitor by brand, anywhere in this
- * product — this is now a standing law, not a one-off fix.
+ * The only real change from the original: the headline no longer names a
+ * competitor ("A TradingView-grade workbench" → "A professional-grade
+ * workbench") — user-facing copy never names a competitor by brand,
+ * anywhere in this product, a standing law as of the same day.
  */
 function WorkbenchSection() {
   return (
@@ -541,14 +542,25 @@ function WorkbenchSection() {
       </div>
 
       <Card className="overflow-hidden">
-        <HomepageLiveChart symbol="RELIANCE" height={240} />
-        <CardContent className="flex flex-wrap items-center justify-between gap-3 border-t border-ink-100 p-5">
+        {/* eslint-disable-next-line @next/next/no-img-element -- static local asset, not an optimizable next/image domain (matches components/ui/avatar.tsx's own convention). */}
+        <img
+          src="/homepage/workbench-screenshot.png"
+          alt="The Predict Future charting workbench showing a live NSE candlestick chart with indicators and drawing tools"
+          // The source capture is a wide 1600x960 landscape (the workbench's own
+          // native layout) — at full mobile width that shrinks small enough that
+          // the on-chart price/indicator text stops being legible. A fixed,
+          // breakpoint-scaled height + object-cover (anchored top-left, where the
+          // candles/moving-average lines/trendline live) crops in on the most
+          // visually compelling part instead of shrinking the whole frame.
+          className="h-56 w-full border-b border-ink-100 object-cover object-left-top sm:h-72 lg:h-[420px]"
+        />
+        <CardContent className="flex flex-wrap items-center justify-between gap-3 p-5">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-ink-900 text-white">
               <BarChart3 className="h-4 w-4" />
             </div>
             <p className="text-sm text-ink-500">
-              A live preview — open the full workbench for 88 drawing tools, 41 indicators, and strategy backtests.
+              The actual workbench — RELIANCE, live candles with indicators and drawing tools active.
             </p>
           </div>
           <Link
