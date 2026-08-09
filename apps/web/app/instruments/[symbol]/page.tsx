@@ -197,12 +197,14 @@ export default async function InstrumentDetailPage({
       />
 
       <PulseTabs
+        newsSymbol={instrument.symbol}
         news={instrument.news.map((item) => ({
           id: item.id,
           tickerSymbol: item.tickerSymbol,
           headline: item.headline,
           publisher: item.publisher,
           sourceUrl: item.sourceUrl,
+          publishedAt: item.publishedAt.toISOString(),
           timeLabel: formatRelativeTime(item.publishedAt),
           summary: item.summary,
         }))}

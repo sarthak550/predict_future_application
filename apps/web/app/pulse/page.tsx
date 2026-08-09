@@ -63,6 +63,7 @@ export default async function MarketPulsePage() {
           headline: item.headline,
           publisher: item.publisher,
           sourceUrl: item.sourceUrl,
+          publishedAt: item.publishedAt.toISOString(),
           timeLabel: formatRelativeTime(item.publishedAt),
           summary: item.summary,
         }))}

@@ -38,3 +38,7 @@ npm-debug.*
 *.pre-pull-backup
 *.backup
 expo_go_backup.ab
+
+# DB dump backups written by operational scripts (e.g. scripts/reset-markets.ts) —
+# may contain user data (usernames, reasoning text, wallet amounts); never commit.
+apps/api/backups/

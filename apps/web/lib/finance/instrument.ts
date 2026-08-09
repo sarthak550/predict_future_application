@@ -10,7 +10,11 @@ import { prisma } from "@/lib/prisma";
 // Enough sessions for a 1Y timeframe on the interactive chart (~250 trading
 // days) — the mobile API keeps its own smaller window.
 const SPARK_SESSIONS = 260;
-const NEWS_LIMIT = 10;
+// 2026-08-09: bumped from 10 (founder: don't hard-cap news reading) — the
+// instrument news tab now also supports "Load more" beyond this initial
+// batch (PulseTabs' newsSymbol prop -> /api/pulse/news?symbol=), so this is
+// purely the first-page size, not a hard ceiling.
+const NEWS_LIMIT = 20;
 /** Over-fetch factor before the refineStockNews quality pipeline (dedup/quality can only shrink the set). */
 const NEWS_FETCH_MULTIPLE = 6;
 const FILINGS_LIMIT = 10;
