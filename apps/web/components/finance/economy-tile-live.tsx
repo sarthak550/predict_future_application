@@ -14,13 +14,24 @@
  * This is presentation-only: the server-rendered `initial*` props are
  * ALWAYS the true value on first paint / no-JS; a live tick only ever
  * refines the number shown, never fabricates one.
+ *
+ * Price/change typography and sparkline sizing deliberately mirror
+ * `InstrumentResearchTileLive` exactly (text-xl price, plain colored
+ * change line with no icon/chip, 64px sparkline, matching card padding in
+ * `economy-section.tsx`) — founder feedback 2026-08-09: the two sections
+ * had visually drifted (this one used a smaller price, an icon+chip change
+ * badge via `IndexChangeBadge`, and a shorter 44px sparkline) even though
+ * both already rendered the same underlying `InstrumentSparkline`. The one
+ * real, disclosed difference kept here: `changePercent` can be `null` for
+ * a tile with no data (Instrument Research's stocks always have one), so
+ * this file alone needs the "—" fallback branch.
  */
 import { useEffect, useState } from "react";
 
 import { isNseWeekdayMarketHours } from "@predict-future/business-rules/papertrading/marketHours";
 
 import { InstrumentSparkline } from "@/components/finance/instrument-sparkline";
-import { IndexChangeBadge, formatIndexLevel } from "@/components/finance/index-change-badge";
+import { formatIndexLevel } from "@/components/finance/index-change-badge";
 import { LiveStatusBadge } from "@/components/finance/live-status-badge";
 import { foldTickIntoSparkline } from "@/components/finance/live-quote-fold";
 import { useLiveQuoteTick } from "@/components/paper-trading/use-live-quote-tick";
@@ -61,10 +72,8 @@ export function EconomyTileLive({
 
   const last = tick?.price ?? initialLast;
   const prevClose = initialChangeAbs != null ? initialLast - initialChangeAbs : null;
-  const changeAbs = tick != null && prevClose != null ? tick.price - prevClose : initialChangeAbs;
   const changePercent =
     tick != null && prevClose != null && prevClose !== 0 ? ((tick.price - prevClose) / prevClose) * 100 : initialChangePercent;
-  void changeAbs; // computed for clarity/symmetry with changePercent; IndexChangeBadge only needs the percent.
 
   const displaySpark = tick != null ? foldTickIntoSparkline(spark, tick.price) : spark;
   const asOfMs = tick?.asOf ?? initialAsOfMs;
@@ -72,13 +81,20 @@ export function EconomyTileLive({
   return (
     <>
       <div className="flex items-center justify-between gap-2">
-        <p className="text-lg font-semibold tabular-nums text-ink-900">
+        <p className="text-xl font-semibold tabular-nums text-ink-900">
           {isUsdInr ? formatUsdInr(last) : formatIndexLevel(last)}
         </p>
         <LiveStatusBadge marketOpen={marketOpen} isLive={isLive} asOfMs={asOfMs} />
       </div>
-      <IndexChangeBadge changePercent={changePercent} />
-      <InstrumentSparkline points={displaySpark} height={44} />
+      {changePercent != null ? (
+        <p className={`text-sm font-medium tabular-nums ${changePercent >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+          {changePercent >= 0 ? "+" : ""}
+          {changePercent.toFixed(2)}%
+        </p>
+      ) : (
+        <p className="text-sm text-ink-400">—</p>
+      )}
+      <InstrumentSparkline points={displaySpark} height={64} isLive={isLive} />
     </>
   );
 }

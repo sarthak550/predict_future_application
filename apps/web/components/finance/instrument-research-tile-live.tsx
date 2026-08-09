@@ -65,7 +65,7 @@ export function InstrumentResearchTileLive({
         {changePercent >= 0 ? "+" : ""}
         {changePercent.toFixed(2)}%
       </p>
-      <InstrumentSparkline points={displaySpark} height={64} />
+      <InstrumentSparkline points={displaySpark} height={64} isLive={isLive} />
     </div>
   );
 }

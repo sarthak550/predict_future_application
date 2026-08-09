@@ -63,8 +63,15 @@ function MarketSummaryTileCard({ tile, asOfMs }: { tile: MarketSummaryResult["ti
   const quoteUrl = quoteSymbol ? `/api/instruments/index/${encodeURIComponent(quoteSymbol)}/quote` : null;
 
   const body = (
-    <Card className={`h-full ${tile.indexSlug ? "transition hover:border-signal-sky/40" : ""}`}>
-      <CardContent className="space-y-2 p-4">
+    // hover accent + padding match InstrumentResearchSection's card exactly
+    // (founder feedback 2026-08-09: the two sections had drifted) — emerald,
+    // not the sky this used before, per this app's own "Markets=emerald"
+    // pillar-color convention (tailwind.config.ts's `signal.emerald` doc
+    // comment); only applied when the tile is actually a link (SENSEX/
+    // USD-INR have no detail page, so a hover affordance there would be a
+    // false promise, not a style unification).
+    <Card className={`h-full ${tile.indexSlug ? "transition hover:border-signal-emerald/40" : ""}`}>
+      <CardContent className="space-y-3 p-5">
         <div className="flex items-center justify-between gap-2">
           <p className="text-xs font-semibold uppercase tracking-[0.14em] text-ink-400">{tile.label}</p>
           {tile.indexSlug && <TrendingUp className="h-3 w-3 text-ink-300" aria-hidden />}
