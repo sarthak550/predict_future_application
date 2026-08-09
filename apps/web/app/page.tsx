@@ -4,10 +4,9 @@ import { ArrowUpRight, BarChart3, FileSearch, Gauge, ScrollText, Wallet } from "
 
 import { BigCallCard } from "@/components/finance/big-call-card";
 import { DirectionChip, VerdictBadge } from "@/components/finance/analyst-badges";
-import { AnalystDisclaimerFooter } from "@/components/finance/disclaimer-footer";
 import { EconomySection } from "@/components/finance/economy-section";
 import { FirmLink } from "@/components/finance/firm-link";
-import { InstrumentSparkline } from "@/components/finance/instrument-sparkline";
+import { InstrumentResearchTileLive } from "@/components/finance/instrument-research-tile-live";
 import { PublicHeader } from "@/components/finance/public-header";
 import { SentimentGauge } from "@/components/finance/sentiment-gauge";
 import { SiteFooter } from "@/components/finance/site-footer";
@@ -59,8 +58,11 @@ export const metadata: Metadata = {
   openGraph: { url: "https://predictfuture.app" },
 };
 
-const LATEST_GRADED_LIMIT = 5;
-const TOP_ANALYSTS_LIMIT = 5;
+// 6, not 5: a multiple of the lg:grid-cols-3 card grid below (see
+// LatestGradedCalls/TopAnalysts) so a full house of results fills evenly
+// (2 rows of 3) instead of leaving one gap cell in a half-empty last row.
+const LATEST_GRADED_LIMIT = 6;
+const TOP_ANALYSTS_LIMIT = 6;
 
 async function fetchLatestGradedCalls() {
   return prisma.expertOpinion.findMany({
@@ -107,6 +109,25 @@ async function fetchHomepageInstruments(): Promise<InstrumentDetail[]> {
   return details.filter((d): d is InstrumentDetail => d != null);
 }
 
+/**
+ * Card-grid column classes that stop short of `maxCols` when there aren't
+ * enough items to fill that many — a grid configured for more columns than
+ * it has items leaves a bare region on the right at wide viewports (proven
+ * live on this pass: TopAnalysts currently renders a single qualifying
+ * analyst, and a lone card in a 3-col grid left ~2/3 of the row empty next
+ * to it). Same "empty rectangle" failure mode the rest of this pass fixes,
+ * just triggered by data availability instead of a fixed layout, so it gets
+ * the same fix: never configure more columns than there is content.
+ * Literal, Tailwind-scannable class strings only (no dynamic `grid-cols-${n}`
+ * interpolation — that wouldn't survive the production build's CSS purge).
+ */
+function cardGridClass(count: number, maxCols: 3 | 4): string {
+  if (count <= 1) return "grid gap-4";
+  if (count === 2) return "grid gap-4 sm:grid-cols-2";
+  if (count === 3 || maxCols === 3) return "grid gap-4 sm:grid-cols-2 lg:grid-cols-3";
+  return "grid gap-4 sm:grid-cols-2 lg:grid-cols-4";
+}
+
 export default async function HomePage() {
   const [
     sentiment,
@@ -140,7 +161,14 @@ export default async function HomePage() {
     <div className="min-h-screen bg-[#f5f7fb]">
       <PublicHeader />
 
-      <main className="mx-auto max-w-6xl space-y-16 px-4 py-10 sm:px-6">
+      {/* Founder pushed back twice on residual side margins after 6xl→1440px —
+          1440px still leaves a visible ~240px empty band per side on a
+          1920px screen. Widened again; 1760px keeps a real (if generous)
+          cap rather than going edge-to-edge, since several sections still
+          rely on multi-column CSS grids (4-across tiles, etc.) that need a
+          bounded width to lay out sensibly — but the gap should now read as
+          intentional breathing room, not obviously wasted space. */}
+      <main className="mx-auto max-w-[1760px] space-y-16 px-4 py-10 sm:px-6">
         <Hero sentiment={sentiment} bigCall={bigCall} scaleStats={scaleStats} />
 
         <LatestGradedCalls calls={latestGraded} />
@@ -158,10 +186,15 @@ export default async function HomePage() {
         <TopAnalysts analysts={topAnalysts} />
 
         <HowItWorks />
-
-        <AnalystDisclaimerFooter />
       </main>
 
+      {/* Founder 2026-08-09: the homepage previously rendered the
+          disclaimer twice — AnalystDisclaimerFooter here, then SiteFooter's
+          own (near-identical) legal paragraph right after. Removed the
+          first; SiteFooter's copy is now the only one. Every OTHER page
+          (analysts/opinions/pulse/instruments/calls) still uses
+          AnalystDisclaimerFooter on its own — this removal is homepage-only,
+          do not remove the import/component itself. */}
       <SiteFooter />
     </div>
   );
@@ -176,8 +209,28 @@ function Hero({
   bigCall: Awaited<ReturnType<typeof getTodaysBigCall>>;
   scaleStats: Awaited<ReturnType<typeof fetchScaleStats>>;
 }) {
+  // BigCallCard renders nothing when there's no candidate opinion (see its
+  // own doc comment) — confirmed live on this pass: real data currently has
+  // no big call, so the 2-card grid below would otherwise leave a lone
+  // SentimentGauge sitting in the FIRST column track only, with the second
+  // track (and everything below it, down to the next section) empty. Same
+  // failure mode this whole pass exists to fix, just data-dependent instead
+  // of structural — so it's handled the same way: when there's only one
+  // card, it gets the full row width instead of half of it.
+  const hasBigCall = bigCall.opinion != null;
+
   return (
-    <section className="space-y-6 pt-4">
+    /* Founder correction 2026-08-09 (round 3 on "empty side space"): the
+       text block and the SentimentGauge/BigCallCard row used to stack full
+       width, top-to-bottom — on a wide viewport that left the entire area
+       right of the (deliberately max-w-2xl-capped) headline empty, all the
+       way down to where the row started. Above `xl` there's enough room for
+       both side by side (text column capped at the same 42rem/max-w-2xl as
+       before, row column filling the remainder); below `xl` it collapses
+       back to the original stacked order. `gap-6`/`xl:gap-10` replace the
+       old `space-y-6` — a margin-based stack breaks once the second child
+       sits beside the first instead of below it. */
+    <section className="grid gap-6 pt-4 xl:grid-cols-[minmax(0,42rem)_1fr] xl:items-start xl:gap-10">
       <div className="max-w-2xl space-y-4">
         <span className="inline-flex items-center gap-2 rounded-full border border-ink-200 bg-white px-3 py-1 text-xs font-medium text-ink-600">
           <Gauge className="h-3.5 w-3.5 text-signal-sky" />
@@ -210,9 +263,23 @@ function Hero({
         <ScaleStatStrip stats={scaleStats} />
       </div>
 
-      <div className="grid gap-5 lg:grid-cols-[1.1fr_0.9fr] lg:items-start">
+      {/* lg:grid-cols-[...] gives the row its side-by-side layout whenever
+          it has the FULL container width to work with (below `xl`, where
+          the section above is still a single stacked column). Once `xl`
+          turns this into the narrower right-hand column of the 2-col
+          section grid, xl:grid-cols-1 stacks the two cards again rather
+          than squeezing them — then 2xl:grid-cols-[...] re-splits them
+          side by side once that column itself is wide enough (~750px+) to
+          hold both without cramping BigCallCard's quote. */}
+      <div
+        className={
+          hasBigCall
+            ? "grid grid-cols-1 gap-5 lg:grid-cols-[1.1fr_0.9fr] lg:items-start xl:grid-cols-1 2xl:grid-cols-[1.1fr_0.9fr] 2xl:items-start"
+            : undefined
+        }
+      >
         <SentimentGauge split={sentiment} title="Market-wide sentiment" />
-        <BigCallCard result={bigCall} />
+        {hasBigCall && <BigCallCard result={bigCall} />}
       </div>
     </section>
   );
@@ -265,7 +332,13 @@ function LatestGradedCalls({ calls }: { calls: Awaited<ReturnType<typeof fetchLa
         </Link>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
+      {/* sm:2 then lg:3 (matching the breakpoint InstrumentResearchSection/
+          HowItWorks already use for their own column jumps) — a fixed
+          2-across left a full empty column at wide viewports since the
+          outer container no longer caps out at 2-card width. LATEST_GRADED_LIMIT
+          is 6 (a multiple of 3) so a full result set fills evenly; cardGridClass
+          keeps it from over-columning if fewer than 6 graded calls exist. */}
+      <div className={cardGridClass(calls.length, 3)}>
         {calls.map((call) => (
           <Card key={call.id} className="h-full">
             <CardContent className="space-y-3 p-5">
@@ -403,10 +476,13 @@ function InstrumentResearchSection({ instruments }: { instruments: InstrumentDet
         </Link>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {/* HOMEPAGE_INSTRUMENT_SYMBOLS is a fixed 4-symbol set, but
+          fetchHomepageInstruments filters out any that fail to resolve —
+          cardGridClass avoids the same over-columning risk as the two
+          grids above if that ever drops below 4. */}
+      <div className={cardGridClass(instruments.length, 4)}>
         {instruments.map((instrument) => {
           const quote = instrument.quote;
-          const isUp = (quote?.changePercent ?? 0) >= 0;
           return (
             <Link key={instrument.symbol} href={`/instruments/${instrument.symbol}`} className="block h-full">
               <Card className="h-full transition hover:border-signal-emerald/40">
@@ -418,17 +494,17 @@ function InstrumentResearchSection({ instruments }: { instruments: InstrumentDet
                     <p className="truncate text-sm font-semibold text-ink-900">{instrument.companyName}</p>
                   </div>
                   {quote ? (
-                    <div>
-                      <p className="text-xl font-semibold tabular-nums text-ink-900">{formatRupees(quote.close)}</p>
-                      <p className={`text-sm font-medium tabular-nums ${isUp ? "text-emerald-600" : "text-rose-600"}`}>
-                        {quote.changePercent >= 0 ? "+" : ""}
-                        {quote.changePercent.toFixed(2)}%
-                      </p>
-                    </div>
+                    <InstrumentResearchTileLive
+                      symbol={instrument.symbol}
+                      initialClose={quote.close}
+                      initialPrevClose={quote.prevClose}
+                      initialChangePercent={quote.changePercent}
+                      initialAsOfMs={quote.sessionDate.getTime()}
+                      spark={instrument.spark}
+                    />
                   ) : (
                     <p className="text-sm text-ink-400">Price data pending</p>
                   )}
-                  <InstrumentSparkline points={instrument.spark} height={64} />
                 </CardContent>
               </Card>
             </Link>
@@ -593,7 +669,12 @@ function TopAnalysts({ analysts }: { analysts: Awaited<ReturnType<typeof fetchIn
         </Link>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
+      {/* Same sm:2→lg:3 + cardGridClass reasoning as LatestGradedCalls above
+          (TOP_ANALYSTS_LIMIT is also 6, for the same even-fill reason). This
+          is the section that actually motivated cardGridClass: with today's
+          real data there's only 1 qualifying analyst, and a lone card in a
+          fixed 3-col grid was leaving a large empty region beside it. */}
+      <div className={cardGridClass(analysts.length, 3)}>
         {analysts.map((analyst) => (
           // Stretched-link pattern (see app/analysts/page.tsx for the full
           // rationale) — the firm name stays independently clickable rather

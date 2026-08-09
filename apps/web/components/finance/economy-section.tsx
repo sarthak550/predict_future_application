@@ -39,21 +39,28 @@
 import Link from "next/link";
 import { TrendingUp } from "lucide-react";
 
-import { InstrumentSparkline } from "@/components/finance/instrument-sparkline";
-import { IndexChangeBadge, formatIndexLevel } from "@/components/finance/index-change-badge";
+import { EconomyTileLive } from "@/components/finance/economy-tile-live";
 import { Card, CardContent } from "@/components/ui/card";
 import type { MarketSummaryResult } from "@/lib/finance/marketSummary";
 import type { MacroSnapshotResult } from "@/lib/finance/macro";
 import type { PlainNewsItem } from "@/lib/news/queries";
 import { formatRelativeTime } from "@/lib/utils";
 
-function formatUsdInr(value: number): string {
-  return `₹${value.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
+/**
+ * Tiles with a live per-symbol quote route today — see
+ * `/api/instruments/index/[symbol]/quote`'s own "5 registry index
+ * underlyings" gate. SENSEX (BSE, no NSE index feed) and USD/INR (no FX
+ * quote route in this product) have none; those two tiles still render an
+ * honest live/closed badge (EconomyTileLive/LiveStatusBadge) but never
+ * claim "Live" — see those components' own doc comments.
+ */
+const TILE_QUOTE_SYMBOL: Record<string, string> = { NIFTY50: "NIFTY", BANKNIFTY: "BANKNIFTY" };
 
-function MarketSummaryTileCard({ tile }: { tile: MarketSummaryResult["tiles"][number] }) {
+function MarketSummaryTileCard({ tile, asOfMs }: { tile: MarketSummaryResult["tiles"][number]; asOfMs: number }) {
   const hasData = tile.last != null;
   const isUsdInr = tile.key === "USDINR";
+  const quoteSymbol = TILE_QUOTE_SYMBOL[tile.key] ?? null;
+  const quoteUrl = quoteSymbol ? `/api/instruments/index/${encodeURIComponent(quoteSymbol)}/quote` : null;
 
   const body = (
     <Card className={`h-full ${tile.indexSlug ? "transition hover:border-signal-sky/40" : ""}`}>
@@ -63,13 +70,15 @@ function MarketSummaryTileCard({ tile }: { tile: MarketSummaryResult["tiles"][nu
           {tile.indexSlug && <TrendingUp className="h-3 w-3 text-ink-300" aria-hidden />}
         </div>
         {hasData ? (
-          <>
-            <p className="text-lg font-semibold tabular-nums text-ink-900">
-              {isUsdInr ? formatUsdInr(tile.last!) : formatIndexLevel(tile.last!)}
-            </p>
-            <IndexChangeBadge changePercent={tile.changePercent} />
-            <InstrumentSparkline points={tile.spark} height={44} />
-          </>
+          <EconomyTileLive
+            quoteUrl={quoteUrl}
+            isUsdInr={isUsdInr}
+            initialLast={tile.last!}
+            initialChangeAbs={tile.changeAbs}
+            initialChangePercent={tile.changePercent}
+            initialAsOfMs={asOfMs}
+            spark={tile.spark}
+          />
         ) : (
           <p className="py-4 text-xs text-ink-400">Live data unavailable right now.</p>
         )}
@@ -203,17 +212,28 @@ export function EconomySection({
       {hasTiles && (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {marketSummary!.tiles.map((tile) => (
-            <MarketSummaryTileCard key={tile.key} tile={tile} />
+            <MarketSummaryTileCard key={tile.key} tile={tile} asOfMs={new Date(marketSummary!.asOf).getTime()} />
           ))}
         </div>
       )}
 
-      {(hasMacro || hasNews) && (
+      {/* Was `{hasMacro ? <IndiaMacroCard .../> : <div />}` — that empty
+          placeholder existed only to hold the grid's first column open, but
+          it left a bare empty box beside MacroNewsStrip whenever macro data
+          isn't available (e.g. the RBI/IMF fetch failing independently of
+          the news query). Same empty-rectangle failure mode as the rest of
+          this pass: when only one side has data, it should take the full
+          row width, not half of it next to a blank cell. */}
+      {hasMacro && hasNews ? (
         <div className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr] lg:items-start">
-          {hasMacro ? <IndiaMacroCard macro={macro!} /> : <div />}
+          <IndiaMacroCard macro={macro!} />
           <MacroNewsStrip news={news} />
         </div>
-      )}
+      ) : hasMacro ? (
+        <IndiaMacroCard macro={macro!} />
+      ) : hasNews ? (
+        <MacroNewsStrip news={news} />
+      ) : null}
     </section>
   );
 }

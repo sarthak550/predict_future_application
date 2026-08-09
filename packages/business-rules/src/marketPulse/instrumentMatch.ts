@@ -18,7 +18,30 @@ export type AnalystCallRow = {
   publishedAt: Date;
 };
 
-/** Strips a trailing exchange suffix (".NS", ".BO", "^...", etc.), uppercased. */
+/**
+ * Strips a trailing exchange suffix (".NS", ".BO"), uppercased.
+ *
+ * EQUITY-ONLY, despite this file's original doc comment claiming "^..."
+ * handling too — it never did. A caret-prefixed Yahoo index ticker
+ * (`^NSEI`, `^NSEBANK`, `^BSESN`, ...) passes through with the caret intact
+ * and, even if stripped, Yahoo's internal index codes (NSEI, NSEBANK, BSESN)
+ * don't textually match NSE's own index names (NIFTY, BANKNIFTY, SENSEX) —
+ * unlike equities, where "RELIANCE.NS" cleanly strips to the real NSE
+ * symbol "RELIANCE". A real index↔ticker alias map (the kind
+ * `lib/finance/economy-section.tsx`/`indices.ts` already carry) would be
+ * needed to extend this to indices correctly; nothing here attempts that.
+ *
+ * Real bug found 2026-08-09: `apps/web/lib/finance/instrument.ts` used to
+ * run every opinion candidate through `nseSymbolMatchesInstrumentTicker` as
+ * a redundant validation recheck — including for NIFTY 50, whose opinions
+ * are correctly resolved elsewhere via an exact `INDEX_OPINION_TICKER`
+ * match — and this equity-only matcher silently rejected all 319 of them.
+ * Fixed at that call site (skip the recheck for index-resolved opinions,
+ * since the exact-ticker match that found them is already correct) rather
+ * than here, since this function's actual contract (equity-only) was never
+ * broken — its doc comment was just wrong. Do not call this for index
+ * tickers expecting it to work; it won't.
+ */
 function bareInstrumentSymbol(instrumentTicker: string): string {
   return instrumentTicker.replace(/\.[A-Za-z]+$/, "").toUpperCase();
 }

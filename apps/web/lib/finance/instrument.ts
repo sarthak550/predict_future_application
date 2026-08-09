@@ -202,10 +202,24 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     }),
   ]);
 
-  // Belt-and-suspenders re-check with the shared matcher, same as the API route.
-  const matchedOpinions = opinionCandidates.filter(
-    (o) => o.instrumentTicker != null && nseSymbolMatchesInstrumentTicker(symbol, o.instrumentTicker)
-  );
+  // Belt-and-suspenders re-check with the shared matcher, same as the API
+  // route — EXCEPT for a symbol resolved via INDEX_OPINION_TICKER above
+  // (NIFTY/BANKNIFTY), whose query already used an EXACT ticker equality,
+  // not a prefix match. Real bug found 2026-08-09 (founder: "I can't see
+  // opinions on NIFTY 50"): nseSymbolMatchesInstrumentTicker strips a
+  // trailing ".NS"/".BO"-style suffix to compare bare symbols
+  // (packages/business-rules/src/marketPulse/instrumentMatch.ts) — it has
+  // no notion of a caret-prefixed index ticker like "^NSEI", so it silently
+  // rejected every one of the 300+ real NIFTY 50 opinions that DID match
+  // the query above. The query's `equals: "^NSEI"` is already provably
+  // exact; re-verifying it through a matcher built for a different ticker
+  // shape is both redundant and wrong here.
+  const matchedOpinions = opinionCandidates.filter((o) => {
+    if (o.instrumentTicker == null) return false;
+    const indexTicker = INDEX_OPINION_TICKER[symbol];
+    if (indexTicker) return o.instrumentTicker === indexTicker;
+    return nseSymbolMatchesInstrumentTicker(symbol, o.instrumentTicker);
+  });
 
   const news = refineStockNews(newsRows, { limit: NEWS_LIMIT });
 
