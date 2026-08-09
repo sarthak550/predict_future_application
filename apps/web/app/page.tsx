@@ -210,13 +210,13 @@ function Hero({
   scaleStats: Awaited<ReturnType<typeof fetchScaleStats>>;
 }) {
   // BigCallCard renders nothing when there's no candidate opinion (see its
-  // own doc comment) — confirmed live on this pass: real data currently has
-  // no big call, so the 2-card grid below would otherwise leave a lone
-  // SentimentGauge sitting in the FIRST column track only, with the second
-  // track (and everything below it, down to the next section) empty. Same
-  // failure mode this whole pass exists to fix, just data-dependent instead
-  // of structural — so it's handled the same way: when there's only one
-  // card, it gets the full row width instead of half of it.
+  // own doc comment). Placement (founder, 2026-08-09 round 2 on the hero):
+  // Market-wide sentiment belongs in the LEFT column, directly below the
+  // analyst-tracked stat strip — beside Call of the Week, not stacked above
+  // it. When there's no big call, sentiment takes the right column instead:
+  // with it in the left column the xl 2-col split would leave the whole
+  // right track empty — the exact "empty side space" failure the round-3/4
+  // restructure exists to prevent, just data-triggered.
   const hasBigCall = bigCall.opinion != null;
 
   return (
@@ -261,26 +261,15 @@ function Hero({
         </div>
 
         <ScaleStatStrip stats={scaleStats} />
+
+        {hasBigCall && <SentimentGauge split={sentiment} title="Market-wide sentiment" />}
       </div>
 
-      {/* lg:grid-cols-[...] gives the row its side-by-side layout whenever
-          it has the FULL container width to work with (below `xl`, where
-          the section above is still a single stacked column). Once `xl`
-          turns this into the narrower right-hand column of the 2-col
-          section grid, xl:grid-cols-1 stacks the two cards again rather
-          than squeezing them — then 2xl:grid-cols-[...] re-splits them
-          side by side once that column itself is wide enough (~750px+) to
-          hold both without cramping BigCallCard's quote. */}
-      <div
-        className={
-          hasBigCall
-            ? "grid grid-cols-1 gap-5 lg:grid-cols-[1.1fr_0.9fr] lg:items-start xl:grid-cols-1 2xl:grid-cols-[1.1fr_0.9fr] 2xl:items-start"
-            : undefined
-        }
-      >
+      {hasBigCall ? (
+        <BigCallCard result={bigCall} />
+      ) : (
         <SentimentGauge split={sentiment} title="Market-wide sentiment" />
-        {hasBigCall && <BigCallCard result={bigCall} />}
-      </div>
+      )}
     </section>
   );
 }

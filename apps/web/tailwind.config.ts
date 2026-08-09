@@ -41,18 +41,19 @@ const config: Config = {
         // Homepage sparkline "draw the line in" reveal (founder ask
         // 2026-08-09: charts should have real visual motion, not just a
         // text badge; follow-up same day: "continuous", not one-time — so
-        // the cycle loops: draw 0-14% (~1.1s of the 8s cycle), hold the
-        // finished chart until 88%, fade out by 94%, and reset to undrawn
-        // while fully invisible so the loop restart never pops. Replays the
-        // SAME real data each cycle — motion without fabricating values.
+        // the cycle loops: draw 0-22% (~1.1s of the 5s cycle — founder
+        // follow-up: 8s read as too infrequent), hold the finished chart
+        // until 80%, fade out by 90%, and reset to undrawn while fully
+        // invisible so the loop restart never pops. Replays the SAME real
+        // data each cycle — motion without fabricating values.
         // Pure CSS, driven by the SVG `pathLength=1` normalization trick on
         // the polyline itself (instrument-sparkline.tsx) — no JS
         // measurement, no flash-of-drawn-then-redraw on hydration.
         "sparkline-draw": {
           "0%": { strokeDashoffset: "1", opacity: "1" },
-          "14%": { strokeDashoffset: "0", opacity: "1" },
-          "88%": { strokeDashoffset: "0", opacity: "1" },
-          "94%": { strokeDashoffset: "0", opacity: "0" },
+          "22%": { strokeDashoffset: "0", opacity: "1" },
+          "80%": { strokeDashoffset: "0", opacity: "1" },
+          "90%": { strokeDashoffset: "0", opacity: "0" },
           "100%": { strokeDashoffset: "1", opacity: "0" }
         },
         // Left-to-right clip-path wipe for the area fill beneath the line —
@@ -69,15 +70,15 @@ const config: Config = {
         // lockstep.
         "sparkline-wipe": {
           "0%": { clipPath: "inset(0 100% 0 0)", opacity: "1" },
-          "14%": { clipPath: "inset(0 0% 0 0)", opacity: "1" },
-          "88%": { clipPath: "inset(0 0% 0 0)", opacity: "1" },
-          "94%": { clipPath: "inset(0 0% 0 0)", opacity: "0" },
+          "22%": { clipPath: "inset(0 0% 0 0)", opacity: "1" },
+          "80%": { clipPath: "inset(0 0% 0 0)", opacity: "1" },
+          "90%": { clipPath: "inset(0 0% 0 0)", opacity: "0" },
           "100%": { clipPath: "inset(0 100% 0 0)", opacity: "0" }
         }
       },
       animation: {
-        "sparkline-draw": "sparkline-draw 8s ease-out infinite",
-        "sparkline-wipe": "sparkline-wipe 8s ease-out infinite"
+        "sparkline-draw": "sparkline-draw 5s ease-out infinite",
+        "sparkline-wipe": "sparkline-wipe 5s ease-out infinite"
       },
       backgroundImage: {
         grid:
