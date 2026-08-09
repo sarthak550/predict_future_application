@@ -106,7 +106,9 @@ export function InstrumentSparkline({
       role="img"
       aria-label={`${points.length}-session closing price trend`}
     >
-      <path d={areaPath} fill={stroke} fillOpacity={0.08} stroke="none" className="animate-sparkline-wipe" />
+      {/* motion-reduce: the loop is decorative — a static complete chart is
+          the correct reduced-motion rendering, not a frozen mid-draw frame. */}
+      <path d={areaPath} fill={stroke} fillOpacity={0.08} stroke="none" className="animate-sparkline-wipe motion-reduce:animate-none" />
       <polyline
         pathLength={1}
         points={pointsAttr}
@@ -116,7 +118,7 @@ export function InstrumentSparkline({
         strokeLinejoin="round"
         strokeLinecap="round"
         strokeDasharray={1}
-        className="animate-sparkline-draw"
+        className="animate-sparkline-draw motion-reduce:animate-none"
       />
       {isLive && (
         <circle cx={last.x} cy={last.y} r={haloRadius} fill={stroke} fillOpacity={0.35} className="animate-ping" style={haloTransformStyle} />
