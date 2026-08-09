@@ -39,8 +39,6 @@
  * whole point of this module.
  */
 
-import { YAHOO_INDEX_SPOT_TICKER, type IndexOptionUnderlying } from "@predict-future/business-rules/papertrading/optionContract";
-
 const YAHOO_CHART_BASE = "https://query1.finance.yahoo.com/v8/finance/chart";
 const YAHOO_TIMEOUT_MS = 8000;
 
@@ -144,16 +142,16 @@ export async function fetchLiveEquityQuote(symbol: string): Promise<LiveQuote | 
 }
 
 /**
- * Fast last-price tick for an index underlying, via the same
- * `YAHOO_INDEX_SPOT_TICKER` map lib/marketMoves/indexIntraday.ts and
- * lib/paperTrading/optionsExpiry.ts already use (not duplicated). Covers all
- * 5 registry underlyings (NIFTY/BANKNIFTY/FINNIFTY/MIDCPNIFTY/NIFTYNXT50) —
- * the same scope indexIntraday.ts's own route already accepts today (its
- * type guard checks full `IndexOptionUnderlying` membership, not just the
- * two named in that file's doc comment).
+ * Fast last-price tick for an index underlying. `underlying` is a cache key
+ * only, `yahooTicker` is the resolved upstream symbol — same
+ * caller-resolves-the-ticker split Index Universe Expansion (Sprint A,
+ * 2026-08-09) applied to indexIntraday.ts's `fetchIndexIntradaySeries`, so
+ * this covers both the 5 tradable underlyings (route resolves via
+ * `YAHOO_INDEX_SPOT_TICKER`) and the new view-only `INDEX_UNIVERSE` indices
+ * (route resolves via that registry) without this module knowing which is
+ * which.
  */
-export async function fetchLiveIndexQuote(underlying: IndexOptionUnderlying): Promise<LiveQuote | null> {
-  const ticker = YAHOO_INDEX_SPOT_TICKER[underlying];
-  if (!ticker) return null;
-  return fetchCached(`IDX:${underlying}`, ticker);
+export async function fetchLiveIndexQuote(underlying: string, yahooTicker: string): Promise<LiveQuote | null> {
+  if (!yahooTicker) return null;
+  return fetchCached(`IDX:${underlying}`, yahooTicker);
 }

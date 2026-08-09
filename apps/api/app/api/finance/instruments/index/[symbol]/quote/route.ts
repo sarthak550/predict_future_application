@@ -1,12 +1,15 @@
 import { NextResponse } from "next/server";
 
 import { fetchLiveIndexQuote } from "@/lib/marketMoves/liveQuote";
-import { isIndexOptionUnderlying, type IndexOptionUnderlying } from "@predict-future/business-rules/papertrading/optionContract";
+import { isIndexOptionUnderlying, type IndexOptionUnderlying, YAHOO_INDEX_SPOT_TICKER } from "@predict-future/business-rules/papertrading/optionContract";
+import { getIndexUniverseEntry } from "@predict-future/business-rules/finance/indexUniverse";
 
 export const dynamic = "force-dynamic";
 
-function isIndexUnderlying(value: string): value is IndexOptionUnderlying {
-  return isIndexOptionUnderlying(value);
+/** Same two-registry resolution as the sibling intraday route — see that file's own doc. */
+function resolveIndexYahooTicker(symbol: string): string | null {
+  if (isIndexOptionUnderlying(symbol)) return YAHOO_INDEX_SPOT_TICKER[symbol as IndexOptionUnderlying];
+  return getIndexUniverseEntry(symbol)?.yahooTicker ?? null;
 }
 
 /**
@@ -14,12 +17,12 @@ function isIndexUnderlying(value: string): value is IndexOptionUnderlying {
  *
  * Quote-driven intrabar ticks — index-only sibling of
  * `/api/finance/instruments/[symbol]/quote` (equity, always appends
- * ".NS"), matching `/index/[symbol]/intraday`'s own scope: `symbol` must be
- * one of the 5 registry index underlyings (NIFTY/BANKNIFTY/FINNIFTY/
- * MIDCPNIFTY/NIFTYNXT50), same `isIndexOptionUnderlying` guard that route
- * already uses. Response shape is byte-identical to the equity quote
- * route's success body so apps/web callers can point at either with zero
- * branching, same convention as the intraday routes.
+ * ".NS"). Originally scoped to the 5 tradable underlyings only; widened
+ * 2026-08-09 (Index Universe Expansion, Sprint A) to also accept any
+ * `INDEX_UNIVERSE` view-only index, same two-registry resolution as the
+ * sibling `/intraday` route. Response shape is byte-identical to the equity
+ * quote route's success body so apps/web callers can point at either with
+ * zero branching, same convention as the intraday routes.
  *
  * Public endpoint — no auth required. `Cache-Control: no-store` (see the
  * equity quote route's own doc for why, unlike the 60s-cacheable sibling
@@ -31,14 +34,12 @@ export async function GET(_request: Request, { params }: { params: { symbol: str
     return NextResponse.json({ error: "Symbol is required." }, { status: 400 });
   }
   const symbol = rawSymbol.trim().toUpperCase();
-  if (!isIndexUnderlying(symbol)) {
-    return NextResponse.json(
-      { error: "underlying must be one of NIFTY, BANKNIFTY, FINNIFTY, MIDCPNIFTY, NIFTYNXT50." },
-      { status: 400 }
-    );
+  const yahooTicker = resolveIndexYahooTicker(symbol);
+  if (!yahooTicker) {
+    return NextResponse.json({ error: "Unsupported index symbol." }, { status: 400 });
   }
 
-  const quote = await fetchLiveIndexQuote(symbol);
+  const quote = await fetchLiveIndexQuote(symbol, yahooTicker);
   if (!quote) {
     return NextResponse.json({ error: "No live quote available for this index." }, { status: 404 });
   }

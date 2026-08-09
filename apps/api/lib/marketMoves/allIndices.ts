@@ -28,7 +28,17 @@
  * endpoint, no trap here — safe to use directly as changeAbs.
  */
 
+import { slugifyIndexName } from "@predict-future/business-rules/finance/indexSlug";
+
 import { nseApiGet, primeNseSession } from "./nse";
+
+// Re-exported for back-compat — every doc comment in this file (and
+// elsewhere) that says "see slugifyIndexName's doc" still resolves; the
+// canonical definition moved to business-rules 2026-08-09 (Index Universe
+// Expansion, Sprint A) so the new INDEX_UNIVERSE registry can reuse the
+// EXACT same function apps/api's own `/indices/[slug]` directory always
+// used, rather than a second copy silently drifting from this one.
+export { slugifyIndexName };
 
 const ALL_INDICES_PATH = "/api/allIndices";
 const ALL_INDICES_REFERER = "/market-data/live-market-indices";
@@ -80,29 +90,6 @@ export type NormalizedIndexRow = {
   declines: number | null;
   unchanged: number | null;
 };
-
-/**
- * Derives a URL-safe, uppercase slug from NSE's index display name: any run
- * of non-alphanumeric characters (spaces, "&", "/", ":", "-", parentheses,
- * ...) collapses to a single hyphen, with leading/trailing hyphens trimmed.
- * E.g. "NIFTY AUTO" -> "NIFTY-AUTO", "NIFTY OIL & GAS" -> "NIFTY-OIL-GAS",
- * "NIFTY FINANCIAL SERVICES 25/50" -> "NIFTY-FINANCIAL-SERVICES-25-50".
- *
- * Not claimed to be mathematically invertible (multiple distinct names could
- * in principle collapse to the same slug — e.g. a "/" vs a " " both become
- * "-"), but empirically verified unique across all 139 live rows on
- * 2026-07-25. Detail-page lookups always resolve a slug against the live
- * name->slug map built by getAllIndices() below, never by parsing the slug
- * back into a name, so a hypothetical future collision would show as a 404
- * for the second name, not a mismatch.
- */
-export function slugifyIndexName(name: string): string {
-  return name
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
 
 /** Parses an NSE numeric-as-string field ("30.92", "0", "", null) into a real number, treating non-positive values as "not applicable" rather than a genuine zero reading (NSE zeroes out pe/pb/dy/yearHigh/yearLow for non-equity index groups like Fixed Income instead of omitting them). */
 function parsePositiveNumericString(raw: string | null | undefined): number | null {

@@ -10,6 +10,7 @@ import { PulseTabs } from "@/components/finance/pulse-tabs";
 import { QuoteHeader } from "@/components/finance/quote-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { isIndexOptionUnderlying } from "@predict-future/business-rules/papertrading/optionContract";
+import { isIndexUniverseSymbol } from "@predict-future/business-rules/finance/indexUniverse";
 
 import { fetchInstrumentDetail } from "@/lib/finance/instrument";
 import { resolveCanonicalNameForSymbol } from "@/lib/finance/instrumentLink";
@@ -71,7 +72,17 @@ export default async function InstrumentDetailPage({
   // Index pages have no bhavcopy series — the chart runs on the live 1D index
   // pipe instead, and the header's live overlay must hit the index endpoint
   // (the default equity path would request a nonexistent "NIFTY.NS").
-  const isIndex = isIndexOptionUnderlying(instrument.symbol);
+  //
+  // Index Universe Expansion (Sprint A, 2026-08-09) — `isIndex` now covers
+  // both the 5 tradable underlyings AND the new view-only INDEX_UNIVERSE
+  // indices (isIndexOptionUnderlying itself stays untouched, still gating
+  // only the options/futures order path). `isViewOnlyIndex` is the NEW,
+  // narrower flag: true only for an index that is NOT one of the 5
+  // tradable underlyings — drives the "Index — view only" indicator below,
+  // so the 5 existing tradable index pages render byte-for-byte unchanged.
+  const isTradableIndex = isIndexOptionUnderlying(instrument.symbol);
+  const isViewOnlyIndex = !isTradableIndex && isIndexUniverseSymbol(instrument.symbol);
+  const isIndex = isTradableIndex || isViewOnlyIndex;
   const indexIntradayUrl = `/api/instruments/index/${encodeURIComponent(instrument.symbol)}/intraday`;
 
   // Sentiment date-range link-out (2026-08-09 feature) — scoped to this
@@ -100,6 +111,7 @@ export default async function InstrumentDetailPage({
         symbol={instrument.symbol}
         companyName={instrument.companyName}
         intradayEndpoint={isIndex ? indexIntradayUrl : undefined}
+        viewOnlyIndex={isViewOnlyIndex}
         quote={
           instrument.quote
             ? {

@@ -22,19 +22,29 @@
 import type { InstrumentAlias, InstrumentResolutionSource, PrismaClient } from "@prisma/client";
 
 import { normalizeInstrumentRawName } from "@predict-future/business-rules/instruments/instrumentDedup";
+import { INDEX_UNIVERSE } from "@predict-future/business-rules/finance/indexUniverse";
 import { sanitizeExtractedValue } from "@/lib/ai/sanitizeExtractedValue";
 import { fetchEquityNames } from "@/lib/marketMoves/nse";
 
 /**
  * Small, stable, hand-verified index-identity map — the only non-equity
- * instruments this resolver ever resolves. Mirrors the same 2-entry set
- * apps/web's now-retired instrumentLink.ts hardcoded (FINNIFTY/MIDCPNIFTY/
- * NIFTYNXT50 opinions haven't been observed in the wild yet — expand here if
- * that changes).
+ * instruments this resolver ever resolves. Originally a 2-entry set mirroring
+ * apps/web's now-retired instrumentLink.ts (FINNIFTY/MIDCPNIFTY/NIFTYNXT50
+ * opinions haven't been observed in the wild yet — expand here if that
+ * changes). Extended 2026-08-09 (Index Universe Expansion, Sprint A) with
+ * every INDEX_UNIVERSE entry (business-rules) — generated from that registry
+ * rather than hand-duplicated, per the assigning brief's own warning against
+ * two disagreeing index-identity registries. `INDEX_UNIVERSE` was found
+ * ALREADY LIVE in this DB (163 InstrumentAlias rows present) when this
+ * ticket was picked up, not still dormant as the brief assumed — see this
+ * ticket's report.
  */
 const KNOWN_INDEX_IDENTITIES: Record<string, { symbol: string; canonicalName: string }> = {
   "^NSEI": { symbol: "NIFTY", canonicalName: "NIFTY 50" },
   "^NSEBANK": { symbol: "BANKNIFTY", canonicalName: "NIFTY BANK" },
+  ...Object.fromEntries(
+    INDEX_UNIVERSE.map((e) => [e.yahooTicker, { symbol: e.symbol, canonicalName: e.displayName }]),
+  ),
 };
 
 /** Yahoo-style NSE equity ticker only ("RELIANCE.NS" -> "RELIANCE"). */

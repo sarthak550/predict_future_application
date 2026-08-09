@@ -1,10 +1,18 @@
 /**
  * Trading Terminal UI Overhaul (Sprint A, T2) — index intraday (1-minute tick)
- * chart fetcher for NIFTY / BANKNIFTY, promoting
+ * chart fetcher, originally NIFTY/BANKNIFTY-only, promoting
  * lib/paperTrading/optionsExpiry.ts's single-number `fetchIndexSpotFallback`
  * into a real series fetch. Same Yahoo chart endpoint, same
- * `YAHOO_INDEX_TICKER` map (imported from optionsExpiry.ts, not duplicated),
- * same `^NSEI` / `^NSEBANK` tickers already proven live in that file.
+ * `^NSEI` / `^NSEBANK` tickers already proven live in that file.
+ *
+ * Index Universe Expansion (Sprint A, 2026-08-09) — widened from a
+ * `YAHOO_INDEX_TICKER`-keyed lookup (5-symbol `IndexOptionUnderlying` union
+ * only) to a plain `(underlying, yahooTicker)` pair: the caller resolves the
+ * ticker (from `YAHOO_INDEX_TICKER` for the 5 tradable underlyings, or from
+ * `INDEX_UNIVERSE` for the new view-only indices) and this module just
+ * fetches it — decoupling the FETCH from the narrow tradable-underlying
+ * TYPE, which `isIndexOptionUnderlying` deliberately keeps scoped to "can
+ * this be traded." `underlying` is now only a cache key, not a type guard.
  *
  * Returns the EXACT SAME shape as the equity `IntradaySeries`
  * (lib/marketMoves/intraday.ts) so the apps/api route, the apps/web proxy, and
@@ -18,14 +26,9 @@
  * Null when Yahoo omits it, never a fabricated number.
  */
 
-import { YAHOO_INDEX_TICKER } from "../paperTrading/optionsExpiry";
-
 const YAHOO_CHART_BASE = "https://query1.finance.yahoo.com/v8/finance/chart";
 const YAHOO_TIMEOUT_MS = 8000;
 const CACHE_TTL_MS = 60 * 1000; // same in-module TTL convention as the equity fetcher's cache
-
-import { type IndexOptionUnderlying } from "@predict-future/business-rules/papertrading/optionContract";
-export type IndexUnderlying = IndexOptionUnderlying;
 
 export type IndexIntradayPoint = { t: number; price: number };
 
@@ -73,27 +76,31 @@ function zipYahooTicks(timestamps: unknown, closes: unknown): IndexIntradayPoint
 }
 
 type CacheEntry = { at: number; data: IndexIntradaySeries | null };
-const cache = new Map<IndexUnderlying, CacheEntry>();
+const cache = new Map<string, CacheEntry>();
 
 /**
- * Fetches today's (or, after close, the last session's) 1-minute intraday tick
- * series for NIFTY or BANKNIFTY. Never throws — returns null on any
- * fetch/parse failure or an empty series, matching the equity fetcher's
- * clean-failure contract exactly (verified against
- * lib/marketMoves/intraday.ts's fetchIntradaySeries return shape). Cached
- * in-module per underlying for CACHE_TTL_MS (60s).
+ * Fetches today's (or, after close, the last session's) 1-minute intraday
+ * tick series for any index — `underlying` is a cache key only (e.g.
+ * "NIFTY" or "NIFTYIT"), `yahooTicker` is the actual upstream symbol to
+ * fetch (e.g. "^NSEI" or "^CNXIT"), resolved by the caller (route.ts) from
+ * either `YAHOO_INDEX_TICKER` (the 5 tradable underlyings) or
+ * `INDEX_UNIVERSE` (the view-only registry — Index Universe Expansion,
+ * Sprint A, 2026-08-09). Never throws — returns null on any fetch/parse
+ * failure or an empty series, matching the equity fetcher's clean-failure
+ * contract exactly (verified against lib/marketMoves/intraday.ts's
+ * fetchIntradaySeries return shape). Cached in-module per underlying for
+ * CACHE_TTL_MS (60s).
  */
-export async function fetchIndexIntradaySeries(underlying: IndexUnderlying): Promise<IndexIntradaySeries | null> {
+export async function fetchIndexIntradaySeries(underlying: string, yahooTicker: string): Promise<IndexIntradaySeries | null> {
   const cached = cache.get(underlying);
   if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.data;
 
-  const result = await fetchIndexIntradaySeriesUncached(underlying);
+  const result = await fetchIndexIntradaySeriesUncached(yahooTicker);
   cache.set(underlying, { at: Date.now(), data: result });
   return result;
 }
 
-async function fetchIndexIntradaySeriesUncached(underlying: IndexUnderlying): Promise<IndexIntradaySeries | null> {
-  const ticker = YAHOO_INDEX_TICKER[underlying];
+async function fetchIndexIntradaySeriesUncached(ticker: string): Promise<IndexIntradaySeries | null> {
   if (!ticker) return null;
 
   const controller = new AbortController();
@@ -126,7 +133,7 @@ async function fetchIndexIntradaySeriesUncached(underlying: IndexUnderlying): Pr
 
     return { points, prevClose, sessionLabel, volume };
   } catch (err) {
-    console.warn(`[marketMoves/indexIntraday] fetch failed for ${underlying}: ${err instanceof Error ? err.message : err}`);
+    console.warn(`[marketMoves/indexIntraday] fetch failed for ${ticker}: ${err instanceof Error ? err.message : err}`);
     return null;
   } finally {
     clearTimeout(timeout);

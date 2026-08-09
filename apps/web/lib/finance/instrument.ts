@@ -2,6 +2,11 @@ import { nseSymbolMatchesInstrumentTicker, refineStockNews } from "@predict-futu
 import { computeReturnsStrip, type ReturnsStrip } from "@predict-future/business-rules/marketPulse/returns";
 import { isIndexOptionUnderlying } from "@predict-future/business-rules/papertrading/optionContract";
 import { canonicalizeOrgDisplay } from "@predict-future/business-rules/experts/firmAliases";
+import {
+  isIndexUniverseSymbol,
+  INDEX_UNIVERSE_OPINION_TICKER,
+  INDEX_UNIVERSE_DISPLAY_NAME,
+} from "@predict-future/business-rules/finance/indexUniverse";
 import type { OpinionDirection, OpinionResolutionStatus } from "@prisma/client";
 
 import { EMPTY_INSTRUMENT_ENRICHMENT, getOrFetchInstrumentEnrichment, type InstrumentEnrichmentData } from "@/lib/finance/enrichment";
@@ -121,16 +126,34 @@ const INDEX_DISPLAY_NAME: Record<string, string> = {
   FINNIFTY: "Nifty Financial Services",
   MIDCPNIFTY: "Nifty Midcap Select",
   NIFTYNXT50: "Nifty Next 50",
+  // Index Universe Expansion (Sprint A, 2026-08-09) — the 25 view-only
+  // indices' display names, sourced from INDEX_UNIVERSE (business-rules)
+  // rather than hand-duplicated here, so the two never drift.
+  ...INDEX_UNIVERSE_DISPLAY_NAME,
 };
 const INDEX_OPINION_TICKER: Record<string, string> = {
   NIFTY: "^NSEI",
   BANKNIFTY: "^NSEBANK",
+  // Index Universe Expansion (Sprint A, 2026-08-09) — extends opinion-ticker
+  // resolution to every qualifying index, inheriting the caret-ticker
+  // matcher bypass below for free (see fetchInstrumentDetail's own comment
+  // on why INDEX_OPINION_TICKER-resolved symbols skip
+  // nseSymbolMatchesInstrumentTicker entirely).
+  ...INDEX_UNIVERSE_OPINION_TICKER,
 };
 
 export async function fetchInstrumentDetail(rawSymbol: string): Promise<InstrumentDetail | null> {
   const symbol = rawSymbol.trim().toUpperCase();
   if (!symbol) return null;
-  const isIndex = isIndexOptionUnderlying(symbol);
+  // Index Universe Expansion (Sprint A, 2026-08-09) — broadened from
+  // isIndexOptionUnderlying alone (the 5 tradable underlyings) to also
+  // recognize any INDEX_UNIVERSE view-only index. isIndexOptionUnderlying
+  // itself is UNTOUCHED — it still gates only the options/futures order
+  // path elsewhere; this broader `isIndex` only controls this page's own
+  // "does this symbol get index treatment" branches (skip StockEodQuote-only
+  // enrichment, always resolve even with zero content yet, use the index
+  // intraday chart endpoint).
+  const isIndex = isIndexOptionUnderlying(symbol) || isIndexUniverseSymbol(symbol);
 
   const opinionSince = new Date(Date.now() - OPINION_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
 

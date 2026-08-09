@@ -17,6 +17,8 @@
     "./marketPulse/instrumentMatch": "./src/marketPulse/instrumentMatch.ts",
     "./hosts/trust": "./src/hosts/trust.ts",
     "./finance/voteTallies": "./src/finance/voteTallies.ts",
+    "./finance/indexSlug": "./src/finance/indexSlug.ts",
+    "./finance/indexUniverse": "./src/finance/indexUniverse.ts",
     "./experts/firmAliases": "./src/experts/firmAliases.ts",
     "./instruments/instrumentDedup": "./src/instruments/instrumentDedup.ts",
     "./news/category-map": "./src/news/category-map.ts",

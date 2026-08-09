@@ -34,7 +34,12 @@ const TICKER_REMAP: Record<string, string> = {
   "^NSEPHARMA": "^CNXPHARMA",
   "NIFTYPHARMA.NS": "^CNXPHARMA",
   "^NSEENERGY": "^CNXENERGY",
-  "^NIFTYHLTH": "^CNXHEALTHCARE",
+  // 2026-08-09 fix (Index Universe Expansion, Sprint A): "^CNXHEALTHCARE" was
+  // a dead/never-verified target (confirmed 404 on Yahoo's chart API
+  // 2026-08-09) — redirected to "NIFTY_HEALTHCARE.NS", verified live with
+  // real intraday ticks and a price matching NSE's own "NIFTY HEALTHCARE
+  // INDEX" last value exactly.
+  "^NIFTYHLTH": "NIFTY_HEALTHCARE.NS",
   "^NSEPSUBK": "^CNXPSUBANK",
   "^NSEPSUBANK": "^CNXPSUBANK",
   // Renamed / re-listed equities
@@ -155,6 +160,13 @@ const INDEX_SECTOR_COMMODITY_MAP: Record<string, InstrumentResult> = {
   "bank nifty": { instrument: "Bank Nifty", ticker: "^NSEBANK" },
   "banknifty": { instrument: "Bank Nifty", ticker: "^NSEBANK" },
   "sensex": { instrument: "Sensex", ticker: "^BSESN" },
+  // Index Universe Expansion (Sprint A, 2026-08-09) — "nifty midcap 100"/"150"
+  // MUST be matched before the bare "midcap" key below (same substring-
+  // swallowing risk this file's own comment already documents for "nifty" vs
+  // "nifty 50": bare "midcap" is a substring of "nifty midcap 100", so it
+  // would otherwise mis-tag every Midcap 100/150 mention as Midcap 50).
+  "nifty midcap 150": { instrument: "Nifty Midcap 150", ticker: "NIFTYMIDCAP150.NS" },
+  "nifty midcap 100": { instrument: "Nifty Midcap 100", ticker: "NIFTY_MIDCAP_100.NS" },
   "midcap": { instrument: "Nifty Midcap 50", ticker: "^NSEMDCP50" },
   // "Nifty <sector>" phrases MUST be matched before the bare "nifty" key below,
   // otherwise the bare-"nifty" substring mis-tags them all as Nifty 50 (^NSEI) and
@@ -171,6 +183,30 @@ const INDEX_SECTOR_COMMODITY_MAP: Record<string, InstrumentResult> = {
   "nifty energy": { instrument: "Nifty Energy", ticker: "^CNXENERGY" },
   "nifty infra": { instrument: "Nifty Infra", ticker: "^CNXINFRA" },
   "nifty psu bank": { instrument: "Nifty PSU Bank", ticker: "^CNXPSUBANK" },
+  // Index Universe Expansion (Sprint A, 2026-08-09) — new qualifying indices
+  // (INDEX_UNIVERSE, business-rules), same "before the bare nifty catchall"
+  // placement discipline as every entry above. Each `instrument` label is
+  // set to the EXACT NSE display name (normalized) so a future opinion
+  // resolves without needing an INDEX_NAME_ALIASES entry.
+  "nifty media": { instrument: "Nifty Media", ticker: "^CNXMEDIA" },
+  // Deliberately MORE SPECIFIC than (and placed before) the existing generic
+  // "private bank(s)" keys below, which keep resolving to Bank Nifty
+  // (^NSEBANK) unchanged — a loose "private banks" mention still means Bank
+  // Nifty; only the exact index name routes to the new sub-index.
+  "nifty private bank": { instrument: "Nifty Private Bank", ticker: "NIFTY_PVT_BANK.NS" },
+  "nifty healthcare": { instrument: "Nifty Healthcare Index", ticker: "NIFTY_HEALTHCARE.NS" },
+  "nifty oil & gas": { instrument: "Nifty Oil & Gas", ticker: "NIFTY_OIL_AND_GAS.NS" },
+  "nifty oil and gas": { instrument: "Nifty Oil & Gas", ticker: "NIFTY_OIL_AND_GAS.NS" },
+  "nifty chemicals": { instrument: "Nifty Chemicals", ticker: "NIFTY_CHEMICALS.NS" },
+  "nifty reits": { instrument: "Nifty REITs & Realty", ticker: "NIFTY_REITS_REALTY.NS" },
+  "nifty cement": { instrument: "Nifty Cement", ticker: "NIFTY_CEMENT.NS" },
+  "nifty microcap 250": { instrument: "Nifty Microcap 250", ticker: "NIFTY_MICROCAP250.NS" },
+  "nifty total market": { instrument: "Nifty Total Market", ticker: "NIFTY_TOTAL_MKT.NS" },
+  "nifty india fpi 150": { instrument: "Nifty India FPI 150", ticker: "NIFTY_FPI_150.NS" },
+  "nifty 500": { instrument: "Nifty 500", ticker: "^CRSLDX" },
+  "nifty 200": { instrument: "Nifty 200", ticker: "^CNX200" },
+  "nifty 100": { instrument: "Nifty 100", ticker: "^CNX100" },
+  "india vix": { instrument: "India VIX", ticker: "^INDIAVIX" },
   "nifty": { instrument: "Nifty 50", ticker: "^NSEI" },
   // Global indices — ordered most-specific first (verified on Yahoo Finance 2026-06-06)
   "s&p 500": { instrument: "S&P 500", ticker: "^GSPC" },
@@ -215,6 +251,20 @@ const INDEX_SECTOR_COMMODITY_MAP: Record<string, InstrumentResult> = {
   "real estate": { instrument: "Nifty Realty", ticker: "^CNXREALTY" },
   "infrastructure": { instrument: "Nifty Infra", ticker: "^CNXINFRA" },
   "energy sector": { instrument: "Nifty Energy", ticker: "^CNXENERGY" },
+  // Index Universe Expansion (Sprint A, 2026-08-09) — generic bare-sector
+  // fallbacks for the new qualifying indices, same "no nifty prefix" style
+  // as the cluster above. Placed AFTER the top "nifty <sector>" cluster (so
+  // a fuller phrase always wins first) — the bottom cluster is only reached
+  // when the top one misses, same two-tier discipline as every existing
+  // pair here (e.g. "nifty realty" above vs bare "realty" here).
+  "media stocks": { instrument: "Nifty Media", ticker: "^CNXMEDIA" },
+  "healthcare sector": { instrument: "Nifty Healthcare Index", ticker: "NIFTY_HEALTHCARE.NS" },
+  "healthcare stocks": { instrument: "Nifty Healthcare Index", ticker: "NIFTY_HEALTHCARE.NS" },
+  "oil and gas": { instrument: "Nifty Oil & Gas", ticker: "NIFTY_OIL_AND_GAS.NS" },
+  "chemical sector": { instrument: "Nifty Chemicals", ticker: "NIFTY_CHEMICALS.NS" },
+  "chemical stocks": { instrument: "Nifty Chemicals", ticker: "NIFTY_CHEMICALS.NS" },
+  "cement sector": { instrument: "Nifty Cement", ticker: "NIFTY_CEMENT.NS" },
+  "cement stocks": { instrument: "Nifty Cement", ticker: "NIFTY_CEMENT.NS" },
 };
 
 /**

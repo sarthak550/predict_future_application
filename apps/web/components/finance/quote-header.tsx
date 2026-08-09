@@ -16,7 +16,7 @@
  * live mode that cell is labeled with the session it belongs to.
  */
 
-import { TrendingDown, TrendingUp } from "lucide-react";
+import { BarChart3, TrendingDown, TrendingUp } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Card, CardContent } from "@/components/ui/card";
@@ -27,6 +27,17 @@ export type QuoteHeaderProps = {
   /** Override the live-overlay fetch path — index pages point this at /api/instruments/index/[symbol]/intraday (the default equity path would request a nonexistent NIFTY.NS). */
   intradayEndpoint?: string;
   companyName: string;
+  /**
+   * Index Universe Expansion (Sprint A, 2026-08-09) — true for a
+   * view-only INDEX_UNIVERSE index (i.e. not one of the 5 F&O-tradable
+   * underlyings). Renders a small, honest "Index · View only" indicator
+   * instead of silently omitting any trade affordance — this page never has
+   * one anyway (trading lives on a separate terminal surface), but the
+   * badge tells a founder/user WHY, rather than leaving it looking like a
+   * gap. Omitted or false: zero visual change, so the 5 existing tradable
+   * index pages (and every equity page) render byte-for-byte unchanged.
+   */
+  viewOnlyIndex?: boolean;
   quote: {
     close: number;
     prevClose: number;
@@ -76,7 +87,7 @@ function formatIstTime(epochMs: number): string {
   }).format(new Date(epochMs));
 }
 
-export function QuoteHeader({ symbol, companyName, quote, intradayEndpoint }: QuoteHeaderProps) {
+export function QuoteHeader({ symbol, companyName, quote, intradayEndpoint, viewOnlyIndex }: QuoteHeaderProps) {
   const [live, setLive] = useState<LiveQuote | null>(null);
   const fetchedFor = useRef<string | null>(null);
 
@@ -143,6 +154,12 @@ export function QuoteHeader({ symbol, companyName, quote, intradayEndpoint }: Qu
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-white/50">{symbol} · NSE</p>
             <h1 className="mt-1 text-2xl font-semibold">{companyName}</h1>
+            {viewOnlyIndex && (
+              <p className="mt-1.5 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-xs font-medium text-white/70">
+                <BarChart3 className="h-3.5 w-3.5" aria-hidden="true" />
+                Index · View only — not on the trading terminal
+              </p>
+            )}
           </div>
 
           {price != null ? (
