@@ -52,14 +52,14 @@ const TICKER_REMAP: Record<string, string> = {
   // Sectors / themes
   "^CPSE": "CPSEETF.NS",
   "AUTOFIN.NS": "^CNXAUTO",
-  // Sectoral indices not present on Yahoo Finance — routed to verified proxies.
-  // ^CNXCAPITAL (Nifty Capital Goods) is not available on Yahoo; ^CNXINFRA (Nifty Infrastructure)
-  // is the closest verified index covering capital goods companies (L&T, Siemens, ABB, etc.).
-  "^CNXCAPITAL": "^CNXINFRA",
-  // NIFTYCONDUR.NS (Nifty Consumer Durables) is not available on Yahoo; ^CNXSC (Nifty Small Cap)
-  // is not ideal. Using ^CNXFMCG as closest broad consumer proxy pending a direct Yahoo ticker.
-  // Revisit if Yahoo adds a Consumer Durables index symbol.
-  "NIFTYCONDUR.NS": "^CNXFMCG",
+  // NO "closest proxy" index substitutions here — founder correction
+  // 2026-08-10 ("Nifty Infra and Nifty Capital Goods are not same"): this
+  // map used to route ^CNXCAPITAL -> ^CNXINFRA and NIFTYCONDUR.NS ->
+  // ^CNXFMCG on "closest verified index" reasoning, which silently filed
+  // capital-goods opinions under Infrastructure and consumer-durables
+  // opinions under FMCG — different indices, wrong data. An index with no
+  // verifiable data source gets NO ticker (the opinion keeps its honest
+  // text label and stays unlinked), never a neighboring index's identity.
 };
 
 /**
@@ -229,12 +229,15 @@ const INDEX_SECTOR_COMMODITY_MAP: Record<string, InstrumentResult> = {
   "gold": { instrument: "Gold", ticker: "GC=F" },
   "crude": { instrument: "Crude Oil", ticker: "CL=F" },
   // Sectoral indices — ordered most-specific first to avoid partial-key collisions.
-  // ^CNXCAPITAL and NIFTYCONDUR.NS are not available on Yahoo Finance; TICKER_REMAP routes them
-  // to verified proxy tickers (^CNXINFRA and ^CNXFMCG respectively).
-  "capital goods": { instrument: "Nifty Capital Goods", ticker: "^CNXCAPITAL" },
-  "consumer durables": { instrument: "Nifty Consumer Durables", ticker: "NIFTYCONDUR.NS" },
-  "private banks": { instrument: "Bank Nifty", ticker: "^NSEBANK" },
-  "private bank": { instrument: "Bank Nifty", ticker: "^NSEBANK" },
+  // "capital goods" and "consumer durables" deliberately have NO entries
+  // (founder correction 2026-08-10): NSE has no Capital Goods index at all,
+  // and NIFTY CONSUMER DURABLES failed live data-feed verification — both
+  // used to be force-mapped to neighboring indices (^CNXINFRA / ^CNXFMCG),
+  // which mis-filed those opinions under the wrong index. With no map entry
+  // the AI fallback extracts the honest text label with no ticker (junk
+  // sentinels sanitized) and the opinion stays correctly unlinked.
+  "private banks": { instrument: "Nifty Private Bank", ticker: "NIFTY_PVT_BANK.NS" },
+  "private bank": { instrument: "Nifty Private Bank", ticker: "NIFTY_PVT_BANK.NS" },
   "psu banks": { instrument: "Nifty PSU Bank", ticker: "^CNXPSUBANK" },
   "psu bank": { instrument: "Nifty PSU Bank", ticker: "^CNXPSUBANK" },
   "public sector bank": { instrument: "Nifty PSU Bank", ticker: "^CNXPSUBANK" },
