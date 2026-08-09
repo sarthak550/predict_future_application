@@ -78,7 +78,7 @@ export default async function AnalystsDirectoryPage({
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {visible.map((analyst) => (
             // The card is a "stretched link" to the profile (Link positioned
             // absolute+inset-0 under the content) rather than wrapping the

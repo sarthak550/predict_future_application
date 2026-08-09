@@ -199,14 +199,49 @@ export default async function AnalystProfilePage({
         </CardContent>
       </Card>
 
-      {stats.perInstrument.length > 0 && (
+      {/* 2026-08-09 sitewide layout-width pass: at the wider max-w-6xl shell,
+          a single narrow column of stacked cards left visible empty margin
+          either side. "By instrument" (a compact stat breakdown) now sits
+          in a sticky sidebar next to the Recent calls table, which is the
+          column that actually wants the width — a real 2-column detail-page
+          layout rather than just a wider single column. */}
+      <div className="grid gap-6 lg:grid-cols-[1fr_320px] lg:items-start">
         <Card>
           <CardHeader>
-            <CardTitle>By instrument</CardTitle>
-            <CardDescription>Graded calls broken down by what was being called.</CardDescription>
+            <CardTitle>{expert.isFirm ? "Recent analysis" : "Recent calls"}</CardTitle>
+            <CardDescription>Newest first. Every call links back to its original source.</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="grid gap-3 sm:grid-cols-2">
+            {recentCalls.length === 0 ? (
+              <p className="py-6 text-center text-sm text-ink-500">No public calls recorded yet.</p>
+            ) : (
+              <ExpandableCallsTable
+                calls={recentCalls.map((call) => ({
+                  id: call.id,
+                  quote: call.quote,
+                  headline: call.headline,
+                  instrument: call.instrument,
+                  instrumentTicker: call.instrumentTicker,
+                  instrumentPageSymbol: call.instrumentTicker ? instrumentPageSymbols.get(call.instrumentTicker) : null,
+                  direction: call.direction,
+                  sourceUrl: call.sourceUrl,
+                  publishedAtLabel: formatDateOnly(call.publishedAt),
+                  resolutionStatus: call.resolutionStatus,
+                  resolutionNote: call.resolutionNote,
+                  resolvedAtLabel: call.resolvedAt ? formatDateOnly(call.resolvedAt) : null,
+                }))}
+              />
+            )}
+          </CardContent>
+        </Card>
+
+        {stats.perInstrument.length > 0 && (
+          <Card className="lg:sticky lg:top-6">
+            <CardHeader>
+              <CardTitle>By instrument</CardTitle>
+              <CardDescription>Graded calls broken down by what was being called.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
               {stats.perInstrument.map((row) => (
                 <div
                   key={row.instrument}
@@ -227,39 +262,10 @@ export default async function AnalystProfilePage({
                   )}
                 </div>
               ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      <Card>
-        <CardHeader>
-          <CardTitle>{expert.isFirm ? "Recent analysis" : "Recent calls"}</CardTitle>
-          <CardDescription>Newest first. Every call links back to its original source.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {recentCalls.length === 0 ? (
-            <p className="py-6 text-center text-sm text-ink-500">No public calls recorded yet.</p>
-          ) : (
-            <ExpandableCallsTable
-              calls={recentCalls.map((call) => ({
-                id: call.id,
-                quote: call.quote,
-                headline: call.headline,
-                instrument: call.instrument,
-                instrumentTicker: call.instrumentTicker,
-                instrumentPageSymbol: call.instrumentTicker ? instrumentPageSymbols.get(call.instrumentTicker) : null,
-                direction: call.direction,
-                sourceUrl: call.sourceUrl,
-                publishedAtLabel: formatDateOnly(call.publishedAt),
-                resolutionStatus: call.resolutionStatus,
-                resolutionNote: call.resolutionNote,
-                resolvedAtLabel: call.resolvedAt ? formatDateOnly(call.resolvedAt) : null,
-              }))}
-            />
-          )}
-        </CardContent>
-      </Card>
+            </CardContent>
+          </Card>
+        )}
+      </div>
 
       <AnalystDisclaimerFooter />
     </div>

@@ -5,7 +5,9 @@ import { ArrowUpRight, BarChart3, FileSearch, Gauge, ScrollText, Wallet } from "
 import { BigCallCard } from "@/components/finance/big-call-card";
 import { DirectionChip, VerdictBadge } from "@/components/finance/analyst-badges";
 import { AnalystDisclaimerFooter } from "@/components/finance/disclaimer-footer";
+import { EconomySection } from "@/components/finance/economy-section";
 import { FirmLink } from "@/components/finance/firm-link";
+import { HomepageLiveChart } from "@/components/finance/homepage-live-chart";
 import { InstrumentSparkline } from "@/components/finance/instrument-sparkline";
 import { PublicHeader } from "@/components/finance/public-header";
 import { SentimentGauge } from "@/components/finance/sentiment-gauge";
@@ -18,12 +20,18 @@ import { Card, CardContent } from "@/components/ui/card";
 import { fetchIndexableAnalysts, sortAnalysts } from "@/lib/finance/analysts";
 import { getTodaysBigCall } from "@/lib/finance/bigCall";
 import { fetchInstrumentDetail, type InstrumentDetail } from "@/lib/finance/instrument";
+import { fetchMacroSnapshot } from "@/lib/finance/macro";
+import { fetchMarketSummary } from "@/lib/finance/marketSummary";
 import { fetchTopMovers } from "@/lib/finance/marketPulse";
 import { canonicalizeOrgDisplay } from "@predict-future/business-rules/experts/firmAliases";
 import { computeOrderCosts } from "@predict-future/business-rules/papertrading/costs";
 import { getSentimentSplit } from "@/lib/finance/sentiment";
+import { getPublishedNewsItems } from "@/lib/news/queries";
 import { prisma } from "@/lib/prisma";
 import { formatDateOnly, formatPercent } from "@/lib/utils";
+
+/** Indian Economy section (T-Economy) — the macro news strip's item count, kept small and skimmable, matching the homepage's other "latest N" sections. */
+const MACRO_NEWS_LIMIT = 4;
 
 export const revalidate = 900;
 
@@ -101,17 +109,31 @@ async function fetchHomepageInstruments(): Promise<InstrumentDetail[]> {
 }
 
 export default async function HomePage() {
-  const [sentiment, bigCall, latestGraded, analysts, scaleStats, popularMovers, allMovers, instruments] =
-    await Promise.all([
-      getSentimentSplit(),
-      getTodaysBigCall(),
-      fetchLatestGradedCalls(),
-      fetchIndexableAnalysts(),
-      fetchScaleStats(),
-      fetchTopMovers("popular"),
-      fetchTopMovers("all"),
-      fetchHomepageInstruments(),
-    ]);
+  const [
+    sentiment,
+    bigCall,
+    latestGraded,
+    analysts,
+    scaleStats,
+    popularMovers,
+    allMovers,
+    instruments,
+    marketSummary,
+    macro,
+    macroNews,
+  ] = await Promise.all([
+    getSentimentSplit(),
+    getTodaysBigCall(),
+    fetchLatestGradedCalls(),
+    fetchIndexableAnalysts(),
+    fetchScaleStats(),
+    fetchTopMovers("popular"),
+    fetchTopMovers("all"),
+    fetchHomepageInstruments(),
+    fetchMarketSummary(),
+    fetchMacroSnapshot(),
+    getPublishedNewsItems({ limit: MACRO_NEWS_LIMIT, category: "FINANCE" }),
+  ]);
 
   const topAnalysts = sortAnalysts(analysts, "accuracy").slice(0, TOP_ANALYSTS_LIMIT);
 
@@ -119,12 +141,14 @@ export default async function HomePage() {
     <div className="min-h-screen bg-[#f5f7fb]">
       <PublicHeader />
 
-      <main className="mx-auto max-w-5xl space-y-16 px-4 py-10 sm:px-6">
+      <main className="mx-auto max-w-6xl space-y-16 px-4 py-10 sm:px-6">
         <Hero sentiment={sentiment} bigCall={bigCall} scaleStats={scaleStats} />
 
         <LatestGradedCalls calls={latestGraded} />
 
         <MarketPulseSection popular={popularMovers} all={allMovers} />
+
+        <EconomySection marketSummary={marketSummary} macro={macro} news={macroNews} />
 
         <InstrumentResearchSection instruments={instruments} />
 
@@ -488,13 +512,19 @@ function PaperTradingSection({ instruments }: { instruments: InstrumentDetail[] 
 }
 
 /**
- * Charting Workbench + Strategy Scripting (T5) — the one section without a
- * live embed (klinecharts is a heavy client canvas needing real-time data;
- * embedding it signed-out on the homepage isn't practical, and a synthetic
- * re-creation would violate the CEO brief's honesty law). Instead: a real
- * captured-state screenshot of the actual running workbench, taken via
- * Playwright against a real dev-server session (see the CTO report for the
- * exact capture method) — apps/web/public/homepage/workbench-screenshot.png.
+ * Charting Workbench + Strategy Scripting (T5). Founder feedback
+ * (2026-08-09): the section's old static screenshot capture
+ * (`public/homepage/workbench-screenshot.png`) read as inert — "it needs
+ * ... to be dynamic instead of just image." Replaced with
+ * `HomepageLiveChart`, a genuinely live, real-data candlestick strip (see
+ * that component's own doc for the full data-path/honesty rationale) —
+ * lightweight (no klinecharts import here), so the workbench's own heavy
+ * bundle still only loads inside `/paper-trading`.
+ *
+ * Also fixes a real brand/legal issue flagged the same day: the old
+ * headline literally named a competitor ("A TradingView-grade workbench").
+ * User-facing copy never names a competitor by brand, anywhere in this
+ * product — this is now a standing law, not a one-off fix.
  */
 function WorkbenchSection() {
   return (
@@ -502,7 +532,7 @@ function WorkbenchSection() {
       <div>
         <p className="text-xs font-semibold uppercase tracking-[0.2em] text-ink-400">Charting Workbench</p>
         <h2 className="mt-1 text-2xl font-semibold text-ink-900">
-          A TradingView-grade workbench — with your own strategies.
+          A professional-grade workbench — with your own strategies.
         </h2>
         <p className="mt-2 max-w-xl text-sm leading-6 text-ink-500">
           88 drawing tools, 41 indicators, and a Technicals Rating dial. Write your own strategy in
@@ -511,25 +541,14 @@ function WorkbenchSection() {
       </div>
 
       <Card className="overflow-hidden">
-        {/* eslint-disable-next-line @next/next/no-img-element -- static local asset, not an optimizable next/image domain (matches components/ui/avatar.tsx's own convention). */}
-        <img
-          src="/homepage/workbench-screenshot.png"
-          alt="The Predict Future charting workbench showing a live NSE candlestick chart with indicators and drawing tools"
-          // The source capture is a wide 1600x960 landscape (the workbench's own
-          // native layout) — at full mobile width that shrinks small enough that
-          // the on-chart price/indicator text stops being legible. A fixed,
-          // breakpoint-scaled height + object-cover (anchored top-left, where the
-          // candles/moving-average lines/trendline live) crops in on the most
-          // visually compelling part instead of shrinking the whole frame.
-          className="h-56 w-full border-b border-ink-100 object-cover object-left-top sm:h-72 lg:h-[420px]"
-        />
-        <CardContent className="flex flex-wrap items-center justify-between gap-3 p-5">
+        <HomepageLiveChart symbol="RELIANCE" height={240} />
+        <CardContent className="flex flex-wrap items-center justify-between gap-3 border-t border-ink-100 p-5">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-ink-900 text-white">
               <BarChart3 className="h-4 w-4" />
             </div>
             <p className="text-sm text-ink-500">
-              The actual workbench — RELIANCE, live candles with indicators and drawing tools active.
+              A live preview — open the full workbench for 88 drawing tools, 41 indicators, and strategy backtests.
             </p>
           </div>
           <Link
