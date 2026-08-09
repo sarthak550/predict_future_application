@@ -48,6 +48,7 @@
  * without needing every dropdown to reset every other on each change.
  */
 
+import { useState, type ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { Select } from "@/components/ui/select";
@@ -70,6 +71,44 @@ const STATUS_OPTIONS = [
   { value: "graded", label: "Graded (HIT/MISS)" },
   { value: "pending", label: "Pending" },
 ];
+
+/** `YYYY-MM-DD` for the caller's LOCAL wall-clock date — deliberately not UTC (Date#toISOString would shift the date near midnight for any IST/US viewer), and matches how a native `<input type="date">`'s own value/max are always interpreted: a plain calendar date, no timezone. */
+function toDateOnly(d: Date): string {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function todayDateOnly(): string {
+  return toDateOnly(new Date());
+}
+
+/** `days=7` means "today and the 6 days before it" — 7 calendar days total, inclusive of today, matching how "last 7 days" already reads elsewhere in this app (e.g. getSentimentSplit's rolling window). */
+function daysAgoDateOnly(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - (days - 1));
+  return toDateOnly(d);
+}
+
+/**
+ * Preset chips (founder ask, 2026-08-09: "better control... make better
+ * sense of data" — most users click a preset rather than type two dates).
+ * `from`/`to` are computed fresh on every render against "today" rather than
+ * memoized, so a tab left open across midnight still computes the correct
+ * range on the next interaction — cheap enough (four Date computations) that
+ * memoizing would be premature.
+ */
+function buildPresets(): { key: string; label: string; from: string; to: string }[] {
+  const to = todayDateOnly();
+  const year = new Date().getFullYear();
+  return [
+    { key: "7d", label: "7d", from: daysAgoDateOnly(7), to },
+    { key: "30d", label: "30d", from: daysAgoDateOnly(30), to },
+    { key: "90d", label: "90d", from: daysAgoDateOnly(90), to },
+    { key: "ytd", label: "YTD", from: `${year}-01-01`, to },
+  ];
+}
 
 export function OpinionsFilterBar({
   instrumentOptions,
@@ -116,89 +155,218 @@ export function OpinionsFilterBar({
     router.push(query ? `${pathname}?${query}` : pathname);
   };
 
+  // --- Date range (2026-08-09 feature) -----------------------------------
+  const currentFrom = searchParams.get("from") ?? "";
+  const currentTo = searchParams.get("to") ?? "";
+  const today = todayDateOnly();
+  const presets = buildPresets();
+  const matchedPreset = presets.find((p) => p.from === currentFrom && p.to === currentTo);
+  const isAllTime = !currentFrom && !currentTo;
+  // "Custom" is active whenever the current range isn't All-time and doesn't
+  // exactly match a preset — covers both a hand-picked range AND a shared
+  // link someone sent with an arbitrary from/to. Seeds the initial open/
+  // closed state of the custom inputs below; see that state's own comment
+  // for why it isn't recomputed on every render.
+  const isCustomRange = !isAllTime && !matchedPreset;
+  // Once opened (by the user clicking Custom, or because the page loaded
+  // with an already-custom range), the two date inputs stay visible even if
+  // their own onChange briefly produces a range that happens to match a
+  // preset — collapsing the inputs the user is actively looking at out from
+  // under them would be a worse experience than leaving them open.
+  const [customOpen, setCustomOpen] = useState(isCustomRange);
+
+  const setDateRange = (from: string | undefined, to: string | undefined) => {
+    const next = new URLSearchParams(searchParams.toString());
+    if (from) next.set("from", from);
+    else next.delete("from");
+    if (to) next.set("to", to);
+    else next.delete("to");
+    next.delete("page");
+    const query = next.toString();
+    router.push(query ? `${pathname}?${query}` : pathname);
+  };
+
+  const applyPreset = (preset: { from: string; to: string }) => {
+    setCustomOpen(false);
+    setDateRange(preset.from, preset.to);
+  };
+
+  // "All-time" clears the params entirely rather than setting an explicit
+  // wide range (founder brief, section 2) — it degrades to the exact same
+  // all-time code path that exists today for every currently-shared link.
+  const clearDateRange = () => {
+    setCustomOpen(false);
+    setDateRange(undefined, undefined);
+  };
+
+  // Validation (founder brief, section 2): end defaults to today when only
+  // start is given; start > end is clamped (not an error) rather than
+  // silently producing a zero-result range; no future dates — clamped here
+  // as well as via each input's own `max` attribute, since `max` alone
+  // doesn't stop every browser/input method from producing a later value.
+  const handleFromChange = (value: string) => {
+    let from: string | undefined = value || undefined;
+    let to: string | undefined = currentTo || undefined;
+    if (from) {
+      if (from > today) from = today;
+      if (!to) to = today;
+      else if (from > to) to = from;
+    }
+    setDateRange(from, to);
+  };
+
+  const handleToChange = (value: string) => {
+    let to: string | undefined = value || undefined;
+    let from: string | undefined = currentFrom || undefined;
+    if (to) {
+      if (to > today) to = today;
+      if (from && from > to) from = to;
+    }
+    setDateRange(from, to);
+  };
+
   return (
-    <div className="flex flex-wrap items-center gap-3">
-      <Select
-        aria-label="Filter by instrument"
-        value={searchParams.get("instrument") ?? ""}
-        onChange={(e) => setParam("instrument", e.target.value)}
-        className="w-auto min-w-[10rem]"
-      >
-        <option value="">All instruments</option>
-        {instrumentOptions.map((opt) => (
-          <option key={opt.value} value={opt.value}>
-            {opt.value} ({opt.count})
-          </option>
-        ))}
-      </Select>
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <Select
+          aria-label="Filter by instrument"
+          value={searchParams.get("instrument") ?? ""}
+          onChange={(e) => setParam("instrument", e.target.value)}
+          className="w-auto min-w-[10rem]"
+        >
+          <option value="">All instruments</option>
+          {instrumentOptions.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.value} ({opt.count})
+            </option>
+          ))}
+        </Select>
 
-      <Select
-        aria-label="Filter by direction"
-        value={searchParams.get("direction") ?? ""}
-        onChange={(e) => setParam("direction", e.target.value)}
-        className="w-auto min-w-[9rem]"
-      >
-        {DIRECTION_OPTIONS.map((opt) => (
-          <option key={opt.value} value={opt.value}>
-            {opt.label}
-          </option>
-        ))}
-      </Select>
+        <Select
+          aria-label="Filter by direction"
+          value={searchParams.get("direction") ?? ""}
+          onChange={(e) => setParam("direction", e.target.value)}
+          className="w-auto min-w-[9rem]"
+        >
+          {DIRECTION_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </Select>
 
-      <Select
-        aria-label="Filter by grading status"
-        value={searchParams.get("status") ?? ""}
-        onChange={(e) => setParam("status", e.target.value)}
-        className="w-auto min-w-[10rem]"
-      >
-        {STATUS_OPTIONS.map((opt) => (
-          <option key={opt.value} value={opt.value}>
-            {opt.label}
-          </option>
-        ))}
-      </Select>
+        <Select
+          aria-label="Filter by grading status"
+          value={searchParams.get("status") ?? ""}
+          onChange={(e) => setParam("status", e.target.value)}
+          className="w-auto min-w-[10rem]"
+        >
+          {STATUS_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </Select>
 
-      <Select
-        aria-label="Filter by analyst"
-        value={searchParams.get("analyst") ?? ""}
-        onChange={(e) => setParam("analyst", e.target.value)}
-        className="w-auto min-w-[10rem]"
-      >
-        <option value="">All analysts</option>
-        {analystOptions.map((analyst) => (
-          <option key={analyst.slug} value={analyst.slug}>
-            {analyst.count !== undefined ? `${analyst.name} (${analyst.count})` : analyst.name}
-          </option>
-        ))}
-      </Select>
+        <Select
+          aria-label="Filter by analyst"
+          value={searchParams.get("analyst") ?? ""}
+          onChange={(e) => setParam("analyst", e.target.value)}
+          className="w-auto min-w-[10rem]"
+        >
+          <option value="">All analysts</option>
+          {analystOptions.map((analyst) => (
+            <option key={analyst.slug} value={analyst.slug}>
+              {analyst.count !== undefined ? `${analyst.name} (${analyst.count})` : analyst.name}
+            </option>
+          ))}
+        </Select>
 
-      <Select
-        aria-label="Filter by firm"
-        value={searchParams.get("firm") ?? ""}
-        onChange={(e) => setParamAndClearDependent("firm", e.target.value, "analyst")}
-        className="w-auto min-w-[14rem]"
-      >
-        <option value="">All firms</option>
-        {firmOptions.map((opt) => (
-          <option key={opt.firm} value={opt.firm}>
-            {opt.firm} ({opt.count})
-          </option>
-        ))}
-      </Select>
+        <Select
+          aria-label="Filter by firm"
+          value={searchParams.get("firm") ?? ""}
+          onChange={(e) => setParamAndClearDependent("firm", e.target.value, "analyst")}
+          className="w-auto min-w-[14rem]"
+        >
+          <option value="">All firms</option>
+          {firmOptions.map((opt) => (
+            <option key={opt.firm} value={opt.firm}>
+              {opt.firm} ({opt.count})
+            </option>
+          ))}
+        </Select>
 
-      <Select
-        aria-label="Filter by sector"
-        value={searchParams.get("sector") ?? ""}
-        onChange={(e) => setParamAndClearDependent("sector", e.target.value, "instrument")}
-        className="w-auto min-w-[12rem]"
-      >
-        <option value="">All sectors</option>
-        {sectorOptions.map((opt) => (
-          <option key={opt.sector} value={opt.sector}>
-            {opt.sector} ({opt.count})
-          </option>
+        <Select
+          aria-label="Filter by sector"
+          value={searchParams.get("sector") ?? ""}
+          onChange={(e) => setParamAndClearDependent("sector", e.target.value, "instrument")}
+          className="w-auto min-w-[12rem]"
+        >
+          <option value="">All sectors</option>
+          {sectorOptions.map((opt) => (
+            <option key={opt.sector} value={opt.sector}>
+              {opt.sector} ({opt.count})
+            </option>
+          ))}
+        </Select>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-medium text-ink-400">Date range</span>
+        {presets.map((preset) => (
+          <DateRangeChip key={preset.key} active={matchedPreset?.key === preset.key} onClick={() => applyPreset(preset)}>
+            {preset.label}
+          </DateRangeChip>
         ))}
-      </Select>
+        <DateRangeChip active={isAllTime} onClick={clearDateRange}>
+          All-time
+        </DateRangeChip>
+        <DateRangeChip active={isCustomRange || customOpen} onClick={() => setCustomOpen(true)}>
+          Custom
+        </DateRangeChip>
+
+        {customOpen && (
+          <span className="flex flex-wrap items-center gap-2 pl-1">
+            <label className="flex items-center gap-1.5 text-xs text-ink-500">
+              From
+              <input
+                type="date"
+                aria-label="Custom range start date"
+                value={currentFrom}
+                max={today}
+                onChange={(e) => handleFromChange(e.target.value)}
+                className="h-9 rounded-xl border border-ink-200 bg-white px-2 text-sm text-ink-900 outline-none transition focus:border-signal-sky focus:ring-2 focus:ring-signal-sky/20"
+              />
+            </label>
+            <label className="flex items-center gap-1.5 text-xs text-ink-500">
+              To
+              <input
+                type="date"
+                aria-label="Custom range end date"
+                value={currentTo}
+                max={today}
+                onChange={(e) => handleToChange(e.target.value)}
+                className="h-9 rounded-xl border border-ink-200 bg-white px-2 text-sm text-ink-900 outline-none transition focus:border-signal-sky focus:ring-2 focus:ring-signal-sky/20"
+              />
+            </label>
+          </span>
+        )}
+      </div>
     </div>
+  );
+}
+
+function DateRangeChip({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+        active ? "bg-ink-900 text-white" : "border border-ink-200 bg-white text-ink-600 hover:bg-ink-50"
+      }`}
+    >
+      {children}
+    </button>
   );
 }

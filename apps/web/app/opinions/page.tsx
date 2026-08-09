@@ -19,6 +19,7 @@ import {
   hasNonDirectionOpinionsFilter,
   parseOpinionsFilters,
   resolveEffectiveFilters,
+  type OpinionsFilters,
 } from "@/lib/finance/opinionsQuery";
 import { resolveInstrumentPageSymbols } from "@/lib/finance/instrumentLink";
 import { formatDateOnly } from "@/lib/utils";
@@ -46,6 +47,29 @@ export function generateMetadata({ searchParams }: { searchParams: SearchParams 
       url: "https://predictfuture.app/opinions",
     },
   };
+}
+
+/**
+ * Range-aware sentiment-bar empty-state copy (2026-08-09 date-range
+ * feature) — SentimentGauge's own hardcoded "last 7 days" fallback would be
+ * actively wrong once a user has picked their own from/to, so this composes
+ * the actual bound(s) into the message instead. Only reached when a
+ * non-direction filter is active (this is only ever passed on the filtered
+ * `"scopeLabel" in sentiment` branch below) — filters other than the date
+ * range are covered by the generic "clear one" copy, unchanged from before
+ * this feature.
+ */
+function buildSentimentEmptyMessage(filters: OpinionsFilters): string {
+  if (filters.from && filters.to) {
+    return `No calls between ${formatDateOnly(filters.from)} and ${formatDateOnly(filters.to)} match these filters.`;
+  }
+  if (filters.from) {
+    return `No calls since ${formatDateOnly(filters.from)} match these filters.`;
+  }
+  if (filters.to) {
+    return `No calls on or before ${formatDateOnly(filters.to)} match these filters.`;
+  }
+  return "No calls match these filters yet — clear one to see a sentiment split.";
 }
 
 function buildPageHref(searchParams: SearchParams, page: number): string {
@@ -116,7 +140,11 @@ export default async function OpinionsPage({ searchParams }: { searchParams: Sea
               ? `Based on ${sentiment.totalCount} call${sentiment.totalCount === 1 ? "" : "s"}`
               : `${sentiment.totalCount} call${sentiment.totalCount === 1 ? "" : "s"} matching these filters`
           }
-          emptyMessage="No calls match these filters yet — clear one to see a sentiment split."
+          // Range-aware (2026-08-09 date-range feature): a custom from/to
+          // that yields zero calls should name the actual range rather than
+          // the generic "clear one" copy, which reads as if no date filter
+          // were involved at all.
+          emptyMessage={buildSentimentEmptyMessage(filters)}
         />
       ) : (
         <SentimentGauge split={sentiment} />

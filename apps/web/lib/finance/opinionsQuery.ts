@@ -4,6 +4,7 @@ import { canonicalizeOrgDisplay } from "@predict-future/business-rules/experts/f
 import { normalizeInstrumentRawName } from "@predict-future/business-rules/instruments/instrumentDedup";
 
 import { prisma } from "@/lib/prisma";
+import { formatDateOnly } from "@/lib/utils";
 import { buildInstrumentWhereOr } from "@/lib/finance/instruments";
 import { isMissingTableError } from "@/lib/finance/instrumentLink";
 import { computeDominantLean, computeSentimentPercentages, type DominantLean } from "@/lib/finance/sentiment";
@@ -24,6 +25,10 @@ export interface OpinionsFilters {
   firm?: string;
   /** One of CANONICAL_SECTOR_LABELS (sectorTaxonomy.ts), e.g. "Banking", "Automobile and Auto Components" — the ticker's underlying instrument's sector, NOT an expert/firm attribute. */
   sector?: string;
+  /** ISO `YYYY-MM-DD`, inclusive lower bound on `publishedAt` — see DATE_ONLY_RE/parseDateOnly. Absent means no lower bound, i.e. byte-for-byte the pre-date-range behavior. */
+  from?: string;
+  /** ISO `YYYY-MM-DD`, inclusive upper bound on `publishedAt` (end-of-day — see buildWhere) — see DATE_ONLY_RE/parseDateOnly. Absent means no upper bound. */
+  to?: string;
   page: number;
 }
 
@@ -33,11 +38,22 @@ type CascadeDimension = (typeof CASCADE_DIMENSIONS)[number];
 
 const VALID_DIRECTIONS: readonly OpinionDirection[] = ["BULLISH", "BEARISH", "NEUTRAL"];
 
+/** Matches a bare `YYYY-MM-DD` — the shape both the native `<input type="date">` in OpinionsFilterBar and the preset-chip math in that same file produce. Anything else (malformed, a full ISO timestamp, garbage) is dropped by parseDateOnly rather than passed through to Prisma. */
+const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Parses a `?from=`/`?to=` value into a validated `YYYY-MM-DD` string, or undefined if it's missing/malformed/not a real calendar date (e.g. "2026-02-30"). The round-trip comparison (parse, then re-format and compare to the input) is load-bearing: JS's Date constructor silently rolls day-of-month overflow forward ("2026-02-30" → 2026-03-02) instead of producing NaN, so an isNaN check alone quietly filters by a date the user never typed — caught by QA 2026-08-09. Kept as a string (not a Date) here — buildWhere is the single place that turns it into the actual gte/lte Date bounds, and callers that need to render the range back (scopeLabel, the empty-state message) want the plain date string, not a Date they'd have to re-format. */
+function parseDateOnly(value: string | undefined): string | undefined {
+  if (!value || !DATE_ONLY_RE.test(value)) return undefined;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime())) return undefined;
+  return parsed.toISOString().slice(0, 10) === value ? value : undefined;
+}
+
 /**
- * Parses ?instrument=&direction=&status=&analyst=&page= from a page's raw
- * searchParams into a typed, validated filter set. Unknown/invalid values are
- * dropped rather than erroring — a malformed query string degrades to "no
- * filter" instead of a 500.
+ * Parses ?instrument=&direction=&status=&analyst=&from=&to=&page= from a
+ * page's raw searchParams into a typed, validated filter set. Unknown/invalid
+ * values are dropped rather than erroring — a malformed query string degrades
+ * to "no filter" instead of a 500.
  */
 export function parseOpinionsFilters(searchParams: Record<string, string | string[] | undefined>): OpinionsFilters {
   const get = (key: string): string | undefined => {
@@ -58,18 +74,22 @@ export function parseOpinionsFilters(searchParams: Record<string, string | strin
   const analyst = get("analyst")?.trim() || undefined;
   const firm = get("firm")?.trim() || undefined;
   const sector = get("sector")?.trim() || undefined;
+  const from = parseDateOnly(get("from")?.trim());
+  const to = parseDateOnly(get("to")?.trim());
 
   const pageRaw = Number.parseInt(get("page") ?? "1", 10);
   const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
 
-  return { instrument, direction, status, analyst, firm, sector, page };
+  return { instrument, direction, status, analyst, firm, sector, from, to, page };
 }
 
 /** True if any filter/pagination param beyond the bare unfiltered first page is active. */
 export function hasActiveOpinionsQuery(filters: OpinionsFilters): boolean {
   return (
-    Boolean(filters.instrument || filters.direction || filters.status || filters.analyst || filters.firm || filters.sector) ||
-    filters.page > 1
+    Boolean(
+      filters.instrument || filters.direction || filters.status || filters.analyst || filters.firm || filters.sector ||
+        filters.from || filters.to,
+    ) || filters.page > 1
   );
 }
 
@@ -80,9 +100,15 @@ export function hasActiveOpinionsQuery(filters: OpinionsFilters): boolean {
  * direction from its own aggregate, so a direction-ONLY filter shouldn't
  * switch it out of the default market-wide/7-day view either. Used by
  * opinions/page.tsx to decide which sentiment data source to render.
+ *
+ * `from`/`to` count as non-direction filters (2026-08-09 date-range feature)
+ * — a date range with no other filter active must route through the
+ * filtered, all-time fetchOpinionsSentimentSplit (with the date clause
+ * applied) rather than silently falling back to the unfiltered default
+ * 7-day getSentimentSplit(), which would ignore the user's chosen range.
  */
 export function hasNonDirectionOpinionsFilter(filters: OpinionsFilters): boolean {
-  return Boolean(filters.instrument || filters.status || filters.analyst || filters.firm || filters.sector);
+  return Boolean(filters.instrument || filters.status || filters.analyst || filters.firm || filters.sector || filters.from || filters.to);
 }
 
 const GRADED_STATUSES: OpinionResolutionStatus[] = ["RESOLVED_HIT", "RESOLVED_MISS"];
@@ -249,6 +275,17 @@ function buildWhere(filters: OpinionsFilters, ctx: FilterResolutionContext): Pri
     instrumentTickerWhere = { instrumentTicker: { in: intersection } };
   }
 
+  // Date range (2026-08-09 feature) — inclusive on both ends. `to` is bumped
+  // to the END of that calendar day (23:59:59.999) rather than midnight, so
+  // ?to=2026-07-15 includes every opinion published ON the 15th, not just up
+  // to its first instant. Absent when neither `from` nor `to` is set, so
+  // every existing link/bookmark with no date params gets byte-for-byte the
+  // same WHERE clause as before this feature — see parseOpinionsFilters'
+  // own doc comment for why this stays a plain YYYY-MM-DD string until here.
+  const publishedAtWhere: Prisma.DateTimeFilter = {};
+  if (filters.from) publishedAtWhere.gte = new Date(`${filters.from}T00:00:00.000Z`);
+  if (filters.to) publishedAtWhere.lte = new Date(`${filters.to}T23:59:59.999Z`);
+
   return {
     suppressedAt: null,
     // Legacy fuzzy-text OR match — only when `instrument` is set AND it did
@@ -257,6 +294,7 @@ function buildWhere(filters: OpinionsFilters, ctx: FilterResolutionContext): Pri
     ...(filters.direction ? { direction: filters.direction } : {}),
     ...(filters.status === "graded" ? { resolutionStatus: { in: GRADED_STATUSES } } : {}),
     ...(filters.status === "pending" ? { resolutionStatus: "PENDING" as const } : {}),
+    ...(Object.keys(publishedAtWhere).length > 0 ? { publishedAt: publishedAtWhere } : {}),
     ...(Object.keys(expertWhere).length > 0 ? { expert: expertWhere } : {}),
     ...instrumentTickerWhere,
   };
@@ -448,6 +486,20 @@ const STATUS_SCOPE_LABELS: Record<OpinionStatusFilter, string> = {
   pending: "pending calls",
 };
 
+/**
+ * Human-readable label for an active `from`/`to` range, e.g. "12 Jan – 20 Jan
+ * 2026" (both bounds), "Since 12 Jan 2026" (open-ended end), or "Through 20
+ * Jan 2026" (open-ended start). Shared by fetchOpinionsSentimentSplit's
+ * scopeLabel and opinions/page.tsx's range-aware empty-state message so the
+ * two never describe the same range differently.
+ */
+export function formatDateRangeLabel(from: string | undefined, to: string | undefined): string {
+  if (from && to) return `${formatDateOnly(from)} – ${formatDateOnly(to)}`;
+  if (from) return `Since ${formatDateOnly(from)}`;
+  if (to) return `Through ${formatDateOnly(to)}`;
+  return "";
+}
+
 export interface OpinionsSentimentSplit {
   bullishCount: number;
   bearishCount: number;
@@ -524,6 +576,7 @@ export async function fetchOpinionsSentimentSplit(
   if (filters.instrument) scopeParts.push(filters.instrument);
   if (filters.sector) scopeParts.push(filters.sector);
   if (filters.status) scopeParts.push(STATUS_SCOPE_LABELS[filters.status]);
+  if (filters.from || filters.to) scopeParts.push(formatDateRangeLabel(filters.from, filters.to));
 
   const scopeLabel = scopeParts.length > 0 ? `Sentiment · ${scopeParts.filter(Boolean).join(" · ")}` : "Market-wide sentiment";
 

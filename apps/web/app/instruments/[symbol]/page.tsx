@@ -12,6 +12,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { isIndexOptionUnderlying } from "@predict-future/business-rules/papertrading/optionContract";
 
 import { fetchInstrumentDetail } from "@/lib/finance/instrument";
+import { resolveCanonicalNameForSymbol } from "@/lib/finance/instrumentLink";
 import { formatIstSessionDate, formatRelativeTime } from "@/lib/utils";
 
 export const revalidate = 900;
@@ -73,6 +74,16 @@ export default async function InstrumentDetailPage({
   const isIndex = isIndexOptionUnderlying(instrument.symbol);
   const indexIntradayUrl = `/api/instruments/index/${encodeURIComponent(instrument.symbol)}/intraday`;
 
+  // Sentiment date-range link-out (2026-08-09 feature) — scoped to this
+  // instrument's own /opinions filter value when InstrumentAlias has
+  // resolved one, otherwise the plain unscoped /opinions link (never a dead
+  // link). See resolveCanonicalNameForSymbol's own doc comment for why this
+  // is NOT `instrument.companyName`.
+  const opinionsCanonicalName = await resolveCanonicalNameForSymbol(instrument.symbol);
+  const opinionsExploreHref = opinionsCanonicalName
+    ? `/opinions?instrument=${encodeURIComponent(opinionsCanonicalName)}`
+    : "/opinions";
+
   const jsonLd = {
     "@context": "https://schema.org",
     "@type": "Organization",
@@ -128,7 +139,7 @@ export default async function InstrumentDetailPage({
           previous one was good") — back to stacked full-width blocks,
           sentiment first, opinions below. Do not re-introduce the sidebar
           layout here without an explicit founder ask. */}
-      <InstrumentSentimentGauge sentiment={instrument.sentiment} />
+      <InstrumentSentimentGauge sentiment={instrument.sentiment} exploreHref={opinionsExploreHref} />
 
       <section className="space-y-4">
         <h2 className="text-xl font-semibold text-ink-900">Analyst opinions</h2>

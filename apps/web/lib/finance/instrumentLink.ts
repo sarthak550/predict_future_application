@@ -104,6 +104,33 @@ export async function resolveInstrumentPageSymbols(
   return result;
 }
 
+/**
+ * Reverse lookup of resolveInstrumentPageSymbols — bare NSE symbol
+ * ("RELIANCE") -> the SAME canonical display name opinionsQuery.ts's
+ * resolveInstrumentFilterTickers matches `?instrument=` against. Used by
+ * /instruments/[symbol] (sentiment date-range link-out, 2026-08-09 feature)
+ * to build a `/opinions?instrument=<canonicalName>` link that actually
+ * resolves to that instrument's calls — the page's own `companyName` is
+ * NOT used for this, even though it's frequently identical in practice,
+ * because it can fall back to a filing/news company name or the bare symbol
+ * itself (see fetchInstrumentDetail's companyName priority chain) when no
+ * StockEodQuote row exists yet, which would silently produce a dead filter
+ * link. InstrumentAlias is indexed on `symbol` — one cheap lookup, same
+ * DEFENSIVE missing-table degrade as every other function in this file.
+ */
+export async function resolveCanonicalNameForSymbol(symbol: string): Promise<string | undefined> {
+  try {
+    const alias = await prisma.instrumentAlias.findFirst({
+      where: { symbol, resolved: true, canonicalName: { not: null } },
+      select: { canonicalName: true },
+    });
+    return alias?.canonicalName ?? undefined;
+  } catch (err) {
+    if (isMissingTableError(err)) return undefined;
+    throw err;
+  }
+}
+
 /** Re-exported so opinionsQuery.ts can build a canonicalName -> InstrumentAlias.rawName[] index without importing Prisma types itself. */
 export type InstrumentAliasWhereInput = Prisma.InstrumentAliasWhereInput;
 export { isMissingTableError };

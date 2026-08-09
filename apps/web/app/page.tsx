@@ -262,13 +262,13 @@ function Hero({
 
         <ScaleStatStrip stats={scaleStats} />
 
-        {hasBigCall && <SentimentGauge split={sentiment} title="Market-wide sentiment" />}
+        {hasBigCall && <SentimentGauge split={sentiment} title="Market-wide sentiment" exploreHref="/opinions" />}
       </div>
 
       {hasBigCall ? (
         <BigCallCard result={bigCall} />
       ) : (
-        <SentimentGauge split={sentiment} title="Market-wide sentiment" />
+        <SentimentGauge split={sentiment} title="Market-wide sentiment" exploreHref="/opinions" />
       )}
     </section>
   );
