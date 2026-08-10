@@ -281,6 +281,57 @@ function intervalToPeriod(interval: string): Period {
   }
 }
 
+/**
+ * Sparse-history visual fix (2026-08-11) — founder complaint, with
+ * screenshot: the options-premium chart (e.g. BANKNIFTY 57700 PE 25-Aug-26)
+ * rendered as "scattered isolated dash-marks with large empty holes." A
+ * same-day data audit confirmed the captured `OptionPremiumSnapshot` rows
+ * were themselves correct — the chart was honestly plotting genuinely sparse
+ * demand-driven history (see premiumCapture.ts's own "always-on index
+ * capture" fix, which densifies FUTURE history; this fixes the PRESENTATION
+ * of history that is, and for single-stock underlyings always will remain,
+ * genuinely sparse).
+ *
+ * Root cause, verified against klinecharts v10's own bundled source
+ * (`StoreImp.prototype.getDataByDataIndex` — real bars ARE plotted at plain
+ * array-index positions, `barSpace` apart, never stretched by real elapsed
+ * time between their timestamps; `dataIndexToTimestamp`'s period-based
+ * extrapolation only ever fires for index positions OUTSIDE the real data,
+ * i.e. the axis's own "future" grid beyond the last bar). Confirmed live
+ * (real dev DB, 8 genuinely-captured points spanning 2026-08-07 to
+ * 2026-08-10): all 8 points reached this component's `candles` prop intact
+ * — `DEFAULT_BAR_SPACE` (10px, klinecharts' own `dist/index.esm.js`
+ * constant) meant those 8 real bars occupied a ~80px sliver against a
+ * 1000+px canvas, reading as "empty/broken" even though every bar shown was
+ * a real, honestly-captured sample (never fabricated — see
+ * premium-candles.ts's own honesty rule, untouched by this fix).
+ *
+ * `sparseFitBarSpace` widens `barSpace` (via klinecharts' own public
+ * `chart.setBarSpace`, capped at the library's OWN 50px ceiling — verified
+ * against `_layoutOptions.barSpaceLimit` in the same bundled source) so a
+ * sparse dataset's few real bars fill a legible fraction of the container
+ * instead — a pure PRESENTATION change, no data point added, removed, or
+ * interpolated, and no axis time-compression involved (the index-based
+ * spacing above is already gap-free by construction). Only engages below
+ * `SPARSE_BAR_COUNT_THRESHOLD`; a normal-density chart's barSpace is left
+ * exactly as klinecharts' own default already renders it — never forced
+ * back to a smaller value on a chart the user may have already zoomed.
+ * Applies to every workbench chart (equity/index included), not just
+ * premium mode: a freshly-listed stock's daily view has the identical "few
+ * real bars, huge canvas" problem and benefits identically.
+ */
+export const SPARSE_BAR_COUNT_THRESHOLD = 40;
+const SPARSE_FILL_FRACTION = 0.5;
+const KLINECHARTS_DEFAULT_BAR_SPACE = 10;
+const KLINECHARTS_MAX_BAR_SPACE = 50;
+
+/** Returns the widened barSpace to apply, or `null` when the dataset isn't sparse (leave klinecharts' own default/current barSpace untouched). See module doc above. */
+function sparseFitBarSpace(barCount: number, containerWidthPx: number): number | null {
+  if (barCount <= 0 || barCount >= SPARSE_BAR_COUNT_THRESHOLD || containerWidthPx <= 0) return null;
+  const ideal = (containerWidthPx * SPARSE_FILL_FRACTION) / barCount;
+  return Math.min(KLINECHARTS_MAX_BAR_SPACE, Math.max(KLINECHARTS_DEFAULT_BAR_SPACE, Math.round(ideal)));
+}
+
 const MAIN_PANE_ID = "candle_pane";
 
 /**
@@ -1023,6 +1074,27 @@ export function KlineChart({
   const lastIntervalRef = useRef<string | null>(null);
   const lastFirstTsRef = useRef<number | undefined>(undefined);
   const lastCountRef = useRef(0);
+  // Sparse-history visual fix (2026-08-11) — see `sparseFitBarSpace`'s own
+  // doc for the founder-complaint trace. Tracked SEPARATELY from
+  // `lastIntervalRef`/`lastFirstTsRef` above rather than folded into their
+  // `isFirstLoad` check, for a real, verified reason: those refs are plain
+  // `useRef`s with no cleanup, so they survive React StrictMode's dev-only
+  // double-invoke of this effect untouched, while the underlying klinecharts
+  // INSTANCE does not — the mount effect's own cleanup (`dispose(el)`) tears
+  // it down and recreates a fresh one on StrictMode's second pass. Verified
+  // live (real dev server, real sparse BANKNIFTY data): gating the
+  // `setBarSpace` call behind `isFirstLoad` alone applied it to the FIRST
+  // (already-disposed) instance only — `lastIntervalRef.current` was already
+  // non-null by the time the SECOND (actually-rendered) instance's own pass
+  // ran, so `isFirstLoad` read false and the real, on-screen chart never
+  // got the fix, even though `chart.getBarSpace()` reported the correct
+  // value when queried against the stale instance. Comparing against the
+  // CURRENT `chart` object's own identity (never reset by anything except a
+  // genuine new instance) sidesteps that mismatch entirely — re-fits once
+  // per real instance, and again whenever the bar count itself changes
+  // (a newly-arrived snapshot can turn a sparse chart dense, or vice versa
+  // in principle), never on a routine unrelated re-render.
+  const barSpaceFitRef = useRef<{ chart: unknown; count: number } | null>(null);
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;
@@ -1044,6 +1116,20 @@ export function KlineChart({
       // never a full reload for a routine 60s poll tick.
       const last = candles[candles.length - 1];
       if (last) subscribeBarCallbackRef.current?.(last as unknown as KLineData);
+    }
+
+    // Sparse-history visual fix — see this ref's own doc above for why this
+    // is deliberately NOT nested inside the `isFirstLoad` branch above. Only
+    // touches barSpace when the dataset is genuinely sparse; a normal-
+    // density chart is left exactly as klinecharts' own default renders it,
+    // and re-running this check on an unrelated tick (chart/count both
+    // unchanged) is a no-op via the identity/count comparison, never an
+    // extra `setBarSpace` call.
+    const needsSparseFit = barSpaceFitRef.current?.chart !== chart || barSpaceFitRef.current?.count !== count;
+    if (needsSparseFit) {
+      const fitBarSpace = sparseFitBarSpace(count, containerRef.current?.clientWidth ?? 0);
+      if (fitBarSpace !== null) chart.setBarSpace(fitBarSpace);
+      barSpaceFitRef.current = { chart, count };
     }
 
     lastIntervalRef.current = interval;

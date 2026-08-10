@@ -60,6 +60,9 @@ const W = 640;
 const H = 200;
 const PAD = { top: 12, right: 12, bottom: 22, left: 12 };
 
+/** Sparse-history disclosure threshold (2026-08-11) — see `footerNote`'s own doc. Deliberately a different, smaller number than the workbench's `SPARSE_BAR_COUNT_THRESHOLD` (40): this chart is a compact terminal widget where even a handful of real points is normal/expected, not the workbench's full-screen candlestick view. */
+const SPARSE_HISTORY_POINT_THRESHOLD = 10;
+
 interface PremiumTick {
   capturedAt: string;
   lastPrice: number;
@@ -322,9 +325,23 @@ export function PremiumChart({
     setDragState(null);
   };
 
+  // Sparse-history disclosure (2026-08-11) — companion fix to the workbench
+  // candlestick view's `sparseFitBarSpace`/sparse-notice pair (see
+  // kline-chart.tsx's own doc for the full founder-complaint trace). This
+  // chart's own rendering (an index-spaced connected line, never bars) never
+  // shows the workbench's specific "isolated dash" artifact, but a straight
+  // line segment drawn between two REAL samples that happen to be days apart
+  // carries its own honesty gap: it visually implies smooth movement across
+  // that whole span, when in truth nothing was captured in between. This
+  // note discloses that directly rather than leaving the line to speak for
+  // itself — no change to the line-drawing geometry itself (still exactly
+  // the real captured points, connected in order; never interpolated).
+  const isSparseHistory = historyPoints.length > 0 && historyPoints.length < SPARSE_HISTORY_POINT_THRESHOLD;
   const footerNote =
     historyPoints.length > 0
-      ? `${captureCadenceLabel} snapshots since ${formatIstDateShort(historyPoints[0].capturedAt)} · delayed`
+      ? isSparseHistory
+        ? `Sparse — only ${historyPoints.length} ${captureCadenceLabel} snapshot${historyPoints.length === 1 ? "" : "s"} since ${formatIstDateShort(historyPoints[0].capturedAt)} · line connects real but widely-spaced samples, not continuous ticks · delayed`
+        : `${captureCadenceLabel} snapshots since ${formatIstDateShort(historyPoints[0].capturedAt)} · delayed`
       : "Live session only · history accrues as this contract is viewed";
 
   return (

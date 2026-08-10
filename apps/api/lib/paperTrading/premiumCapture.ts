@@ -69,13 +69,63 @@
  * aggregation to decide, per bucket and from the row's own recorded truth,
  * whether a bucket is native-granularity (1 row = 1 honest bar) or a real
  * aggregation still bound by the pre-existing "≥3 samples" honesty floor.
+ *
+ * **Always-on index capture (2026-08-11) — the "sparse chart" fix.** Founder
+ * complaint, with screenshot: the BANKNIFTY 57700 PE 25-Aug-26 premium chart
+ * rendered as scattered isolated single-sample bars with big empty stretches.
+ * A same-day DATA AUDIT (not re-derived here) confirmed the captured rows
+ * were themselves correct (spot parity to the decimal, CE/PE paired, zero
+ * gaps WITHIN a capture window) — the problem was pure SPARSITY: capture was,
+ * and until this change still is for stocks, 100% demand-driven (open
+ * position or "viewed in the last 15 minutes"), so an index chain nobody had
+ * open simply had almost no history. `collectAlwaysOnIndexCandidates` below
+ * adds a THIRD candidate source — the 5 index underlyings'
+ * (`INDEX_OPTION_UNDERLYINGS`, the same shared registry `isIndexUnderlying`
+ * already re-exports from, never a locally duplicated list) nearest weekly
+ * expiry (`fetchOptionChainExpiries(underlying)[0]` — that function's own
+ * contract is "nearest first", verified against its doc) is now captured on
+ * EVERY fast-track run during market hours, regardless of whether anyone is
+ * looking at it. Marked `alwaysOn: true` on the merged `Candidate` and — like
+ * `hasOpenPosition` — NEVER dropped by `capCandidates`'s defensive cap
+ * (`FAST_TRACK_MAX_CANDIDATES` still leaves 7 of its 12 slots free for open
+ * positions plus genuinely-viewed extra expiries/underlyings on top of the 5
+ * always-on ones). Single-stock (slow-track) underlyings are DELIBERATELY
+ * left demand-driven, unchanged — this domain's own write-volume ceiling is
+ * the ~211-name F&O stock universe, and always-on capture across all of them
+ * would be the unbounded-write-volume risk this file's own "Defensive
+ * candidate caps" section above already warns against; a stock's chart
+ * staying sparse until it's actually traded/viewed remains the accepted
+ * tradeoff, matching this file's existing SLOW_TRACK design intent.
+ *
+ * Write-volume math (5 underlyings, always on, full ATM±10 depth, every
+ * market-hour minute — same 375 min/session figure this file's part (a)
+ * measurement above used): 5 × 42 rows × 375 min/day ≈ 78,750 rows/day, a
+ * ~787,500-row steady state against the prune cron's existing 10-calendar-day
+ * fine-grained retention window (`paper-trading-premium-snapshot-prune`,
+ * `FINE_GRAINED_RETENTION_DAYS`). That prune cron's own module doc already
+ * anticipated exactly this cadence ("the 1-minute fast (index) track writes
+ * ~5x the rows/candidate/run the old 5-minute cadence did") when it carved
+ * out the 10-day fine-grained tier — this change is what actually realizes
+ * that assumption in steady state (previously the fast track only wrote
+ * when something was genuinely being viewed, so real volume sat far below
+ * the tier's own budget). `OptionPremiumSnapshot`'s existing composite index
+ * (`[underlyingSymbol, expiryDate, strikePrice, optionType, capturedAt]`,
+ * schema-defined, unchanged) already covers both the premium-history read
+ * path and the prune cron's own delete filters at this volume — no schema
+ * change needed. No new crontab entry needed either: this rides the exact
+ * same every-minute fast-track invocation the interval-parity project
+ * already installed.
  */
 
 import { isNseWeekdayMarketHours } from "@predict-future/business-rules/papertrading/marketHours";
 import { deriveOptionPositions, type PaperEngineOrder } from "@predict-future/business-rules/papertrading/replay";
-import { formatNseExpiryDate, parseNseExpiryDate } from "@predict-future/business-rules/papertrading/optionContract";
+import {
+  formatNseExpiryDate,
+  parseNseExpiryDate,
+  INDEX_OPTION_UNDERLYINGS
+} from "@predict-future/business-rules/papertrading/optionContract";
 
-import { fetchOptionChain, getRecentlyViewedContracts, isIndexUnderlying, type OptionChainSnapshot } from "@/lib/marketMoves/optionChain";
+import { fetchOptionChain, fetchOptionChainExpiries, getRecentlyViewedContracts, isIndexUnderlying, type OptionChainSnapshot } from "@/lib/marketMoves/optionChain";
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 
@@ -122,6 +172,8 @@ export interface PremiumCaptureRunResult {
   candidateContracts: number;
   fastTrackCandidates: number;
   slowTrackCandidates: number;
+  /** Always-on index capture (2026-08-11) — how many of the 5 index underlyings successfully resolved a nearest-weekly-expiry candidate this run; less than 5 signals a chain-fetch problem for one or more underlyings (see collectAlwaysOnIndexCandidates), not a cap/traffic issue. */
+  alwaysOnIndexCandidates: number;
   /** Count of purely-viewed (no open position) candidates dropped by the defensive cap this run — 0 in the overwhelmingly common case; a nonzero value here is a real signal this app's usage has outgrown FAST_TRACK_MAX_CANDIDATES/SLOW_TRACK_MAX_CANDIDATES and they should be revisited. */
   candidatesDroppedByCap: number;
   chainFetchFailures: number;
@@ -134,7 +186,9 @@ interface Candidate {
   expiryStr: string; // NSE "DD-MMM-YYYY"
   /** True if ANY account currently holds an open position in this contract — see capCandidates's "never drop real exposure" rule. */
   hasOpenPosition: boolean;
-  /** Epoch ms this pair was last requested through the chain endpoint — 0 for a candidate that only ever showed up via an open position. Prioritizes which merely-viewed candidates survive the cap; never decides capture eligibility itself. */
+  /** Always-on index capture (2026-08-11) — true for one of the 5 index underlyings' own nearest-weekly-expiry pair, regardless of viewing/positions. Never dropped by capCandidates, same as hasOpenPosition — see module doc. */
+  alwaysOn: boolean;
+  /** Epoch ms this pair was last requested through the chain endpoint — 0 for a candidate that only ever showed up via an open position or always-on capture. Prioritizes which merely-viewed candidates survive the cap; never decides capture eligibility itself. */
   lastViewedAt: number;
 }
 
@@ -179,46 +233,82 @@ function collectRecentlyViewedCandidates(): Array<{ underlying: string; expirySt
 }
 
 /**
- * Merges the two candidate sources into one deduped list carrying both
- * `hasOpenPosition` and `lastViewedAt` — the two signals `capCandidates`
- * below needs to decide what survives a defensive cap. A pair present in
- * BOTH sources keeps `hasOpenPosition: true` (never downgraded).
+ * Always-on index capture (2026-08-11, see module doc) — one candidate per
+ * index underlying, pinned to that underlying's OWN nearest weekly expiry
+ * (`fetchOptionChainExpiries` is documented "nearest first" — never assumed,
+ * that ordering is this function's whole contract). A per-underlying fetch
+ * failure (chain endpoint down, no expiries returned) drops just that one
+ * underlying for this run — never throws, matching every other function in
+ * this file's failure posture — so one flaky underlying can't blank out
+ * always-on capture for the other four.
+ */
+async function collectAlwaysOnIndexCandidates(): Promise<Array<{ underlying: string; expiryStr: string }>> {
+  const results = await Promise.all(
+    INDEX_OPTION_UNDERLYINGS.map(async (underlying): Promise<{ underlying: string; expiryStr: string } | null> => {
+      try {
+        const expiries = await fetchOptionChainExpiries(underlying);
+        const nearest = expiries[0];
+        return nearest ? { underlying, expiryStr: nearest } : null;
+      } catch {
+        return null;
+      }
+    })
+  );
+  return results.filter((c): c is { underlying: string; expiryStr: string } => c !== null);
+}
+
+/**
+ * Merges the three candidate sources into one deduped list carrying
+ * `hasOpenPosition`, `alwaysOn`, and `lastViewedAt` — the signals
+ * `capCandidates` below needs to decide what survives a defensive cap. A
+ * pair present in multiple sources keeps every `true` flag it earned from
+ * ANY source (never downgraded) and the MAX `lastViewedAt` across sources.
  */
 function mergeCandidates(
   openPositions: Array<{ underlying: string; expiryStr: string }>,
-  recentlyViewed: Array<{ underlying: string; expiryStr: string; lastViewedAt: number }>
+  recentlyViewed: Array<{ underlying: string; expiryStr: string; lastViewedAt: number }>,
+  alwaysOn: Array<{ underlying: string; expiryStr: string }>
 ): Candidate[] {
   const byKey = new Map<string, Candidate>();
   for (const c of openPositions) {
-    byKey.set(candidateKey(c), { underlying: c.underlying, expiryStr: c.expiryStr, hasOpenPosition: true, lastViewedAt: 0 });
+    byKey.set(candidateKey(c), { underlying: c.underlying, expiryStr: c.expiryStr, hasOpenPosition: true, alwaysOn: false, lastViewedAt: 0 });
+  }
+  for (const c of alwaysOn) {
+    const existing = byKey.get(candidateKey(c));
+    if (existing) {
+      existing.alwaysOn = true;
+    } else {
+      byKey.set(candidateKey(c), { underlying: c.underlying, expiryStr: c.expiryStr, hasOpenPosition: false, alwaysOn: true, lastViewedAt: 0 });
+    }
   }
   for (const c of recentlyViewed) {
     const existing = byKey.get(candidateKey(c));
     if (existing) {
       existing.lastViewedAt = Math.max(existing.lastViewedAt, c.lastViewedAt);
     } else {
-      byKey.set(candidateKey(c), { underlying: c.underlying, expiryStr: c.expiryStr, hasOpenPosition: false, lastViewedAt: c.lastViewedAt });
+      byKey.set(candidateKey(c), { underlying: c.underlying, expiryStr: c.expiryStr, hasOpenPosition: false, alwaysOn: false, lastViewedAt: c.lastViewedAt });
     }
   }
   return [...byKey.values()];
 }
 
 /**
- * Defensive circuit breaker (see module doc) — every `hasOpenPosition`
- * candidate always survives, however many there are (real account exposure
- * is never sacrificed to a write-volume budget); remaining slots up to `max`
- * are filled by merely-viewed candidates, most-recently-viewed first.
- * Returns the kept list plus how many merely-viewed candidates were dropped.
+ * Defensive circuit breaker (see module doc) — every `hasOpenPosition` OR
+ * `alwaysOn` candidate always survives, however many there are (real account
+ * exposure and the always-on index floor are never sacrificed to a
+ * write-volume budget); remaining slots up to `max` are filled by
+ * merely-viewed candidates, most-recently-viewed first. Returns the kept
+ * list plus how many merely-viewed candidates were dropped.
  */
 function capCandidates(candidates: Candidate[], max: number): { kept: Candidate[]; dropped: number } {
-  const withPosition = candidates.filter((c) => c.hasOpenPosition);
-  const viewedOnly = candidates.filter((c) => !c.hasOpenPosition).sort((a, b) => b.lastViewedAt - a.lastViewedAt);
+  const neverDropped = candidates.filter((c) => c.hasOpenPosition || c.alwaysOn);
+  const viewedOnly = candidates.filter((c) => !c.hasOpenPosition && !c.alwaysOn).sort((a, b) => b.lastViewedAt - a.lastViewedAt);
 
-  const remainingSlots = Math.max(0, max - withPosition.length);
+  const remainingSlots = Math.max(0, max - neverDropped.length);
   const keptViewedOnly = viewedOnly.slice(0, remainingSlots);
   const dropped = viewedOnly.length - keptViewedOnly.length;
 
-  return { kept: [...withPosition, ...keptViewedOnly], dropped };
+  return { kept: [...neverDropped, ...keptViewedOnly], dropped };
 }
 
 /** Nearest strike to the chain's own live underlyingValue — same "nearest wins" definition option-chain-browser.tsx uses client-side for its ATM highlight. */
@@ -326,6 +416,7 @@ export async function runPremiumCapture(now: Date = new Date()): Promise<Premium
     candidateContracts: 0,
     fastTrackCandidates: 0,
     slowTrackCandidates: 0,
+    alwaysOnIndexCandidates: 0,
     candidatesDroppedByCap: 0,
     chainFetchFailures: 0,
     snapshotsWritten: 0,
@@ -340,13 +431,15 @@ export async function runPremiumCapture(now: Date = new Date()): Promise<Premium
   const runSlowTrack = isFiveMinuteBoundary(now);
   result.slowTrackSkipped = !runSlowTrack;
 
-  const [openPositionCandidates, recentlyViewedCandidates] = await Promise.all([
+  const [openPositionCandidates, recentlyViewedCandidates, alwaysOnIndexCandidates] = await Promise.all([
     collectOpenPositionCandidates(),
-    Promise.resolve(collectRecentlyViewedCandidates())
+    Promise.resolve(collectRecentlyViewedCandidates()),
+    collectAlwaysOnIndexCandidates()
   ]);
 
-  const allCandidates = mergeCandidates(openPositionCandidates, recentlyViewedCandidates);
+  const allCandidates = mergeCandidates(openPositionCandidates, recentlyViewedCandidates, alwaysOnIndexCandidates);
   result.candidateContracts = allCandidates.length;
+  result.alwaysOnIndexCandidates = alwaysOnIndexCandidates.length;
 
   const fastRaw = allCandidates.filter((c) => isIndexUnderlying(c.underlying));
   const slowRaw = allCandidates.filter((c) => !isIndexUnderlying(c.underlying));

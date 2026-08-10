@@ -109,7 +109,7 @@ import { ChartAxisPlusButton } from "@/components/finance/chart-axis-plus-button
 import { ChartContextMenu } from "@/components/finance/chart-context-menu";
 import { ChartTradeHint, useTradeHintDismissed } from "@/components/finance/chart-trade-hint";
 import type { ChartOrderLine, OrderSide, OrderVariant } from "@/components/finance/chart-order-lines";
-import { KlineChart, type PfSignalsConfig } from "./kline-chart";
+import { KlineChart, SPARSE_BAR_COUNT_THRESHOLD, type PfSignalsConfig } from "./kline-chart";
 import { TimeframeSelector } from "./timeframe-selector";
 import { IndicatorDialog } from "./indicator-dialog";
 import { IndicatorActiveStrip } from "./indicator-active-strip";
@@ -1030,6 +1030,24 @@ export function ChartWorkbench({
       ? `No premium history captured for this contract yet — history accrues as this contract is viewed (${captureCadenceLabel} snapshots while it's on someone's screen; live ticks start building today's chart on this screen within the first minute).`
       : "Not enough premium ticks yet — check back shortly.";
 
+  // Sparse-history disclosure (2026-08-11) — see kline-chart.tsx's
+  // `sparseFitBarSpace` doc for the companion visual fix (widening barSpace
+  // so a handful of real bars don't render as an invisible sliver). That
+  // fix alone can still leave a viewer wondering why bars are so far apart
+  // in time — this banner states the honest reason instead of leaving a
+  // sparse-but-now-visible chart to speak for itself. Gated on the SAME
+  // `SPARSE_BAR_COUNT_THRESHOLD` kline-chart.tsx itself uses (imported, not
+  // duplicated, so the two can never drift) and on real candles actually
+  // existing (`!premiumTooSparse`, which already owns the zero-candle case
+  // above with its own, more detailed empty-state message). Premium-mode
+  // only: an equity/index chart's expected bar density isn't known here the
+  // way premiumMeta's own capture-cadence truth is.
+  const premiumIsSparse = isPremiumMode && candles.length > 0 && candles.length < SPARSE_BAR_COUNT_THRESHOLD;
+  const premiumSparseNotice =
+    premiumIsSparse && premiumSinceDate
+      ? `Sparse history — only ${premiumSnapshotCount} snapshot${premiumSnapshotCount === 1 ? "" : "s"} captured since ${formatIstDateShort(premiumSinceDate)}. Bars may sit far apart in time; this contract's history densifies as it's viewed or traded.`
+      : null;
+
   const activeColor = (selectedRow?.styles as { line?: { color?: string } } | undefined)?.line?.color ?? null;
   const activeWidth = (selectedRow?.styles as { line?: { size?: number } } | undefined)?.line?.size ?? null;
 
@@ -1204,6 +1222,11 @@ export function ChartWorkbench({
           )}
           {status === "ready" && premiumTooSparse && (
             <div className="flex h-full items-center justify-center px-6 text-center text-sm text-ink-500">{premiumAccrualNote}</div>
+          )}
+          {status === "ready" && premiumSparseNotice && (
+            <div className="pointer-events-none absolute left-3 top-3 z-10 max-w-md rounded-lg border border-amber-200 bg-amber-50/95 px-3 py-2 text-xs text-amber-800 shadow-sm">
+              {premiumSparseNotice}
+            </div>
           )}
           {status === "ready" && !premiumTooSparse && (
             <KlineChart
