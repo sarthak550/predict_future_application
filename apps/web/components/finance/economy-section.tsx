@@ -21,7 +21,20 @@
  *  3. A small macro-relevant news strip, reusing `getPublishedNewsItems`
  *     scoped to `category: "FINANCE"` — the only India-market news tag
  *     that exists in `MarketCategory` (no separate "macro" sub-tag), the
- *     honest fallback per the brief.
+ *     honest fallback per the brief. Capped at `MACRO_NEWS_LIMIT` (4,
+ *     unchanged — see page.tsx) with a "View all" link to the dedicated
+ *     `/economy/news` page for full cursor-paginated history (founder ask
+ *     2026-08-12: "no way of seeing more than that"). Kept as a link-out
+ *     rather than inline expansion so the homepage's own ISR render stays
+ *     exactly as costly as before — no new member in page.tsx's Promise.all.
+ *  4. An "Upcoming policy events" card — the RBI MPC meeting calendar
+ *     (`lib/finance/rbiMpcCalendar.ts`). Founder ask 2026-08-12: mobile used
+ *     to show "next RBI policy change" dates; that module's doc comment has
+ *     the full investigation of why this is a fresh hand-maintained
+ *     constant (RBI's own Section-45ZI-mandated published schedule) rather
+ *     than a port of mobile's admin-poll-driven "Policy calendar" pill. Pure
+ *     computation, no I/O — also adds zero cost to the homepage's data
+ *     fetching.
  *
  * **Known, disclosed gap — India 10Y G-Sec yield**: investigated and
  * dropped, not fabricated. Yahoo has no resolving ticker for it (every
@@ -37,14 +50,16 @@
  * UI. Revisit if a clean live source is found later.
  */
 import Link from "next/link";
-import { TrendingUp } from "lucide-react";
+import type { ReactNode } from "react";
+import { ArrowUpRight, TrendingUp } from "lucide-react";
 
 import { EconomyTileLive } from "@/components/finance/economy-tile-live";
 import { Card, CardContent } from "@/components/ui/card";
 import type { MarketSummaryResult } from "@/lib/finance/marketSummary";
 import type { MacroSnapshotResult } from "@/lib/finance/macro";
+import { countdownLabel, getUpcomingMpcMeetings, MPC_CALENDAR_SOURCE, type MpcMeeting } from "@/lib/finance/rbiMpcCalendar";
 import type { PlainNewsItem } from "@/lib/news/queries";
-import { formatRelativeTime } from "@/lib/utils";
+import { formatIstSessionDate, formatRelativeTime } from "@/lib/utils";
 
 /**
  * Tiles with a live per-symbol quote route today — see
@@ -161,13 +176,81 @@ function IndiaMacroCard({ macro }: { macro: MacroSnapshotResult }) {
   );
 }
 
+/**
+ * "Upcoming policy events" card — RBI MPC meeting calendar. See
+ * lib/finance/rbiMpcCalendar.ts's doc comment for the full sourcing/honesty
+ * rationale. Never returns null: an empty upcoming-meetings list (the
+ * fiscal year's calendar fully lapsed and next year's isn't announced yet)
+ * is itself the intended "graceful when no future dates remain" state, per
+ * the brief — shown as a message, not a hidden card.
+ */
+function PolicyCalendarCard({ meetings }: { meetings: MpcMeeting[] }) {
+  const [next, ...rest] = meetings;
+
+  return (
+    <Card>
+      <CardContent className="space-y-4 p-5">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-ink-400">Upcoming policy events</p>
+          <p className="mt-0.5 text-xs text-ink-400">RBI Monetary Policy Committee</p>
+        </div>
+
+        {!next ? (
+          <p className="text-xs leading-5 text-ink-400">
+            {MPC_CALENDAR_SOURCE.fiscalYear}&apos;s MPC calendar has concluded — next fiscal year&apos;s
+            calendar not yet announced. RBI typically publishes it in March.
+          </p>
+        ) : (
+          <>
+            <div className="rounded-2xl bg-[#f5f7fb] px-4 py-3">
+              <p className="text-xs text-ink-400">Next RBI policy decision</p>
+              <p className="mt-0.5 text-base font-semibold tabular-nums text-ink-900">
+                {formatIstSessionDate(next.decisionDate)}
+              </p>
+              <p className="mt-0.5 text-xs text-ink-500">
+                Meeting {formatIstSessionDate(next.startDate)} – {formatIstSessionDate(next.decisionDate)} ·{" "}
+                {countdownLabel(next.decisionDate)}
+              </p>
+            </div>
+
+            {rest.length > 0 && (
+              <ul className="space-y-1.5">
+                {rest.map((m) => (
+                  <li key={m.seq} className="flex items-center justify-between text-xs text-ink-500">
+                    <span>Meeting {m.seq}</span>
+                    <span className="tabular-nums text-ink-400">{formatIstSessionDate(m.decisionDate)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </>
+        )}
+
+        <p className="text-[11px] leading-5 text-ink-400">
+          Official {MPC_CALENDAR_SOURCE.fiscalYear} calendar, announced{" "}
+          {formatIstSessionDate(MPC_CALENDAR_SOURCE.announcedOn)} under {MPC_CALENDAR_SOURCE.legalBasis}.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
 function MacroNewsStrip({ news }: { news: PlainNewsItem[] }) {
   if (news.length === 0) return null;
 
   return (
     <Card>
       <CardContent className="space-y-3 p-5">
-        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-ink-400">Macro &amp; markets news</p>
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-ink-400">Macro &amp; markets news</p>
+          <Link
+            href="/economy/news"
+            className="inline-flex items-center gap-1 text-xs font-medium text-signal-sky hover:underline"
+          >
+            View all
+            <ArrowUpRight className="h-3 w-3" />
+          </Link>
+        </div>
         <ul className="space-y-3">
           {news.map((item) => (
             <li key={item.id} className="border-b border-ink-100 pb-3 last:border-0 last:pb-0">
@@ -190,6 +273,20 @@ function MacroNewsStrip({ news }: { news: PlainNewsItem[] }) {
   );
 }
 
+/** Section heading, extracted so the all-data-sources-down degraded return (below) doesn't duplicate it. */
+function EconomySectionHeader() {
+  return (
+    <div>
+      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-signal-emerald">Indian Economy</p>
+      <h2 className="mt-1 text-2xl font-semibold text-ink-900">The macro backdrop, at a glance.</h2>
+      <p className="mt-2 max-w-xl text-sm leading-6 text-ink-500">
+        Headline indices, the rupee, and the policy rates and growth projections shaping every call on this
+        page — real data, delayed a few minutes.
+      </p>
+    </div>
+  );
+}
+
 export function EconomySection({
   marketSummary,
   macro,
@@ -202,19 +299,26 @@ export function EconomySection({
   const hasTiles = marketSummary != null && marketSummary.tiles.length > 0;
   const hasMacro = macro != null && (macro.rbi.repoRate != null || macro.rbi.crr != null || macro.rbi.slr != null || macro.imf.gdpGrowth != null || macro.imf.cpiInflation != null);
   const hasNews = news.length > 0;
+  // Pure/no-I/O — the RBI MPC calendar always has content (either upcoming
+  // dates or an honest "not yet announced" message), so unlike hasTiles/
+  // hasMacro/hasNews above it never gates this section's visibility.
+  const upcomingMpcMeetings = getUpcomingMpcMeetings();
 
-  if (!hasTiles && !hasMacro && !hasNews) return null;
+  if (!hasTiles && !hasMacro && !hasNews) {
+    // Even with every live data source down, the policy calendar is still
+    // real, always-available content — degrade to just the section header
+    // + calendar card rather than hiding the whole section.
+    return (
+      <section className="space-y-5">
+        <EconomySectionHeader />
+        <PolicyCalendarCard meetings={upcomingMpcMeetings} />
+      </section>
+    );
+  }
 
   return (
     <section className="space-y-5">
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-signal-emerald">Indian Economy</p>
-        <h2 className="mt-1 text-2xl font-semibold text-ink-900">The macro backdrop, at a glance.</h2>
-        <p className="mt-2 max-w-xl text-sm leading-6 text-ink-500">
-          Headline indices, the rupee, and the policy rates and growth projections shaping every call on this
-          page — real data, delayed a few minutes.
-        </p>
-      </div>
+      <EconomySectionHeader />
 
       {hasTiles && (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -224,23 +328,40 @@ export function EconomySection({
         </div>
       )}
 
-      {/* Was `{hasMacro ? <IndiaMacroCard .../> : <div />}` — that empty
-          placeholder existed only to hold the grid's first column open, but
-          it left a bare empty box beside MacroNewsStrip whenever macro data
-          isn't available (e.g. the RBI/IMF fetch failing independently of
-          the news query). Same empty-rectangle failure mode as the rest of
-          this pass: when only one side has data, it should take the full
-          row width, not half of it next to a blank cell. */}
-      {hasMacro && hasNews ? (
-        <div className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr] lg:items-start">
-          <IndiaMacroCard macro={macro!} />
-          <MacroNewsStrip news={news} />
-        </div>
-      ) : hasMacro ? (
-        <IndiaMacroCard macro={macro!} />
-      ) : hasNews ? (
-        <MacroNewsStrip news={news} />
-      ) : null}
+      {/* Was a hasMacro/hasNews-only two-card layout (0.9fr/1.1fr weighted)
+          with a `{hasMacro ? <IndiaMacroCard/> : <div/>}` empty placeholder
+          for the "only one side has data" case — that placeholder left a
+          bare empty box beside MacroNewsStrip whenever the RBI/IMF fetch
+          failed independently of the news query. Generalized to N present
+          cards (PolicyCalendarCard added 2026-08-12 and never itself
+          returns null, so this row is now 1-3 cards): equal-width columns
+          via a literal-class lookup (Tailwind needs literal class names,
+          not a computed `grid-cols-${n}`), one weighting simplification
+          from the old 0.9/1.1 split — not worth a 3-way weighted grid-
+          template for what's a minor visual nicety. Never a bare empty
+          cell: absent cards are simply omitted from the array, not
+          rendered as blanks. */}
+      {(() => {
+        const cards: { key: string; node: ReactNode }[] = [];
+        if (hasMacro) cards.push({ key: "macro", node: <IndiaMacroCard macro={macro!} /> });
+        cards.push({ key: "policy", node: <PolicyCalendarCard meetings={upcomingMpcMeetings} /> });
+        if (hasNews) cards.push({ key: "news", node: <MacroNewsStrip news={news} /> });
+
+        const gridClass =
+          cards.length === 3
+            ? "grid gap-4 lg:grid-cols-3 lg:items-start"
+            : cards.length === 2
+              ? "grid gap-4 lg:grid-cols-2 lg:items-start"
+              : "";
+
+        return (
+          <div className={gridClass}>
+            {cards.map((c) => (
+              <div key={c.key}>{c.node}</div>
+            ))}
+          </div>
+        );
+      })()}
     </section>
   );
 }
