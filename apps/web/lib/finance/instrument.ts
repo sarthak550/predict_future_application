@@ -490,6 +490,35 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
   // `close`) is what NSE's daily file actually reports as the day's
   // points-change, so prevClose is derived (close - changeAbs) rather than
   // stored separately — same derivation IndexEodQuote's own schema doc uses.
+  // Founder 2026-08-12: "As of date is missing on indices pages" — the 35
+  // hasLiveIndexPipe pages shipped a null server quote by design (the
+  // client live pipe fills the level), which also dropped the dated
+  // "closed at … on <date>" header line equities always show. They now
+  // have their own IndexEodQuote rows (Stage 2), so synthesize the server
+  // quote from the latest self-owned row — the client overlay still
+  // freshens the level; the honest session date renders server-side.
+  let livePipeIndexQuote: InstrumentQuote | null = null;
+  if (hasLiveIndexPipe && latestQuote == null) {
+    const displayName = INDEX_DISPLAY_NAME[symbol];
+    const eodRow = displayName
+      ? await prisma.indexEodQuote.findFirst({
+          where: { indexName: { equals: displayName, mode: "insensitive" } },
+          orderBy: { sessionDate: "desc" },
+          select: { sessionDate: true, close: true, changeAbs: true, changePercent: true, volume: true },
+        })
+      : null;
+    if (eodRow) {
+      livePipeIndexQuote = {
+        sessionDate: eodRow.sessionDate,
+        close: eodRow.close,
+        prevClose: eodRow.close - eodRow.changeAbs,
+        changePercent: eodRow.changePercent,
+        volume: eodRow.volume ?? 0,
+        deliveryPct: null,
+      };
+    }
+  }
+
   let longTailQuote: InstrumentQuote | null = null;
   if (isLongTailIndex) {
     const latestRow = longTailEodRows?.[0] ?? null;
@@ -620,7 +649,7 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
   return {
     symbol,
     companyName,
-    quote: isLongTailIndex ? longTailQuote : latestQuote,
+    quote: isLongTailIndex ? longTailQuote : (latestQuote ?? livePipeIndexQuote),
     spark,
     news,
     filings,
