@@ -434,6 +434,7 @@ function buildExtendDataForOverlay(overlayName: string): unknown {
 export function KlineChart({
   candles,
   interval,
+  instrumentKey,
   precision = 2,
   mainIndicators,
   subIndicators,
@@ -469,6 +470,38 @@ export function KlineChart({
 }: {
   candles: Candle[];
   interval: string;
+  /**
+   * Founder-reported bug fix (2026-08-11, options terminal live in prod):
+   * "when I switch the strikes the chart does not change, only the live
+   * price gets changed." Root cause — the SAME class of bug the interval-
+   * switch race fix (see this file's git history / use-workbench-candles.ts's
+   * own module doc) closed, but for the OTHER axis: the reload-decision
+   * effect below used to infer "did the dataset identity change" purely from
+   * `interval` plus the candles array's own `firstTs`, never from the
+   * caller's actual instrument identity. For premium contracts specifically,
+   * `firstTs` is next to useless as an identity signal — every contract's
+   * capture history routinely starts at the SAME bucket-floored timestamp
+   * (all contracts under always-on capture begin at the same market-open
+   * minute), so a genuine strike/expiry/CE-PE switch frequently produces a
+   * new candle array whose `firstTs` happens to equal the OLD one's. Live-
+   * reproduced (real dev DB, two seeded NIFTY CE contracts sharing an
+   * identical first-bucket timestamp by construction): switching strikes
+   * left `chart.getDataList()` showing the OLD contract's full 60-bar body
+   * with ONLY the last bar's close overwritten to the NEW contract's price —
+   * exactly "only the live price gets changed." `chartKey` (this app's own
+   * `EQ:<symbol>` / `INDEX:<symbol>` / `OPT:<underlying>:<expiry>:<strike>:
+   * <type>` convention, already computed by every caller — see
+   * chart-workbench.tsx's own prop of the same name) is the one signal that
+   * unambiguously captures "is this still the same instrument," independent
+   * of what its candle content happens to look like. Passed straight through
+   * as `instrumentKey` and compared by identity in the reload-decision effect
+   * below (`instrumentChanged`), alongside (not instead of) the existing
+   * `intervalChanged`/`windowShifted` checks — this closes the SAME latent
+   * gap for equity/index symbol switches too (an intraday chart's `firstTs`
+   * can just as easily collide across two stocks that both opened at 09:15),
+   * not just premium.
+   */
+  instrumentKey: string;
   /** Decimal places for price display/tooltip — the plan's fixed "precision 2" for every instrument this sprint charts. */
   precision?: number;
   /** TA Suite S2 — indicator INSTANCES (not bare names, see `indicator-registry.ts`) stacked in the main candle pane. */
@@ -1031,18 +1064,31 @@ export function KlineChart({
   }, []);
 
   // ── Data effect: full reload vs tail-advance. Keyed on the primitives
-  // (interval + first/last timestamp + count) PLUS `candles`' identity — the
-  // identity dep is required, not an accident: an in-progress bar's OHLC can
-  // tick while interval/firstTs/lastTs/count all stay identical, and only the
-  // fresh array from the parent's 60s poll signals that. Safe despite the
-  // identity key because the body only pushes into klinecharts (one-way sync,
-  // no parent-state feedback — same justification as the orderLines sync). ──
+  // (interval + instrumentKey + first/last timestamp + count) PLUS
+  // `candles`' identity — the identity dep is required, not an accident: an
+  // in-progress bar's OHLC can tick while interval/instrumentKey/firstTs/
+  // lastTs/count all stay identical, and only the fresh array from the
+  // parent's 60s poll signals that. Safe despite the identity key because
+  // the body only pushes into klinecharts (one-way sync, no parent-state
+  // feedback — same justification as the orderLines sync). `instrumentKey`
+  // (2026-08-11 founder bug fix — see its own prop doc above) is checked
+  // ALONGSIDE `firstTs`-based `windowShifted`, never instead of it: a
+  // genuine identity change is always a full reload even when firstTs
+  // happens to collide, but a same-instrument backfill/pagination event
+  // that shifts firstTs without changing instrumentKey must still reload
+  // too — both are independent triggers, either one is sufficient. ──
   const firstTs = candles[0]?.timestamp;
   const lastTs = candles[candles.length - 1]?.timestamp;
   const count = candles.length;
   const lastIntervalRef = useRef<string | null>(null);
   const lastFirstTsRef = useRef<number | undefined>(undefined);
   const lastCountRef = useRef(0);
+  // Founder bug fix (2026-08-11) — see `instrumentKey`'s own prop doc above
+  // for the full trace. `null` (not `""`) as the "never set yet" sentinel so
+  // a real instrumentKey of `""` (never happens in practice — every caller's
+  // `chartKey` convention always has a prefix — but worth being explicit)
+  // can't be mistaken for "first load".
+  const lastInstrumentKeyRef = useRef<string | null>(null);
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;
@@ -1051,8 +1097,14 @@ export function KlineChart({
     const isFirstLoad = lastIntervalRef.current === null;
     const intervalChanged = !isFirstLoad && lastIntervalRef.current !== interval;
     const windowShifted = !isFirstLoad && lastFirstTsRef.current !== firstTs;
+    // The actual fix: an instrument-identity change (strike/expiry/CE-PE
+    // switch, or an equity/index symbol switch) is ALWAYS a hard dataset
+    // swap, regardless of whether the new series' firstTs happens to collide
+    // with the old one's — see `instrumentKey`'s own doc for why that
+    // collision is the norm, not an edge case, for premium contracts.
+    const instrumentChanged = !isFirstLoad && lastInstrumentKeyRef.current !== instrumentKey;
 
-    const isFullReload = isFirstLoad || intervalChanged || windowShifted;
+    const isFullReload = isFirstLoad || intervalChanged || windowShifted || instrumentChanged;
     if (isFullReload) {
       // Full reload — the plan's "applyNewData" moment. `setPeriod` forces
       // KLineCharts to call our DataLoader's `getBars` again, which answers
@@ -1079,7 +1131,8 @@ export function KlineChart({
     lastIntervalRef.current = interval;
     lastFirstTsRef.current = firstTs;
     lastCountRef.current = count;
-  }, [interval, firstTs, lastTs, count, candles]);
+    lastInstrumentKeyRef.current = instrumentKey;
+  }, [interval, instrumentKey, firstTs, lastTs, count, candles]);
 
   // ── Indicators effect: TA Suite S2 multi-instance rework. Keyed on a
   // JSON-stringified `[instanceId, name, resolvedParams]` snapshot (the

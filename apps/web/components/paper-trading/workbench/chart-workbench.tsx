@@ -528,7 +528,8 @@ export function ChartWorkbench({
     saveStoredPanelWidth(PANEL_DEFAULT_WIDTH);
   }
 
-  const { candles, status, errorMessage, sourceLabel, quote, premiumMeta, lastUpdatedAt, pollIntervalMs, liveTicksActive } = useWorkbenchCandles(feed, chartInterval);
+  const { candles, status, errorMessage, sourceLabel, quote, premiumMeta, lastUpdatedAt, pollIntervalMs, liveTicksActive, dataInstrumentKey } =
+    useWorkbenchCandles(feed, chartInterval);
 
   // Founder-feedback pass (2026-08-03) — PART A (per-indicator signal chips) + PART B (Technicals Rating gauge).
   // Both `computeIndicatorSignal`/`computeTechnicalRating` are pure functions over `candles` — recomputed here
@@ -1235,6 +1236,21 @@ export function ChartWorkbench({
             <KlineChart
               candles={candles}
               interval={chartInterval}
+              // Founder bug fix (2026-08-11) — `dataInstrumentKey` (from
+              // `useWorkbenchCandles`), NOT the raw `chartKey` prop this
+              // component itself receives: `chartKey` changes the instant a
+              // new contract/symbol is picked, a render or more BEFORE that
+              // contract's candles have actually finished fetching — passing
+              // it straight through re-created the exact cross-render race
+              // this whole fix closes (see `dataInstrumentKey`'s own doc in
+              // use-workbench-candles.ts for the live-reproduced trace). The
+              // `?? chartKey` fallback only matters before the very first
+              // fetch ever resolves — impossible in practice here (this
+              // `<KlineChart>` is gated on `status === "ready"`, which itself
+              // requires a successful fetch, so `dataInstrumentKey` is always
+              // already non-null by the time this line runs) but keeps the
+              // prop's type honest without an unsafe cast.
+              instrumentKey={dataInstrumentKey ?? chartKey}
               mainIndicators={indicators.main}
               subIndicators={indicators.sub}
               signalsConfig={signalsConfig}

@@ -402,6 +402,11 @@ function feedTitle(feed: WorkbenchFeed): string {
   return `${feed.underlying} ${feed.strikePrice} ${feed.optionType}`;
 }
 
+/** Equity/index instrument identity for `dataInstrumentKey` below — deliberately excludes `interval` (see that state's own doc: an interval switch is already caught by kline-chart.tsx's own `intervalChanged` check). */
+function equityInstrumentKey(feed: WorkbenchFeed): string {
+  return feed.kind === "optionPremium" ? "" : `${feed.kind}:${feed.symbol}`;
+}
+
 /** Bucket width for every premium-mode interval — widened 2026-08-07 from a 15m/30m-only mapping to the full set (see `PREMIUM_INTERVALS_INDEX`/`PREMIUM_INTERVALS_STOCK`'s own doc). */
 const PREMIUM_BUCKET_MS: Record<CandleInterval, number> = {
   "1m": 60_000,
@@ -454,13 +459,62 @@ export function useWorkbenchCandles(
   pollIntervalMs: number;
   /** Quote-driven intrabar ticks (2026-08-04) — true while the fast last-price poll is genuinely running for this feed right now (equity/index, intraday interval, NSE market hours open). `heartbeat-chip.tsx`'s caller uses this to choose honest cadence copy — "price ticks every ~5s, full bars every 30-60s" only makes sense to say while this is true. */
   liveTicksActive: boolean;
+  /**
+   * Founder bug fix (2026-08-11) — the instrument identity that `candles`
+   * ACTUALLY, CONFIRMED corresponds to right now (stamped inside the same
+   * fetch-success callback that sets the candle data itself — see this
+   * state's own doc below). `null` only before the first successful fetch
+   * ever resolves. `chart-workbench.tsx` passes this (never the raw
+   * `chartKey` prop, which changes a render early) as kline-chart.tsx's
+   * `instrumentKey` — the one signal that closes the "switch strikes, chart
+   * doesn't update" bug at its root without reintroducing the exact
+   * cross-render race this whole fix is about.
+   */
+  dataInstrumentKey: string | null;
 } {
   const [equityState, setEquityState] = useState<CandleFetchState>({ status: "loading" });
   const [quote, setQuote] = useState<WorkbenchQuote | null>(null);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
 
+  // Founder bug fix (2026-08-11, options terminal live in prod — "when I
+  // switch the strikes the chart does not change, only the live price gets
+  // changed"). The FIRST fix attempt threaded the caller's raw `chartKey`
+  // straight into kline-chart.tsx as `instrumentKey` — live-reproduced as
+  // STILL broken (real dev DB, two seeded contracts): `chartKey` changes the
+  // INSTANT the caller picks a new contract (a synchronous state update),
+  // one or more renders BEFORE the new contract's actual candle data has
+  // finished fetching — so kline-chart.tsx's reload-decision effect fires
+  // ONCE on the (harmless, same-old-data) render where only the key changed,
+  // stamping its "last seen key" ref to the NEW value there — and by the
+  // time the REAL new data lands on a LATER render, the key isn't changing
+  // AGAIN, so that genuinely-new-data render is misclassified right back
+  // into a tail-advance. The exact same cross-render-split failure mode
+  // `use-workbench-candles.ts`'s own interval-race fix (see this file's
+  // module doc) closed for `interval` — just on the identity axis instead.
+  //
+  // Fixed the same way: `dataInstrumentKey` is stamped ONLY inside the fetch
+  // success handlers below (equity's `fetchOnce`, premium's
+  // `fetchPremiumOnce`), in the SAME callback invocation that calls
+  // `setEquityState`/`setRawPoints` — React batches both `set` calls from
+  // one event-handler-adjacent callback into ONE commit, so `candles` and
+  // `dataInstrumentKey` always change together, never across a render
+  // boundary. `chart-workbench.tsx` passes THIS (not the raw `chartKey`) as
+  // kline-chart.tsx's `instrumentKey` prop.
+  const [dataInstrumentKey, setDataInstrumentKey] = useState<string | null>(null);
+
   const isPremium = feed.kind === "optionPremium";
   const url = feedUrl(feed, interval);
+
+  // `fetchOnce` below reads `feed` (for `dataInstrumentKey`) but must stay
+  // keyed on `[url]` alone — `feed` is a fresh object identity every render
+  // (this module's own established "no memo, no feedback loop" posture, see
+  // `WorkbenchFeed`'s own doc), and adding it to `fetchOnce`'s dependency
+  // array would recreate the callback (and re-arm the effects that call it)
+  // on every render, defeating the whole point of keying on `url`. A ref,
+  // same idiom `fetchOnceRef`/`onChainDataRef` already use in this codebase
+  // for exactly this reason.
+  const feedRef = useRef(feed);
+  feedRef.current = feed;
 
   // Interval-race fix (2026-08-04, QA-caught: "select 1m, refresh -> chip
   // shows 1m but bars are 5m"). Root cause traced to chart-workbench.tsx
@@ -514,6 +568,7 @@ export function useWorkbenchCandles(
           }
           const prevClose = typeof body.prevClose === "number" ? body.prevClose : null;
           setEquityState({ status: "ready", candles, prevClose, premiumMeta: null });
+          setDataInstrumentKey(equityInstrumentKey(feedRef.current)); // same callback as setEquityState — see dataInstrumentKey's own doc above.
           setLastUpdatedAt(Date.now());
         })
         .catch(() => {
@@ -605,6 +660,7 @@ export function useWorkbenchCandles(
             : [];
           setRawPoints(points);
           setPremiumLoadState("ready");
+          setDataInstrumentKey(key); // same callback as setRawPoints — see dataInstrumentKey's own doc above.
           setLastUpdatedAt(Date.now());
         })
         .catch(() => {
@@ -687,6 +743,32 @@ export function useWorkbenchCandles(
   // one. Also updated only in the commit-phase effect below. Shared by both
   // feed kinds.
   const provisionalBarRef = useRef<Candle | null>(null);
+
+  // Founder bug fix (2026-08-11) — companion to kline-chart.tsx's own
+  // `instrumentKey` fix (same session, same root cause: an instrument-
+  // identity change was only ever inferred from CONTENT — here, whether a
+  // bar's own `barTimestamp` happened to differ — never from the caller's
+  // actual identity). Both refs above are keyed on `barTimestamp` alone, so
+  // a genuine instrument switch (strike/expiry/CE-PE, or an equity/index
+  // symbol switch) whose new last-bar timestamp happens to COINCIDE with the
+  // old instrument's (routine here for the same reason kline-chart.tsx's own
+  // fix doc explains — contracts sharing a capture clock share bucket-
+  // floored timestamps at BOTH ends, not just the first) would silently
+  // carry the OLD instrument's running high/low (or an in-flight provisional
+  // bar built from the OLD instrument's price) onto the NEW one — a wrong
+  // wick or a phantom bar, not the headline "chart doesn't update" bug but
+  // the same design gap. Explicit reset on identity change closes it the
+  // same way `premiumTick`'s own reset effect above already does for that
+  // ref specifically.
+  const instrumentIdentity = isPremium
+    ? premiumUnderlying != null
+      ? `${premiumUnderlying}|${premiumExpiry}|${premiumStrike}|${premiumType}`
+      : null
+    : `${feed.kind}:${"symbol" in feed ? feed.symbol : ""}`;
+  useEffect(() => {
+    runningExtremesRef.current = null;
+    provisionalBarRef.current = null;
+  }, [instrumentIdentity]);
 
   // The array the rest of this hook (and its caller) actually reads: the
   // base candles with the live tick folded into the forming bar (or, past
@@ -786,7 +868,8 @@ export function useWorkbenchCandles(
     premiumMeta: state.status === "ready" ? state.premiumMeta : null,
     lastUpdatedAt,
     pollIntervalMs: isPremium ? 60_000 : liveTicksActive ? LIVE_QUOTE_POLL_MS : equityPollMs,
-    liveTicksActive
+    liveTicksActive,
+    dataInstrumentKey
   };
 }
 
