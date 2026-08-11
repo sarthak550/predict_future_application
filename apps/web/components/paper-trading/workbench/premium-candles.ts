@@ -34,6 +34,15 @@
  * tick that omits it) is treated as the conservative legacy default (300s)
  * so it can never inflate a bucket's confidence past what's actually known.
  *
+ * **2026-08-11 fix — per-point `.some`, not a bucket-wide `Math.min`.** The
+ * native-granularity check used to take the MINIMUM `captureIntervalSec`
+ * across every point sharing a bucket, so one fast live session tick
+ * (~15s) landing alongside a genuine official native-cadence capture (60s)
+ * dragged the WHOLE bucket down to "needs 3 samples" even though the
+ * official capture alone already qualified — wrongly hiding the
+ * currently-forming bar on an actively-watched, otherwise-dense chart.
+ * See `aggregatePremiumCandles`'s own inline comment for the full trace.
+ *
  * Pure function, no I/O, no React — trivially unit-testable.
  */
 
@@ -85,8 +94,29 @@ export function aggregatePremiumCandles(points: PremiumSnapshotPoint[], bucketMs
     const snapshots = buckets.get(bucketStart);
     if (!snapshots) continue;
 
-    const finestIntervalMs = Math.min(...snapshots.map((s) => (s.captureIntervalSec ?? DEFAULT_CAPTURE_INTERVAL_SEC) * 1000));
-    const isNativeGranularity = bucketMs <= finestIntervalMs;
+    // Founder-reported bug (2026-08-11) — "1 min candles are not there."
+    // Traced (jointly with kline-chart.tsx's own stale-barSpace fix) to a
+    // real bug HERE too: this used to take the MINIMUM captureIntervalSec
+    // across every point in the bucket (`Math.min`), so a single fast
+    // session tick (~15s, `SESSION_TICK_CAPTURE_INTERVAL_SEC` in
+    // use-workbench-candles.ts) sharing a bucket with a genuine official
+    // 60s-cadence always-on capture dragged the WHOLE bucket's
+    // classification down to "needs the ≥3-sample floor" — even though the
+    // official capture ALONE would already have qualified as one honest
+    // native sample. In practice: the CURRENTLY-FORMING minute, while
+    // someone has the chart open (live ticks are always flowing at ~15s
+    // during that exact window), would almost never reach 3 samples before
+    // the bucket rolled over — so the live edge of an otherwise-dense,
+    // correctly-captured 1-minute chart could go missing while being
+    // watched. Fixed: a bucket is native-granularity if ANY of its points
+    // independently qualifies as native for this bucket width (`.some`, not
+    // a bucket-wide `Math.min`) — one real native-cadence sample is enough
+    // on its own, regardless of how many finer/coarser points also share
+    // its bucket. A bucket with ONLY fine-grained live ticks and no
+    // official capture yet is unaffected (still needs 3) — this only
+    // changes buckets that already contain a genuine native-cadence sample,
+    // which is exactly the case that was wrongly downgraded before.
+    const isNativeGranularity = snapshots.some((s) => bucketMs <= (s.captureIntervalSec ?? DEFAULT_CAPTURE_INTERVAL_SEC) * 1000);
     const minSamples = isNativeGranularity ? 1 : 3; // see module doc's honesty rule.
     if (snapshots.length < minSamples) continue;
 
