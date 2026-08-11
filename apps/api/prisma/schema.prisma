@@ -1787,6 +1787,65 @@ model BondEodQuote {
   @@index([series, sessionDate(sort: Desc)])
 }
 
+/// Index History Stage 2 (2026-08-11), founder: "I want you to fetch all the
+/// indices that exist and have them with us" — self-owned daily OHLC for
+/// EVERY NSE-published index (~139-164, not just the 35 with a verified
+/// Yahoo feed — see business-rules' INDEX_UNIVERSE for those). Sourced from
+/// NSE's own daily index-close CSV (a DIFFERENT archives file from
+/// StockEodQuote's sec_bhavdata_full — see
+/// apps/api/lib/marketMoves/indexEod.ts's module doc for the exact URL/
+/// columns), NOT derived from Yahoo, NOT derived from the live /api/allIndices
+/// snapshot (that endpoint has no historical series at all — see
+/// allIndices.ts). This is the ONLY durable historical store for the vast
+/// majority of NSE indices; StockEodQuote/BondEodQuote remain untouched and
+/// fully separate (equities and bonds, not indices).
+model IndexEodQuote {
+  id            String   @id @default(cuid())
+  sessionDate   DateTime
+  /// NSE's own display name AS PUBLISHED IN THIS CSV, verbatim (e.g. "Nifty
+  /// Auto", "Nifty 50") — Title Case, NOT upper-cased like StockEodQuote.symbol,
+  /// because indices have no separate short ticker; this name IS the
+  /// canonical key. `deriveIndexSymbol`/`slugifyIndexName`
+  /// (business-rules/finance) are pure functions of this field, uppercasing
+  /// internally, so callers never need to case-normalize before deriving a
+  /// `/instruments/[symbol]` code or an `/indices/[slug]` — only when
+  /// comparing two names for equality (e.g. against the live /api/allIndices
+  /// snapshot's own upper-cased `index` field, or against INDEX_UNIVERSE's
+  /// `name`) does a caller need normalizeIndexDisplayName-style uppercasing.
+  indexName     String
+  /// Open/High/Low are null for a subset of indices NSE genuinely doesn't
+  /// publish an intraday range for in this file (verified live 2026-08-11:
+  /// 26 of 164 rows — e.g. "Nifty NBFC", "Nifty Insurance", corporate-group
+  /// indices — carry '-' for these three columns but a real Close/Points
+  /// Change/Change(%) always). Treated as "not applicable", never coerced to
+  /// 0 or dropped from ingestion — Close is the only price field guaranteed
+  /// present, and is what `spark`/history actually needs.
+  open          Float?
+  high          Float?
+  low           Float?
+  close         Float
+  /// "Points Change" column — a genuine index-point delta, not a percent.
+  changeAbs     Float
+  /// "Change(%)" column, e.g. -.46 parses to -0.46.
+  changePercent Float
+  /// "Volume" column. Null for a handful of non-equity-weighted index rows
+  /// (e.g. some G-Sec/fixed-income indices) where NSE publishes no volume.
+  volume        Float?
+  /// "Turnover (Rs. Cr.)" column.
+  turnoverCr    Float?
+  /// "P/E" column. Null when NSE omits it for this index (common for
+  /// non-equity indices) or the cell isn't a parseable number.
+  peRatio       Float?
+  /// "P/B" column, same null convention as peRatio.
+  pbRatio       Float?
+  /// "Div Yield" column, same null convention as peRatio.
+  dividendYield Float?
+  createdAt     DateTime @default(now())
+
+  @@unique([indexName, sessionDate])
+  @@index([indexName, sessionDate(sort: Desc)])
+}
+
 // ─── Portfolios (P3.1) ──────────────────────────────────────────────────────────
 //
 // Virtual, cash-constrained, long-only paper-trading portfolios priced off

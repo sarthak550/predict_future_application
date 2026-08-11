@@ -9,8 +9,6 @@ import { PriceChart } from "@/components/finance/price-chart";
 import { PulseTabs } from "@/components/finance/pulse-tabs";
 import { QuoteHeader } from "@/components/finance/quote-header";
 import { Card, CardContent } from "@/components/ui/card";
-import { isIndexOptionUnderlying } from "@predict-future/business-rules/papertrading/optionContract";
-import { isIndexUniverseSymbol } from "@predict-future/business-rules/finance/indexUniverse";
 
 import { fetchInstrumentDetail } from "@/lib/finance/instrument";
 import { resolveCanonicalNameForSymbol } from "@/lib/finance/instrumentLink";
@@ -73,16 +71,25 @@ export default async function InstrumentDetailPage({
   // pipe instead, and the header's live overlay must hit the index endpoint
   // (the default equity path would request a nonexistent "NIFTY.NS").
   //
-  // Index Universe Expansion (Sprint A, 2026-08-09) — `isIndex` now covers
-  // both the 5 tradable underlyings AND the new view-only INDEX_UNIVERSE
-  // indices (isIndexOptionUnderlying itself stays untouched, still gating
-  // only the options/futures order path). `isViewOnlyIndex` is the NEW,
-  // narrower flag: true only for an index that is NOT one of the 5
-  // tradable underlyings — drives the "Index — view only" indicator below,
-  // so the 5 existing tradable index pages render byte-for-byte unchanged.
-  const isTradableIndex = isIndexOptionUnderlying(instrument.symbol);
-  const isViewOnlyIndex = !isTradableIndex && isIndexUniverseSymbol(instrument.symbol);
-  const isIndex = isTradableIndex || isViewOnlyIndex;
+  // Index Universe Expansion (Sprint A, 2026-08-09) — `isIndex` covers both
+  // the 5 tradable underlyings AND the view-only INDEX_UNIVERSE indices.
+  // `viewOnlyIndex` drives the "Index — view only" indicator below.
+  //
+  // Index History Stage 2 (2026-08-11) — both flags now ALSO cover the long
+  // tail (every other NSE-published index with self-owned IndexEodQuote
+  // history), computed centrally in fetchInstrumentDetail (which already
+  // does the DB lookup needed to tell a long-tail index apart from a plain
+  // equity) rather than re-derived here. `hasLiveIndexPipe` is the narrower,
+  // UNCHANGED-behavior flag: true only for the 35 symbols with a verified
+  // Yahoo feed — a long-tail index has no Yahoo ticker, so it must NOT get
+  // the live 1D intraday pipe (there is nothing for that endpoint to
+  // resolve) or default to the "1D" timeframe (which would show an empty/
+  // error state before the user ever picks a timeframe that has real data).
+  // The 5 existing tradable + 30 view-only index pages are byte-for-byte
+  // unchanged: hasLiveIndexPipe is computed identically to the old `isIndex`.
+  const isIndex = instrument.isIndex;
+  const viewOnlyIndex = instrument.viewOnlyIndex;
+  const hasLiveIndexPipe = instrument.hasLiveIndexPipe;
   const indexIntradayUrl = `/api/instruments/index/${encodeURIComponent(instrument.symbol)}/intraday`;
 
   // Sentiment date-range link-out (2026-08-09 feature) — scoped to this
@@ -110,8 +117,8 @@ export default async function InstrumentDetailPage({
       <QuoteHeader
         symbol={instrument.symbol}
         companyName={instrument.companyName}
-        intradayEndpoint={isIndex ? indexIntradayUrl : undefined}
-        viewOnlyIndex={isViewOnlyIndex}
+        intradayEndpoint={hasLiveIndexPipe ? indexIntradayUrl : undefined}
+        viewOnlyIndex={viewOnlyIndex}
         quote={
           instrument.quote
             ? {
@@ -138,8 +145,20 @@ export default async function InstrumentDetailPage({
               date: formatIstSessionDate(pt.sessionDate),
               close: pt.close,
             }))}
-            intradaySource={isIndex ? { url: indexIntradayUrl } : undefined}
-            defaultTimeframe={isIndex ? "1D" : undefined}
+            intradaySource={hasLiveIndexPipe ? { url: indexIntradayUrl } : undefined}
+            defaultTimeframe={hasLiveIndexPipe ? "1D" : undefined}
+            // Index History Stage 2 (2026-08-11) — a long-tail index isn't a
+            // real NSE equity ticker, so the chart's default bare-equity
+            // quote poll (`/api/instruments/[symbol]/quote`) must be
+            // explicitly disabled for it — exactly the background-hammering
+            // footgun the /bonds page regression (see this prop's own doc
+            // comment in price-chart.tsx) already taught this codebase:
+            // `intradaySource` being set is NOT a reliable proxy for "don't
+            // poll" on its own, every non-equity caller must say so. A
+            // hasLiveIndexPipe index already avoided this (intradaySource
+            // being set alone suppresses the default) — passing `false`
+            // here is a no-op for it, explicit and harmless either way.
+            quoteSource={isIndex ? false : undefined}
           />
         </CardContent>
       </Card>

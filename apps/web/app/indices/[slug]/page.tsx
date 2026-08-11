@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { deriveIndexSymbol } from "@predict-future/business-rules/finance/indexUniverse";
+
 import { formatIndexLevel, formatSignedPoints } from "@/components/finance/index-change-badge";
 import { PriceChart } from "@/components/finance/price-chart";
 import { Card, CardContent } from "@/components/ui/card";
@@ -63,6 +65,15 @@ export default async function IndexDetailPage({ params }: { params: { slug: stri
   const indexIntradayUrl = tradableUnderlying
     ? `/api/instruments/index/${encodeURIComponent(tradableUnderlying)}/intraday`
     : null;
+  // Index History Stage 2 (2026-08-11) — every index now has (or will have,
+  // once the backfill/cron ingest its history — see IndexEodQuote) a full
+  // `/instruments/[symbol]` page: real daily OHLC, opinions, sentiment. The
+  // 5 tradable underlyings use their short mnemonic code (already resolved
+  // above); every other index's code is `deriveIndexSymbol(name)` — the SAME
+  // pure function business-rules' INDEX_UNIVERSE and the long-tail resolver
+  // (apps/web/lib/finance/indexLongTail.ts) both use, so this link always
+  // agrees with whatever code that page itself resolves under.
+  const fullInstrumentSymbol = tradableUnderlying ?? deriveIndexSymbol(index.name);
 
   const isUp = (index.changePercent ?? 0) >= 0;
 
@@ -81,6 +92,12 @@ export default async function IndexDetailPage({ params }: { params: { slug: stri
               {tradableUnderlying ? (
                 <p className="mt-1 text-xs font-medium text-emerald-400">Tradable in the F&amp;O options terminal</p>
               ) : null}
+              <Link
+                href={`/instruments/${fullInstrumentSymbol}`}
+                className="mt-1.5 inline-flex items-center gap-1 text-xs font-semibold text-signal-sky hover:underline"
+              >
+                Open full instrument page →
+              </Link>
             </div>
 
             {index.last != null ? (

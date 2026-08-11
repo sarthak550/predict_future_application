@@ -4,6 +4,7 @@ import { isIndexOptionUnderlying } from "@predict-future/business-rules/papertra
 import { canonicalizeOrgDisplay } from "@predict-future/business-rules/experts/firmAliases";
 import {
   isIndexUniverseSymbol,
+  normalizeIndexDisplayName,
   INDEX_UNIVERSE_OPINION_TICKER,
   INDEX_UNIVERSE_DISPLAY_NAME,
 } from "@predict-future/business-rules/finance/indexUniverse";
@@ -11,6 +12,8 @@ import type { OpinionDirection, OpinionResolutionStatus } from "@prisma/client";
 
 import { EMPTY_INSTRUMENT_ENRICHMENT, getOrFetchInstrumentEnrichment, type InstrumentEnrichmentData } from "@/lib/finance/enrichment";
 import { fetchIndexInstrumentSpark } from "@/lib/finance/fundamentals";
+import { fetchIndexBySlug } from "@/lib/finance/indices";
+import { getLongTailIndexBySymbol } from "@/lib/finance/indexLongTail";
 import { prisma } from "@/lib/prisma";
 
 // Enough sessions for a 1Y timeframe on the interactive chart (~250 trading
@@ -98,6 +101,29 @@ export interface InstrumentDetail {
   opinions: InstrumentOpinionRow[];
   sentiment: InstrumentSentiment;
   /**
+   * Index History Stage 2 (2026-08-11) — true for ANY index page: the 5
+   * F&O-tradable underlyings, the 30 INDEX_UNIVERSE view-only indices, AND
+   * now every other NSE-published index this app has self-owned
+   * IndexEodQuote history for (the "long tail" — see
+   * lib/finance/indexLongTail.ts). False for a plain equity.
+   */
+  isIndex: boolean;
+  /** True when `isIndex` AND this is NOT one of the 5 tradable underlyings — drives the "Index · View only" badge. Widened from the Sprint A `isViewOnlyIndex` page-local variable to also cover the long tail. */
+  viewOnlyIndex: boolean;
+  /**
+   * True only for the 35 symbols with a verified-live Yahoo feed (tradable +
+   * INDEX_UNIVERSE) — these alone get the live 1D intraday pipe
+   * (`/api/instruments/index/[symbol]/intraday`) and QuoteHeader's live
+   * overlay. The long tail has no Yahoo ticker (by design — see
+   * indexLongTail.ts's module doc on why it's deliberately NOT
+   * hand-verified like INDEX_UNIVERSE) and so renders daily-only, exactly
+   * like an equity chart minus the intraday timeframe — `quote` above is
+   * therefore the ONLY price source for a long-tail page (no live overlay
+   * to fall back on), unlike the 35 where a null server `quote` is normal
+   * and expected (the client-side live fetch fills it in).
+   */
+  hasLiveIndexPipe: boolean;
+  /**
    * Instrument Page v2 (T3) — 1W/1M/3M/6M/1Y/FY-to-date returns computed
    * over `spark`. Was all-null for indices (no StockEodQuote series) until
    * Index History (2026-08-11) gave indices a real daily `spark` too — now
@@ -178,19 +204,36 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
   // "does this symbol get index treatment" branches (skip StockEodQuote-only
   // enrichment, always resolve even with zero content yet, use the index
   // intraday chart endpoint).
-  const isIndex = isIndexOptionUnderlying(symbol) || isIndexUniverseSymbol(symbol);
+  // hasLiveIndexPipe is exactly the OLD (Sprint A) `isIndex` — the 35
+  // symbols with a verified-live Yahoo feed. UNCHANGED logic/behavior for
+  // these; see the module doc on why this stays decoupled from the broader
+  // Index History Stage 2 (2026-08-11) `isIndex` below.
+  const hasLiveIndexPipe = isIndexOptionUnderlying(symbol) || isIndexUniverseSymbol(symbol);
   // Index History (2026-08-11), founder: "why don't we have indices history
   // as we have of stocks" — indices have no StockEodQuote row (that table is
   // NSE-equity-only), so `spark` was always empty for them; the chart ran
   // ONLY on the live 1D intraday pipe. INDEX_OPINION_TICKER (below) already
-  // carries every isIndex-true symbol's verified Yahoo ticker (it doubles as
-  // the ExpertOpinion resolution ticker) — reused here as the Yahoo chart
-  // ticker too, one identity for both jobs, never a second value invented.
-  const indexYahooTicker = isIndex ? INDEX_OPINION_TICKER[symbol] : undefined;
+  // carries every hasLiveIndexPipe-true symbol's verified Yahoo ticker (it
+  // doubles as the ExpertOpinion resolution ticker) — reused here as the
+  // Yahoo chart ticker too, one identity for both jobs, never a second value
+  // invented.
+  const indexYahooTicker = hasLiveIndexPipe ? INDEX_OPINION_TICKER[symbol] : undefined;
+
+  // Index History Stage 2 (2026-08-11) — the "long tail": every other
+  // NSE-published index this app has self-owned IndexEodQuote history for
+  // (see lib/finance/indexLongTail.ts). Only looked up when the symbol isn't
+  // already one of the 35 (a plain equity falls into this branch too — the
+  // lookup is a cached in-memory Map after the first call in any 5-minute
+  // window, so the added cost for the overwhelming majority of page views
+  // — equities — is negligible).
+  const longTailEntry = hasLiveIndexPipe ? null : await getLongTailIndexBySymbol(symbol);
+  const isLongTailIndex = longTailEntry != null;
+  const isIndex = hasLiveIndexPipe || isLongTailIndex;
+  const viewOnlyIndex = isIndex && !isIndexOptionUnderlying(symbol);
 
   const opinionSince = new Date(Date.now() - OPINION_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
 
-  const [latestQuote, sparkRows, newsRows, filings, opinionCandidates, indexSparkRows] = await Promise.all([
+  const [latestQuote, sparkRows, newsRows, filings, opinionCandidates, indexSparkRows, longTailEodRows, longTailLiveQuote] = await Promise.all([
     prisma.stockEodQuote.findFirst({
       where: { symbol },
       orderBy: { sessionDate: "desc" },
@@ -236,12 +279,25 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     // cheaper than the unfiltered all-tickers scans the movers routes already
     // run in production. No index on instrumentTicker exists yet — acceptable
     // at current table size, same as those routes.
+    //
+    // Index History Stage 2 (2026-08-11) — a long-tail index has NO Yahoo
+    // ticker (by design), so ExpertOpinion.instrumentTicker has nothing to
+    // resolve under for it. Falls back to matching the raw `instrument` TEXT
+    // field against this index's own NSE name instead — same exact-match
+    // discipline (never fuzzy) as INDEX_UNIVERSE's own
+    // resolveIndexUniverseEntryByRawName/INDEX_NAME_ALIASES, just applied at
+    // read-time here rather than via a backfill script (a long-tail index's
+    // opinion volume is expected to be much thinner than the 35 curated
+    // ones, so a live query is cheap and always current — no backfill
+    // needed to keep it in sync).
     prisma.expertOpinion.findMany({
       where: {
         suppressedAt: null,
-        instrumentTicker: INDEX_OPINION_TICKER[symbol]
-          ? { equals: INDEX_OPINION_TICKER[symbol] }
-          : { startsWith: `${symbol}.`, mode: "insensitive" },
+        ...(indexYahooTicker
+          ? { instrumentTicker: { equals: indexYahooTicker } }
+          : isLongTailIndex
+            ? { instrument: { equals: longTailEntry!.name, mode: "insensitive" as const } }
+            : { instrumentTicker: { startsWith: `${symbol}.`, mode: "insensitive" as const } }),
         publishedAt: { gte: opinionSince },
       },
       orderBy: { publishedAt: "desc" },
@@ -265,6 +321,28 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     // views), so this array stays a single Promise.all alongside the
     // existing Prisma queries rather than a second awaited round.
     indexYahooTicker ? fetchIndexInstrumentSpark(indexYahooTicker) : Promise.resolve(null),
+    // Index History Stage 2 (2026-08-11) — self-owned daily OHLC for the
+    // long tail (NOT fetched for the 35 hasLiveIndexPipe symbols, which keep
+    // their Yahoo spark unchanged this round — see indexLongTail.ts's module
+    // doc). Desc order (newest first) so `[0]` is the latest session without
+    // a second query; `spark` reverses it below, same as `sparkRows`.
+    isLongTailIndex
+      ? prisma.indexEodQuote.findMany({
+          where: { indexName: longTailEntry!.name },
+          orderBy: { sessionDate: "desc" },
+          take: SPARK_SESSIONS,
+          select: { sessionDate: true, close: true, changeAbs: true, changePercent: true, volume: true },
+        })
+      : Promise.resolve(null),
+    // Index History Stage 2 (2026-08-11) — live level/change from NSE's own
+    // /api/allIndices snapshot (via the existing apps/web->apps/api loopback
+    // in lib/finance/indices.ts, already used by /indices/[slug]), preferred
+    // over yesterday's IndexEodQuote close for `quote` freshness during/after
+    // a live session — see the brief's own "quote header from the live
+    // allIndices snapshot" instruction. Best-effort: fetchIndexBySlug never
+    // throws, returns null on any upstream failure, in which case `quote`
+    // simply falls back to the self-owned IndexEodQuote row below.
+    isLongTailIndex ? fetchIndexBySlug(longTailEntry!.slug) : Promise.resolve(null),
   ]);
 
   // Belt-and-suspenders re-check with the shared matcher, same as the API
@@ -280,21 +358,70 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
   // exact; re-verifying it through a matcher built for a different ticker
   // shape is both redundant and wrong here.
   const matchedOpinions = opinionCandidates.filter((o) => {
-    if (o.instrumentTicker == null) return false;
     const indexTicker = INDEX_OPINION_TICKER[symbol];
     if (indexTicker) return o.instrumentTicker === indexTicker;
+    // Index History Stage 2 (2026-08-11) — long-tail match is by `instrument`
+    // text, not `instrumentTicker` (see the query's own comment above).
+    if (isLongTailIndex) {
+      return o.instrument != null && normalizeIndexDisplayName(o.instrument) === normalizeIndexDisplayName(longTailEntry!.name);
+    }
+    if (o.instrumentTicker == null) return false;
     return nseSymbolMatchesInstrumentTicker(symbol, o.instrumentTicker);
   });
 
   const news = refineStockNews(newsRows, { limit: NEWS_LIMIT });
 
-  // A known F&O index ALWAYS resolves (its page renders a live 1D chart even
-  // with zero stored content) — the null gate only applies to unknown symbols.
+  // A known index ALWAYS resolves (a tradable/view-only page renders a live
+  // 1D chart, a long-tail page renders its own self-owned OHLC history) even
+  // with zero stored content — the null gate only applies to unknown symbols.
   const hasAnyContent = latestQuote != null || news.length > 0 || filings.length > 0 || matchedOpinions.length > 0;
   if (!hasAnyContent && !isIndex) return null;
 
   const companyName =
-    INDEX_DISPLAY_NAME[symbol] ?? latestQuote?.companyName ?? filings[0]?.companyName ?? newsRows[0]?.companyName ?? symbol;
+    INDEX_DISPLAY_NAME[symbol] ??
+    longTailEntry?.name ??
+    latestQuote?.companyName ??
+    filings[0]?.companyName ??
+    newsRows[0]?.companyName ??
+    symbol;
+
+  // Index History Stage 2 (2026-08-11) — a long-tail index has no live
+  // intraday pipe (hasLiveIndexPipe is false), so unlike the 35 where a null
+  // server `quote` is normal and expected (the client fills it in), THIS is
+  // the only price source the page will ever render. Self-owned
+  // IndexEodQuote is primary; the live /api/allIndices snapshot
+  // (`longTailLiveQuote`) overrides level/change when available for
+  // same-day freshness, per the brief's own instruction. `changeAbs` (not
+  // `close`) is what NSE's daily file actually reports as the day's
+  // points-change, so prevClose is derived (close - changeAbs) rather than
+  // stored separately — same derivation IndexEodQuote's own schema doc uses.
+  let longTailQuote: InstrumentQuote | null = null;
+  if (isLongTailIndex) {
+    const latestRow = longTailEodRows?.[0] ?? null;
+    if (latestRow) {
+      const selfPrevClose = latestRow.close - latestRow.changeAbs;
+      const liveLast = longTailLiveQuote?.last;
+      longTailQuote = {
+        sessionDate: latestRow.sessionDate,
+        close: liveLast ?? latestRow.close,
+        prevClose: liveLast != null ? (longTailLiveQuote?.previousClose ?? selfPrevClose) : selfPrevClose,
+        changePercent: liveLast != null ? (longTailLiveQuote?.changePercent ?? latestRow.changePercent) : latestRow.changePercent,
+        volume: latestRow.volume ?? 0,
+        deliveryPct: null,
+      };
+    } else if (longTailLiveQuote?.last != null) {
+      // Backfill hasn't reached this index yet, but the live snapshot has
+      // it — still show a real level rather than "price data pending".
+      longTailQuote = {
+        sessionDate: new Date(),
+        close: longTailLiveQuote.last,
+        prevClose: longTailLiveQuote.previousClose ?? longTailLiveQuote.last,
+        changePercent: longTailLiveQuote.changePercent ?? 0,
+        volume: 0,
+        deliveryPct: null,
+      };
+    }
+  }
 
   const sentimentCounts = matchedOpinions.reduce(
     (acc, o) => {
@@ -306,13 +433,23 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     { bullish: 0, bearish: 0, neutral: 0 }
   );
 
-  // Index History (2026-08-11) — an index's spark comes from the Yahoo daily
-  // fetch above (already oldest-first, see fetchIndexInstrumentSpark), never
-  // from `sparkRows` (StockEodQuote is NSE-equity-only and always empty for
-  // an index symbol). `indexSparkRows` is null on a total Yahoo fetch
-  // failure — degrades to an empty array, exactly the "no history section"
-  // state an index page renders today, never fabricated and never a 500.
-  const spark = isIndex ? (indexSparkRows ?? []) : sparkRows.slice().reverse();
+  // Index History (2026-08-11) — a hasLiveIndexPipe index's spark comes from
+  // the Yahoo daily fetch above (already oldest-first, see
+  // fetchIndexInstrumentSpark), never from `sparkRows` (StockEodQuote is
+  // NSE-equity-only and always empty for an index symbol). `indexSparkRows`
+  // is null on a total Yahoo fetch failure — degrades to an empty array,
+  // exactly the "no history section" state an index page renders today,
+  // never fabricated and never a 500.
+  //
+  // Index History Stage 2 (2026-08-11) — a long-tail index's spark comes
+  // from its own self-owned IndexEodQuote rows instead (`longTailEodRows`,
+  // fetched desc — reversed here to oldest-first, same shape/convention as
+  // `sparkRows`).
+  const spark = hasLiveIndexPipe
+    ? (indexSparkRows ?? [])
+    : isLongTailIndex
+      ? (longTailEodRows ?? []).slice().reverse().map((r) => ({ sessionDate: r.sessionDate, close: r.close }))
+      : sparkRows.slice().reverse();
 
   // Instrument Page v2 (T3) — pure, zero extra query/network call over the
   // spark series already resolved above (equity or index).
@@ -327,7 +464,7 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
   return {
     symbol,
     companyName,
-    quote: latestQuote,
+    quote: isLongTailIndex ? longTailQuote : latestQuote,
     spark,
     news,
     filings,
@@ -352,5 +489,8 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     },
     performance,
     enrichment,
+    isIndex,
+    viewOnlyIndex,
+    hasLiveIndexPipe,
   };
 }

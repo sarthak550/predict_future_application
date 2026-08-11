@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { deriveIndexSymbol } from "@predict-future/business-rules/finance/indexUniverse";
+
 import { prisma } from "@/lib/prisma";
 import { fetchAllIndices } from "@/lib/finance/indices";
 import { INDEX_SLUG_TO_TRADABLE_UNDERLYING } from "@/lib/finance/indexTradableAlias";
@@ -18,8 +20,15 @@ import { isTradableOptionUnderlyingServer } from "@/lib/paperTrading/fnoUniverse
  *  - "fund": ETF rows from the same store, split out by name/symbol heuristic
  *    (companyName contains ETF/FUND/BEES or symbol ends IETF/BEES/ETF) — the
  *    bhavcopy's EQ series carries listed ETFs alongside stocks.
- *  - "index": the 5 F&O-tradable indices (→ /instruments/[symbol], richer
- *    page) + all other NSE-published indices (→ /indices/[slug]).
+ *  - "index": the 5 F&O-tradable indices AND, since Index History Stage 2
+ *    (2026-08-11), every other NSE-published index — all link to
+ *    /instruments/[symbol] now that every index has a full instrument page
+ *    (self-owned daily OHLC at minimum, live Yahoo feed for the 35
+ *    hand-verified ones — see business-rules' INDEX_UNIVERSE and
+ *    lib/finance/indexLongTail.ts). /indices/[slug] (the slim directory)
+ *    still exists and itself now links onward to /instruments/[symbol], but
+ *    search no longer routes there directly — was the pre-Stage-2 behavior,
+ *    when most indices had no instrument page yet.
  *  - "option": for any F&O-eligible match (stock or index), a direct link
  *    into its option chain on the options terminal.
  *  - "future": Phase 4 (Sprint 2) — the 5 index futures (same registry as
@@ -141,7 +150,7 @@ async function buildDefaults(): Promise<NextResponse> {
       category: "index" as const,
     })),
     ...topMovingInfoIndices.map((idx) => ({
-      href: `/indices/${idx.slug}`,
+      href: `/instruments/${deriveIndexSymbol(idx.name)}`,
       label: idx.name,
       sublabel: idx.changePercent != null ? pct(idx.changePercent) : "NSE index",
       category: "index" as const,
@@ -261,7 +270,7 @@ export async function GET(request: Request) {
       category: "index" as const,
     })),
     ...infoIndexMatches.map((idx) => ({
-      href: `/indices/${idx.slug}`,
+      href: `/instruments/${deriveIndexSymbol(idx.name)}`,
       label: idx.name,
       sublabel: "NSE index",
       category: "index" as const,
