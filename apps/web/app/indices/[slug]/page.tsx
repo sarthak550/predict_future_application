@@ -1,6 +1,7 @@
 import { notFound, permanentRedirect } from "next/navigation";
 
 import { deriveIndexSymbol } from "@predict-future/business-rules/finance/indexUniverse";
+import { slugifyIndexName } from "@predict-future/business-rules/finance/indexSlug";
 
 import { fetchIndexBySlug } from "@/lib/finance/indices";
 import { tradableUnderlyingForIndexSlug } from "@/lib/finance/indexTradableAlias";
@@ -34,7 +35,13 @@ import { tradableUnderlyingForIndexSlug } from "@/lib/finance/indexTradableAlias
  * unknown/typo'd slug) — matches this route's pre-existing 404 behavior.
  */
 export default async function IndexDetailRedirect({ params }: { params: { slug: string } }) {
-  const tradableUnderlying = tradableUnderlyingForIndexSlug(params.slug);
+  // Case-normalize BEFORE the tradable lookup — the homepage Economy tiles
+  // (and any external links) use lowercase slugs ("/indices/nifty-50"),
+  // while the alias map keys are uppercase. Without this, lowercase slugs
+  // for the tradable 5 fell through to the generic name-derive path and
+  // minted duplicate degraded pages (NIFTY50 instead of NIFTY, NIFTYBANK
+  // instead of BANKNIFTY) — founder-reported 2026-08-12.
+  const tradableUnderlying = tradableUnderlyingForIndexSlug(params.slug.toUpperCase());
   if (tradableUnderlying) {
     permanentRedirect(`/instruments/${tradableUnderlying}`);
   }
@@ -44,5 +51,9 @@ export default async function IndexDetailRedirect({ params }: { params: { slug: 
     notFound();
   }
 
-  permanentRedirect(`/instruments/${deriveIndexSymbol(index.name)}`);
+  // Second guard on the same bug class: after resolving the index by (any-
+  // case) slug, re-check its CANONICAL slug against the tradable alias so
+  // no path ever mints a derived twin of a tradable underlying's page.
+  const canonicalTradable = tradableUnderlyingForIndexSlug(slugifyIndexName(index.name));
+  permanentRedirect(`/instruments/${canonicalTradable ?? deriveIndexSymbol(index.name)}`);
 }

@@ -14,6 +14,7 @@ import { Card, CardContent } from "@/components/ui/card";
 
 import { fetchInstrumentDetail } from "@/lib/finance/instrument";
 import { resolveCanonicalNameForSymbol } from "@/lib/finance/instrumentLink";
+import { isOptionsTradingEnabled } from "@/lib/paperTrading/featureFlags";
 import { formatIstSessionDate, formatRelativeTime } from "@/lib/utils";
 
 export const revalidate = 900;
@@ -231,7 +232,11 @@ export default async function InstrumentDetailPage({
             <IndexMetricsPanel
               symbol={instrument.symbol}
               metrics={instrument.indexMetrics}
-              isTradable={!instrument.viewOnlyIndex}
+              // Founder 2026-08-12: while F&O is gated "coming soon", the
+              // "Tradable in the F&O options terminal" CTA must not show —
+              // it would advertise a surface the gate blocks. Flag-driven,
+              // so launching options restores it with zero code changes.
+              isTradable={!instrument.viewOnlyIndex && isOptionsTradingEnabled()}
             />
           )}
           {instrument.indexComposition && (
