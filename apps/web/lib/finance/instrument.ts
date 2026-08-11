@@ -143,6 +143,8 @@ export interface IndexConstituentQuoteRow {
   industry: string | null;
   close: number | null;
   changePercent: number | null;
+  /** Free-float mcap share from NSE's live index watch (indexLiveWatch.ts) — an ESTIMATE of index weight (NSE's published weights apply capping factors we don't have); null when the live watch doesn't cover this index. */
+  weightPct: number | null;
 }
 
 export interface InstrumentDetail {
@@ -698,6 +700,7 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
         industry: c.industry,
         close: q?.close ?? null,
         changePercent: q?.changePercent ?? null,
+        weightPct: c.weightPct ?? null,
       };
     });
     // Design call (founder addendum, 2026-08-12): "change-ordered beats

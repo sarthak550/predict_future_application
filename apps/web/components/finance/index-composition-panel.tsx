@@ -19,8 +19,14 @@ import { Card, CardContent } from "@/components/ui/card";
  * than dropped — still real members, just unrankable by a change that
  * doesn't exist.
  *
- * NO WEIGHTS COLUMN: the source CSVs don't carry index weights, and this
- * panel never estimates one — see indexConstituents.ts's module doc.
+ * WEIGHT COLUMN (2026-08-12 follow-up): when a constituent carries
+ * `weightPct` (indexLiveWatch.ts's live free-float-mcap-share estimate — see
+ * that file's module doc), this panel shows a "Wt." column and a "Top
+ * weight" header callout for the single largest constituent. Labeled as an
+ * ESTIMATE, never asserted to be NSE's own official (possibly capped)
+ * published weight — the source CSVs still carry no weight column of their
+ * own, and a plain-CSV index with no live-watch mapping renders exactly as
+ * before (no Wt. column at all, `weightPct` all null).
  */
 
 function formatRupees(value: number): string {
@@ -33,6 +39,8 @@ export type IndexCompositionConstituent = {
   industry: string | null;
   close: number | null;
   changePercent: number | null;
+  /** Live free-float-mcap-share weight estimate (0-100), or undefined/null when unavailable — see this file's module doc. Optional so existing callers (a plain IndexConstituentQuoteRow with no weight field) keep compiling unchanged. */
+  weightPct?: number | null;
 };
 
 export type IndexCompositionPanelProps = {
@@ -52,6 +60,11 @@ export function IndexCompositionPanel({ constituents, advances, declines }: Inde
     advances != null && declines != null ? ` · ${advances} advanced · ${declines} declined` : "";
   const listClassName = constituents.length > SCROLL_THRESHOLD ? "max-h-[560px] overflow-y-auto" : "";
 
+  const hasWeights = constituents.some((c) => c.weightPct != null);
+  const topWeight = hasWeights
+    ? constituents.reduce((max, c) => ((c.weightPct ?? -1) > (max.weightPct ?? -1) ? c : max), constituents[0])
+    : null;
+
   return (
     <Card>
       <CardContent className="p-5">
@@ -62,9 +75,16 @@ export function IndexCompositionPanel({ constituents, advances, declines }: Inde
             {breadthLabel}
           </p>
         </div>
-        <p className="mb-3 text-xs text-ink-400">
+        <p className={topWeight ? "mb-1 text-xs text-ink-400" : "mb-3 text-xs text-ink-400"}>
           Member stocks, ranked by today&apos;s change — biggest gainers first, biggest losers last.
         </p>
+        {topWeight && topWeight.weightPct != null && (
+          <p className="mb-3 text-xs text-ink-500">
+            Top weight: <span className="font-semibold text-ink-700">{topWeight.symbol}</span> ·{" "}
+            {topWeight.weightPct.toFixed(1)}%{" "}
+            <span className="text-ink-300">(free-float mcap share, estimate — not NSE&apos;s published weight)</span>
+          </p>
+        )}
 
         <div className={listClassName}>
           <ul className="divide-y divide-ink-100">
@@ -87,6 +107,14 @@ export function IndexCompositionPanel({ constituents, advances, declines }: Inde
                         {c.industry ? <span className="text-ink-300"> · {c.industry}</span> : null}
                       </p>
                     </div>
+                    {hasWeights && (
+                      <div className="shrink-0 text-right">
+                        <p className="text-xs text-ink-400">Wt.</p>
+                        <p className="text-sm font-medium text-ink-700 tabular-nums">
+                          {c.weightPct != null ? `${c.weightPct.toFixed(1)}%` : "—"}
+                        </p>
+                      </div>
+                    )}
                     <div className="shrink-0 text-right">
                       {c.close != null && <p className="text-sm text-ink-700 tabular-nums">{formatRupees(c.close)}</p>}
                       {hasChange ? (

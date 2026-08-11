@@ -66,11 +66,27 @@
  * reproduced. NSE may host some of these under a different path/host this
  * sweep didn't uncover live; a genuine gap, not a forgotten one.
  *
- * NO WEIGHTS: every verified CSV here is the "Company Name,Industry,Symbol,
- * Series,ISIN Code" shape (same 5 columns nseSectorMaster.ts's file uses) —
- * none of them carry an index weight column. Per the brief, weights are
- * NEVER computed/estimated locally; the column is simply omitted.
+ * NO WEIGHTS FROM THE CSV: every verified CSV here is the "Company Name,
+ * Industry,Symbol,Series,ISIN Code" shape (same 5 columns nseSectorMaster.ts's
+ * file uses) — none of them carry an index weight column.
+ *
+ * WEIGHT UPDATE (2026-08-12, same-day follow-up — founder: "On NSE's page
+ * each Index has the Index Constituents — from there we can easily get the
+ * constituents"): a SECOND, live NSE source was found by tracing the actual
+ * page a user lands on (not guessed from the dead endpoints the earlier
+ * investigation ruled out) — see indexLiveWatch.ts's own module doc for the
+ * full trace/verification. That source DOES carry a real free-float-mcap
+ * field NSE itself publishes, so a genuine (disclosed-as-estimate, never
+ * fabricated) weight% is now available: `fetchIndexConstituents` below
+ * overlays it onto CSV rows when `hasIndexLiveWatch` has a mapping for this
+ * symbol, and `hasIndexConstituentList`/`fetchIndexConstituents` also now
+ * serve indexLiveWatch.ts as a fallback CONSTITUENT LIST for 68 of the 111
+ * symbols in KNOWN_NO_CONSTITUENT_LIST below that have no CSV at all. The CSV
+ * stays PRIMARY wherever it exists (archival-stable, unaffected by an NSE
+ * session hiccup); indexLiveWatch is secondary/overlay + gap-fill only.
  */
+
+import { hasIndexLiveWatch, fetchIndexLiveWatch } from "./indexLiveWatch";
 
 const CONSTITUENT_CSV_SLUG: Record<string, string> = {
   // 5 F&O-tradable underlyings (apps/web/lib/finance/indexTradableAlias.ts)
@@ -145,13 +161,19 @@ const CONSTITUENT_CSV_SLUG: Record<string, string> = {
  * — see the module doc's "111 verified-absent indices" section for the full
  * breakdown (1 excluded by nature, 4 from the original 35-index pass, 106
  * from the 2026-08-12 long-tail sweep). Purely a documentation/audit set: a
- * symbol's absence from CONSTITUENT_CSV_SLUG already makes
- * `hasIndexConstituentList` return false on its own, so nothing at request
- * time reads this constant. Its only job is to stop a future pass from
- * re-probing a symbol already confirmed absent, and to make that absence a
- * recorded fact instead of a silent gap. Never used to SUPPRESS anything
- * that would otherwise render — there's nothing to suppress, since none of
- * these symbols are in CONSTITUENT_CSV_SLUG in the first place.
+ * symbol's absence from CONSTITUENT_CSV_SLUG already makes CSV lookup fail
+ * on its own, so nothing at request time reads this constant to suppress
+ * anything. Its only job is to stop a future CSV-discovery pass from
+ * re-probing a symbol already confirmed absent from that family.
+ *
+ * STILL MEANS "NO CSV", NOT "NO DATA": 68 of these 111 symbols now resolve
+ * via indexLiveWatch.ts's gap-fill instead (see this file's "WEIGHT UPDATE"
+ * module doc note and `hasIndexLiveWatch`) — `hasIndexConstituentList` below
+ * returns true for those, `fetchIndexConstituents` serves live rows. The
+ * remaining 43 (mostly G-Sec/fixed-income indices, PR/TR futures & leverage/
+ * inverse variants, the Bharat Bond series, and a handful of real gaps like
+ * NIFTY CAPITAL GOODS/POWER/NBFC/INSURANCE/RETAIL) are absent from BOTH
+ * sources — genuinely no working feed found for them yet, on either pass.
  */
 export const KNOWN_NO_CONSTITUENT_LIST: ReadonlySet<string> = new Set([
   // Excluded by nature — a volatility index has no equity constituents at
@@ -299,8 +321,16 @@ const BROWSER_UA =
 export interface IndexConstituentRow {
   symbol: string;
   companyName: string;
-  /** NSE's own industry label (their own naming convention, not GICS — same source nseSectorMaster.ts uses for opinion sector filtering). Null on a malformed row (never observed live, defensive only). */
+  /** NSE's own industry label (their own naming convention, not GICS — same source nseSectorMaster.ts uses for opinion sector filtering). Null on a malformed row (never observed live, defensive only), and always null for a indexLiveWatch-only (gap-fill) row — that source carries no industry field. */
   industry: string | null;
+  /**
+   * Free-float-mcap-share weight estimate (0-100), from indexLiveWatch.ts —
+   * see that file's module doc for the honesty disclosure (a real,
+   * NSE-sourced-data estimate, not NSE's own published/capped weight). Null
+   * when no live-watch mapping exists for this symbol (most CSV-covered
+   * indices still render with no weight column, same as before this change).
+   */
+  weightPct: number | null;
 }
 
 /** "Company Name,Industry,Symbol,Series,ISIN Code" -> rows, same parser shape as nseSectorMaster.ts's parseNseTotalMarketCsv (no embedded commas in any published field). */
@@ -315,29 +345,69 @@ function parseConstituentCsv(csv: string): IndexConstituentRow[] {
     const companyName = parts[0]?.trim();
     const industry = parts[1]?.trim() || null;
     const symbol = parts[2]?.trim();
-    if (symbol && companyName) rows.push({ symbol, companyName, industry });
+    if (symbol && companyName) rows.push({ symbol, companyName, industry, weightPct: null });
   }
   return rows;
 }
 
 const cache = new Map<string, { at: number; rows: IndexConstituentRow[] }>();
 
-/** Cheap sync check — lets a caller skip any network/DB work entirely for the ~130+ indices with no verified list (every long-tail index, plus the 5 documented misses). */
+/**
+ * Cheap sync check — true when EITHER a CSV (CONSTITUENT_CSV_SLUG) or a live
+ * NSE watch mapping (indexLiveWatch.ts, `hasIndexLiveWatch`) exists for this
+ * symbol. Lets a caller skip any network/DB work entirely for the ~95
+ * indices with neither.
+ */
 export function hasIndexConstituentList(symbol: string): boolean {
-  return symbol.trim().toUpperCase() in CONSTITUENT_CSV_SLUG;
+  const key = symbol.trim().toUpperCase();
+  return key in CONSTITUENT_CSV_SLUG || hasIndexLiveWatch(key);
 }
 
 /**
- * Returns this index's constituent list, or null when unverified/unavailable.
- * Cached 24h per index in-module (rebalances are quarterly-or-rarer events,
- * far less often than this TTL) with stale-serve on a failed refetch —
- * mirrors nseSectorMaster.ts's getNseIndustryMap exactly. Never throws.
+ * Returns this index's constituent list, or null when unverified/unavailable
+ * from either source. CSV stays PRIMARY (archival-stable membership) when it
+ * exists — indexLiveWatch.ts is layered on top ONLY to add `weightPct`
+ * (best-effort: a live-watch failure never blocks the CSV path, it just
+ * leaves weightPct null, same as before this change). When no CSV exists,
+ * falls back to indexLiveWatch.ts as the sole constituent source (68 of the
+ * 111 KNOWN_NO_CONSTITUENT_LIST symbols — see that constant's own doc).
+ * CSV rows cached 24h in-module (rebalances are quarterly-or-rarer, far less
+ * often than this TTL) with stale-serve on a failed refetch — mirrors
+ * nseSectorMaster.ts's getNseIndustryMap exactly. Never throws.
  */
 export async function fetchIndexConstituents(symbol: string): Promise<IndexConstituentRow[] | null> {
   const key = symbol.trim().toUpperCase();
   const csvSlug = CONSTITUENT_CSV_SLUG[key];
-  if (!csvSlug) return null;
 
+  if (!csvSlug) {
+    // Gap-fill path: no CSV at all — indexLiveWatch.ts is the only source.
+    if (!hasIndexLiveWatch(key)) return null;
+    const liveRows = await fetchIndexLiveWatch(key);
+    if (!liveRows) return null;
+    return liveRows.map((r) => ({
+      symbol: r.symbol,
+      companyName: r.companyName,
+      industry: null,
+      weightPct: r.weightPct,
+    }));
+  }
+
+  const rows = await fetchCsvConstituentRows(key, csvSlug);
+  if (!rows) return null;
+  if (!hasIndexLiveWatch(key)) return rows;
+
+  // Weight overlay: best-effort, joined by symbol. A live-watch failure (or
+  // partial coverage — new listings the CSV has that the live snapshot
+  // hasn't caught up to yet) never blocks the CSV path; unmatched rows just
+  // keep weightPct: null, exactly like before this feature existed.
+  const liveRows = await fetchIndexLiveWatch(key);
+  if (!liveRows || liveRows.length === 0) return rows;
+  const weightBySymbol = new Map(liveRows.map((r) => [r.symbol, r.weightPct]));
+  return rows.map((r) => ({ ...r, weightPct: weightBySymbol.get(r.symbol) ?? null }));
+}
+
+/** CSV-only fetch/parse/cache — factored out of fetchIndexConstituents so the live-watch weight overlay above can wrap it without duplicating the cache/retry logic. */
+async function fetchCsvConstituentRows(key: string, csvSlug: string): Promise<IndexConstituentRow[] | null> {
   const now = Date.now();
   const cached = cache.get(key);
   if (cached && now - cached.at < CACHE_TTL_MS) return cached.rows;

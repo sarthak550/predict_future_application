@@ -50,7 +50,12 @@ RUN npm run build --workspace @predict-future/web
 # ── runner ──────────────────────────────────────────────────────────────────────
 FROM node:20-bookworm-slim AS runner
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates \
+# curl (not just openssl/ca-certificates) is required: lib/finance/indexLiveWatch.ts
+# fetches www.nseindia.com's Akamai-gated NextApi through a curl subprocess, mirroring
+# apps/api/lib/marketMoves/nse.ts's TRANSPORT NOTE — Node's native fetch/undici TLS
+# fingerprint is 403-blocked by NSE's Akamai from server IPs (verified on this same
+# EC2 box for apps/api), curl's is not.
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates curl \
   && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
