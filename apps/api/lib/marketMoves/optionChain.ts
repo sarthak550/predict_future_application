@@ -510,6 +510,24 @@ export interface FetchOptionChainOptions {
    * Only the public chain-browsing route opts in.
    */
   allowStale?: boolean;
+  /**
+   * 15-second premium-capture cadence project (2026-08-11) — opt-in: skips
+   * the `chainQuoteCacheTtlMs()` no-hammer THROTTLE READ entirely and always
+   * performs a live upstream fetch (the result still populates the cache
+   * afterward, same as any other fetch, so a later non-forceFresh caller
+   * within the TTL window benefits from it). Exists because the always-on
+   * index capture round now runs 4x/minute at a fixed ~15s cadence — exactly
+   * matching `CHAIN_CACHE_TTL_MARKET_HOURS_MS`, which means a naive
+   * time-based wait between rounds would race the TTL boundary (network
+   * jitter either direction could make round N read round N-1's cached
+   * payload, silently writing 4 identical `lastPrice` samples per minute and
+   * defeating the whole point of the finer cadence). Bypassing the read
+   * check outright removes that race by construction rather than by timing
+   * discipline. Defaults to false — every other caller (chain-browsing route,
+   * settlement/fill/pricing math, the demand-driven premium-capture tracks)
+   * keeps the existing throttle untouched.
+   */
+  forceFresh?: boolean;
 }
 
 /**
@@ -535,7 +553,7 @@ export async function fetchOptionChain(
   const cached = chainCache.get(cacheKey);
   const now = Date.now();
 
-  if (cached && now - cached.attemptedAt < chainQuoteCacheTtlMs()) {
+  if (!opts.forceFresh && cached && now - cached.attemptedAt < chainQuoteCacheTtlMs()) {
     // Within the no-hammer throttle window — don't re-hit NSE, but a THROTTLED
     // window after a FAILED attempt must still go through the same
     // allowStale gate as a live failure, not silently hand back lastGood to

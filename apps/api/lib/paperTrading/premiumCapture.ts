@@ -115,6 +115,64 @@
  * change needed. No new crontab entry needed either: this rides the exact
  * same every-minute fast-track invocation the interval-parity project
  * already installed.
+ *
+ * **15-second always-on cadence (2026-08-11, same-day follow-up)** — founder
+ * wants real 1-minute CANDLE BODIES on the index premium chart, not flat
+ * single-sample dashes. The web side needs zero changes for this: the
+ * architecture-simplification pass (commit c83656d, same day) already made
+ * `premium-candles.ts`'s aggregation plain first/max/min/last-per-bucket
+ * OHLC with no branching on sample count or `captureIntervalSec` — so a
+ * 1-minute bucket that receives 4 real samples instead of 1 automatically
+ * gets a real body, no client changes required (verified by reading that
+ * file: it truly buckets on `capturedAt` alone).
+ *
+ * `ALWAYS_ON_CAPTURE_INTERVAL_SEC` (15s) replaces `FAST_TRACK_CAPTURE_INTERVAL_SEC`
+ * (60s) ONLY for candidates carrying `alwaysOn: true` — the 5 index
+ * underlyings' own nearest-weekly-expiry pair. A demand-driven fast-track
+ * candidate (an index contract someone's viewing, or holds a position in,
+ * at an expiry OTHER than the always-on nearest weekly) still captures once
+ * per invocation at the original 60s cadence, unchanged — see
+ * `runAlwaysOnRounds` vs. the immediate `captureTrack` call in
+ * `runPremiumCapture`. A candidate that's BOTH always-on and separately
+ * viewed/held is a single merged `Candidate` (see `mergeCandidates`), so it
+ * only ever gets the finer 15s treatment — never double-captured under two
+ * different cadences for the same `(underlying, expiry)` key in one run.
+ *
+ * Mechanically, one cron invocation now runs the always-on candidates
+ * through 4 rounds scheduled at fixed ~0/15/30/45s offsets from the
+ * invocation's own start time (`ALWAYS_ON_ROUND_OFFSETS_MS`, anchored to a
+ * single `runStartedAt` rather than chained wait-then-capture-then-wait, so
+ * per-round execution time never accumulates drift across rounds). Each
+ * round calls `fetchOptionChain` with `forceFresh: true` (see
+ * `optionChain.ts`'s doc on that option) rather than relying on timing
+ * alone to outrun the chain cache's own 15s market-hours TTL — the TTL and
+ * the round spacing are numerically identical, so a naive wait-based
+ * approach would race the boundary and risk 4 identical `lastPrice` samples
+ * a round early or late. `forceFresh` removes that race by construction.
+ * `ALWAYS_ON_ROUND_HARD_DEADLINE_MS` (58s) bounds the whole sequence so a
+ * slow round (upstream latency, a flaky underlying) can never push a write
+ * past the next minute's cron invocation — a round that would start after
+ * the deadline is skipped, not delayed, and `alwaysOnRoundsSkippedByDeadline`
+ * surfaces this in the result for monitoring. `runPremiumCapture` also now
+ * guards against genuine RE-ENTRANCY (a prior invocation still in flight
+ * when the next minute's cron hits, e.g. after an unusually slow round) with
+ * a module-level in-progress flag — `skippedDueToOverlap: true` on the
+ * result, never two invocations writing concurrently.
+ *
+ * Updated write-volume math: the always-on track alone is now 5 × 42 rows ×
+ * 4 rounds × 375 min/day ≈ 315,000 rows/day (up from the single-round
+ * 78,750/day figure above — a 4x multiplier, exactly the round count, since
+ * depth/underlyings/session-length are unchanged). Against the SAME
+ * unchanged 10-calendar-day fine-grained retention window that's a
+ * ~3,150,000-row steady state for this track (demand-driven fast candidates
+ * and the 5-minute stock track add a comparatively small amount on top — low
+ * single-digit candidate counts per this file's own "Defensive candidate
+ * caps" section). `OptionPremiumSnapshot` already carries a dedicated
+ * `[captureIntervalSec, capturedAt]` index (schema-defined, unchanged) that
+ * the prune cron's delete filters use directly — confirmed sufficient for
+ * this volume; no schema or prune-cron change needed. No crontab change
+ * either: still one every-minute invocation, all 4 rounds happen inside that
+ * single request.
  */
 
 import { isNseWeekdayMarketHours } from "@predict-future/business-rules/papertrading/marketHours";
@@ -150,10 +208,21 @@ const ENGINE_ORDER_SELECT = {
 const STRIKES_AROUND_ATM = 10;
 const RECENTLY_VIEWED_WINDOW_MS = 15 * 60_000;
 
-/** Fast track (index underlyings) — 1-minute cadence during market hours. */
+/** Fast track (index underlyings) — 1-minute cadence during market hours, for demand-driven (non-always-on) candidates only; see module doc's 2026-08-11 section. */
 const FAST_TRACK_CAPTURE_INTERVAL_SEC = 60;
 /** Slow track (single-stock underlyings) — unchanged 5-minute cadence. */
 const SLOW_TRACK_CAPTURE_INTERVAL_SEC = 300;
+
+/**
+ * 15-second always-on cadence (2026-08-11) — see module doc. Applies ONLY to
+ * `alwaysOn: true` candidates (the 5 index underlyings' own nearest weekly
+ * expiry), captured `ALWAYS_ON_ROUND_OFFSETS_MS.length` times per invocation.
+ */
+const ALWAYS_ON_CAPTURE_INTERVAL_SEC = 15;
+/** Fixed offsets (ms) from the invocation's own start — anchored, not chained, so per-round latency never accumulates drift across rounds. */
+const ALWAYS_ON_ROUND_OFFSETS_MS = [0, 15_000, 30_000, 45_000];
+/** A round scheduled to start after this many ms from invocation start is skipped, not delayed — keeps the whole sequence bounded well inside the ~60s window before the next cron invocation. */
+const ALWAYS_ON_ROUND_HARD_DEADLINE_MS = 58_000;
 
 /**
  * Defensive circuit breakers, NEW as of the interval-parity project — see
@@ -167,6 +236,18 @@ const SLOW_TRACK_MAX_CANDIDATES = 40;
 
 export interface PremiumCaptureRunResult {
   ranOutsideMarketHours: boolean;
+  /**
+   * 15-second cadence project (2026-08-11) — true when this invocation was
+   * skipped in its entirety because a PRIOR invocation was still running
+   * (the re-entrancy guard, see module-level `captureInProgress`). Every
+   * other field is left at its zero-value default when this is true. Should
+   * be rare in steady state (the whole sequence is bounded by
+   * `ALWAYS_ON_ROUND_HARD_DEADLINE_MS`, well inside the ~60s window before
+   * the next invocation) — a nonzero rate of this over time is a real signal
+   * something upstream (NSE latency, DB latency) is running slower than this
+   * file's own timing budget assumes.
+   */
+  skippedDueToOverlap: boolean;
   /** True when this invocation's `now` didn't land on a real 5-minute IST boundary — the slow (stock) track was skipped this run by design, not a failure. */
   slowTrackSkipped: boolean;
   candidateContracts: number;
@@ -179,6 +260,10 @@ export interface PremiumCaptureRunResult {
   chainFetchFailures: number;
   snapshotsWritten: number;
   errors: number;
+  /** 15-second cadence project (2026-08-11) — how many of the (up to) 4 always-on rounds this invocation actually ran; less than the offsets-array length (normally 4) means one or more late rounds were skipped by `ALWAYS_ON_ROUND_HARD_DEADLINE_MS`, see `alwaysOnRoundsSkippedByDeadline`. 0 whenever `alwaysOnIndexCandidates` itself is 0 (nothing to capture). */
+  alwaysOnRoundsCompleted: number;
+  /** 15-second cadence project (2026-08-11) — count of always-on rounds skipped this invocation because they would have started past the hard deadline. 0 in the overwhelmingly common case; a nonzero value is a real signal this invocation is running slower than the timing budget assumes (see module doc). */
+  alwaysOnRoundsSkippedByDeadline: number;
 }
 
 interface Candidate {
@@ -376,7 +461,8 @@ async function captureTrack(
   candidates: Candidate[],
   captureIntervalSec: number,
   capturedAt: Date,
-  result: PremiumCaptureRunResult
+  result: PremiumCaptureRunResult,
+  options: { forceFresh?: boolean } = {}
 ): Promise<Prisma.OptionPremiumSnapshotCreateManyInput[]> {
   const allRows: Prisma.OptionPremiumSnapshotCreateManyInput[] = [];
   for (const candidate of candidates) {
@@ -386,7 +472,7 @@ async function captureTrack(
         result.errors += 1;
         continue;
       }
-      const chain = await fetchOptionChain(candidate.underlying, candidate.expiryStr);
+      const chain = await fetchOptionChain(candidate.underlying, candidate.expiryStr, { forceFresh: options.forceFresh });
       if (!chain) {
         result.chainFetchFailures += 1;
         continue;
@@ -400,18 +486,79 @@ async function captureTrack(
   return allRows;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * 15-second always-on cadence (2026-08-11, see module doc) — runs
+ * `alwaysOnCandidates` through `ALWAYS_ON_ROUND_OFFSETS_MS.length` rounds
+ * (normally 4), each anchored to a fixed offset from `runStartedAt` rather
+ * than chained off the PREVIOUS round's own finish time, so per-round
+ * latency (a slow underlying, upstream jitter) never compounds into
+ * schedule drift across the sequence. Each round fetches with
+ * `forceFresh: true` (bypassing the chain cache's read-side throttle
+ * entirely) rather than trusting elapsed wall-clock time to have outrun the
+ * cache TTL — the TTL and the round spacing are both 15s, so a timing-only
+ * approach would race that boundary. Writes each round's rows immediately
+ * (not batched to the end) so a mid-sequence failure still preserves
+ * whatever rounds already completed. A round whose target start time has
+ * already passed `ALWAYS_ON_ROUND_HARD_DEADLINE_MS` is skipped outright,
+ * never delayed — keeps the whole sequence bounded well inside the ~60s
+ * window before the next cron invocation.
+ */
+async function runAlwaysOnRounds(
+  alwaysOnCandidates: Candidate[],
+  runStartedAt: number,
+  result: PremiumCaptureRunResult
+): Promise<void> {
+  for (const offsetMs of ALWAYS_ON_ROUND_OFFSETS_MS) {
+    if (Date.now() - runStartedAt > ALWAYS_ON_ROUND_HARD_DEADLINE_MS) {
+      result.alwaysOnRoundsSkippedByDeadline += 1;
+      continue;
+    }
+
+    const waitMs = runStartedAt + offsetMs - Date.now();
+    if (waitMs > 0) await sleep(waitMs);
+
+    const capturedAt = new Date();
+    const rows = await captureTrack(alwaysOnCandidates, ALWAYS_ON_CAPTURE_INTERVAL_SEC, capturedAt, result, { forceFresh: true });
+    if (rows.length > 0) {
+      const written = await prisma.optionPremiumSnapshot.createMany({ data: rows });
+      result.snapshotsWritten += written.count;
+    }
+    result.alwaysOnRoundsCompleted += 1;
+  }
+}
+
+/**
+ * 15-second cadence project (2026-08-11) — process-local re-entrancy guard.
+ * `runPremiumCapture` can now take up to `ALWAYS_ON_ROUND_HARD_DEADLINE_MS`
+ * (58s) to complete, close to the every-minute cron cadence itself; without
+ * this guard an unusually slow invocation overlapping the next one would
+ * risk two concurrent runs racing writes/chain-cache state. Single boolean
+ * is sufficient — this route runs single-instance (same accepted limitation
+ * `optionChain.ts`'s in-module caches already carry).
+ */
+let captureInProgress = false;
+
 /**
  * Captures one round of ATM ± 10 premium snapshots for every candidate
- * contract, split into the fast (index, every invocation) and slow (stock,
- * every real 5-minute IST boundary) tracks — see module doc for the full
+ * contract, split into three cadence tracks — always-on index (15s × 4
+ * rounds), demand-driven index (60s × 1, every invocation), and stock (300s
+ * × 1, every real 5-minute IST boundary) — see module doc for the full
  * cadence/volume reasoning. Self-gates on `isNseWeekdayMarketHours()`
  * regardless of when the cron itself fired — a slightly-loose crontab bound
  * (the brief's coarse hour-window filter) never writes off-session ticks.
- * Never throws — per-candidate failures are caught and counted.
+ * Never throws — per-candidate failures are caught and counted. Guarded
+ * against re-entrancy (see `captureInProgress`) — an overlapping invocation
+ * returns immediately with `skippedDueToOverlap: true` rather than racing
+ * the one already running.
  */
 export async function runPremiumCapture(now: Date = new Date()): Promise<PremiumCaptureRunResult> {
   const result: PremiumCaptureRunResult = {
     ranOutsideMarketHours: false,
+    skippedDueToOverlap: false,
     slowTrackSkipped: false,
     candidateContracts: 0,
     fastTrackCandidates: 0,
@@ -420,48 +567,72 @@ export async function runPremiumCapture(now: Date = new Date()): Promise<Premium
     candidatesDroppedByCap: 0,
     chainFetchFailures: 0,
     snapshotsWritten: 0,
-    errors: 0
+    errors: 0,
+    alwaysOnRoundsCompleted: 0,
+    alwaysOnRoundsSkippedByDeadline: 0
   };
 
-  if (!isNseWeekdayMarketHours(now)) {
-    result.ranOutsideMarketHours = true;
+  if (captureInProgress) {
+    result.skippedDueToOverlap = true;
     return result;
   }
 
-  const runSlowTrack = isFiveMinuteBoundary(now);
-  result.slowTrackSkipped = !runSlowTrack;
+  const runStartedAt = Date.now();
+  captureInProgress = true;
+  try {
+    if (!isNseWeekdayMarketHours(now)) {
+      result.ranOutsideMarketHours = true;
+      return result;
+    }
 
-  const [openPositionCandidates, recentlyViewedCandidates, alwaysOnIndexCandidates] = await Promise.all([
-    collectOpenPositionCandidates(),
-    Promise.resolve(collectRecentlyViewedCandidates()),
-    collectAlwaysOnIndexCandidates()
-  ]);
+    const runSlowTrack = isFiveMinuteBoundary(now);
+    result.slowTrackSkipped = !runSlowTrack;
 
-  const allCandidates = mergeCandidates(openPositionCandidates, recentlyViewedCandidates, alwaysOnIndexCandidates);
-  result.candidateContracts = allCandidates.length;
-  result.alwaysOnIndexCandidates = alwaysOnIndexCandidates.length;
+    const [openPositionCandidates, recentlyViewedCandidates, alwaysOnIndexCandidates] = await Promise.all([
+      collectOpenPositionCandidates(),
+      Promise.resolve(collectRecentlyViewedCandidates()),
+      collectAlwaysOnIndexCandidates()
+    ]);
 
-  const fastRaw = allCandidates.filter((c) => isIndexUnderlying(c.underlying));
-  const slowRaw = allCandidates.filter((c) => !isIndexUnderlying(c.underlying));
+    const allCandidates = mergeCandidates(openPositionCandidates, recentlyViewedCandidates, alwaysOnIndexCandidates);
+    result.candidateContracts = allCandidates.length;
+    result.alwaysOnIndexCandidates = alwaysOnIndexCandidates.length;
 
-  const fastCapped = capCandidates(fastRaw, FAST_TRACK_MAX_CANDIDATES);
-  const slowCapped = runSlowTrack ? capCandidates(slowRaw, SLOW_TRACK_MAX_CANDIDATES) : { kept: [], dropped: 0 };
+    const fastRaw = allCandidates.filter((c) => isIndexUnderlying(c.underlying));
+    const slowRaw = allCandidates.filter((c) => !isIndexUnderlying(c.underlying));
 
-  result.fastTrackCandidates = fastCapped.kept.length;
-  result.slowTrackCandidates = slowCapped.kept.length;
-  result.candidatesDroppedByCap = fastCapped.dropped + slowCapped.dropped;
+    const fastCapped = capCandidates(fastRaw, FAST_TRACK_MAX_CANDIDATES);
+    const slowCapped = runSlowTrack ? capCandidates(slowRaw, SLOW_TRACK_MAX_CANDIDATES) : { kept: [], dropped: 0 };
 
-  const capturedAt = new Date();
-  const [fastRows, slowRows] = await Promise.all([
-    captureTrack(fastCapped.kept, FAST_TRACK_CAPTURE_INTERVAL_SEC, capturedAt, result),
-    captureTrack(slowCapped.kept, SLOW_TRACK_CAPTURE_INTERVAL_SEC, capturedAt, result)
-  ]);
-  const allRows = [...fastRows, ...slowRows];
+    result.fastTrackCandidates = fastCapped.kept.length;
+    result.slowTrackCandidates = slowCapped.kept.length;
+    result.candidatesDroppedByCap = fastCapped.dropped + slowCapped.dropped;
 
-  if (allRows.length > 0) {
-    const written = await prisma.optionPremiumSnapshot.createMany({ data: allRows });
-    result.snapshotsWritten = written.count;
+    // Split the fast track: always-on candidates get the 15s × 4-round
+    // treatment below; demand-driven fast candidates (viewed/held at an
+    // expiry other than the always-on nearest weekly) keep the original 60s
+    // single-round cadence, captured here alongside the stock track.
+    const alwaysOnFastCandidates = fastCapped.kept.filter((c) => c.alwaysOn);
+    const demandFastCandidates = fastCapped.kept.filter((c) => !c.alwaysOn);
+
+    const capturedAt = new Date();
+    const [demandFastRows, slowRows] = await Promise.all([
+      captureTrack(demandFastCandidates, FAST_TRACK_CAPTURE_INTERVAL_SEC, capturedAt, result),
+      captureTrack(slowCapped.kept, SLOW_TRACK_CAPTURE_INTERVAL_SEC, capturedAt, result)
+    ]);
+    const immediateRows = [...demandFastRows, ...slowRows];
+
+    if (immediateRows.length > 0) {
+      const written = await prisma.optionPremiumSnapshot.createMany({ data: immediateRows });
+      result.snapshotsWritten += written.count;
+    }
+
+    if (alwaysOnFastCandidates.length > 0) {
+      await runAlwaysOnRounds(alwaysOnFastCandidates, runStartedAt, result);
+    }
+
+    return result;
+  } finally {
+    captureInProgress = false;
   }
-
-  return result;
 }
