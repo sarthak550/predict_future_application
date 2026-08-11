@@ -3,15 +3,22 @@
  * orchestration for POST /api/cron/paper-trading-premium-capture.
  *
  * Writes one OptionPremiumSnapshot row per CE/PE quote (that has a lastPrice
- * or a bid/ask), for the UNION of:
- *   1. Every listed expiry of the 5 index underlyings (see the "all-expiry"
- *      project below — this is now always-on, not demand-driven).
- *   2. Every (underlyingSymbol, expiryDate) with at least one open option
- *      position across any account, on a SINGLE-STOCK underlying (index
- *      positions are already covered by #1 — see that section).
- *   3. Every single-stock (underlyingSymbol, expiryDate) requested through
- *      the chain endpoint in roughly the last 15 minutes
- *      (getRecentlyViewedContracts).
+ * or a bid/ask). Index-underlying coverage is GATED by the
+ * `PREMIUM_CAPTURE_ALL_EXPIRIES` env flag (default OFF — see the
+ * "Feature-flagged" section far below for the full launch story):
+ *   - Flag ON: every listed expiry of all 5 index underlyings, always-on,
+ *     tiered near/far by days-to-expiry.
+ *   - Flag OFF (default, current production behavior): each index
+ *     underlying's nearest weekly expiry only, always-on, PLUS any index
+ *     open position or recently-viewed index contract (restored bc90714
+ *     behavior).
+ * Either way, the UNION also always includes:
+ *   - Every (underlyingSymbol, expiryDate) with at least one open option
+ *     position across any account, on a SINGLE-STOCK underlying (index
+ *     positions are handled by the gated section above).
+ *   - Every single-stock (underlyingSymbol, expiryDate) requested through
+ *     the chain endpoint in roughly the last 15 minutes
+ *     (getRecentlyViewedContracts).
  *
  * All pure math (ATM-nearest-strike selection) lives inline here — it's a
  * three-line reduce, not worth a business-rules module of its own, and
@@ -207,11 +214,95 @@
  * at all before this pass — a single unbounded delete against a table now
  * writing ~788K rows/day into its fine-grained tier is a bigger single
  * transaction than the prior design ever produced, so this pass ALSO adds
- * chunked deletion there (see that route's own doc) as a direct response to
- * the brief's "adjust if it would fall behind" instruction — not a
- * hypothetical, the marginal nightly delete volume (~788K rows, one day's
- * production sliding out of the 10-day window) is real and growing with
- * this change.
+ * chunked deletion there (see that route's own doc) — that fix stays live in
+ * BOTH modes below (see next section), it's a robustness improvement, not
+ * part of the gated feature.
+ *
+ * **Feature-flagged behind PREMIUM_CAPTURE_ALL_EXPIRIES (2026-08-11, same-day
+ * launch decision)** — founder, verbatim, after seeing the storage math
+ * above: "IF this feature is gonna cost so much space then we can have the
+ * complete code base but block this for now, given it's working absolutely
+ * fine, we can launch it later." Translation: keep every line of the
+ * all-expiry design above, but make it opt-in, default OFF, flippable at
+ * launch time with an env var and a container recreate — NO code change
+ * needed to launch later.
+ *
+ * `PREMIUM_CAPTURE_ALL_EXPIRIES` — parsed `=== "true"` (this codebase's
+ * established boolean-env-gate convention, matching
+ * `FEED_FILTER_SUMMARY_READY` in stories/queries.ts and news/queries.ts),
+ * default OFF (unset, empty, or any value other than the literal string
+ * `"true"` all resolve to OFF — the safe default for an unset var in every
+ * deploy environment that hasn't been told about this flag yet).
+ *
+ * FLAG ON — exactly the all-expiry design documented above, zero
+ * difference: `collectIndexExpiryCandidates` fetches every listed expiry of
+ * all 5 index underlyings, tiered near/far by `NEAR_TERM_MAX_DAYS` +
+ * open-position promotion, no cap (deterministic membership). ~788,250
+ * rows/day, ~3.17GB fine-grained steady state (both figures as measured
+ * above).
+ *
+ * FLAG OFF (default) — restores the EXACT previous shipped behavior from
+ * commit bc90714 (the last commit before the all-expiry rewrite), not a
+ * fresh reinvention: pulled from git history and adapted to fit inside the
+ * new near/far-tier function shapes rather than duplicating them.
+ *   - `collectNearestWeeklyIndexCandidates` — bc90714's
+ *     `collectAlwaysOnIndexCandidates`, renamed: one candidate per index
+ *     underlying, its OWN nearest weekly expiry
+ *     (`fetchOptionChainExpiries(underlying)[0]`), always-on.
+ *   - Index open positions are promoted into the SAME near-tier round loop
+ *     regardless of expiry — this was already true structurally (open
+ *     positions are unioned in before capping, see
+ *     `mergeLegacyIndexCandidates`/`capLegacyIndexCandidates` below, restored
+ *     from bc90714's `mergeCandidates`/`capCandidates`), so positions never
+ *     lose capture in either mode.
+ *   - RECENTLY-VIEWED INDEX CONTRACTS — bc90714 had a genuine third path
+ *     here: any index (underlying, expiry) viewed through the chain endpoint
+ *     in the last 15 minutes, captured at `FAST_TRACK_CAPTURE_INTERVAL_SEC`
+ *     (60s, a SEPARATE single-round capture alongside the always-on 15s×4
+ *     rounds). Restored from git history per the brief, but ADAPTED rather
+ *     than reproduced verbatim: instead of a separate 60s single-round path,
+ *     a viewed-but-not-always-on index contract now simply JOINS the near
+ *     tier's existing 15s×4 round loop for that invocation (own call, per
+ *     the brief's explicit "your call, document it"). Reasoning: (1) it's
+ *     strictly better for the user — the founder's own BANKNIFTY-25-Aug
+ *     example gets REAL 1-minute candles while being watched, not the old
+ *     design's flatter 60s samples; (2) it's simpler — reuses
+ *     `runNearTierRounds` as-is with zero new round-scheduling code, versus
+ *     resurrecting a whole parallel 60s-single-round track; (3) it's cheap —
+ *     viewing is rare (this file's own `RECENTLY_VIEWED_WINDOW_MS` — 15
+ *     minutes — combined with `LEGACY_NEAR_TRACK_MAX_CANDIDATES` below
+ *     bounds the extra fetches to a handful per invocation, nowhere near
+ *     the all-expiry mode's own 15s-track cost).
+ *   - `LEGACY_NEAR_TRACK_MAX_CANDIDATES` (12) — restored verbatim from
+ *     bc90714's `FAST_TRACK_MAX_CANDIDATES`: guards against unbounded
+ *     VIEWING traffic in this mode (a real vector here, unlike ALL_EXPIRIES
+ *     mode — see that section above). Never drops an always-on
+ *     nearest-weekly candidate or an open position; only trims excess
+ *     merely-viewed candidates, most-recently-viewed first. This cap is
+ *     INACTIVE (never invoked) when the flag is ON.
+ *   - No far tier at all in this mode (`farTierCandidates` is always `[]`) —
+ *     `runFarTierOnce` already no-ops on an empty array, so no branch is
+ *     needed there.
+ *   - Volume: ~315,000 rows/day (bc90714's own measured figure — 5
+ *     always-on candidates + a handful of viewed/position extras, all at
+ *     42 rows/round × 4 rounds/min × 375 min/day), ~1.27GB fine-grained
+ *     steady state at the unchanged 10-day retention. Effectively zero
+ *     incremental storage cost versus what was already live in production
+ *     before this whole project started.
+ *
+ * LAUNCH PROCEDURE (when the founder decides to turn this on) — set
+ * `PREMIUM_CAPTURE_ALL_EXPIRIES=true` in the API container's env (the same
+ * `.env`/`.env.prod` convention every other prod env var in this app
+ * already uses) on the EC2 box, then recreate the container — `docker rm` +
+ * `docker run` (or the project's equivalent reship step), NOT a plain
+ * `docker restart`: Docker snapshots env vars at container CREATION, so a
+ * restart alone would keep running with the old (unset) value. No code
+ * change, no migration, no crontab change — this doc, the constants below,
+ * and both code paths already ship in this same file either way.
+ *
+ * `allExpiriesEnabled` on `PremiumCaptureRunResult` surfaces which mode ran,
+ * directly in the cron's own JSON response — no need to cross-reference env
+ * config to tell which behavior a given invocation used.
  */
 
 import { isNseWeekdayMarketHours } from "@predict-future/business-rules/papertrading/marketHours";
@@ -265,20 +356,33 @@ const ALWAYS_ON_ROUND_HARD_DEADLINE_MS = 58_000;
 /** Live-measured 2026-08-11: 3-way concurrent far-tier fetch is ~3.2x faster than sequential (4.9s vs 15.75s for 24 candidates) with the identical failure set — see module doc. */
 const FAR_TIER_FETCH_CONCURRENCY = 3;
 
+/**
+ * Launch gate (2026-08-11, see module doc's "Feature-flagged" section) —
+ * default OFF. `=== "true"` parsing matches this codebase's established
+ * boolean-env-gate convention (`FEED_FILTER_SUMMARY_READY` in
+ * stories/queries.ts and news/queries.ts).
+ */
+const PREMIUM_CAPTURE_ALL_EXPIRIES = process.env.PREMIUM_CAPTURE_ALL_EXPIRIES === "true";
+
+/** Legacy mode (flag OFF) only, restored verbatim from bc90714's FAST_TRACK_MAX_CANDIDATES — see module doc. Never invoked when the flag is ON (the all-expiry near/far tiers are deterministic, not traffic-driven, so nothing caps them). */
+const LEGACY_NEAR_TRACK_MAX_CANDIDATES = 12;
+
 export interface PremiumCaptureRunResult {
   ranOutsideMarketHours: boolean;
   /** True when this invocation was skipped in its entirety because a PRIOR invocation was still running (see module-level `captureInProgress`). Every other field is left at its zero-value default when this is true. */
   skippedDueToOverlap: boolean;
   /** True when this invocation's `now` didn't land on a real 5-minute IST boundary — the slow (stock) track was skipped this run by design, not a failure. */
   slowTrackSkipped: boolean;
-  /** All-expiry project (2026-08-11) — total (underlying, expiry) pairs observed across the 5 index underlyings' live expiry lists this run. Live-measured baseline 2026-08-11: 33 (NIFTY 18 + BANKNIFTY 6 + FINNIFTY 3 + MIDCPNIFTY 3 + NIFTYNXT50 3). A big drop signals a chain-fetch problem for one or more underlyings, not a real product state (an index option chain never has zero expiries). */
+  /** ALL_EXPIRIES mode only (see allExpiriesEnabled) — total (underlying, expiry) pairs observed across the 5 index underlyings' live expiry lists this run. Live-measured baseline 2026-08-11: 33 (NIFTY 18 + BANKNIFTY 6 + FINNIFTY 3 + MIDCPNIFTY 3 + NIFTYNXT50 3). A big drop signals a chain-fetch problem for one or more underlyings, not a real product state (an index option chain never has zero expiries). Always 0 in legacy mode — see nearestWeeklyResolved instead. */
   indexExpiriesObserved: number;
-  /** Index expiries captured at 15s x 4-round cadence this run — real near-dated expiries (<= NEAR_TERM_MAX_DAYS) plus any far-dated expiry currently holding an open position, promoted regardless of date. Live baseline 2026-08-11: 9. */
+  /** Legacy mode only (see allExpiriesEnabled) — how many of the 5 index underlyings resolved a nearest-weekly candidate this run (bc90714's original always-on signal, restored). Always 0 in ALL_EXPIRIES mode. */
+  nearestWeeklyResolved: number;
+  /** Index expiries captured at 15s x 4-round cadence this run. ALL_EXPIRIES mode: real near-dated expiries (<= NEAR_TERM_MAX_DAYS) plus any far-dated expiry currently holding an open position, promoted regardless of date (live baseline 2026-08-11: 9). Legacy mode: each underlying's nearest-weekly candidate, plus any open-position or recently-viewed index contract, capped at LEGACY_NEAR_TRACK_MAX_CANDIDATES. */
   nearTierCandidates: number;
-  /** Index expiries beyond NEAR_TERM_MAX_DAYS with no open position — captured once this run at 60s cadence, FAR_TIER_FETCH_CONCURRENCY-way concurrent. Live baseline 2026-08-11: 24. */
+  /** Index expiries beyond NEAR_TERM_MAX_DAYS with no open position — captured once this run at 60s cadence, FAR_TIER_FETCH_CONCURRENCY-way concurrent. ALL_EXPIRIES mode only (live baseline 2026-08-11: 24) — always 0 in legacy mode (no far tier exists there, see module doc). */
   farTierCandidates: number;
   slowTrackCandidates: number;
-  /** Count of merely-viewed (no open position) STOCK candidates dropped by the slow-track defensive cap this run — 0 in the overwhelmingly common case. Index tiers are never capped (see module doc — membership is derived from live NSE data + real positions, not user traffic). */
+  /** Count of merely-viewed (no open position, no always-on status) candidates dropped by a defensive cap this run — 0 in the overwhelmingly common case. Covers the STOCK slow-track cap in both modes, PLUS the legacy-mode index near-track cap (LEGACY_NEAR_TRACK_MAX_CANDIDATES) when the flag is off. ALL_EXPIRIES-mode index tiers are never capped (see module doc — membership is derived from live NSE data + real positions, not user traffic). */
   candidatesDroppedByCap: number;
   chainFetchFailures: number;
   snapshotsWritten: number;
@@ -287,6 +391,8 @@ export interface PremiumCaptureRunResult {
   nearTierRoundsCompleted: number;
   /** Count of near-tier rounds skipped this invocation because they would have started past the hard deadline. 0 in the overwhelmingly common case; a nonzero value is a real signal this invocation is running slower than the ~50.4s measured baseline (see module doc). */
   nearTierRoundsSkippedByDeadline: number;
+  /** Which mode this invocation ran under — mirrors PREMIUM_CAPTURE_ALL_EXPIRIES, surfaced directly on the result so the cron's own JSON response answers "which behavior just ran" without cross-referencing env config. */
+  allExpiriesEnabled: boolean;
 }
 
 interface CaptureCandidate {
@@ -294,9 +400,16 @@ interface CaptureCandidate {
   expiryStr: string; // NSE "DD-MMM-YYYY"
 }
 
-/** Stock (slow) track only — carries the signals `capStockCandidates` needs. Index tiers use the bare `CaptureCandidate` shape; nothing caps them (see module doc). */
+/** Stock (slow) track only — carries the signals `capStockCandidates` needs. ALL_EXPIRIES-mode index tiers use the bare `CaptureCandidate` shape; nothing caps them (see module doc). */
 interface StockCandidate extends CaptureCandidate {
   hasOpenPosition: boolean;
+  lastViewedAt: number;
+}
+
+/** Legacy mode (flag OFF) only — restored from bc90714's `Candidate` interface. `alwaysOn` = this underlying's own nearest-weekly expiry (never dropped by the cap, same as `hasOpenPosition`); see `mergeLegacyIndexCandidates`/`capLegacyIndexCandidates`. */
+interface LegacyIndexCandidate extends CaptureCandidate {
+  hasOpenPosition: boolean;
+  alwaysOn: boolean;
   lastViewedAt: number;
 }
 
@@ -378,6 +491,30 @@ async function collectIndexExpiryCandidates(
 }
 
 /**
+ * Legacy mode (flag OFF) only — restored from bc90714's
+ * `collectAlwaysOnIndexCandidates`, renamed but otherwise unchanged: one
+ * candidate per index underlying, pinned to that underlying's OWN nearest
+ * weekly expiry (`fetchOptionChainExpiries(underlying)[0]` — that
+ * function's own documented contract is "nearest first"). A per-underlying
+ * fetch failure drops just that one underlying for this run — never throws,
+ * matching every other function in this file's failure posture.
+ */
+async function collectNearestWeeklyIndexCandidates(): Promise<CaptureCandidate[]> {
+  const results = await Promise.all(
+    INDEX_OPTION_UNDERLYINGS.map(async (underlying: string): Promise<CaptureCandidate | null> => {
+      try {
+        const expiries = await fetchOptionChainExpiries(underlying);
+        const nearest = expiries[0];
+        return nearest ? { underlying, expiryStr: nearest } : null;
+      } catch {
+        return null;
+      }
+    })
+  );
+  return results.filter((c): c is CaptureCandidate => c !== null);
+}
+
+/**
  * Merges open-position + recently-viewed signals for the STOCK slow track
  * only (index tiers are handled separately — see collectIndexExpiryCandidates
  * and the near/far split in runPremiumCapture). A pair present in both
@@ -415,6 +552,60 @@ function mergeStockCandidates(
 function capStockCandidates(candidates: StockCandidate[], max: number): { kept: StockCandidate[]; dropped: number } {
   const neverDropped = candidates.filter((c) => c.hasOpenPosition);
   const viewedOnly = candidates.filter((c) => !c.hasOpenPosition).sort((a, b) => b.lastViewedAt - a.lastViewedAt);
+
+  const remainingSlots = Math.max(0, max - neverDropped.length);
+  const keptViewedOnly = viewedOnly.slice(0, remainingSlots);
+  const dropped = viewedOnly.length - keptViewedOnly.length;
+
+  return { kept: [...neverDropped, ...keptViewedOnly], dropped };
+}
+
+/**
+ * Legacy mode (flag OFF) only — restored from bc90714's 3-way
+ * `mergeCandidates`, scoped to index candidates only (the stock slow track
+ * has its own 2-way `mergeStockCandidates` above, unchanged in both modes).
+ * A pair present in multiple sources keeps every `true` flag it earned from
+ * ANY source (never downgraded) and the MAX `lastViewedAt` across sources.
+ */
+function mergeLegacyIndexCandidates(
+  alwaysOnNearestWeekly: CaptureCandidate[],
+  openPositions: CaptureCandidate[],
+  recentlyViewed: Array<{ underlying: string; expiryStr: string; lastViewedAt: number }>
+): LegacyIndexCandidate[] {
+  const byKey = new Map<string, LegacyIndexCandidate>();
+  for (const c of alwaysOnNearestWeekly) {
+    byKey.set(candidateKey(c), { underlying: c.underlying, expiryStr: c.expiryStr, hasOpenPosition: false, alwaysOn: true, lastViewedAt: 0 });
+  }
+  for (const c of openPositions) {
+    const existing = byKey.get(candidateKey(c));
+    if (existing) {
+      existing.hasOpenPosition = true;
+    } else {
+      byKey.set(candidateKey(c), { underlying: c.underlying, expiryStr: c.expiryStr, hasOpenPosition: true, alwaysOn: false, lastViewedAt: 0 });
+    }
+  }
+  for (const c of recentlyViewed) {
+    const existing = byKey.get(candidateKey(c));
+    if (existing) {
+      existing.lastViewedAt = Math.max(existing.lastViewedAt, c.lastViewedAt);
+    } else {
+      byKey.set(candidateKey(c), { underlying: c.underlying, expiryStr: c.expiryStr, hasOpenPosition: false, alwaysOn: false, lastViewedAt: c.lastViewedAt });
+    }
+  }
+  return [...byKey.values()];
+}
+
+/**
+ * Legacy mode (flag OFF) only — restored from bc90714's `capCandidates`,
+ * scoped to index candidates. Every `hasOpenPosition` OR `alwaysOn`
+ * candidate always survives (real account exposure and the always-on
+ * nearest-weekly floor are never sacrificed to a write-volume budget);
+ * remaining slots up to `max` are filled by merely-viewed candidates,
+ * most-recently-viewed first.
+ */
+function capLegacyIndexCandidates(candidates: LegacyIndexCandidate[], max: number): { kept: LegacyIndexCandidate[]; dropped: number } {
+  const neverDropped = candidates.filter((c) => c.hasOpenPosition || c.alwaysOn);
+  const viewedOnly = candidates.filter((c) => !c.hasOpenPosition && !c.alwaysOn).sort((a, b) => b.lastViewedAt - a.lastViewedAt);
 
   const remainingSlots = Math.max(0, max - neverDropped.length);
   const keptViewedOnly = viewedOnly.slice(0, remainingSlots);
@@ -632,15 +823,22 @@ let captureInProgress = false;
 /**
  * Captures premium snapshots for every candidate contract, split into three
  * concurrent tracks — near-tier index (15s × 4 rounds), far-tier index (60s
- * × 1, all listed expiries beyond NEAR_TERM_MAX_DAYS with no open position),
- * and single-stock (300s × 1, every real 5-minute IST boundary) — see module
- * doc for the full all-expiry tiering/timing/volume reasoning. Self-gates on
- * `isNseWeekdayMarketHours()` regardless of when the cron itself fired — a
- * slightly-loose crontab bound (the brief's coarse hour-window filter) never
- * writes off-session ticks. Never throws — per-candidate failures are caught
- * and counted. Guarded against re-entrancy (see `captureInProgress`) — an
- * overlapping invocation returns immediately with `skippedDueToOverlap: true`
- * rather than racing the one already running.
+ * × 1, ALL_EXPIRIES mode only), and single-stock (300s × 1, every real
+ * 5-minute IST boundary) — see module doc for the full tiering/timing/volume
+ * reasoning. Index candidate selection is GATED by `PREMIUM_CAPTURE_ALL_EXPIRIES`
+ * (module-level, read once at import time — see module doc's
+ * "Feature-flagged" section): ON builds near/far tiers from every listed
+ * expiry; OFF (default) restores the pre-all-expiry bc90714 behavior
+ * (nearest-weekly-per-underlying always-on + open positions + recently-viewed,
+ * all in the near tier, no far tier). The single-stock track and the
+ * near/far ROUND-EXECUTION machinery (`runNearTierRounds`/`runFarTierOnce`)
+ * are identical in both modes — only candidate SELECTION differs. Self-gates
+ * on `isNseWeekdayMarketHours()` regardless of when the cron itself fired —
+ * a slightly-loose crontab bound (the brief's coarse hour-window filter)
+ * never writes off-session ticks. Never throws — per-candidate failures are
+ * caught and counted. Guarded against re-entrancy (see `captureInProgress`)
+ * — an overlapping invocation returns immediately with
+ * `skippedDueToOverlap: true` rather than racing the one already running.
  */
 export async function runPremiumCapture(now: Date = new Date()): Promise<PremiumCaptureRunResult> {
   const result: PremiumCaptureRunResult = {
@@ -648,6 +846,7 @@ export async function runPremiumCapture(now: Date = new Date()): Promise<Premium
     skippedDueToOverlap: false,
     slowTrackSkipped: false,
     indexExpiriesObserved: 0,
+    nearestWeeklyResolved: 0,
     nearTierCandidates: 0,
     farTierCandidates: 0,
     slowTrackCandidates: 0,
@@ -656,7 +855,8 @@ export async function runPremiumCapture(now: Date = new Date()): Promise<Premium
     snapshotsWritten: 0,
     errors: 0,
     nearTierRoundsCompleted: 0,
-    nearTierRoundsSkippedByDeadline: 0
+    nearTierRoundsSkippedByDeadline: 0,
+    allExpiriesEnabled: PREMIUM_CAPTURE_ALL_EXPIRIES
   };
 
   if (captureInProgress) {
@@ -675,27 +875,52 @@ export async function runPremiumCapture(now: Date = new Date()): Promise<Premium
     const runSlowTrack = isFiveMinuteBoundary(now);
     result.slowTrackSkipped = !runSlowTrack;
 
-    const [indexExpiryCandidates, openPositionCandidates, recentlyViewedCandidates] = await Promise.all([
-      collectIndexExpiryCandidates(now),
+    const [openPositionCandidates, recentlyViewedCandidates] = await Promise.all([
       collectOpenPositionCandidates(),
       Promise.resolve(collectRecentlyViewedCandidates())
     ]);
-
-    result.indexExpiriesObserved = indexExpiryCandidates.length;
-
     const openPositionKeySet = new Set(openPositionCandidates.map(candidateKey));
+    const indexOpenPositions = openPositionCandidates.filter((c) => isIndexUnderlying(c.underlying));
+    const indexRecentlyViewed = recentlyViewedCandidates.filter((c) => isIndexUnderlying(c.underlying));
 
-    // All-expiry index split: every listed index expiry lands in EXACTLY one
-    // of near/far — near if it's within NEAR_TERM_MAX_DAYS OR currently
-    // holds an open position (promoted regardless of date), far otherwise.
-    const nearTierCandidates: CaptureCandidate[] = [];
-    const farTierCandidates: CaptureCandidate[] = [];
-    for (const c of indexExpiryCandidates) {
-      const candidate = { underlying: c.underlying, expiryStr: c.expiryStr };
-      const isNearByDate = c.daysToExpiry <= NEAR_TERM_MAX_DAYS;
-      const hasOpenPosition = openPositionKeySet.has(candidateKey(candidate));
-      (isNearByDate || hasOpenPosition ? nearTierCandidates : farTierCandidates).push(candidate);
+    let nearTierCandidates: CaptureCandidate[];
+    let farTierCandidates: CaptureCandidate[];
+
+    if (PREMIUM_CAPTURE_ALL_EXPIRIES) {
+      // ALL_EXPIRIES mode — see module doc. Every listed index expiry lands
+      // in EXACTLY one of near/far — near if it's within NEAR_TERM_MAX_DAYS
+      // OR currently holds an open position (promoted regardless of date),
+      // far otherwise. No cap: membership is deterministic (live NSE data +
+      // real positions), not traffic-driven.
+      const indexExpiryCandidates = await collectIndexExpiryCandidates(now);
+      result.indexExpiriesObserved = indexExpiryCandidates.length;
+
+      nearTierCandidates = [];
+      farTierCandidates = [];
+      for (const c of indexExpiryCandidates) {
+        const candidate = { underlying: c.underlying, expiryStr: c.expiryStr };
+        const isNearByDate = c.daysToExpiry <= NEAR_TERM_MAX_DAYS;
+        const hasOpenPosition = openPositionKeySet.has(candidateKey(candidate));
+        (isNearByDate || hasOpenPosition ? nearTierCandidates : farTierCandidates).push(candidate);
+      }
+    } else {
+      // Legacy mode (default, flag OFF) — restored from bc90714, see module
+      // doc. Nearest-weekly-per-underlying (always-on) + index open
+      // positions + recently-viewed index contracts, all joining the SAME
+      // 15s near-tier round loop, capped by LEGACY_NEAR_TRACK_MAX_CANDIDATES
+      // (never dropping an always-on or open-position candidate). No far
+      // tier at all in this mode.
+      const nearestWeekly = await collectNearestWeeklyIndexCandidates();
+      result.nearestWeeklyResolved = nearestWeekly.length;
+
+      const legacyMerged = mergeLegacyIndexCandidates(nearestWeekly, indexOpenPositions, indexRecentlyViewed);
+      const legacyCapped = capLegacyIndexCandidates(legacyMerged, LEGACY_NEAR_TRACK_MAX_CANDIDATES);
+      result.candidatesDroppedByCap += legacyCapped.dropped;
+
+      nearTierCandidates = legacyCapped.kept.map((c) => ({ underlying: c.underlying, expiryStr: c.expiryStr }));
+      farTierCandidates = [];
     }
+
     result.nearTierCandidates = nearTierCandidates.length;
     result.farTierCandidates = farTierCandidates.length;
 
@@ -706,7 +931,7 @@ export async function runPremiumCapture(now: Date = new Date()): Promise<Premium
     const stockMerged = mergeStockCandidates(stockOpenPositions, stockRecentlyViewed);
     const slowCapped = runSlowTrack ? capStockCandidates(stockMerged, SLOW_TRACK_MAX_CANDIDATES) : { kept: [] as StockCandidate[], dropped: 0 };
     result.slowTrackCandidates = slowCapped.kept.length;
-    result.candidatesDroppedByCap = slowCapped.dropped;
+    result.candidatesDroppedByCap += slowCapped.dropped;
 
     // All three tracks run CONCURRENTLY, sharing one runStartedAt-anchored
     // clock — see module doc's TIMING section for why sequential-before was

@@ -63,6 +63,7 @@ import { isIndexUnderlyingServer, isTradableOptionUnderlyingServer } from "@/lib
 import { fetchDelayedLtp } from "@/lib/paperTrading/ltp";
 import { fetchOptionChainSnapshot, findOptionQuote } from "@/lib/paperTrading/optionQuote";
 import { fetchFuturesQuoteServer, findFuturesContractQuote } from "@/lib/paperTrading/futuresQuote";
+import { isOptionsTradingEnabled, isFuturesTradingEnabled } from "@/lib/paperTrading/featureFlags";
 import { prisma } from "@/lib/prisma";
 
 const ENGINE_ORDER_SELECT = {
@@ -265,7 +266,7 @@ export interface PlacedPendingOrder {
 
 export type PlacePendingOrderResult =
   | { ok: true; order: PlacedPendingOrder }
-  | { ok: false; status: 400 | 422 | 502; reason: string };
+  | { ok: false; status: 400 | 403 | 422 | 502; reason: string };
 
 const PLACED_PENDING_SELECT = {
   id: true,
@@ -392,6 +393,17 @@ export async function placePendingOrder(userId: string, input: PlacePendingOrder
   }
 
   if (input.orderKind === "OPTION") {
+    // Product-level derivatives gate (2026-08-11) — same posture as the
+    // market-order path in optionOrders.ts: options are long-only, so SELL
+    // is always a closing leg and is never gated; only BUY (new pending
+    // limit/stop, opening or adding) is blocked while gated.
+    if (!isOptionsTradingEnabled() && input.side === "BUY") {
+      return {
+        ok: false,
+        status: 403,
+        reason: "Options trading is coming soon — new positions can't be opened right now. Existing positions can still be closed."
+      };
+    }
     if (!(await isTradableOptionUnderlyingServer(input.underlyingSymbol))) {
       return {
         ok: false,
@@ -561,6 +573,19 @@ export async function placePendingOrder(userId: string, input: PlacePendingOrder
 
   if (!plan.ok) {
     return { ok: false, status: plan.status, reason: plan.reason };
+  }
+
+  // Product-level derivatives gate (2026-08-11) — same posture as the
+  // market-order path in futuresOrders.ts: `isOpeningOrAdding` (from the
+  // SAME shared `planFuturesOrderFill`) precisely distinguishes a new/added
+  // pending position from a closing/reducing one — only the former is
+  // gated.
+  if (!isFuturesTradingEnabled() && plan.plan.isOpeningOrAdding) {
+    return {
+      ok: false,
+      status: 403,
+      reason: "Futures trading is coming soon — new positions can't be opened right now. Existing positions can still be closed."
+    };
   }
 
   const symbol = formatFuturesContractSymbol(input.underlyingSymbol, expiryDate);

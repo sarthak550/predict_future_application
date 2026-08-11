@@ -51,6 +51,7 @@ import { OptionChainBrowser, type OptionChainSnapshot, type SelectedContract } f
 import { useVisiblePolling } from "@/components/paper-trading/use-visible-polling";
 import type { PlacedOptionOrderPayload } from "@/components/paper-trading/option-trade-panel";
 import { PaperTradingDisclaimerFooter } from "@/components/paper-trading/paper-trading-disclaimer-footer";
+import { ComingSoonPanel } from "@/components/paper-trading/coming-soon-panel";
 import { InstrumentContextCard } from "@/components/paper-trading/instrument-context-card";
 import { PendingOrdersPanel } from "@/components/paper-trading/pending-orders-panel";
 import { DockedOrderTicket } from "@/components/paper-trading/terminal/docked-order-ticket";
@@ -143,7 +144,7 @@ function isIndexUnderlying(symbol: string): boolean {
  * feature on 2026-07-25 — every ladder tap now pre-fills the docked ticket
  * for one explicit Confirm, no instant-fill path exists.)
  */
-export function OptionsPageClient() {
+export function OptionsPageClient({ tradingEnabled }: { tradingEnabled: boolean }) {
   const searchParams = useSearchParams();
   // Founder bug fix (2026-08-06) — the `?workbench=` param (see
   // use-workbench-url-param.ts) must NOT be part of this remount key, for
@@ -166,10 +167,10 @@ export function OptionsPageClient() {
     params.delete("side");
     return params.toString();
   }, [searchParams]);
-  return <OptionsPageClientInner key={remountKey} />;
+  return <OptionsPageClientInner key={remountKey} tradingEnabled={tradingEnabled} />;
 }
 
-function OptionsPageClientInner() {
+function OptionsPageClientInner({ tradingEnabled }: { tradingEnabled: boolean }) {
   // Founder bug fix (2026-08-04b) — `deepLinkSide` is one-shot and gets
   // stripped from the live URL shortly after mount; reading every deep-link
   // field from the FROZEN snapshot (not live `searchParams`) means the
@@ -769,6 +770,18 @@ function OptionsPageClientInner() {
   }
 
   if (!account) return null;
+
+  // Product-level derivatives gate (2026-08-11) — see featureFlags.ts and
+  // coming-soon-panel.tsx's own docs. Gated ONLY for a caller with NO
+  // existing option position: someone who already holds one keeps full
+  // terminal access (so they can close it) — this is deliberately a coarse,
+  // page-level check ("do you have ANY option position") rather than
+  // per-contract; the precise per-order defense-in-depth check (does THIS
+  // specific order close an existing position) lives server-side in
+  // optionOrders.ts, which is what actually decides per-trade.
+  if (!tradingEnabled && account.optionPositions.length === 0) {
+    return <ComingSoonPanel kind="options" />;
+  }
 
   const heldLotsForSelected = selectedContract
     ? getHeldLots(selectedContract.underlying, selectedContract.strikePrice, selectedContract.optionType, selectedContract.expiry)

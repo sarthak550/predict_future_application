@@ -96,6 +96,7 @@ import type { TxSide } from "@prisma/client";
 import { getOrCreateActiveAccount } from "@/lib/paperTrading/account";
 import { fetchActivePendingOrders } from "@/lib/paperTrading/pendingOrders";
 import { fetchFuturesQuoteServer, findFuturesContractQuote, type FuturesQuoteSource } from "@/lib/paperTrading/futuresQuote";
+import { isFuturesTradingEnabled } from "@/lib/paperTrading/featureFlags";
 import { prisma } from "@/lib/prisma";
 
 const ENGINE_ORDER_SELECT = {
@@ -158,19 +159,11 @@ export interface PlacedFuturesOrder {
 
 export type PlaceFuturesOrderResult =
   | { ok: true; order: PlacedFuturesOrder }
-  | { ok: false; status: 400 | 422 | 502; reason: string };
+  | { ok: false; status: 400 | 403 | 422 | 502; reason: string };
 
 const IMPLIED_LEVERAGE = 1 / INDEX_FUTURES_MARGIN_RATE;
 
 export async function placeFuturesOrder(userId: string, input: PlaceFuturesOrderInput): Promise<PlaceFuturesOrderResult> {
-  if (!isNseWeekdayMarketHours()) {
-    return {
-      ok: false,
-      status: 422,
-      reason: "Orders can only be placed during NSE market hours (Mon-Fri, 09:15-15:30 IST)."
-    };
-  }
-
   if (!isIndexOptionUnderlying(input.underlyingSymbol)) {
     return {
       ok: false,
@@ -183,6 +176,47 @@ export async function placeFuturesOrder(userId: string, input: PlaceFuturesOrder
   const expiryDate = parseNseExpiryDate(input.expiryDate);
   if (!expiryDate) {
     return { ok: false, status: 400, reason: "Invalid expiry date." };
+  }
+
+  // Product-level derivatives gate (2026-08-11) — a CHEAP pre-check, before
+  // the market-hours gate below, so a gated caller with no position in this
+  // exact contract gets the correct "coming soon" message instead of the
+  // misleading "come back during market hours" one (which wouldn't help —
+  // it'd still be gated then too). Uses only DB-read data already needed
+  // later (no extra network quote fetch): if this account holds NO open
+  // position in this exact (underlying, expiry) at all, it is categorically
+  // impossible for this order to be a close, so it's safe to reject here
+  // without knowing the order's side/direction yet. If a matching position
+  // DOES exist, this pre-check defers to the precise `isOpeningOrAdding`
+  // gate further down (after `planFuturesOrderFill` — the only place that
+  // correctly knows open-vs-add-vs-reduce-vs-flip for THIS side/lots against
+  // that position), rather than duplicating that direction logic here.
+  if (!isFuturesTradingEnabled()) {
+    const preCheckAccount = await getOrCreateActiveAccount(userId);
+    const preCheckOrderRows = await prisma.paperOrder.findMany({
+      where: { accountId: preCheckAccount.id },
+      orderBy: { createdAt: "asc" },
+      select: ENGINE_ORDER_SELECT
+    });
+    const preCheckOrders = preCheckOrderRows as unknown as PaperEngineOrder[];
+    const hasMatchingPosition = deriveOpenFuturesPositions(preCheckOrders).some(
+      (p) => p.underlyingSymbol === underlying && p.expiryDate.getTime() === expiryDate.getTime() && p.side !== "FLAT"
+    );
+    if (!hasMatchingPosition) {
+      return {
+        ok: false,
+        status: 403,
+        reason: "Futures trading is coming soon — new positions can't be opened right now. Existing positions can still be closed."
+      };
+    }
+  }
+
+  if (!isNseWeekdayMarketHours()) {
+    return {
+      ok: false,
+      status: 422,
+      reason: "Orders can only be placed during NSE market hours (Mon-Fri, 09:15-15:30 IST)."
+    };
   }
 
   const quote = await fetchFuturesQuoteServer(underlying);
@@ -247,6 +281,26 @@ export async function placeFuturesOrder(userId: string, input: PlaceFuturesOrder
   }
   const { plan } = planResult;
   const { costs, netAmount, isOpeningOrAdding } = plan;
+
+  // Product-level derivatives gate (2026-08-11) — the PRECISE backstop,
+  // catching what the cheap pre-check above deliberately couldn't: that
+  // pre-check only ruled out "no position in this contract at all"; a
+  // caller WITH a matching position still reaches this point, and unlike
+  // options, futures can go long OR short, so a SELL is NOT categorically a
+  // close even for a held contract. `isOpeningOrAdding` (computed by the
+  // shared `planFuturesOrderFill`, the same function pending futures orders
+  // use) is the precise, already-correct signal: true for opening a fresh
+  // position or adding to an existing one in the SAME direction, false for
+  // reducing/flattening/flipping down toward flat. Only the true case is
+  // gated — a close/reduce always goes through, matching "closing must
+  // still work; new orders are gated" exactly.
+  if (!isFuturesTradingEnabled() && isOpeningOrAdding) {
+    return {
+      ok: false,
+      status: 403,
+      reason: "Futures trading is coming soon — new positions can't be opened right now. Existing positions can still be closed."
+    };
+  }
 
   const symbol = formatFuturesContractSymbol(underlying, expiryDate);
   const fillTickAt = quote.asOf ?? new Date();

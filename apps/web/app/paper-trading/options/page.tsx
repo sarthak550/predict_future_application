@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import { ArrowLeft } from "lucide-react";
 
 import { OptionsPageClient } from "@/components/paper-trading/options-page-client";
+import { isOptionsTradingEnabled } from "@/lib/paperTrading/featureFlags";
 
 // Signed-in personal utility page — never indexed.
 export const metadata: Metadata = {
@@ -16,6 +17,15 @@ export const metadata: Metadata = {
 // reads it via useSearchParams(), which bails out of static prerender without a
 // Suspense boundary. Same pattern as the main dashboard page.tsx.
 export default function PaperTradingOptionsPage() {
+  // Product-level derivatives gate (2026-08-11) — read server-side (see
+  // featureFlags.ts's own doc on why this must never be read client-side),
+  // passed down as a plain boolean prop. OptionsPageClient decides, once its
+  // own account fetch resolves, whether to render the real terminal or the
+  // ComingSoonPanel — gated only for a caller with NO existing option
+  // position, so closing an existing position keeps working. This header
+  // renders either way; only the terminal body below is conditional.
+  const tradingEnabled = isOptionsTradingEnabled();
+
   return (
     <div className="space-y-6">
       <div>
@@ -30,7 +40,7 @@ export default function PaperTradingOptionsPage() {
         </p>
       </div>
       <Suspense>
-        <OptionsPageClient />
+        <OptionsPageClient tradingEnabled={tradingEnabled} />
       </Suspense>
     </div>
   );

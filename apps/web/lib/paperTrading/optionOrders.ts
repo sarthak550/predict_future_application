@@ -39,6 +39,7 @@ import { getOrCreateActiveAccount } from "@/lib/paperTrading/account";
 import { fetchOptionChainSnapshot, findOptionQuote } from "@/lib/paperTrading/optionQuote";
 import { isIndexUnderlyingServer, isTradableOptionUnderlyingServer } from "@/lib/paperTrading/fnoUniverseServer";
 import { fetchActivePendingOrders } from "@/lib/paperTrading/pendingOrders";
+import { isOptionsTradingEnabled } from "@/lib/paperTrading/featureFlags";
 import { prisma } from "@/lib/prisma";
 
 const ENGINE_ORDER_SELECT = {
@@ -101,7 +102,7 @@ export interface PlacedOptionOrder {
 
 export type PlaceOptionOrderResult =
   | { ok: true; order: PlacedOptionOrder }
-  | { ok: false; status: 400 | 422 | 502; reason: string };
+  | { ok: false; status: 400 | 403 | 422 | 502; reason: string };
 
 /**
  * Places and immediately fills one BUY/SELL option leg (index OR stock, Phase
@@ -114,6 +115,29 @@ export type PlaceOptionOrderResult =
  * row-level order-book locking (see orders.ts's identical note).
  */
 export async function placeOptionOrder(userId: string, input: PlaceOptionOrderInput): Promise<PlaceOptionOrderResult> {
+  // Product-level derivatives gate (2026-08-11) — checked FIRST, before the
+  // market-hours gate below: while gated, "come back during market hours"
+  // would be a misleading thing to tell the caller (it wouldn't work then
+  // either), so the more fundamental block takes priority. Defense-in-depth
+  // alongside the UI gate in options-page-client.tsx (which already keeps a
+  // no-existing-position caller off this terminal entirely; this is the
+  // server-side backstop for anyone who reaches this route another way).
+  // Options are long-only by design (see this file's own module doc above)
+  // — a SELL is ALWAYS a closing leg against an existing long, enforced a
+  // few lines below and never a naked write, so it is categorically never
+  // "new access" and is never blocked here. Only BUY (opening OR adding to
+  // a position) is gated — matches the founder's "closing must still work;
+  // new orders are gated" directive exactly, with zero extra
+  // position-matching logic needed: options' own long-only invariant
+  // already guarantees every non-BUY order is a close.
+  if (!isOptionsTradingEnabled() && input.side === "BUY") {
+    return {
+      ok: false,
+      status: 403,
+      reason: "Options trading is coming soon — new positions can't be opened right now. Existing positions can still be closed."
+    };
+  }
+
   if (!isNseWeekdayMarketHours()) {
     return {
       ok: false,

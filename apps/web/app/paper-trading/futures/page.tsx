@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import { ArrowLeft } from "lucide-react";
 
 import { FuturesPageClient } from "@/components/paper-trading/futures-page-client";
+import { isFuturesTradingEnabled } from "@/lib/paperTrading/featureFlags";
 
 // Signed-in personal utility page — never indexed.
 export const metadata: Metadata = {
@@ -16,6 +17,10 @@ export const metadata: Metadata = {
 // which bails out of static prerender without a Suspense boundary — same
 // pattern as the options page.
 export default function PaperTradingFuturesPage() {
+  // Product-level derivatives gate (2026-08-11) — see the matching comment
+  // in app/paper-trading/options/page.tsx; same pattern, own flag.
+  const tradingEnabled = isFuturesTradingEnabled();
+
   return (
     <div className="space-y-6">
       <div>
@@ -31,7 +36,7 @@ export default function PaperTradingFuturesPage() {
         </p>
       </div>
       <Suspense>
-        <FuturesPageClient />
+        <FuturesPageClient tradingEnabled={tradingEnabled} />
       </Suspense>
     </div>
   );

@@ -66,6 +66,7 @@ import {
   type SelectedFuturesContract
 } from "@/components/paper-trading/futures-contract-table";
 import { PaperTradingDisclaimerFooter } from "@/components/paper-trading/paper-trading-disclaimer-footer";
+import { ComingSoonPanel } from "@/components/paper-trading/coming-soon-panel";
 import { PendingOrdersPanel } from "@/components/paper-trading/pending-orders-panel";
 import { DockedOrderTicket } from "@/components/paper-trading/terminal/docked-order-ticket";
 import { PositionsStrip, type PositionChip } from "@/components/paper-trading/terminal/positions-strip";
@@ -121,7 +122,7 @@ function formatSignedRupeesShort(value: number): string {
 
 const EMPTY_SERIES: PricePoint[] = [];
 
-export function FuturesPageClient() {
+export function FuturesPageClient({ tradingEnabled }: { tradingEnabled: boolean }) {
   const searchParams = useSearchParams();
   // Founder bug fix (2026-08-06) — the `?workbench=` param (see
   // use-workbench-url-param.ts) must NOT be part of this remount key: this
@@ -150,10 +151,10 @@ export function FuturesPageClient() {
     params.delete("side");
     return params.toString();
   }, [searchParams]);
-  return <FuturesPageClientInner key={remountKey} />;
+  return <FuturesPageClientInner key={remountKey} tradingEnabled={tradingEnabled} />;
 }
 
-function FuturesPageClientInner() {
+function FuturesPageClientInner({ tradingEnabled }: { tradingEnabled: boolean }) {
   const router = useRouter();
   // Founder bug fix (2026-08-04b) — `deepLinkSide` is genuinely one-shot
   // (see this file's own module doc) and gets stripped from the live URL
@@ -492,6 +493,16 @@ function FuturesPageClientInner() {
   }
 
   if (!account) return null;
+
+  // Product-level derivatives gate (2026-08-11) — see featureFlags.ts and
+  // coming-soon-panel.tsx's own docs, and options-page-client.tsx's matching
+  // comment. Gated ONLY for a caller with NO existing futures position — the
+  // precise per-order defense-in-depth check (open/add vs. close, via
+  // planFuturesOrderFill's own isOpeningOrAdding) lives server-side in
+  // futuresOrders.ts.
+  if (!tradingEnabled && account.futuresPositions.length === 0) {
+    return <ComingSoonPanel kind="futures" />;
+  }
 
   const heldForSelected = selectedContract ? getHeldPosition(selectedContract.underlying, selectedContract.expiry) : null;
 
