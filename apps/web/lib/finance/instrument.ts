@@ -5,6 +5,7 @@ import { canonicalizeOrgDisplay } from "@predict-future/business-rules/experts/f
 import {
   isIndexUniverseSymbol,
   normalizeIndexDisplayName,
+  getIndexUniverseEntry,
   INDEX_UNIVERSE_OPINION_TICKER,
   INDEX_UNIVERSE_DISPLAY_NAME,
 } from "@predict-future/business-rules/finance/indexUniverse";
@@ -14,6 +15,8 @@ import { EMPTY_INSTRUMENT_ENRICHMENT, getOrFetchInstrumentEnrichment, type Instr
 import { fetchIndexInstrumentSpark } from "@/lib/finance/fundamentals";
 import { fetchIndexBySlug } from "@/lib/finance/indices";
 import { getLongTailIndexBySymbol } from "@/lib/finance/indexLongTail";
+import { TRADABLE_UNDERLYING_TO_INDEX_SLUG } from "@/lib/finance/indexTradableAlias";
+import { hasIndexConstituentList, fetchIndexConstituents } from "@/lib/finance/indexConstituents";
 import { prisma } from "@/lib/prisma";
 
 // Enough sessions for a 1Y timeframe on the interactive chart (~250 trading
@@ -91,6 +94,54 @@ export interface InstrumentSentiment {
   lookbackDays: number;
 }
 
+/**
+ * Indices Consolidation (2026-08-12) Ask 2a — the metrics the retired slim
+ * `/indices/[slug]` page used to show (open/high/low/prevClose, 52-week
+ * range, P/E, dividend yield, advances/declines/unchanged), plus P/B for
+ * free since the live allIndices snapshot (`IndexRow`) already carries it.
+ * Sourced from that SAME snapshot for every index kind: the 35
+ * hasLiveIndexPipe symbols look it up via their own slug (tradable ->
+ * TRADABLE_UNDERLYING_TO_INDEX_SLUG, INDEX_UNIVERSE -> its own `slug`
+ * field), the long tail reuses `longTailLiveQuote` (already fetched for the
+ * quote header — see below, no second network call). Null for a plain
+ * equity, or for an index whose snapshot fetch failed this request (never
+ * fabricated).
+ */
+export interface InstrumentIndexMetrics {
+  peRatio: number | null;
+  pbRatio: number | null;
+  dividendYield: number | null;
+  advances: number | null;
+  declines: number | null;
+  unchanged: number | null;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  previousClose: number | null;
+  yearHigh: number | null;
+  yearLow: number | null;
+  /** ISO timestamp the snapshot this metrics object came from was fetched — the slim page's "As of HH:mm IST" line's new home. */
+  asOf: string;
+}
+
+/**
+ * Indices Consolidation (2026-08-12) Ask 2b, founder addendum — one row per
+ * index constituent, joined against our own StockEodQuote so the panel can
+ * show each member's latest close and day change (never a fabricated
+ * weight — see lib/finance/indexConstituents.ts's module doc on why no
+ * weight column exists). `close`/`changePercent` are null for a constituent
+ * with no StockEodQuote row yet (delisted/renamed/thinly covered) — the
+ * panel renders that row without its change columns rather than dropping
+ * the member, per the founder's explicit instruction.
+ */
+export interface IndexConstituentQuoteRow {
+  symbol: string;
+  companyName: string;
+  industry: string | null;
+  close: number | null;
+  changePercent: number | null;
+}
+
 export interface InstrumentDetail {
   symbol: string;
   companyName: string;
@@ -135,6 +186,10 @@ export interface InstrumentDetail {
   performance: ReturnsStrip;
   /** Instrument Page v2 (T4) — cached Yahoo fundamentals/dividends, read-through with a background refresh trigger. All-null for indices (not fetched — see fetchInstrumentDetail). */
   enrichment: InstrumentEnrichmentData;
+  /** Indices Consolidation (2026-08-12) Ask 2a — see InstrumentIndexMetrics's own doc. Null for a plain equity. */
+  indexMetrics: InstrumentIndexMetrics | null;
+  /** Indices Consolidation (2026-08-12) Ask 2b — see IndexConstituentQuoteRow's own doc. Null for a plain equity OR an index with no verified constituent list (indexConstituents.ts). Sorted biggest-gainer-first, losers last, members with no quote row appended at the very end (see fetchInstrumentDetail's own sort comment). */
+  indexComposition: IndexConstituentQuoteRow[] | null;
 }
 
 /**
@@ -231,9 +286,38 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
   const isIndex = hasLiveIndexPipe || isLongTailIndex;
   const viewOnlyIndex = isIndex && !isIndexOptionUnderlying(symbol);
 
+  // Indices Consolidation (2026-08-12) Ask 2a — the /indices/[slug] directory
+  // slug this hasLiveIndexPipe symbol's live allIndices snapshot metrics
+  // (P/E, P/B, advances/declines/etc) live under. Tradable underlyings use a
+  // short mnemonic /instruments/ code ("NIFTY") that isn't derivable from
+  // their NSE name (same asymmetry indexLongTail.ts documents), so they need
+  // the explicit reverse lookup; every INDEX_UNIVERSE entry already carries
+  // its own `slug`. Null for a long-tail index (handled separately below via
+  // `longTailLiveQuote`, already fetched for the quote header) or a plain
+  // equity — no snapshot lookup attempted for either.
+  const metricsSlug = hasLiveIndexPipe
+    ? (TRADABLE_UNDERLYING_TO_INDEX_SLUG[symbol] ?? getIndexUniverseEntry(symbol)?.slug ?? null)
+    : null;
+  // Indices Consolidation (2026-08-12) Ask 2b — cheap sync check, so the
+  // constituent CSV fetch (and the follow-up StockEodQuote join query below)
+  // is skipped entirely for every plain equity and every index without a
+  // hand-verified list (see indexConstituents.ts's coverage doc).
+  const wantsConstituents = hasIndexConstituentList(symbol);
+
   const opinionSince = new Date(Date.now() - OPINION_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
 
-  const [latestQuote, sparkRows, newsRows, filings, opinionCandidates, indexSparkRows, longTailEodRows, longTailLiveQuote] = await Promise.all([
+  const [
+    latestQuote,
+    sparkRows,
+    newsRows,
+    filings,
+    opinionCandidates,
+    indexSparkRows,
+    longTailEodRows,
+    longTailLiveQuote,
+    metricsSnapshotRow,
+    constituentListRows,
+  ] = await Promise.all([
     prisma.stockEodQuote.findFirst({
       where: { symbol },
       orderBy: { sessionDate: "desc" },
@@ -343,6 +427,17 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     // throws, returns null on any upstream failure, in which case `quote`
     // simply falls back to the self-owned IndexEodQuote row below.
     isLongTailIndex ? fetchIndexBySlug(longTailEntry!.slug) : Promise.resolve(null),
+    // Indices Consolidation (2026-08-12) Ask 2a — the SAME live allIndices
+    // snapshot fetch as `longTailLiveQuote` above, just keyed by `metricsSlug`
+    // for the 35 hasLiveIndexPipe symbols instead (long-tail already covered
+    // via `longTailLiveQuote`, so this is a no-op Promise for it). A no-op
+    // for every plain equity too.
+    metricsSlug ? fetchIndexBySlug(metricsSlug) : Promise.resolve(null),
+    // Indices Consolidation (2026-08-12) Ask 2b — constituent CSV, 24h
+    // in-module cached (indexConstituents.ts) so this is a near-zero-cost
+    // in-memory read on every request but the first per index per day. A
+    // no-op Promise for any symbol without a verified list.
+    wantsConstituents ? fetchIndexConstituents(symbol) : Promise.resolve(null),
   ]);
 
   // Belt-and-suspenders re-check with the shared matcher, same as the API
@@ -461,6 +556,67 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
   // history above, which indices DO now get — see `spark`.)
   const enrichment = isIndex ? EMPTY_INSTRUMENT_ENRICHMENT : await getOrFetchInstrumentEnrichment(symbol, companyName);
 
+  // Indices Consolidation (2026-08-12) Ask 2a — both branches read off the
+  // SAME IndexRow shape (`fetchIndexBySlug`'s return type), just sourced
+  // from a different fetch already resolved above (`longTailLiveQuote` for
+  // the long tail, `metricsSnapshotRow` for the 35 hasLiveIndexPipe symbols
+  // — see the module doc on `metricsSlug`/`InstrumentIndexMetrics`).
+  const snapshotForMetrics = isLongTailIndex ? longTailLiveQuote : metricsSnapshotRow;
+  const indexMetrics: InstrumentIndexMetrics | null = snapshotForMetrics
+    ? {
+        peRatio: snapshotForMetrics.peRatio,
+        pbRatio: snapshotForMetrics.pbRatio,
+        dividendYield: snapshotForMetrics.dividendYield,
+        advances: snapshotForMetrics.advances,
+        declines: snapshotForMetrics.declines,
+        unchanged: snapshotForMetrics.unchanged,
+        open: snapshotForMetrics.open,
+        high: snapshotForMetrics.high,
+        low: snapshotForMetrics.low,
+        previousClose: snapshotForMetrics.previousClose,
+        yearHigh: snapshotForMetrics.yearHigh,
+        yearLow: snapshotForMetrics.yearLow,
+        asOf: snapshotForMetrics.asOf,
+      }
+    : null;
+
+  // Indices Consolidation (2026-08-12) Ask 2b, founder addendum — the price
+  // join is a SECOND awaited step (not folded into the Promise.all above)
+  // because it depends on `constituentListRows`, which that same Promise.all
+  // just resolved. Bounded single query (`in: constituentSymbols`, at most
+  // ~750 rows for NIFTY TOTAL MARKET) — never an unbounded findMany.
+  let indexComposition: IndexConstituentQuoteRow[] | null = null;
+  if (constituentListRows && constituentListRows.length > 0) {
+    const constituentSymbols = constituentListRows.map((r) => r.symbol);
+    const constituentQuotes = await prisma.stockEodQuote.findMany({
+      where: { symbol: { in: constituentSymbols } },
+      orderBy: [{ symbol: "asc" }, { sessionDate: "desc" }],
+      distinct: ["symbol"],
+      select: { symbol: true, close: true, changePercent: true },
+    });
+    const quoteBySymbol = new Map(constituentQuotes.map((q) => [q.symbol, q]));
+    const joined: IndexConstituentQuoteRow[] = constituentListRows.map((c) => {
+      const q = quoteBySymbol.get(c.symbol);
+      return {
+        symbol: c.symbol,
+        companyName: c.companyName,
+        industry: c.industry,
+        close: q?.close ?? null,
+        changePercent: q?.changePercent ?? null,
+      };
+    });
+    // Design call (founder addendum, 2026-08-12): "change-ordered beats
+    // alphabetical" — biggest gainers first, biggest losers last. A member
+    // with no StockEodQuote row yet has no change to rank by, so it's
+    // grouped at the very end rather than interleaved into the ranked
+    // portion — never dropped (still a real member), just not orderable.
+    const ranked = joined
+      .filter((r) => r.changePercent != null)
+      .sort((a, b) => (b.changePercent as number) - (a.changePercent as number));
+    const unranked = joined.filter((r) => r.changePercent == null);
+    indexComposition = [...ranked, ...unranked];
+  }
+
   return {
     symbol,
     companyName,
@@ -492,5 +648,7 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     isIndex,
     viewOnlyIndex,
     hasLiveIndexPipe,
+    indexMetrics,
+    indexComposition,
   };
 }

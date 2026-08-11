@@ -4,6 +4,8 @@ import { notFound } from "next/navigation";
 import { AnalystDisclaimerFooter } from "@/components/finance/disclaimer-footer";
 import { ExpandableCallsTable } from "@/components/finance/expandable-calls-table";
 import { FundamentalsPanel } from "@/components/finance/fundamentals-panel";
+import { IndexCompositionPanel } from "@/components/finance/index-composition-panel";
+import { IndexMetricsPanel } from "@/components/finance/index-metrics-panel";
 import { InstrumentSentimentGauge } from "@/components/finance/instrument-sentiment-gauge";
 import { PriceChart } from "@/components/finance/price-chart";
 import { PulseTabs } from "@/components/finance/pulse-tabs";
@@ -212,20 +214,50 @@ export default async function InstrumentDetailPage({
           (PerformanceStrip removed 2026-08-02 per founder — price-return
           chips read as noise next to the fundamentals charts; the price
           chart's timeframes already tell the returns story. Component kept
-          at components/finance/performance-strip.tsx for possible reuse.) */}
-      <FundamentalsPanel
-        symbol={instrument.symbol}
-        annualRevenue={instrument.enrichment.annualRevenue}
-        annualNetIncome={instrument.enrichment.annualNetIncome}
-        annualDilutedEps={instrument.enrichment.annualDilutedEps}
-        quarterlyRevenue={instrument.enrichment.quarterlyRevenue}
-        quarterlyNetIncome={instrument.enrichment.quarterlyNetIncome}
-        quarterlyDilutedEps={instrument.enrichment.quarterlyDilutedEps}
-        dividends={instrument.enrichment.dividends}
-        keyStats={instrument.enrichment.keyStats}
-        debtCoverage={instrument.enrichment.debtCoverage}
-        fetchedAt={instrument.enrichment.fundamentalsFetchedAt}
-      />
+          at components/finance/performance-strip.tsx for possible reuse.)
+
+          Indices Consolidation (2026-08-12) — an index has no financial
+          statements (FundamentalsPanel always rendered nothing here before
+          this change, see that component's own `return null` gate), so this
+          SAME slot becomes index-shaped instead: metrics (P/E, P/B, div
+          yield, day/52w range, advance/decline — also the retired slim
+          `/indices/[slug]` page's entire stat surface) + composition
+          (member stocks, ranked by today's move) for an equity this is not.
+          Never both — `isIndex` is mutually exclusive with FundamentalsPanel
+          having anything to show (enrichment is always empty for an index). */}
+      {instrument.isIndex ? (
+        <>
+          {instrument.indexMetrics && (
+            <IndexMetricsPanel
+              symbol={instrument.symbol}
+              metrics={instrument.indexMetrics}
+              isTradable={!instrument.viewOnlyIndex}
+            />
+          )}
+          {instrument.indexComposition && (
+            <IndexCompositionPanel
+              constituents={instrument.indexComposition}
+              advances={instrument.indexMetrics?.advances}
+              declines={instrument.indexMetrics?.declines}
+            />
+          )}
+          <p className="text-center text-xs text-ink-400">Index levels are informational only, not investment advice.</p>
+        </>
+      ) : (
+        <FundamentalsPanel
+          symbol={instrument.symbol}
+          annualRevenue={instrument.enrichment.annualRevenue}
+          annualNetIncome={instrument.enrichment.annualNetIncome}
+          annualDilutedEps={instrument.enrichment.annualDilutedEps}
+          quarterlyRevenue={instrument.enrichment.quarterlyRevenue}
+          quarterlyNetIncome={instrument.enrichment.quarterlyNetIncome}
+          quarterlyDilutedEps={instrument.enrichment.quarterlyDilutedEps}
+          dividends={instrument.enrichment.dividends}
+          keyStats={instrument.enrichment.keyStats}
+          debtCoverage={instrument.enrichment.debtCoverage}
+          fetchedAt={instrument.enrichment.fundamentalsFetchedAt}
+        />
+      )}
 
       <PulseTabs
         newsSymbol={instrument.symbol}

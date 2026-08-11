@@ -48,3 +48,17 @@ for (const symbol of Object.values(INDEX_SLUG_TO_TRADABLE_UNDERLYING)) {
 export function tradableUnderlyingForIndexSlug(slug: string): IndexOptionUnderlying | null {
   return INDEX_SLUG_TO_TRADABLE_UNDERLYING[slug] ?? null;
 }
+
+/**
+ * Reverse of INDEX_SLUG_TO_TRADABLE_UNDERLYING — one source of truth,
+ * derived rather than hand-duplicated. Consolidation (2026-08-12): the
+ * index instrument page (`/instruments/[symbol]`) needs this to fetch its
+ * own live allIndices snapshot (peRatio/pbRatio/advances/declines/etc — see
+ * lib/finance/instrument.ts's `indexMetrics`), since fetchIndexBySlug is
+ * keyed by slug, not symbol, and a tradable underlying's `/instruments/`
+ * symbol ("NIFTY") is NOT deriveIndexSymbol of its full NSE name (see
+ * indexLongTail.ts's module doc on the same asymmetry).
+ */
+export const TRADABLE_UNDERLYING_TO_INDEX_SLUG: Record<string, string> = Object.fromEntries(
+  Object.entries(INDEX_SLUG_TO_TRADABLE_UNDERLYING).map(([slug, symbol]) => [symbol, slug])
+);

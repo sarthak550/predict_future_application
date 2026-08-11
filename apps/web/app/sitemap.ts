@@ -1,6 +1,9 @@
 import type { MetadataRoute } from "next";
 
+import { deriveIndexSymbol } from "@predict-future/business-rules/finance/indexUniverse";
+
 import { fetchAllIndices } from "@/lib/finance/indices";
+import { INDEX_SLUG_TO_TRADABLE_UNDERLYING } from "@/lib/finance/indexTradableAlias";
 import { getPublicProfileStats } from "@/lib/finance/publicProfile";
 import { listPublicEligiblePortfolioSlugsForSitemap } from "@/lib/portfolios/queries";
 import { prisma } from "@/lib/prisma";
@@ -35,12 +38,19 @@ const SITE_URL = "https://predictfuture.app";
  * gate on eligibility), it's just not submitted to the sitemap until it has a
  * real track record, mirroring how /opinions only submits its bare URL.
  *
- * /indices/[slug] entries (All-Indices informational layer) are sourced from
- * the SAME live NSE fetch every other /indices page uses (fetchAllIndices) —
- * every index that page shows is indexable, so every one is submitted here
- * too. `fetchAllIndices` never throws (returns null on any upstream
- * failure); a null result here just means the index detail pages are
- * omitted from this particular sitemap generation, not a broken build.
+ * Index entries (Indices Consolidation, 2026-08-12) — `/indices/[slug]` now
+ * 301(308)-redirects onward to `/instruments/[symbol]` (see that route's own
+ * doc comment), so this sitemap submits the REDIRECT TARGET directly rather
+ * than the old slug URL — submitting a page that immediately redirects would
+ * waste crawl budget and dilute the ranking signal the target page should
+ * get. Symbol resolution mirrors the search route's own identical logic:
+ * the 5 tradable underlyings use their short mnemonic code (not derivable
+ * from the full NSE name), every other index's code is
+ * `deriveIndexSymbol(name)`. Sourced from the SAME live NSE fetch every
+ * index surface uses (fetchAllIndices), so every index in the current
+ * snapshot is covered; `fetchAllIndices` never throws (returns null on any
+ * upstream failure), in which case these entries are simply omitted from
+ * this particular sitemap generation, not a broken build.
  */
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const latestQuoteSession = await prisma.stockEodQuote.findFirst({
@@ -91,12 +101,16 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   const allIndices = await fetchAllIndices();
   const now = new Date();
-  const indexEntries: MetadataRoute.Sitemap = (allIndices?.indices ?? []).map((row) => ({
-    url: `${SITE_URL}/indices/${row.slug}`,
-    lastModified: now,
-    changeFrequency: "daily",
-    priority: 0.4,
-  }));
+  const indexEntries: MetadataRoute.Sitemap = (allIndices?.indices ?? []).map((row) => {
+    const tradableUnderlying = INDEX_SLUG_TO_TRADABLE_UNDERLYING[row.slug];
+    const symbol = tradableUnderlying ?? deriveIndexSymbol(row.name);
+    return {
+      url: `${SITE_URL}/instruments/${symbol}`,
+      lastModified: now,
+      changeFrequency: "daily",
+      priority: 0.4,
+    };
+  });
 
   return [
     {
