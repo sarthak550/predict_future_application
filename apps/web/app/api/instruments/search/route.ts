@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { fetchAllIndices } from "@/lib/finance/indices";
 import { INDEX_SLUG_TO_TRADABLE_UNDERLYING } from "@/lib/finance/indexTradableAlias";
 import { isTradableOptionUnderlyingServer } from "@/lib/paperTrading/fnoUniverseServer";
+import { isFuturesTradingEnabled, isOptionsTradingEnabled } from "@/lib/paperTrading/featureFlags";
 
 /**
  * GET /api/instruments/search?q= — global nav-bar search (public), CATEGORIZED
@@ -164,19 +165,28 @@ async function buildDefaults(): Promise<NextResponse> {
     category: "fund" as const,
   }));
 
-  const optionResults: SearchResultItem[] = TRADABLE_INDEX_ENTRIES.map((e) => ({
-    href: `/paper-trading/options?underlying=${encodeURIComponent(e.symbol)}`,
-    label: `${e.symbol} option chain`,
-    sublabel: "Paper Trading",
-    category: "option" as const,
-  }));
+  // Founder 2026-08-12: while F&O is gated "coming soon", search must not
+  // advertise option-chain/futures destinations (same rule as the index
+  // pages' hidden tradable CTA — never link a user into a gated surface).
+  // Flag-driven: launching options/futures restores these entries with
+  // zero code changes.
+  const optionResults: SearchResultItem[] = isOptionsTradingEnabled()
+    ? TRADABLE_INDEX_ENTRIES.map((e) => ({
+        href: `/paper-trading/options?underlying=${encodeURIComponent(e.symbol)}`,
+        label: `${e.symbol} option chain`,
+        sublabel: "Paper Trading",
+        category: "option" as const,
+      }))
+    : [];
 
-  const futureResults: SearchResultItem[] = TRADABLE_INDEX_ENTRIES.map((e) => ({
-    href: `/paper-trading/futures?underlying=${encodeURIComponent(e.symbol)}`,
-    label: `${e.symbol} futures`,
-    sublabel: "Paper Trading",
-    category: "future" as const,
-  }));
+  const futureResults: SearchResultItem[] = isFuturesTradingEnabled()
+    ? TRADABLE_INDEX_ENTRIES.map((e) => ({
+        href: `/paper-trading/futures?underlying=${encodeURIComponent(e.symbol)}`,
+        label: `${e.symbol} futures`,
+        sublabel: "Paper Trading",
+        category: "future" as const,
+      }))
+    : [];
 
   const bondResults: SearchResultItem[] = topBonds.map((b) => ({
     href: `/bonds/${b.symbol}`,
