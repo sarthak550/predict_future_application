@@ -577,6 +577,18 @@ export interface KeyStats {
   website?: string;
   headquartersCity?: string;
   employees?: number;
+  /**
+   * Instrument Details Audit (2026-08-12) — Yahoo assetProfile's
+   * `longBusinessSummary`, verbatim (a few sentences to a short paragraph,
+   * Yahoo-authored, not ours to edit). Rides the SAME crumb-authenticated
+   * quoteSummary request `fetchKeyStats` already makes (assetProfile module
+   * was already being fetched for sector/industry/ceoName/etc — this is one
+   * more field off an existing response, zero extra HTTP cost) and persists
+   * in the SAME `keyStats` JSON column (additive field, no schema change).
+   * Absent whenever Yahoo has no summary for this symbol — never a
+   * fabricated or placeholder description.
+   */
+  businessSummary?: string;
 }
 
 /**
@@ -646,6 +658,7 @@ export async function fetchKeyStats(symbol: string): Promise<KeyStats | null> {
     stats.industry = str(ap.industry);
     stats.website = str(ap.website);
     stats.headquartersCity = str(ap.city);
+    stats.businessSummary = str(ap.longBusinessSummary);
     const emp = ap.fullTimeEmployees;
     if (typeof emp === "number" && Number.isFinite(emp) && emp > 0) stats.employees = emp;
     const officers = ap.companyOfficers as Array<Record<string, unknown>> | undefined;

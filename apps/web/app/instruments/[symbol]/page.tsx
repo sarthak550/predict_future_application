@@ -251,6 +251,7 @@ export default async function InstrumentDetailPage({
       ) : (
         <FundamentalsPanel
           symbol={instrument.symbol}
+          companyName={instrument.companyName}
           annualRevenue={instrument.enrichment.annualRevenue}
           annualNetIncome={instrument.enrichment.annualNetIncome}
           annualDilutedEps={instrument.enrichment.annualDilutedEps}

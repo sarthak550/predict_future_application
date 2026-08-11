@@ -39,6 +39,8 @@ import type {
 export type FundamentalsPanelProps = {
   /** Bare NSE symbol — powers the Details section's "View on NSE" deep link (get-quotes page: official financials, shareholding, announcements). */
   symbol: string;
+  /** Instrument Details Audit (2026-08-12) — titles the About section ("About {companyName}"). Falls back to `symbol` if ever empty (never expected in practice — every StockEodQuote row carries a companyName). */
+  companyName: string;
   annualRevenue: FundamentalsPoint[] | null;
   annualNetIncome: FundamentalsPoint[] | null;
   annualDilutedEps: FundamentalsPoint[] | null;
@@ -77,6 +79,8 @@ export type FundamentalsPanelProps = {
     website?: string;
     headquartersCity?: string;
     employees?: number;
+    /** Yahoo assetProfile's `longBusinessSummary`, verbatim — see KeyStats in fundamentals.ts. Absent when Yahoo has no summary for this symbol. */
+    businessSummary?: string;
   } | null;
   fetchedAt: Date | null;
 };
@@ -1105,10 +1109,43 @@ function DividendsSection({ dividends }: { dividends: DividendRow[] }) {
   );
 }
 
+/**
+ * Instrument Details Audit (2026-08-12) — "About {company}" description,
+ * sourced from Yahoo assetProfile's `longBusinessSummary` (see KeyStats in
+ * fundamentals.ts). Renders nothing when Yahoo has no summary for this
+ * symbol — absence is never papered over with placeholder text. Long
+ * summaries (Yahoo's run 1-3 paragraphs) clamp to 4 lines with a Read
+ * more/Show less toggle so this section doesn't push the Details grid
+ * below the fold on a long-tail name.
+ */
+function AboutSection({ companyName, summary }: { companyName: string; summary: string }) {
+  const [expanded, setExpanded] = useState(false);
+  // Rough heuristic for "long enough to need clamping" — a 4-line clamp at
+  // this panel's width comfortably fits ~280-320 characters; below that the
+  // toggle would have nothing to do.
+  const isLong = summary.length > 320;
+  return (
+    <div>
+      <p className="mb-2 text-lg font-semibold text-ink-900">About {companyName}</p>
+      <p className={`text-sm leading-6 text-ink-700 ${!expanded && isLong ? "line-clamp-4" : ""}`}>{summary}</p>
+      {isLong && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="mt-1 text-xs font-semibold text-signal-sky hover:underline"
+        >
+          {expanded ? "Show less" : "Read more"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 // ── Panel ───────────────────────────────────────────────────────────────────
 
 export function FundamentalsPanel({
   symbol,
+  companyName,
   annualRevenue,
   annualNetIncome,
   annualDilutedEps,
@@ -1170,9 +1207,15 @@ export function FundamentalsPanel({
 
         </div>
 
-        {/* Details (founder 2026-08-02, TradingView-style; description
-            deliberately omitted per founder — facts grid only; Founded/IPO/
-            ISIN not available from the keyless source, never fabricated). */}
+        {/* About (Instrument Details Audit, 2026-08-12) — reverses the
+            2026-08-02 "facts grid only, no description" call now that
+            Yahoo's longBusinessSummary is captured: renders only when a
+            summary is actually cached for this symbol, directly above the
+            Details facts grid it complements. */}
+        {keyStats?.businessSummary && <AboutSection companyName={companyName || symbol} summary={keyStats.businessSummary} />}
+
+        {/* Details (founder 2026-08-02, TradingView-style; Founded/IPO/ISIN
+            not available from the keyless source, never fabricated). */}
         {(
           <div>
             <p className="mb-2 text-lg font-semibold text-ink-900">Details</p>

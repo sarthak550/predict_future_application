@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { PriceChart } from "@/components/finance/price-chart";
+import { BondDetailsPanel } from "@/components/finance/bond-details-panel";
 import { Card, CardContent } from "@/components/ui/card";
 import { fetchBondDetail } from "@/lib/finance/bonds";
 import { formatIstSessionDate } from "@/lib/utils";
@@ -89,6 +90,8 @@ export default async function BondDetailPage({ params }: { params: { symbol: str
           </div>
         </CardContent>
       </Card>
+
+      <BondDetailsPanel symbol={bond.symbol} series={bond.series} />
 
       <Card>
         <CardContent className="p-5">
