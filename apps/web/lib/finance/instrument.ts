@@ -17,11 +17,14 @@ import { fetchIndexBySlug } from "@/lib/finance/indices";
 import { getLongTailIndexBySymbol } from "@/lib/finance/indexLongTail";
 import { TRADABLE_UNDERLYING_TO_INDEX_SLUG } from "@/lib/finance/indexTradableAlias";
 import { hasIndexConstituentList, fetchIndexConstituents } from "@/lib/finance/indexConstituents";
+import { getEtfRegistryEntry, getEtfsTrackingIndex, type EtfRegistryEntry } from "@/lib/finance/etfRegistry";
 import { prisma } from "@/lib/prisma";
 
 // Enough sessions for a 1Y timeframe on the interactive chart (~250 trading
 // days) — the mobile API keeps its own smaller window.
 const SPARK_SESSIONS = 260;
+/** Index History Stage 3 (2026-08-12) — below this many self-owned sessions, a hasLiveIndexPipe index's daily chart prefers the Yahoo fetch instead (see `spark`'s own doc comment). Chosen well under a month of trading days — enough to distinguish "genuinely thin/just-backfilled" from "essentially empty" without discarding a real, if short, self-owned series in favor of Yahoo. */
+const OWNED_SPARK_FLOOR = 30;
 // 2026-08-09: bumped from 10 (founder: don't hard-cap news reading) — the
 // instrument news tab now also supports "Load more" beyond this initial
 // batch (PulseTabs' newsSymbol prop -> /api/pulse/news?symbol=), so this is
@@ -190,6 +193,21 @@ export interface InstrumentDetail {
   indexMetrics: InstrumentIndexMetrics | null;
   /** Indices Consolidation (2026-08-12) Ask 2b — see IndexConstituentQuoteRow's own doc. Null for a plain equity OR an index with no verified constituent list (indexConstituents.ts). Sorted biggest-gainer-first, losers last, members with no quote row appended at the very end (see fetchInstrumentDetail's own sort comment). */
   indexComposition: IndexConstituentQuoteRow[] | null;
+  /**
+   * ETF Layer (2026-08-12) — true when this symbol is a registry-confirmed
+   * ETF (lib/finance/etfRegistry.ts, sourced from NSE's own eq_etfseclist.csv
+   * master). Mutually exclusive with `isIndex`: an ETF is a real
+   * StockEodQuote row, priced/charted exactly like an equity — it never sets
+   * `isIndex`. Drives the page's "ETF" badge and swaps `FundamentalsPanel`
+   * for `EtfDetailsPanel` (an ETF has no income statement/CEO/employees to
+   * show — see that component's own doc on what Yahoo actually returns for
+   * an Indian ETF).
+   */
+  isEtf: boolean;
+  /** Registry facts (Underlying/tracked index/listing date/ISIN/face value) for this ETF — null for a plain equity or an index. */
+  etfDetails: EtfRegistryEntry | null;
+  /** ETF Layer (2026-08-12) Ask 3 — every registry-confirmed ETF hand-verified to track THIS index. Always empty for a non-index page. */
+  etfsTrackingIndex: EtfRegistryEntry[];
 }
 
 /**
@@ -285,6 +303,40 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
   const isLongTailIndex = longTailEntry != null;
   const isIndex = hasLiveIndexPipe || isLongTailIndex;
   const viewOnlyIndex = isIndex && !isIndexOptionUnderlying(symbol);
+  // Index History Stage 3 (2026-08-12) — founder bug report: "/instruments/
+  // NIFTYCEMENT — no price history." Root cause: 10 of the 35 hasLiveIndexPipe
+  // Yahoo tickers (the NIFTY_*.NS quote-page family — CEMENT, CHEMICALS,
+  // REITS_REALTY, MICROCAP250, TOTAL_MKT, FPI_150, HEALTHCARE, OIL_AND_GAS,
+  // IND_DEFENCE, INDIA_MFG) serve a live price but only ONE daily bar over a
+  // 1y window — Stage 1's live-verification bar (module doc above) proved
+  // INTRADAY liveness, never daily-archive DEPTH, so this gap slipped past
+  // it. Meanwhile Stage 2's backfill gave every one of the 163 published
+  // indices (this hasLiveIndexPipe 35 included) 260 sessions of self-owned
+  // IndexEodQuote history — the SAME table the long-tail branch already
+  // trusts as ITS primary spark source below. `ownedIndexName` is this
+  // symbol's join key into that table for EITHER branch: `INDEX_DISPLAY_NAME`
+  // for the 35 (already the exact NSE name — see that map's own doc), or the
+  // long-tail entry's own verbatim `name`. Resolved once, synchronously,
+  // reused by the unified owned-spark/owned-quote fetch below.
+  //
+  // BUG CAUGHT DURING VERIFICATION: this must be the raw NSE `name`
+  // (IndexEodQuote.indexName's own convention), NOT `INDEX_DISPLAY_NAME`
+  // (human-cased `displayName`, built for UI headers — see INDEX_UNIVERSE's
+  // own module doc on why the two fields diverge). They're case-identical
+  // for 29 of the 30 INDEX_UNIVERSE entries, but NIFTY HEALTHCARE INDEX's
+  // `displayName` ("Nifty Healthcare") drops the word "Index" entirely —
+  // using it here silently zeroed that one index's owned-spark join and
+  // regressed it to the pre-fix single-Yahoo-bar state (caught live:
+  // /instruments/NIFTYHEALTHCAREINDEX rendered only 1D/MAX buttons after an
+  // initial pass of this fix, while every sibling index got its full 1Y
+  // chart). `getIndexUniverseEntry(symbol)?.name` is the verbatim field;
+  // the tradable 5 aren't in INDEX_UNIVERSE at all (by design), so they
+  // fall through to `INDEX_DISPLAY_NAME`, which — verified programmatically
+  // against all 30 INDEX_UNIVERSE entries — IS name-identical to the
+  // tradable 5's own raw NSE names ("Nifty 50", "Nifty Bank", etc).
+  const ownedIndexName = hasLiveIndexPipe
+    ? (getIndexUniverseEntry(symbol)?.name ?? INDEX_DISPLAY_NAME[symbol] ?? null)
+    : (longTailEntry?.name ?? null);
 
   // Indices Consolidation (2026-08-12) Ask 2a — the /indices/[slug] directory
   // slug this hasLiveIndexPipe symbol's live allIndices snapshot metrics
@@ -313,10 +365,12 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     filings,
     opinionCandidates,
     indexSparkRows,
-    longTailEodRows,
+    ownedEodRows,
     longTailLiveQuote,
     metricsSnapshotRow,
     constituentListRows,
+    etfDetails,
+    etfsTrackingIndex,
   ] = await Promise.all([
     prisma.stockEodQuote.findFirst({
       where: { symbol },
@@ -404,15 +458,23 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     // symbol (zero extra network call for the overwhelming majority of page
     // views), so this array stays a single Promise.all alongside the
     // existing Prisma queries rather than a second awaited round.
+    //
+    // Index History Stage 3 (2026-08-12) — kept as a FALLBACK source now
+    // (see `ownedIndexName`'s doc comment above and `spark`'s derivation
+    // below): still fetched for every hasLiveIndexPipe symbol, but only used
+    // when this symbol's self-owned archive is absent or thin.
     indexYahooTicker ? fetchIndexInstrumentSpark(indexYahooTicker) : Promise.resolve(null),
-    // Index History Stage 2 (2026-08-11) — self-owned daily OHLC for the
-    // long tail (NOT fetched for the 35 hasLiveIndexPipe symbols, which keep
-    // their Yahoo spark unchanged this round — see indexLongTail.ts's module
-    // doc). Desc order (newest first) so `[0]` is the latest session without
-    // a second query; `spark` reverses it below, same as `sparkRows`.
-    isLongTailIndex
+    // Index History Stage 3 (2026-08-12) — self-owned daily OHLC, now the
+    // PRIMARY spark/quote source for EVERY index page (the 35
+    // hasLiveIndexPipe symbols included, not just the long tail — see
+    // `ownedIndexName`'s doc comment above on why the 35 needed this too).
+    // Desc order (newest first) so `[0]` is the latest session without a
+    // second query; `spark` reverses it below, same as `sparkRows`. Also
+    // replaces the old separate `livePipeIndexQuote` single-row query below
+    // — this one array now serves both jobs.
+    isIndex && ownedIndexName
       ? prisma.indexEodQuote.findMany({
-          where: { indexName: longTailEntry!.name },
+          where: { indexName: { equals: ownedIndexName, mode: "insensitive" } },
           orderBy: { sessionDate: "desc" },
           take: SPARK_SESSIONS,
           select: { sessionDate: true, close: true, changeAbs: true, changePercent: true, volume: true },
@@ -438,6 +500,12 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     // in-memory read on every request but the first per index per day. A
     // no-op Promise for any symbol without a verified list.
     wantsConstituents ? fetchIndexConstituents(symbol) : Promise.resolve(null),
+    // ETF Layer (2026-08-12) — a no-op Promise for every index (an index is
+    // never itself an ETF); cheap in-memory Map lookup after the registry's
+    // first fetch in any 24h window for every equity/ETF symbol.
+    isIndex ? Promise.resolve(null) : getEtfRegistryEntry(symbol),
+    // ETF Layer (2026-08-12) Ask 3 — a no-op Promise for every non-index page.
+    isIndex ? getEtfsTrackingIndex(symbol) : Promise.resolve([]),
   ]);
 
   // Belt-and-suspenders re-check with the shared matcher, same as the API
@@ -472,10 +540,17 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
   const hasAnyContent = latestQuote != null || news.length > 0 || filings.length > 0 || matchedOpinions.length > 0;
   if (!hasAnyContent && !isIndex) return null;
 
-  const companyName =
+  // ETF Layer (2026-08-12) — an ETF's StockEodQuote.companyName is just its
+  // bare symbol (bhavcopy resolves company names off the EQUITY master,
+  // which doesn't carry fund names — verified live: NIFTYBEES/GOLDBEES/
+  // BANKBEES/etc all store companyName === symbol today). Prefer NSE's own
+  // registry SecurityName over that no-op fallback; overridden below with
+  // Yahoo's `price.longName` (a fuller, better-cased fund name — see
+  // fundamentals.ts's KeyStats.yahooLongName doc) once enrichment resolves.
+  let companyName =
     INDEX_DISPLAY_NAME[symbol] ??
     longTailEntry?.name ??
-    latestQuote?.companyName ??
+    (etfDetails && latestQuote?.companyName === symbol ? etfDetails.securityName : latestQuote?.companyName) ??
     filings[0]?.companyName ??
     newsRows[0]?.companyName ??
     symbol;
@@ -497,50 +572,40 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
   // have their own IndexEodQuote rows (Stage 2), so synthesize the server
   // quote from the latest self-owned row — the client overlay still
   // freshens the level; the honest session date renders server-side.
-  let livePipeIndexQuote: InstrumentQuote | null = null;
-  if (hasLiveIndexPipe && latestQuote == null) {
-    const displayName = INDEX_DISPLAY_NAME[symbol];
-    const eodRow = displayName
-      ? await prisma.indexEodQuote.findFirst({
-          where: { indexName: { equals: displayName, mode: "insensitive" } },
-          orderBy: { sessionDate: "desc" },
-          select: { sessionDate: true, close: true, changeAbs: true, changePercent: true, volume: true },
-        })
-      : null;
-    if (eodRow) {
-      livePipeIndexQuote = {
-        sessionDate: eodRow.sessionDate,
-        close: eodRow.close,
-        prevClose: eodRow.close - eodRow.changeAbs,
-        changePercent: eodRow.changePercent,
-        volume: eodRow.volume ?? 0,
-        deliveryPct: null,
-      };
-    }
-  }
-
-  let longTailQuote: InstrumentQuote | null = null;
-  if (isLongTailIndex) {
-    const latestRow = longTailEodRows?.[0] ?? null;
+  //
+  // Index History Stage 3 (2026-08-12) — this block used to be TWO separate
+  // near-identical derivations (`livePipeIndexQuote`, one extra findFirst
+  // query, for the 35; `longTailQuote` for the long tail). Unified into one:
+  // both branches now source their latest row from the SAME `ownedEodRows`
+  // array fetched above (`ownedEodRows?.[0]`, desc order), so the extra
+  // findFirst query is gone entirely. `liveSnapshot` is the SAME live
+  // /api/allIndices snapshot fetch either branch already had
+  // (`metricsSnapshotRow` for the 35, `longTailLiveQuote` for the long tail
+  // — see `metricsSlug`'s doc comment) — reused here for same-day freshness
+  // AND below for `indexMetrics`, rather than re-branched twice.
+  const liveSnapshot = isLongTailIndex ? longTailLiveQuote : metricsSnapshotRow;
+  let ownedQuote: InstrumentQuote | null = null;
+  if (isIndex) {
+    const latestRow = ownedEodRows?.[0] ?? null;
     if (latestRow) {
       const selfPrevClose = latestRow.close - latestRow.changeAbs;
-      const liveLast = longTailLiveQuote?.last;
-      longTailQuote = {
+      const liveLast = liveSnapshot?.last;
+      ownedQuote = {
         sessionDate: latestRow.sessionDate,
         close: liveLast ?? latestRow.close,
-        prevClose: liveLast != null ? (longTailLiveQuote?.previousClose ?? selfPrevClose) : selfPrevClose,
-        changePercent: liveLast != null ? (longTailLiveQuote?.changePercent ?? latestRow.changePercent) : latestRow.changePercent,
+        prevClose: liveLast != null ? (liveSnapshot?.previousClose ?? selfPrevClose) : selfPrevClose,
+        changePercent: liveLast != null ? (liveSnapshot?.changePercent ?? latestRow.changePercent) : latestRow.changePercent,
         volume: latestRow.volume ?? 0,
         deliveryPct: null,
       };
-    } else if (longTailLiveQuote?.last != null) {
+    } else if (liveSnapshot?.last != null) {
       // Backfill hasn't reached this index yet, but the live snapshot has
       // it — still show a real level rather than "price data pending".
-      longTailQuote = {
+      ownedQuote = {
         sessionDate: new Date(),
-        close: longTailLiveQuote.last,
-        prevClose: longTailLiveQuote.previousClose ?? longTailLiveQuote.last,
-        changePercent: longTailLiveQuote.changePercent ?? 0,
+        close: liveSnapshot.last,
+        prevClose: liveSnapshot.previousClose ?? liveSnapshot.last,
+        changePercent: liveSnapshot.changePercent ?? 0,
         volume: 0,
         deliveryPct: null,
       };
@@ -557,23 +622,21 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     { bullish: 0, bearish: 0, neutral: 0 }
   );
 
-  // Index History (2026-08-11) — a hasLiveIndexPipe index's spark comes from
-  // the Yahoo daily fetch above (already oldest-first, see
-  // fetchIndexInstrumentSpark), never from `sparkRows` (StockEodQuote is
-  // NSE-equity-only and always empty for an index symbol). `indexSparkRows`
-  // is null on a total Yahoo fetch failure — degrades to an empty array,
-  // exactly the "no history section" state an index page renders today,
-  // never fabricated and never a 500.
-  //
-  // Index History Stage 2 (2026-08-11) — a long-tail index's spark comes
-  // from its own self-owned IndexEodQuote rows instead (`longTailEodRows`,
-  // fetched desc — reversed here to oldest-first, same shape/convention as
-  // `sparkRows`).
-  const spark = hasLiveIndexPipe
-    ? (indexSparkRows ?? [])
-    : isLongTailIndex
-      ? (longTailEodRows ?? []).slice().reverse().map((r) => ({ sessionDate: r.sessionDate, close: r.close }))
-      : sparkRows.slice().reverse();
+  // Index History Stage 3 (2026-08-12) — founder bug report (see
+  // `ownedIndexName`'s doc comment above): self-owned IndexEodQuote is now
+  // the PRIMARY spark source for EVERY index, not just the long tail. Yahoo
+  // (`indexSparkRows`) is kept ONLY as a fallback for a hasLiveIndexPipe
+  // symbol whose self-owned archive is absent or thin (< OWNED_SPARK_FLOOR
+  // sessions) — never the reverse, and never for the long tail (which has
+  // no Yahoo ticker at all — `indexSparkRows` is always null there, so this
+  // reduces to the unchanged long-tail behavior). `sparkRows` (StockEodQuote)
+  // stays the equity-only path, untouched.
+  const ownedSpark = (ownedEodRows ?? []).slice().reverse().map((r) => ({ sessionDate: r.sessionDate, close: r.close }));
+  const spark = isIndex
+    ? ownedSpark.length >= OWNED_SPARK_FLOOR
+      ? ownedSpark
+      : (indexSparkRows ?? ownedSpark)
+    : sparkRows.slice().reverse();
 
   // Instrument Page v2 (T3) — pure, zero extra query/network call over the
   // spark series already resolved above (equity or index).
@@ -584,28 +647,31 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
   // fetching fundamentals for "^NSEI.NS". (Unrelated to the daily price
   // history above, which indices DO now get — see `spark`.)
   const enrichment = isIndex ? EMPTY_INSTRUMENT_ENRICHMENT : await getOrFetchInstrumentEnrichment(symbol, companyName);
+  // ETF Layer (2026-08-12) — Yahoo's fund long name, when cached, beats both
+  // the registry SecurityName and the bare-symbol fallback above.
+  if (etfDetails && enrichment.keyStats?.yahooLongName) {
+    companyName = enrichment.keyStats.yahooLongName;
+  }
 
   // Indices Consolidation (2026-08-12) Ask 2a — both branches read off the
-  // SAME IndexRow shape (`fetchIndexBySlug`'s return type), just sourced
-  // from a different fetch already resolved above (`longTailLiveQuote` for
-  // the long tail, `metricsSnapshotRow` for the 35 hasLiveIndexPipe symbols
-  // — see the module doc on `metricsSlug`/`InstrumentIndexMetrics`).
-  const snapshotForMetrics = isLongTailIndex ? longTailLiveQuote : metricsSnapshotRow;
-  const indexMetrics: InstrumentIndexMetrics | null = snapshotForMetrics
+  // SAME IndexRow shape (`fetchIndexBySlug`'s return type). Sourced from
+  // `liveSnapshot`, computed once above (Index History Stage 3) and shared
+  // with `ownedQuote`'s derivation rather than re-branched a second time.
+  const indexMetrics: InstrumentIndexMetrics | null = liveSnapshot
     ? {
-        peRatio: snapshotForMetrics.peRatio,
-        pbRatio: snapshotForMetrics.pbRatio,
-        dividendYield: snapshotForMetrics.dividendYield,
-        advances: snapshotForMetrics.advances,
-        declines: snapshotForMetrics.declines,
-        unchanged: snapshotForMetrics.unchanged,
-        open: snapshotForMetrics.open,
-        high: snapshotForMetrics.high,
-        low: snapshotForMetrics.low,
-        previousClose: snapshotForMetrics.previousClose,
-        yearHigh: snapshotForMetrics.yearHigh,
-        yearLow: snapshotForMetrics.yearLow,
-        asOf: snapshotForMetrics.asOf,
+        peRatio: liveSnapshot.peRatio,
+        pbRatio: liveSnapshot.pbRatio,
+        dividendYield: liveSnapshot.dividendYield,
+        advances: liveSnapshot.advances,
+        declines: liveSnapshot.declines,
+        unchanged: liveSnapshot.unchanged,
+        open: liveSnapshot.open,
+        high: liveSnapshot.high,
+        low: liveSnapshot.low,
+        previousClose: liveSnapshot.previousClose,
+        yearHigh: liveSnapshot.yearHigh,
+        yearLow: liveSnapshot.yearLow,
+        asOf: liveSnapshot.asOf,
       }
     : null;
 
@@ -649,7 +715,7 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
   return {
     symbol,
     companyName,
-    quote: isLongTailIndex ? longTailQuote : (latestQuote ?? livePipeIndexQuote),
+    quote: isIndex ? ownedQuote : latestQuote,
     spark,
     news,
     filings,
@@ -679,5 +745,8 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     hasLiveIndexPipe,
     indexMetrics,
     indexComposition,
+    isEtf: etfDetails != null,
+    etfDetails,
+    etfsTrackingIndex,
   };
 }

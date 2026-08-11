@@ -16,7 +16,7 @@
  * live mode that cell is labeled with the session it belongs to.
  */
 
-import { BarChart3, TrendingDown, TrendingUp } from "lucide-react";
+import { BarChart3, LineChart, TrendingDown, TrendingUp } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Card, CardContent } from "@/components/ui/card";
@@ -38,6 +38,8 @@ export type QuoteHeaderProps = {
    * index pages (and every equity page) render byte-for-byte unchanged.
    */
   viewOnlyIndex?: boolean;
+  /** ETF Layer (2026-08-12) — true for a registry-confirmed ETF (lib/finance/etfRegistry.ts). Renders a small "ETF" badge in the same slot `viewOnlyIndex` uses — mutually exclusive with it in practice (an ETF is never an index), but not enforced here since the two props are independent booleans supplied by the same caller. */
+  isEtf?: boolean;
   quote: {
     close: number;
     prevClose: number;
@@ -87,7 +89,7 @@ function formatIstTime(epochMs: number): string {
   }).format(new Date(epochMs));
 }
 
-export function QuoteHeader({ symbol, companyName, quote, intradayEndpoint, viewOnlyIndex }: QuoteHeaderProps) {
+export function QuoteHeader({ symbol, companyName, quote, intradayEndpoint, viewOnlyIndex, isEtf }: QuoteHeaderProps) {
   const [live, setLive] = useState<LiveQuote | null>(null);
   const fetchedFor = useRef<string | null>(null);
 
@@ -158,6 +160,12 @@ export function QuoteHeader({ symbol, companyName, quote, intradayEndpoint, view
               <p className="mt-1.5 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-xs font-medium text-white/70">
                 <BarChart3 className="h-3.5 w-3.5" aria-hidden="true" />
                 Index · View only — not on the trading terminal
+              </p>
+            )}
+            {isEtf && (
+              <p className="mt-1.5 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-xs font-medium text-white/70">
+                <LineChart className="h-3.5 w-3.5" aria-hidden="true" />
+                ETF · Exchange-Traded Fund
               </p>
             )}
           </div>

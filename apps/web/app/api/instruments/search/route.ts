@@ -5,6 +5,7 @@ import { deriveIndexSymbol } from "@predict-future/business-rules/finance/indexU
 import { prisma } from "@/lib/prisma";
 import { fetchAllIndices } from "@/lib/finance/indices";
 import { INDEX_SLUG_TO_TRADABLE_UNDERLYING } from "@/lib/finance/indexTradableAlias";
+import { getEtfSymbolSet } from "@/lib/finance/etfRegistry";
 import { isTradableOptionUnderlyingServer } from "@/lib/paperTrading/fnoUniverseServer";
 import { isFuturesTradingEnabled, isOptionsTradingEnabled } from "@/lib/paperTrading/featureFlags";
 
@@ -18,9 +19,11 @@ import { isFuturesTradingEnabled, isOptionsTradingEnabled } from "@/lib/paperTra
  * Categories and their honest limits:
  *  - "stock": StockEodQuote equities (exact-symbol match ranked first — a
  *    "REL" query must never push RELIANCE out of the window; found live).
- *  - "fund": ETF rows from the same store, split out by name/symbol heuristic
- *    (companyName contains ETF/FUND/BEES or symbol ends IETF/BEES/ETF) — the
- *    bhavcopy's EQ series carries listed ETFs alongside stocks.
+ *  - "fund": ETF rows from the same store, membership decided by
+ *    lib/finance/etfRegistry.ts's verified NSE registry (eq_etfseclist.csv —
+ *    342 ETFs live as of 2026-08-12) rather than a name/symbol heuristic —
+ *    the bhavcopy's EQ series carries listed ETFs alongside stocks with no
+ *    distinct series marker, so the registry is the only reliable source.
  *  - "index": the 5 F&O-tradable indices AND, since Index History Stage 2
  *    (2026-08-11), every other NSE-published index — all link to
  *    /instruments/[symbol] now that every index has a full instrument page
@@ -64,17 +67,6 @@ const MAX_ALL_VIEW = 10;
 /** Over-fetch the fuzzy DB query so the fund/stock split + exact-match dedupe never starve the visible list. */
 const FUZZY_FETCH = 30;
 
-function isFundRow(row: { symbol: string; companyName: string }): boolean {
-  const name = row.companyName.toUpperCase();
-  const sym = row.symbol.toUpperCase();
-  return (
-    /\bETF\b|EXCHANGE TRADED|MUTUAL FUND|\bBEES\b/.test(name) ||
-    sym.endsWith("ETF") ||
-    sym.endsWith("IETF") ||
-    sym.endsWith("BEES")
-  );
-}
-
 /**
  * Empty-query defaults (founder spec: "one can have top stocks/indices
  * already there making search easier for popular assets") — the modal opens
@@ -84,11 +76,12 @@ function isFundRow(row: { symbol: string; companyName: string }): boolean {
  * index option chains.
  */
 async function buildDefaults(): Promise<NextResponse> {
-  const [allIndices, latestMoverSession, latestEodSession, latestBondSession] = await Promise.all([
+  const [allIndices, latestMoverSession, latestEodSession, latestBondSession, etfSymbols] = await Promise.all([
     fetchAllIndices(),
     prisma.marketMoverSnapshot.findFirst({ orderBy: { sessionDate: "desc" }, select: { sessionDate: true } }),
     prisma.stockEodQuote.findFirst({ orderBy: { sessionDate: "desc" }, select: { sessionDate: true } }),
     prisma.bondEodQuote.findFirst({ orderBy: { sessionDate: "desc" }, select: { sessionDate: true } }),
+    getEtfSymbolSet(),
   ]);
 
   const [gainers, losers, topFunds, topBonds] = await Promise.all([
@@ -108,11 +101,11 @@ async function buildDefaults(): Promise<NextResponse> {
           select: { tickerSymbol: true, companyName: true, changePercent: true },
         })
       : [],
-    latestEodSession
+    latestEodSession && etfSymbols.size > 0
       ? prisma.stockEodQuote.findMany({
           where: {
             sessionDate: latestEodSession.sessionDate,
-            OR: [{ symbol: { endsWith: "ETF" } }, { symbol: { endsWith: "BEES" } }, { symbol: { endsWith: "IETF" } }],
+            symbol: { in: [...etfSymbols] },
           },
           orderBy: { volume: "desc" },
           take: MAX_PER_CATEGORY,
@@ -219,11 +212,11 @@ export async function GET(request: Request) {
 
   const needle = q.toUpperCase();
 
-  const [exactStock, fuzzyRows, allIndices, bondRows] = await Promise.all([
+  const [exactStock, fuzzyRows, allIndices, bondRows, etfSymbols] = await Promise.all([
     prisma.stockEodQuote.findFirst({
       where: { symbol: { equals: needle, mode: "insensitive" } },
       orderBy: { sessionDate: "desc" },
-      select: { symbol: true, companyName: true },
+      select: { symbol: true, companyName: true, volume: true },
     }),
     (async () => {
       const latest = await prisma.stockEodQuote.findFirst({
@@ -238,7 +231,12 @@ export async function GET(request: Request) {
         },
         orderBy: { symbol: "asc" },
         take: FUZZY_FETCH,
-        select: { symbol: true, companyName: true },
+        // volume: ETF Layer (2026-08-12) — funds re-rank by liquidity below
+        // (a broad query like "gold" matches 30+ ETFs alphabetically; the
+        // household-name one, e.g. GOLDBEES, should surface over an
+        // alphabetically-earlier but thinly-traded fund). Stocks keep their
+        // existing alphabetical-then-exact-match order, unchanged.
+        select: { symbol: true, companyName: true, volume: true },
       });
     })(),
     // 60s-cached at the apps/api layer (allIndices.ts).
@@ -261,6 +259,7 @@ export async function GET(request: Request) {
         select: { symbol: true, displayName: true, changePercent: true },
       });
     })(),
+    getEtfSymbolSet(),
   ]);
 
   // ── Indices ────────────────────────────────────────────────────────────────
@@ -291,11 +290,16 @@ export async function GET(request: Request) {
   const dedupedFuzzy = fuzzyRows.filter((r) => r.symbol.toUpperCase() !== needle);
   const orderedEquityRows = [...(exactStock ? [exactStock] : []), ...dedupedFuzzy];
   const stockResults: SearchResultItem[] = orderedEquityRows
-    .filter((r) => !isFundRow(r))
+    .filter((r) => !etfSymbols.has(r.symbol.toUpperCase()))
     .slice(0, MAX_PER_CATEGORY)
     .map((r) => ({ href: `/instruments/${r.symbol}`, label: r.symbol, sublabel: r.companyName, category: "stock" as const }));
   const fundResults: SearchResultItem[] = orderedEquityRows
-    .filter((r) => isFundRow(r))
+    .filter((r) => etfSymbols.has(r.symbol.toUpperCase()))
+    // ETF Layer (2026-08-12) — re-rank by liquidity (see fuzzyRows' own
+    // comment): a broad query can alphabetically match 30+ ETFs, and the
+    // well-known, heavily-traded fund should surface over a thin one that
+    // merely sorts earlier by name.
+    .sort((a, b) => b.volume - a.volume)
     .slice(0, MAX_PER_CATEGORY)
     .map((r) => ({ href: `/instruments/${r.symbol}`, label: r.symbol, sublabel: r.companyName, category: "fund" as const }));
 

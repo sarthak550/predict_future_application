@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
 import { AnalystDisclaimerFooter } from "@/components/finance/disclaimer-footer";
+import { EtfDetailsPanel } from "@/components/finance/etf-details-panel";
+import { EtfTrackingList } from "@/components/finance/etf-tracking-list";
 import { ExpandableCallsTable } from "@/components/finance/expandable-calls-table";
 import { FundamentalsPanel } from "@/components/finance/fundamentals-panel";
 import { IndexCompositionPanel } from "@/components/finance/index-composition-panel";
@@ -122,6 +124,7 @@ export default async function InstrumentDetailPage({
         companyName={instrument.companyName}
         intradayEndpoint={hasLiveIndexPipe ? indexIntradayUrl : undefined}
         viewOnlyIndex={viewOnlyIndex}
+        isEtf={instrument.isEtf}
         quote={
           instrument.quote
             ? {
@@ -246,8 +249,23 @@ export default async function InstrumentDetailPage({
               declines={instrument.indexMetrics?.declines}
             />
           )}
+          {/* ETF Layer (2026-08-12) Ask 3 — cross-link glue: registry-confirmed ETFs verified to track this index. */}
+          <EtfTrackingList etfs={instrument.etfsTrackingIndex} />
           <p className="text-center text-xs text-ink-400">Index levels are informational only, not investment advice.</p>
         </>
+      ) : instrument.isEtf && instrument.etfDetails ? (
+        // ETF Layer (2026-08-12) — an ETF has no income statement/CEO/
+        // employees to show (Yahoo's assetProfile returns null for every
+        // NSE ETF tested — see EtfDetailsPanel's own doc), so this branch
+        // swaps FundamentalsPanel entirely rather than rendering it
+        // alongside a mostly-empty ETF panel. "Never both", same rule the
+        // isIndex branch above already follows.
+        <EtfDetailsPanel
+          symbol={instrument.symbol}
+          fundName={instrument.companyName}
+          etf={instrument.etfDetails}
+          trailingPE={instrument.enrichment.keyStats?.trailingPE}
+        />
       ) : (
         <FundamentalsPanel
           symbol={instrument.symbol}

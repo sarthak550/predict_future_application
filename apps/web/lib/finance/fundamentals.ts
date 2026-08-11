@@ -589,6 +589,24 @@ export interface KeyStats {
    * fabricated or placeholder description.
    */
   businessSummary?: string;
+  /**
+   * ETF Layer (2026-08-12) — Yahoo's `price.longName`, the one genuinely
+   * useful fund-identity field Yahoo returns for an NSE-listed ETF. VERIFIED
+   * LIVE 2026-08-12 against NIFTYBEES.NS/GOLDBEES.NS/BANKBEES.NS/
+   * ICICIB22.NS: Yahoo classifies every NSE ETF tested as `quoteType:
+   * "EQUITY"` (not "ETF"), and `fundProfile`/`topHoldings`/`assetProfile`
+   * all return null for each — there is no expense ratio, AUM, or fund
+   * category available from this source for an Indian ETF, so none of those
+   * fields exist on this type; never fabricated. `price.longName` DOES
+   * resolve ("Nippon India ETF Nifty 50 BeES" for NIFTYBEES) and rides the
+   * SAME crumb-gated quoteSummary request `fetchKeyStats` already makes —
+   * `price` is simply one more module in that request, zero extra HTTP
+   * cost. Populated for every symbol (not ETF-gated at fetch time — the
+   * caller decides whether to show it), since a plain equity's own
+   * `companyName` is already better-sourced (bhavcopy's equity master, not
+   * Yahoo) and simply won't be preferred over it.
+   */
+  yahooLongName?: string;
 }
 
 /**
@@ -600,9 +618,10 @@ export interface KeyStats {
  * it is NOT TradingView's "Beta (1Y)".
  */
 export async function fetchKeyStats(symbol: string): Promise<KeyStats | null> {
-  // calendarEvents added 2026-08-02 (founder: "upcoming earnings") — same
-  // crumb-gated request, one more module, zero extra HTTP cost.
-  const data = await fetchQuoteSummary(`${symbol}.NS`, ["summaryDetail", "defaultKeyStatistics", "calendarEvents", "assetProfile"]);
+  // calendarEvents added 2026-08-02 (founder: "upcoming earnings"); price
+  // added 2026-08-12 (ETF Layer — see KeyStats.yahooLongName's doc comment).
+  // Same crumb-gated request each time, one more module, zero extra HTTP cost.
+  const data = await fetchQuoteSummary(`${symbol}.NS`, ["summaryDetail", "defaultKeyStatistics", "calendarEvents", "assetProfile", "price"]);
   if (!data) return null;
   const result = ((data as Record<string, unknown>)?.quoteSummary as Record<string, unknown> | undefined)?.result as
     | Record<string, unknown>[]
@@ -665,6 +684,11 @@ export async function fetchKeyStats(symbol: string): Promise<KeyStats | null> {
     const ceo = officers?.find((o) => typeof o.title === "string" && /chief executive|c\.?e\.?o/i.test(o.title)) ?? officers?.[0];
     stats.ceoName = str(ceo?.name);
   }
+
+  // ETF Layer (2026-08-12) — see KeyStats.yahooLongName's doc comment.
+  const priceModule = row.price as Record<string, unknown> | undefined;
+  stats.yahooLongName = str(priceModule?.longName);
+
   return stats;
 }
 
