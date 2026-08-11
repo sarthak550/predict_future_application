@@ -109,7 +109,7 @@ import { ChartAxisPlusButton } from "@/components/finance/chart-axis-plus-button
 import { ChartContextMenu } from "@/components/finance/chart-context-menu";
 import { ChartTradeHint, useTradeHintDismissed } from "@/components/finance/chart-trade-hint";
 import type { ChartOrderLine, OrderSide, OrderVariant } from "@/components/finance/chart-order-lines";
-import { KlineChart, SPARSE_BAR_COUNT_THRESHOLD, type PfSignalsConfig } from "./kline-chart";
+import { KlineChart, type PfSignalsConfig } from "./kline-chart";
 import { TimeframeSelector } from "./timeframe-selector";
 import { IndicatorDialog } from "./indicator-dialog";
 import { IndicatorActiveStrip } from "./indicator-active-strip";
@@ -135,6 +135,7 @@ import { DrawingTextPopover } from "./drawing-text-popover";
 import { PanelResizeHandle, PANEL_DEFAULT_WIDTH, clampPanelWidth } from "./panel-resize-handle";
 import { useChartDrawings } from "./use-chart-drawings";
 import { useWorkbenchCandles, WORKBENCH_INTERVALS, premiumIntervalsFor, type CandleInterval, type WorkbenchFeed } from "./use-workbench-candles";
+import { SPARSE_BAR_COUNT_THRESHOLD } from "./premium-candles";
 import {
   StrategyConfigPanel,
   StrategyDisclaimerFooter,
@@ -1030,18 +1031,20 @@ export function ChartWorkbench({
       ? `No premium history captured for this contract yet — history accrues as this contract is viewed (${captureCadenceLabel} snapshots while it's on someone's screen; live ticks start building today's chart on this screen within the first minute).`
       : "Not enough premium ticks yet — check back shortly.";
 
-  // Sparse-history disclosure (2026-08-11) — see kline-chart.tsx's
-  // `sparseFitBarSpace` doc for the companion visual fix (widening barSpace
-  // so a handful of real bars don't render as an invisible sliver). That
-  // fix alone can still leave a viewer wondering why bars are so far apart
-  // in time — this banner states the honest reason instead of leaving a
-  // sparse-but-now-visible chart to speak for itself. Gated on the SAME
-  // `SPARSE_BAR_COUNT_THRESHOLD` kline-chart.tsx itself uses (imported, not
-  // duplicated, so the two can never drift) and on real candles actually
-  // existing (`!premiumTooSparse`, which already owns the zero-candle case
-  // above with its own, more detailed empty-state message). Premium-mode
-  // only: an equity/index chart's expected bar density isn't known here the
-  // way premiumMeta's own capture-cadence truth is.
+  // Sparse-history disclosure. Architecture-simplification pass
+  // (2026-08-11) retired kline-chart.tsx's `sparseFitBarSpace` visual patch
+  // (widening barSpace so a handful of real bars didn't render as an
+  // invisible sliver) — per the founder's own directive, that component now
+  // has zero premium-specific/sparse-specific logic, matching stocks/
+  // futures exactly. This banner is what's left to cover genuinely thin
+  // history: an honest disclosure instead of a visual patch. Gated on
+  // `SPARSE_BAR_COUNT_THRESHOLD` (now a plain copy-threshold living in
+  // `premium-candles.ts`, imported not duplicated) and on real candles
+  // actually existing (`!premiumTooSparse`, which already owns the
+  // zero-candle case above with its own, more detailed empty-state
+  // message). Premium-mode only: an equity/index chart's expected bar
+  // density isn't known here the way premiumMeta's own capture-cadence
+  // truth is.
   const premiumIsSparse = isPremiumMode && candles.length > 0 && candles.length < SPARSE_BAR_COUNT_THRESHOLD;
   const premiumSparseNotice =
     premiumIsSparse && premiumSinceDate

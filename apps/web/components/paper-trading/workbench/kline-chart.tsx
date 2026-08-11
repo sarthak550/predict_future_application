@@ -282,90 +282,25 @@ function intervalToPeriod(interval: string): Period {
 }
 
 /**
- * Sparse-history visual fix (2026-08-11) — founder complaint, with
- * screenshot: the options-premium chart (e.g. BANKNIFTY 57700 PE 25-Aug-26)
- * rendered as "scattered isolated dash-marks with large empty holes." A
- * same-day data audit confirmed the captured `OptionPremiumSnapshot` rows
- * were themselves correct — the chart was honestly plotting genuinely sparse
- * demand-driven history (see premiumCapture.ts's own "always-on index
- * capture" fix, which densifies FUTURE history; this fixes the PRESENTATION
- * of history that is, and for single-stock underlyings always will remain,
- * genuinely sparse).
- *
- * Root cause, verified against klinecharts v10's own bundled source
- * (`StoreImp.prototype.getDataByDataIndex` — real bars ARE plotted at plain
- * array-index positions, `barSpace` apart, never stretched by real elapsed
- * time between their timestamps; `dataIndexToTimestamp`'s period-based
- * extrapolation only ever fires for index positions OUTSIDE the real data,
- * i.e. the axis's own "future" grid beyond the last bar). Confirmed live
- * (real dev DB, 8 genuinely-captured points spanning 2026-08-07 to
- * 2026-08-10): all 8 points reached this component's `candles` prop intact
- * — `DEFAULT_BAR_SPACE` (10px, klinecharts' own `dist/index.esm.js`
- * constant) meant those 8 real bars occupied a ~80px sliver against a
- * 1000+px canvas, reading as "empty/broken" even though every bar shown was
- * a real, honestly-captured sample (never fabricated — see
- * premium-candles.ts's own honesty rule, untouched by this fix).
- *
- * `sparseFitBarSpace` widens `barSpace` (via klinecharts' own public
- * `chart.setBarSpace`, capped at the library's OWN 50px ceiling — verified
- * against `_layoutOptions.barSpaceLimit` in the same bundled source) so a
- * sparse dataset's few real bars fill a legible fraction of the container
- * instead — a pure PRESENTATION change, no data point added, removed, or
- * interpolated, and no axis time-compression involved (the index-based
- * spacing above is already gap-free by construction). Only engages below
- * `SPARSE_BAR_COUNT_THRESHOLD`. Applies to every workbench chart (equity/
- * index included), not just premium mode: a freshly-listed stock's daily
- * view has the identical "few real bars, huge canvas" problem and benefits
- * identically.
- *
- * **Founder-reported regression, same day (2026-08-11), fixed same session
- * this doc was written**: "1 min candles are not there" + "when I ... change
- * the tick size it gets fucked up." Both traced to ONE bug in the ORIGINAL
- * version of this fix: it widened `barSpace` when sparse but, on a dataset
- * that ISN'T sparse, left `barSpace` "untouched" — meaning a WIDENED value
- * from a PRIOR sparse dataset (e.g. a coarser interval, or the same interval
- * before enough bars had accrued) silently PERSISTED onto a subsequent
- * dense dataset (an interval switch back to 1m once real 1-minute history
- * had accumulated past `SPARSE_BAR_COUNT_THRESHOLD`, or a live chart simply
- * accruing bars past that threshold in place). Reproduced live (real dev
- * server, real always-on-captured NIFTY 24500 PE 1-minute history,
- * 96 real bars): loading straight into "1m" rendered correctly; switching
- * to "5m" (19 bars, sparse, widened) and back to "1m" (96 bars, NOT sparse)
- * left the stale widened `barSpace` in place — klinecharts then computed a
- * total data width of `96 * <stale wide value>`px, far exceeding the
- * container, so the default (right-anchored) viewport showed only a
- * meaningless slice of the real 96 bars — mostly nothing, with one
- * genuinely ancient bar floating alone. This is what "1 min candles are not
- * there" and "gets fucked up" both were: the real bars were correctly
- * AGGREGATED (verified via `use-workbench-candles.ts`'s own debug trace)
- * but not VISIBLE, because of this stale-spacing carry-over — not a data
- * bug, and not (as first suspected) an axis/session-gap problem.
- *
- * Fixed by tracking `barSpaceFitRef` below across BOTH directions: widen
- * when sparse (as before), but also explicitly reset to klinecharts' own
- * `KLINECHARTS_DEFAULT_BAR_SPACE` when the dataset is NOT sparse — but
- * ONLY if THIS code was the one that widened it last (`appliedByUs`).  That
- * distinction matters: a genuine user-driven manual zoom/pinch on an
- * already-normal-density chart must never be silently reset by this effect
- * (this code has no way to distinguish "user zoomed" from "still at
- * klinecharts' own default" other than never touching `barSpace` at all
- * unless IT was the one that last changed it). Re-verified live after the
- * fix: repeated 1m<->5m<->15m<->1h switching, and a live 39-bar->40-bar
- * threshold crossing, both render correctly at every step (see this
- * session's own verification notes in project memory).
+ * Architecture-simplification pass (2026-08-11), founder-directed. This
+ * component used to carry a premium-specific "sparse-history visual fix"
+ * (`sparseFitBarSpace` + a bidirectional `barSpaceFitRef` widen/reset
+ * dance) built in response to a founder screenshot of the options-premium
+ * chart rendering as "scattered isolated dash-marks with large empty
+ * holes." Two patch rounds on that fix later, the founder's own verdict
+ * was blunt: "it's really fucked up... I want you to not fix it like it's
+ * broken but use what we do in stocks/futures for this as well." Stocks/
+ * futures never had ANY bar-width machinery — this component now doesn't
+ * either. The real fix for premium's sparse/broken rendering lived
+ * upstream, in `use-workbench-candles.ts` (a genuine interval-switch race
+ * — see that file's own module doc) and `premium-candles.ts` (deleting a
+ * now-pointless honesty floor); this file no longer needs to know premium
+ * mode exists at all. Genuinely thin history (a freshly-listed stock, or a
+ * premium contract with little captured history) is disclosed via
+ * `chart-workbench.tsx`'s own sparse-history banner
+ * (`SPARSE_BAR_COUNT_THRESHOLD`, now living in `premium-candles.ts` as a
+ * copy-only threshold) rather than a visual bar-widening patch here.
  */
-export const SPARSE_BAR_COUNT_THRESHOLD = 40;
-const SPARSE_FILL_FRACTION = 0.5;
-const KLINECHARTS_DEFAULT_BAR_SPACE = 10;
-const KLINECHARTS_MAX_BAR_SPACE = 50;
-
-/** Returns the widened barSpace to apply, or `null` when the dataset isn't sparse (leave klinecharts' own default/current barSpace untouched). See module doc above. */
-function sparseFitBarSpace(barCount: number, containerWidthPx: number): number | null {
-  if (barCount <= 0 || barCount >= SPARSE_BAR_COUNT_THRESHOLD || containerWidthPx <= 0) return null;
-  const ideal = (containerWidthPx * SPARSE_FILL_FRACTION) / barCount;
-  return Math.min(KLINECHARTS_MAX_BAR_SPACE, Math.max(KLINECHARTS_DEFAULT_BAR_SPACE, Math.round(ideal)));
-}
-
 const MAIN_PANE_ID = "candle_pane";
 
 /**
@@ -1108,27 +1043,6 @@ export function KlineChart({
   const lastIntervalRef = useRef<string | null>(null);
   const lastFirstTsRef = useRef<number | undefined>(undefined);
   const lastCountRef = useRef(0);
-  // Sparse-history visual fix (2026-08-11) — see `sparseFitBarSpace`'s own
-  // doc for the founder-complaint trace. Tracked SEPARATELY from
-  // `lastIntervalRef`/`lastFirstTsRef` above rather than folded into their
-  // `isFirstLoad` check, for a real, verified reason: those refs are plain
-  // `useRef`s with no cleanup, so they survive React StrictMode's dev-only
-  // double-invoke of this effect untouched, while the underlying klinecharts
-  // INSTANCE does not — the mount effect's own cleanup (`dispose(el)`) tears
-  // it down and recreates a fresh one on StrictMode's second pass. Verified
-  // live (real dev server, real sparse BANKNIFTY data): gating the
-  // `setBarSpace` call behind `isFirstLoad` alone applied it to the FIRST
-  // (already-disposed) instance only — `lastIntervalRef.current` was already
-  // non-null by the time the SECOND (actually-rendered) instance's own pass
-  // ran, so `isFirstLoad` read false and the real, on-screen chart never
-  // got the fix, even though `chart.getBarSpace()` reported the correct
-  // value when queried against the stale instance. Comparing against the
-  // CURRENT `chart` object's own identity (never reset by anything except a
-  // genuine new instance) sidesteps that mismatch entirely — re-fits once
-  // per real instance, and again whenever the bar count itself changes
-  // (a newly-arrived snapshot can turn a sparse chart dense, or vice versa
-  // in principle), never on a routine unrelated re-render.
-  const barSpaceFitRef = useRef<{ chart: unknown; count: number; appliedByUs: boolean } | null>(null);
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;
@@ -1144,6 +1058,15 @@ export function KlineChart({
       // KLineCharts to call our DataLoader's `getBars` again, which answers
       // from the now-current `candlesRef`.
       chart.setPeriod(intervalToPeriod(interval));
+      if (count > 0) {
+        // Reset the pan/scroll window on every full reload — `setPeriod`
+        // reloads the DATA but does not reset which dataIndex slice is in
+        // view, so a stale window from the PRIOR dataset (different bar
+        // count) can leave the viewport showing a meaningless slice.
+        // `animationDuration: 0` — an instant snap, matching what a fresh
+        // load already looks like.
+        chart.scrollToDataIndex(count - 1, 0);
+      }
     } else if (count > 0 && (count !== lastCountRef.current || lastTs !== undefined)) {
       // Same window, same interval — only the tail moved (a new bar
       // appended, or the in-progress bar's OHLC ticked). Push just the last
@@ -1151,65 +1074,6 @@ export function KlineChart({
       // never a full reload for a routine 60s poll tick.
       const last = candles[candles.length - 1];
       if (last) subscribeBarCallbackRef.current?.(last as unknown as KLineData);
-    }
-
-    // Sparse-history visual fix — see this ref's own doc above for why this
-    // is deliberately NOT nested inside the `isFirstLoad` branch above, and
-    // for the founder-reported regression (stale widened barSpace carrying
-    // over onto a later dense dataset) this bidirectional version fixes.
-    // Re-running this check on an unrelated tick (chart/count both
-    // unchanged) is a no-op via the identity/count comparison, never an
-    // extra `setBarSpace` call either direction.
-    const needsSparseFit = barSpaceFitRef.current?.chart !== chart || barSpaceFitRef.current?.count !== count;
-    if (needsSparseFit) {
-      const fitBarSpace = sparseFitBarSpace(count, containerRef.current?.clientWidth ?? 0);
-      if (fitBarSpace !== null) {
-        // Sparse dataset — widen, and remember that WE made this change so
-        // a later dense dataset (on this same chart instance) knows it's
-        // safe to reset, below.
-        chart.setBarSpace(fitBarSpace);
-        barSpaceFitRef.current = { chart, count, appliedByUs: true };
-      } else if (barSpaceFitRef.current?.chart === chart && barSpaceFitRef.current.appliedByUs) {
-        // Not sparse, but we ourselves widened barSpace on THIS same chart
-        // instance for a previous (sparser) dataset — that widened value
-        // must not silently carry over onto this now-dense one (the
-        // regression: 96 real bars at a stale ~50px widened spacing render
-        // as a mostly-empty/clipped mess, reading as "candles are not
-        // there"). Reset to klinecharts' own default explicitly.
-        chart.setBarSpace(KLINECHARTS_DEFAULT_BAR_SPACE);
-        barSpaceFitRef.current = { chart, count, appliedByUs: false };
-      } else {
-        // Not sparse, and we never touched barSpace on this instance before
-        // (still at klinecharts' own default, or a genuine user-driven
-        // manual zoom) — leave it exactly alone, same as the original
-        // (non-regressed) behavior for a normal-density chart.
-        barSpaceFitRef.current = { chart, count, appliedByUs: false };
-      }
-    }
-
-    if (isFullReload && count > 0) {
-      // Founder-reported regression (2026-08-11, "change the tick size and
-      // it gets fucked up") — part two of the same investigation as
-      // `sparseFitBarSpace`'s own doc, but a SEPARATE bug: `setPeriod`
-      // reloads the DATA but does NOT reset the pan/scroll window, and
-      // `setBarSpace` above (verified against klinecharts' own bundled
-      // source, `StoreImp.prototype.setBarSpace` -> `_adjustVisibleRange`)
-      // recomputes the visible index RANGE from whatever pan offset is
-      // already in effect rather than resetting it — so calling
-      // `scrollToDataIndex` BEFORE the barSpace block (this fix's first,
-      // incomplete attempt) got silently overridden by that later call.
-      // Verified live (real dev server): switching intervals on a chart
-      // whose bar COUNT differs between the two datasets (e.g. 19 sparse
-      // "5m" bars, then back to 96 dense "1m" bars) left klinecharts'
-      // visible dataIndex range stuck at whatever slice was in view for the
-      // PRIOR dataset (e.g. `{from:0,to:20}` out of the new 96-bar array)
-      // even after barSpace itself was already correct — a nonsensical,
-      // seemingly-empty/broken slice instead of the real data. Placed here,
-      // AFTER the barSpace block, so it's the LAST view-mutating call on any
-      // full reload and always wins. `animationDuration: 0` — an instant
-      // snap, matching what a fresh load already looks like, never an
-      // animated pan the user didn't ask for.
-      chart.scrollToDataIndex(count - 1, 0);
     }
 
     lastIntervalRef.current = interval;
