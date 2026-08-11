@@ -10,6 +10,7 @@ import {
 import type { OpinionDirection, OpinionResolutionStatus } from "@prisma/client";
 
 import { EMPTY_INSTRUMENT_ENRICHMENT, getOrFetchInstrumentEnrichment, type InstrumentEnrichmentData } from "@/lib/finance/enrichment";
+import { fetchIndexInstrumentSpark } from "@/lib/finance/fundamentals";
 import { prisma } from "@/lib/prisma";
 
 // Enough sessions for a 1Y timeframe on the interactive chart (~250 trading
@@ -96,7 +97,15 @@ export interface InstrumentDetail {
   filings: InstrumentFilingRow[];
   opinions: InstrumentOpinionRow[];
   sentiment: InstrumentSentiment;
-  /** Instrument Page v2 (T3) — 1W/1M/3M/6M/1Y/FY-to-date returns computed over `spark`. All-null for indices (no StockEodQuote series). */
+  /**
+   * Instrument Page v2 (T3) — 1W/1M/3M/6M/1Y/FY-to-date returns computed
+   * over `spark`. Was all-null for indices (no StockEodQuote series) until
+   * Index History (2026-08-11) gave indices a real daily `spark` too — now
+   * computed for both. No UI currently renders this field (PerformanceStrip
+   * was pulled from the page 2026-08-02 per founder — see page.tsx's own
+   * comment); kept computed since it's a pure, zero-extra-I/O derivation of
+   * `spark` a future surface can read for free.
+   */
   performance: ReturnsStrip;
   /** Instrument Page v2 (T4) — cached Yahoo fundamentals/dividends, read-through with a background refresh trigger. All-null for indices (not fetched — see fetchInstrumentDetail). */
   enrichment: InstrumentEnrichmentData;
@@ -170,10 +179,18 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
   // enrichment, always resolve even with zero content yet, use the index
   // intraday chart endpoint).
   const isIndex = isIndexOptionUnderlying(symbol) || isIndexUniverseSymbol(symbol);
+  // Index History (2026-08-11), founder: "why don't we have indices history
+  // as we have of stocks" — indices have no StockEodQuote row (that table is
+  // NSE-equity-only), so `spark` was always empty for them; the chart ran
+  // ONLY on the live 1D intraday pipe. INDEX_OPINION_TICKER (below) already
+  // carries every isIndex-true symbol's verified Yahoo ticker (it doubles as
+  // the ExpertOpinion resolution ticker) — reused here as the Yahoo chart
+  // ticker too, one identity for both jobs, never a second value invented.
+  const indexYahooTicker = isIndex ? INDEX_OPINION_TICKER[symbol] : undefined;
 
   const opinionSince = new Date(Date.now() - OPINION_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
 
-  const [latestQuote, sparkRows, newsRows, filings, opinionCandidates] = await Promise.all([
+  const [latestQuote, sparkRows, newsRows, filings, opinionCandidates, indexSparkRows] = await Promise.all([
     prisma.stockEodQuote.findFirst({
       where: { symbol },
       orderBy: { sessionDate: "desc" },
@@ -243,6 +260,11 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
         expert: { select: { name: true, slug: true, organization: true } },
       },
     }),
+    // Index History (2026-08-11) — a no-op Promise for every non-index
+    // symbol (zero extra network call for the overwhelming majority of page
+    // views), so this array stays a single Promise.all alongside the
+    // existing Prisma queries rather than a second awaited round.
+    indexYahooTicker ? fetchIndexInstrumentSpark(indexYahooTicker) : Promise.resolve(null),
   ]);
 
   // Belt-and-suspenders re-check with the shared matcher, same as the API
@@ -284,20 +306,29 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     { bullish: 0, bearish: 0, neutral: 0 }
   );
 
+  // Index History (2026-08-11) — an index's spark comes from the Yahoo daily
+  // fetch above (already oldest-first, see fetchIndexInstrumentSpark), never
+  // from `sparkRows` (StockEodQuote is NSE-equity-only and always empty for
+  // an index symbol). `indexSparkRows` is null on a total Yahoo fetch
+  // failure — degrades to an empty array, exactly the "no history section"
+  // state an index page renders today, never fabricated and never a 500.
+  const spark = isIndex ? (indexSparkRows ?? []) : sparkRows.slice().reverse();
+
   // Instrument Page v2 (T3) — pure, zero extra query/network call over the
-  // spark series already fetched above.
-  const performance = computeReturnsStrip(sparkRows, latestQuote?.sessionDate);
+  // spark series already resolved above (equity or index).
+  const performance = computeReturnsStrip(spark, latestQuote?.sessionDate);
 
   // Instrument Page v2 (T4) — indices have no financial statements/dividend
-  // history and no StockEodQuote series to enrich; skip the Yahoo/DB round
-  // trip entirely rather than fetching fundamentals for "^NSEI.NS".
+  // history to enrich; skip the Yahoo/DB round trip entirely rather than
+  // fetching fundamentals for "^NSEI.NS". (Unrelated to the daily price
+  // history above, which indices DO now get — see `spark`.)
   const enrichment = isIndex ? EMPTY_INSTRUMENT_ENRICHMENT : await getOrFetchInstrumentEnrichment(symbol, companyName);
 
   return {
     symbol,
     companyName,
     quote: latestQuote,
-    spark: sparkRows.slice().reverse(),
+    spark,
     news,
     filings,
     opinions: matchedOpinions.slice(0, OPINIONS_LIMIT).map((o) => ({

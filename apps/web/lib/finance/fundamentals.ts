@@ -658,39 +658,92 @@ export async function fetchKeyStats(symbol: string): Promise<KeyStats | null> {
 // ── Beta (1Y daily / 5Y monthly, self-computed vs. NIFTY 50) ─────────────────
 
 const NIFTY_50_TICKER = "^NSEI";
-/** Daily cadence matches KEY_STATS_TTL_MS in enrichment.ts — NIFTY's own close series is only as fresh as "once a day" needs to be. */
+/** Daily cadence matches KEY_STATS_TTL_MS in enrichment.ts — a daily close series is only as fresh as "once a day" needs to be. */
 const INDEX_CLOSE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 /**
- * In-module cache for NIFTY 50's daily close series. Every symbol's Key
- * Stats refresh needs this SAME series (the benchmark never changes
- * per-stock), so without a cache a warm-enrichment batch of e.g. 25 symbols
- * would issue 25 near-identical ^NSEI fetches within the same few minutes.
- * A plain module-level variable is safe here because apps/web runs as a
- * single long-lived Node process on EC2, not serverless (same assumption
- * this file's sibling enrichment.ts documents for its own fire-and-forget
- * background refreshes) — a serverless deploy would need a shared cache
- * (e.g. Redis) instead, since each invocation gets a fresh module scope.
+ * In-module cache for daily close series, keyed by raw Yahoo ticker.
+ * Originally single-ticker (NIFTY 50 only, for Beta) — generalized 2026-08-11
+ * (Index History, see `fetchIndexInstrumentSpark` below) to any index
+ * ticker, since every symbol's Key Stats refresh needs the SAME ^NSEI
+ * series (the benchmark never changes per-stock) and an index instrument
+ * page needs its OWN ticker's series, so without a per-ticker cache a warm
+ * batch of symbols/index-page visits would issue redundant near-identical
+ * fetches within the same few minutes. A plain module-level Map is safe
+ * here because apps/web runs as a single long-lived Node process on EC2,
+ * not serverless (same assumption this file's sibling enrichment.ts
+ * documents for its own fire-and-forget background refreshes) — a
+ * serverless deploy would need a shared cache (e.g. Redis) instead, since
+ * each invocation gets a fresh module scope.
+ *
+ * NOTE: the cache key is the ticker ALONE, not `${ticker}|${period1}|${period2}`
+ * — a cache hit returns whatever range was fetched last, regardless of the
+ * caller's requested period1/period2. Safe for both current callers:
+ * `computeBetas` always requests the same `BETA_LOOKBACK_YEARS`-back window
+ * for a given ticker, and `fetchIndexInstrumentSpark` only ever trims the
+ * result down to its trailing N sessions after the fact — a wider cached
+ * range than requested is harmless, just extra (unused) history in memory.
  */
-let indexCloseCache: { fetchedAt: number; closes: DailyClose[] } | null = null;
+const dailyCloseCache = new Map<string, { fetchedAt: number; closes: DailyClose[] }>();
 
 /**
- * Cached fetch of ^NSEI's daily closes over `[period1, period2]`. On a
- * fresh miss/expiry that fails to fetch, falls back to serving a stale
- * cached series rather than blanking every symbol's beta for one transient
- * Yahoo hiccup — betas computed off a slightly-stale-but-real index series
- * are still honest; betas computed off nothing are not possible at all.
+ * Cached fetch of `yahooTicker`'s daily closes over `[period1, period2]`. On
+ * a fresh miss/expiry that fails to fetch, falls back to serving a stale
+ * cached series rather than blanking the result for one transient Yahoo
+ * hiccup — data computed off a slightly-stale-but-real series is still
+ * honest; data computed off nothing is not possible at all.
  */
-async function fetchIndexDailyCloses(period1: number, period2: number): Promise<DailyClose[] | null> {
-  if (indexCloseCache && Date.now() - indexCloseCache.fetchedAt < INDEX_CLOSE_CACHE_TTL_MS) {
-    return indexCloseCache.closes;
+async function fetchCachedDailyCloses(yahooTicker: string, period1: number, period2: number): Promise<DailyClose[] | null> {
+  const cached = dailyCloseCache.get(yahooTicker);
+  if (cached && Date.now() - cached.fetchedAt < INDEX_CLOSE_CACHE_TTL_MS) {
+    return cached.closes;
   }
-  const closes = await fetchDailyClosesForTicker(NIFTY_50_TICKER, period1, period2);
+  const closes = await fetchDailyClosesForTicker(yahooTicker, period1, period2);
   if (closes) {
-    indexCloseCache = { fetchedAt: Date.now(), closes };
+    dailyCloseCache.set(yahooTicker, { fetchedAt: Date.now(), closes });
     return closes;
   }
-  return indexCloseCache?.closes ?? null; // serve stale cache (if any) on a transient fetch failure, else genuinely null.
+  return cached?.closes ?? null; // serve stale cache (if any) on a transient fetch failure, else genuinely null.
+}
+
+/** Cached fetch of ^NSEI's daily closes over `[period1, period2]` — thin wrapper over `fetchCachedDailyCloses` kept for `computeBetas`'s existing call shape. */
+async function fetchIndexDailyCloses(period1: number, period2: number): Promise<DailyClose[] | null> {
+  return fetchCachedDailyCloses(NIFTY_50_TICKER, period1, period2);
+}
+
+/** Instrument-page daily history lookback — comfortably clears `INDEX_SPARK_SESSIONS` (260 sessions, ~1Y) with a holiday/gap buffer, without over-fetching to the full 5y `BETA_LOOKBACK_YEARS` window (which the chart's timeframe selector has no use for today — MAX just renders whatever `spark` holds, same as an equity's MAX, capped at `INDEX_SPARK_SESSIONS` below so index and equity MAX read consistently). */
+const INDEX_INSTRUMENT_HISTORY_LOOKBACK_DAYS = 500;
+/** Trailing sessions returned by `fetchIndexInstrumentSpark` — mirrors `SPARK_SESSIONS` in lib/finance/instrument.ts (not imported directly, to avoid a fundamentals.ts -> instrument.ts import edge; instrument.ts already imports FROM this file). Keep these two constants in lockstep if either changes. */
+const INDEX_SPARK_SESSIONS = 260;
+
+/** One daily point for an index instrument page's price chart — sessionDate/close, matching `InstrumentSparkPoint`'s shape in lib/finance/instrument.ts exactly (duplicated type rather than imported, same direction-of-import reason as `INDEX_SPARK_SESSIONS` above). */
+export type IndexSparkPoint = { sessionDate: Date; close: number };
+
+/**
+ * Daily price history for an index instrument page (Index History, 2026-08-11
+ * — founder: "why don't we have indices history as we have of stocks").
+ * Generalizes the same cached daily-close primitive `computeBetas` already
+ * established for ^NSEI to any Yahoo index ticker — the 5 tradable
+ * underlyings' and the 30 INDEX_UNIVERSE symbols' `yahooTicker` values,
+ * which apps/web's `INDEX_OPINION_TICKER` map already carries (that map
+ * doubles as "opinion resolution ticker" AND "Yahoo chart ticker", the same
+ * one identity/two jobs pattern that registry documents on itself).
+ *
+ * Returns the trailing `INDEX_SPARK_SESSIONS` (260, same depth as an
+ * equity's `SPARK_SESSIONS`) daily points, oldest first — the exact shape
+ * `fetchInstrumentDetail` already builds for equities from `StockEodQuote`,
+ * so `PriceChart` needs zero index-specific branching to render it.
+ *
+ * Null on total fetch failure (network/timeout/parse/unknown ticker) — the
+ * caller then leaves `spark` empty exactly as an index page renders today,
+ * never a 500 and never a fabricated point.
+ */
+export async function fetchIndexInstrumentSpark(yahooTicker: string): Promise<IndexSparkPoint[] | null> {
+  const period2 = Math.floor(Date.now() / 1000);
+  const period1 = period2 - INDEX_INSTRUMENT_HISTORY_LOOKBACK_DAYS * ONE_DAY_S;
+  const closes = await fetchCachedDailyCloses(yahooTicker, period1, period2);
+  if (!closes) return null;
+  return closes.slice(-INDEX_SPARK_SESSIONS).map((c) => ({ sessionDate: new Date(`${c.date}T00:00:00.000Z`), close: c.close }));
 }
 
 /**
