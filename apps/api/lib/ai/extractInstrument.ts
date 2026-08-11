@@ -147,6 +147,10 @@ const STOCK_MAP: Record<string, InstrumentResult> = {
   "l&t": { instrument: "L&T", ticker: "LT.NS" },
   " lt ": { instrument: "L&T", ticker: "LT.NS" },
   " lt": { instrument: "L&T", ticker: "LT.NS" },
+  // Defence / Aerospace — "hindustan aeronautics" MUST be in this map: the AI
+  // fallback guessed HINDALCO.NS (Hindalco — aluminium, different company) for
+  // it twice in prod, caught by the 2026-08-11 competitive audit's page sweep.
+  "hindustan aeronautics": { instrument: "Hindustan Aeronautics", ticker: "HAL.NS" },
   // FMCG / Consumer staples
   "itc": { instrument: "ITC", ticker: "ITC.NS" },
   // State banks — SBI: "sbin" is the NSE ticker substring; " sbi " (space-padded) catches
