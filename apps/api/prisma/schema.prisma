@@ -1846,6 +1846,59 @@ model IndexEodQuote {
   @@index([indexName, sessionDate(sort: Desc)])
 }
 
+/// BSE Expansion Phase 1 (2026-08-12) — daily index closes for every index
+/// BSE's own bulk archive endpoint publishes, same shape/discipline as
+/// IndexEodQuote one exchange over (see apps/api/lib/marketMoves/bseIndexEod.ts's
+/// module doc for the live-verified source). Deliberately a SEPARATE table,
+/// never merged into IndexEodQuote — same reasoning BondEodQuote stays out of
+/// StockEodQuote: every current IndexEodQuote reader implicitly assumes
+/// "NSE index," and polluting that assumption is a correctness bug waiting to
+/// happen. `indexName` values are BSE's own display names, verbatim, which
+/// (unlike NSE's) are ALL naturally prefixed "BSE " / "S&P BSE " — a
+/// collision-free namespace against every NSE index name/derived symbol by
+/// construction (verified live 2026-08-12 against the current NSE
+/// IndexEodQuote + INDEX_UNIVERSE + StockEodQuote + BondEodQuote universes,
+/// zero collisions found — see the shipping ticket's report; re-run before
+/// prod deploy per INDEX_UNIVERSE's own collision-check precedent).
+model BseIndexEodQuote {
+  id            String   @id @default(cuid())
+  sessionDate   DateTime
+  /// BSE's own display name AS PUBLISHED (`I_name`), verbatim — e.g. "BSE
+  /// SENSEX", "BSE 100". Canonical key, same role as IndexEodQuote.indexName.
+  indexName     String
+  /// Open/High/Low are null when BSE's own feed omits them (verified live:
+  /// e.g. "BSE India 10 Year Sovereign Bond" publishes a blank Open/High/Low
+  /// but a real Close) — never coerced to 0, same discipline as IndexEodQuote.
+  open          Float?
+  high          Float?
+  low           Float?
+  close         Float
+  /// "Chg" field — an index-point delta, not a percent.
+  changeAbs     Float
+  /// "ChgPer" field, e.g. -0.49 means -0.49%.
+  changePercent Float
+  /// BSE's own "Prev_Close" field, stored directly (not derived via
+  /// close-changeAbs like IndexEodQuote must, since NSE's ind_close_all file
+  /// doesn't publish it) — avoids any rounding drift between the two.
+  previousClose Float?
+  /// "Volume" field, stored exactly as BSE returns it. UNIT NOT INDEPENDENTLY
+  /// CONFIRMED — unlike NSE's ind_close_all (explicitly labeled "Turnover
+  /// (Rs. Cr.)"), BSE's JSON field is bare "Turnover"/"Volume" with no unit
+  /// label. Do not assume Rs Cr / lakh-shares scale without live-verifying
+  /// against a second source first.
+  volume        Float?
+  turnover      Float?
+  /// "I_pe" field. Null for non-equity-weighted indices (G-Sec/Sovereign Bond
+  /// indices verified live to publish JSON `null` here, not "-" like NSE).
+  peRatio       Float?
+  pbRatio       Float?
+  dividendYield Float?
+  createdAt     DateTime @default(now())
+
+  @@unique([indexName, sessionDate])
+  @@index([indexName, sessionDate(sort: Desc)])
+}
+
 // ─── Portfolios (P3.1) ──────────────────────────────────────────────────────────
 //
 // Virtual, cash-constrained, long-only paper-trading portfolios priced off
