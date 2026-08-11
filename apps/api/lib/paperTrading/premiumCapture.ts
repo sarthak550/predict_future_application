@@ -4,10 +4,14 @@
  *
  * Writes one OptionPremiumSnapshot row per CE/PE quote (that has a lastPrice
  * or a bid/ask), for the UNION of:
- *   1. Every (underlyingSymbol, expiryDate) with at least one open option
- *      position across any account.
- *   2. Every (underlyingSymbol, expiryDate) requested through the chain
- *      endpoint in roughly the last 15 minutes (getRecentlyViewedContracts).
+ *   1. Every listed expiry of the 5 index underlyings (see the "all-expiry"
+ *      project below — this is now always-on, not demand-driven).
+ *   2. Every (underlyingSymbol, expiryDate) with at least one open option
+ *      position across any account, on a SINGLE-STOCK underlying (index
+ *      positions are already covered by #1 — see that section).
+ *   3. Every single-stock (underlyingSymbol, expiryDate) requested through
+ *      the chain endpoint in roughly the last 15 minutes
+ *      (getRecentlyViewedContracts).
  *
  * All pure math (ATM-nearest-strike selection) lives inline here — it's a
  * three-line reduce, not worth a business-rules module of its own, and
@@ -32,147 +36,182 @@
  * ±10 window, consistently across NIFTY/BANKNIFTY/RELIANCE/TCS/SBIN.
  *
  * (b) COARSE CADENCE — 5-minute snapshots can only ever honestly produce
- * 15m/30m+ pseudo-candles (see premium-candles.ts's "≥3 samples per bucket"
- * honesty rule), nowhere near equity/index's 1m-1D parity. Naively moving
- * EVERY candidate to 1-minute cadence at the new ATM±10 window is NOT safe:
- * with no candidate cap at all (today's actual state — candidate count is
- * pure traffic/open-position-driven), a modest 10 concurrently-active
- * (underlying, expiry) pairs would already write 10 × 42 rows × 375
- * market-hour runs/day = 157,500 rows/day from ONE side of the union alone,
- * and there is no ceiling on how high real usage could push that. Trimmed
- * per the brief's own suggested split: 1-MINUTE cadence for the 5 INDEX
- * underlyings only (`FAST_TRACK_*` below) — where real trading activity is
- * genuinely tick-by-tick (scalping NIFTY/BANKNIFTY option premium is the
- * dominant real-world pattern this mirrors) — and the EXISTING 5-minute
- * cadence, unchanged, for single-stock underlyings (`SLOW_TRACK_*`), just
- * with the same wider ATM±10 window. One cron route, one crontab line, fired
- * every minute; the slow (stock) track only actually executes on a real
- * 5-minute IST boundary (`shouldRunSlowTrack`) — since IST is UTC+5:30 and
- * 30 is itself a multiple of 5, a raw `now.getUTCMinutes() % 5 === 0` check
- * lands on the correct IST boundary too, no separate IST-minute helper
- * needed.
+ * 15m/30m+ pseudo-candles. Every single-stock underlying still runs this
+ * original 5-minute demand-driven cadence (`SLOW_TRACK_*` below) — the 5
+ * index underlyings graduated off it entirely, see below.
  *
- * Defensive candidate caps (`FAST_TRACK_MAX_CANDIDATES` /
- * `SLOW_TRACK_MAX_CANDIDATES`) are NEW — today's candidate selection has no
- * cap at all. They exist purely as a circuit breaker against a real usage
- * spike (or a scripted/bot traffic burst re-viewing many chains), not as the
- * expected steady state: this domain's own documented assumption elsewhere
- * in this file ("Paper Trading trade volumes are low (single-retail-feature
- * scale)") puts REALISTIC concurrent candidate counts in the low single
- * digits per track. A candidate with a genuine OPEN POSITION is NEVER
- * dropped by the cap, regardless of how many there are — real account
- * exposure always wins over a soft write-volume budget; only excess
- * merely-viewed candidates get truncated (most-recently-viewed first).
+ * **Always-on index capture (2026-08-11) — the "sparse chart" fix**, then
+ * **15-second cadence (2026-08-11, same-day follow-up)** — superseded by the
+ * all-expiry project immediately below. Both prior passes captured only the
+ * NEAREST WEEKLY expiry per index underlying, always-on at 15s × 4
+ * rounds/minute. Kept only as prior-art context; every mechanism from those
+ * passes (`alwaysOn` flag, single-expiry-per-underlying selection) has been
+ * replaced by the tiered ALL-EXPIRY design below, not layered on top of it.
  *
- * Every written row now also carries `captureIntervalSec` (60 for the fast
- * index track, 300 for the slow stock track) — read by premium-candles.ts's
- * aggregation to decide, per bucket and from the row's own recorded truth,
- * whether a bucket is native-granularity (1 row = 1 honest bar) or a real
- * aggregation still bound by the pre-existing "≥3 samples" honesty floor.
+ * **All-expiry index capture (2026-08-11, third same-day pass)** — founder,
+ * verbatim: "No, I want all expiry data." Rejects the nearest-weekly-only
+ * scope of the two passes above: a trader holding, or wanting to chart, ANY
+ * listed index expiry — not just the front weekly — had zero history for it.
  *
- * **Always-on index capture (2026-08-11) — the "sparse chart" fix.** Founder
- * complaint, with screenshot: the BANKNIFTY 57700 PE 25-Aug-26 premium chart
- * rendered as scattered isolated single-sample bars with big empty stretches.
- * A same-day DATA AUDIT (not re-derived here) confirmed the captured rows
- * were themselves correct (spot parity to the decimal, CE/PE paired, zero
- * gaps WITHIN a capture window) — the problem was pure SPARSITY: capture was,
- * and until this change still is for stocks, 100% demand-driven (open
- * position or "viewed in the last 15 minutes"), so an index chain nobody had
- * open simply had almost no history. `collectAlwaysOnIndexCandidates` below
- * adds a THIRD candidate source — the 5 index underlyings'
- * (`INDEX_OPTION_UNDERLYINGS`, the same shared registry `isIndexUnderlying`
- * already re-exports from, never a locally duplicated list) nearest weekly
- * expiry (`fetchOptionChainExpiries(underlying)[0]` — that function's own
- * contract is "nearest first", verified against its doc) is now captured on
- * EVERY fast-track run during market hours, regardless of whether anyone is
- * looking at it. Marked `alwaysOn: true` on the merged `Candidate` and — like
- * `hasOpenPosition` — NEVER dropped by `capCandidates`'s defensive cap
- * (`FAST_TRACK_MAX_CANDIDATES` still leaves 7 of its 12 slots free for open
- * positions plus genuinely-viewed extra expiries/underlyings on top of the 5
- * always-on ones). Single-stock (slow-track) underlyings are DELIBERATELY
- * left demand-driven, unchanged — this domain's own write-volume ceiling is
- * the ~211-name F&O stock universe, and always-on capture across all of them
- * would be the unbounded-write-volume risk this file's own "Defensive
- * candidate caps" section above already warns against; a stock's chart
- * staying sparse until it's actually traded/viewed remains the accepted
- * tradeoff, matching this file's existing SLOW_TRACK design intent.
+ * MECHANICAL FACT CHECKED, FOUND FALSE — the brief driving this pass assumed
+ * "one NSE chain fetch per underlying returns ALL expiries in the same
+ * payload, so widening scope costs zero extra fetches." Verified live against
+ * `/api/option-chain-v3` before writing a line of this section: omitting the
+ * `expiry` query param returns `{}` (no `records` at all), and passing one
+ * expiry returns ONLY that expiry's rows (`records.data` is 100% one
+ * `expiryDates` value, confirmed by inspecting every row). There is no
+ * bulk-fetch shortcut — this endpoint is fundamentally one HTTP fetch per
+ * (underlying, expiry) pair, confirmed on 2026-08-11 against live NIFTY/
+ * BANKNIFTY/FINNIFTY/MIDCPNIFTY/NIFTYNXT50 chains. `fetchOptionChainExpiries`
+ * (the `/api/option-chain-contract-info` endpoint) is the only "one call
+ * returns everything" shortcut that actually exists, and it returns expiry
+ * DATES only, no strikes/quotes.
  *
- * Write-volume math (5 underlyings, always on, full ATM±10 depth, every
- * market-hour minute — same 375 min/session figure this file's part (a)
- * measurement above used): 5 × 42 rows × 375 min/day ≈ 78,750 rows/day, a
- * ~787,500-row steady state against the prune cron's existing 10-calendar-day
- * fine-grained retention window (`paper-trading-premium-snapshot-prune`,
- * `FINE_GRAINED_RETENTION_DAYS`). That prune cron's own module doc already
- * anticipated exactly this cadence ("the 1-minute fast (index) track writes
- * ~5x the rows/candidate/run the old 5-minute cadence did") when it carved
- * out the 10-day fine-grained tier — this change is what actually realizes
- * that assumption in steady state (previously the fast track only wrote
- * when something was genuinely being viewed, so real volume sat far below
- * the tier's own budget). `OptionPremiumSnapshot`'s existing composite index
- * (`[underlyingSymbol, expiryDate, strikePrice, optionType, capturedAt]`,
- * schema-defined, unchanged) already covers both the premium-history read
- * path and the prune cron's own delete filters at this volume — no schema
- * change needed. No new crontab entry needed either: this rides the exact
- * same every-minute fast-track invocation the interval-parity project
- * already installed.
+ * Real expiry counts, live-measured 2026-08-11 (today's date; NSE lists
+ * expiries out to multi-year LEAPS on NIFTY, confirmed not a fluke by
+ * re-fetching): NIFTY 18, BANKNIFTY 6, FINNIFTY 3, MIDCPNIFTY 3, NIFTYNXT50
+ * 3 — 33 total (underlying, expiry) pairs across the 5 index underlyings.
+ * Capturing all 33 at the old 15s × 4-round cadence would be ~2.08M
+ * rows/day (33 × 42 rows/candidate-round × 4 rounds/min × 375 min/day) — a
+ * ~6.6x jump from the nearest-weekly-only design's 315,000/day, AND it would
+ * mean 33 sequential NSE fetches every 15 seconds, which live timing below
+ * shows does not fit in the budget. Rejected in favor of tiering by
+ * proximity, matching how real trading activity actually concentrates:
  *
- * **15-second always-on cadence (2026-08-11, same-day follow-up)** — founder
- * wants real 1-minute CANDLE BODIES on the index premium chart, not flat
- * single-sample dashes. The web side needs zero changes for this: the
- * architecture-simplification pass (commit c83656d, same day) already made
- * `premium-candles.ts`'s aggregation plain first/max/min/last-per-bucket
- * OHLC with no branching on sample count or `captureIntervalSec` — so a
- * 1-minute bucket that receives 4 real samples instead of 1 automatically
- * gets a real body, no client changes required (verified by reading that
- * file: it truly buckets on `capturedAt` alone).
+ * NEAR TIER (`NEAR_TERM_MAX_DAYS`, 40 calendar days) — real weeklies and the
+ * active-month monthlies, i.e. the contracts that actually move — kept at
+ * the full 15-second × 4-round cadence (`ALWAYS_ON_NEAR_CAPTURE_INTERVAL_SEC`).
+ * Live-measured 2026-08-11: 9 of the 33 pairs fall in this tier today.
  *
- * `ALWAYS_ON_CAPTURE_INTERVAL_SEC` (15s) replaces `FAST_TRACK_CAPTURE_INTERVAL_SEC`
- * (60s) ONLY for candidates carrying `alwaysOn: true` — the 5 index
- * underlyings' own nearest-weekly-expiry pair. A demand-driven fast-track
- * candidate (an index contract someone's viewing, or holds a position in,
- * at an expiry OTHER than the always-on nearest weekly) still captures once
- * per invocation at the original 60s cadence, unchanged — see
- * `runAlwaysOnRounds` vs. the immediate `captureTrack` call in
- * `runPremiumCapture`. A candidate that's BOTH always-on and separately
- * viewed/held is a single merged `Candidate` (see `mergeCandidates`), so it
- * only ever gets the finer 15s treatment — never double-captured under two
- * different cadences for the same `(underlying, expiry)` key in one run.
+ * FAR TIER — everything beyond 40 days (quarterlies, half-yearlies, LEAPS
+ * out to 2031) — captured once per invocation only, at 60-second cadence
+ * (`ALWAYS_ON_FAR_CAPTURE_INTERVAL_SEC`). Rationale: a dead multi-year LEAP
+ * contract sampled 4x/minute writes 4 identical `lastPrice` rows — same flat
+ * candle, 4x the storage, for a contract nobody is scalping. Live-measured
+ * 2026-08-11: 24 of the 33 pairs, and — confirmed by actually reading their
+ * quotes, not assumed — even the farthest (24-Jun-2031) still carries real
+ * (if thin, ~12-strike) bid/ask data, so "all expiry data" is honestly
+ * meaningful all the way out, not empty shells; tiering the cadence keeps
+ * that promise true without paying 4x for contracts that don't move.
  *
- * Mechanically, one cron invocation now runs the always-on candidates
- * through 4 rounds scheduled at fixed ~0/15/30/45s offsets from the
- * invocation's own start time (`ALWAYS_ON_ROUND_OFFSETS_MS`, anchored to a
- * single `runStartedAt` rather than chained wait-then-capture-then-wait, so
- * per-round execution time never accumulates drift across rounds). Each
- * round calls `fetchOptionChain` with `forceFresh: true` (see
- * `optionChain.ts`'s doc on that option) rather than relying on timing
- * alone to outrun the chain cache's own 15s market-hours TTL — the TTL and
- * the round spacing are numerically identical, so a naive wait-based
- * approach would race the boundary and risk 4 identical `lastPrice` samples
- * a round early or late. `forceFresh` removes that race by construction.
- * `ALWAYS_ON_ROUND_HARD_DEADLINE_MS` (58s) bounds the whole sequence so a
- * slow round (upstream latency, a flaky underlying) can never push a write
- * past the next minute's cron invocation — a round that would start after
- * the deadline is skipped, not delayed, and `alwaysOnRoundsSkippedByDeadline`
- * surfaces this in the result for monitoring. `runPremiumCapture` also now
- * guards against genuine RE-ENTRANCY (a prior invocation still in flight
- * when the next minute's cron hits, e.g. after an unusually slow round) with
- * a module-level in-progress flag — `skippedDueToOverlap: true` on the
- * result, never two invocations writing concurrently.
+ * OPEN-POSITION PROMOTION — any index expiry with a currently-open position,
+ * however far out, is treated as near-tier regardless of its actual date
+ * distance (`hasOpenPosition` check in the near/far split below) — a trader
+ * holding a LEAP position gets the same 15s cadence as a front-weekly
+ * scalper. This makes the brief's "open positions always get 15s" rule
+ * automatic rather than a special case: since near+far tiers already cover
+ * literally every listed index expiry, ANY index position is by construction
+ * already inside one of the two tiers — the only real work is the
+ * promotion when it would otherwise have landed in the far (60s) tier.
+ * SINGLE-STOCK open positions are explicitly NOT promoted to any index-style
+ * cadence — they stay on `SLOW_TRACK_CAPTURE_INTERVAL_SEC` (5 minutes),
+ * unchanged. Extending 15s treatment to a stock position would mean adding a
+ * whole new per-position NSE fetch path outside the already-capped,
+ * demand-driven slow track (see `SLOW_TRACK_MAX_CANDIDATES`) — a real scope
+ * expansion the brief did not ask for and this pass deliberately declines,
+ * consistent with the pre-existing "stock stays demand-driven" design
+ * decision from the 2026-08-11 always-on-index pass above.
  *
- * Updated write-volume math: the always-on track alone is now 5 × 42 rows ×
- * 4 rounds × 375 min/day ≈ 315,000 rows/day (up from the single-round
- * 78,750/day figure above — a 4x multiplier, exactly the round count, since
- * depth/underlyings/session-length are unchanged). Against the SAME
- * unchanged 10-calendar-day fine-grained retention window that's a
- * ~3,150,000-row steady state for this track (demand-driven fast candidates
- * and the 5-minute stock track add a comparatively small amount on top — low
- * single-digit candidate counts per this file's own "Defensive candidate
- * caps" section). `OptionPremiumSnapshot` already carries a dedicated
- * `[captureIntervalSec, capturedAt]` index (schema-defined, unchanged) that
- * the prune cron's delete filters use directly — confirmed sufficient for
- * this volume; no schema or prune-cron change needed. No crontab change
- * either: still one every-minute invocation, all 4 rounds happen inside that
- * single request.
+ * DEMAND-DRIVEN INDEX TRACK REMOVED — the old design had a THIRD index path
+ * ("viewed in the last 15 minutes, at whatever expiry"), needed because
+ * always-on capture only covered the nearest weekly. Now that near+far
+ * tiers cover literally every listed index expiry, that path is fully
+ * subsumed: no (underlying, expiry) pair a user can view is NOT already one
+ * of the 33 always-on candidates. Removed rather than left as dead code —
+ * `getRecentlyViewedContracts` is now consumed ONLY for the single-stock
+ * slow track, where it's still load-bearing (stock capture stays
+ * demand-driven, unchanged). Deleted alongside it: the `alwaysOn` candidate
+ * flag, the 3-way `mergeCandidates`, and `FAST_TRACK_MAX_CANDIDATES` — that
+ * cap existed to guard against unbounded VIEWING traffic (bot/scripted
+ * re-viewing), a vector that doesn't apply to a tier whose membership is now
+ * derived from live NSE expiry lists and real account positions, not user
+ * traffic.
+ *
+ * TIMING, live-measured 2026-08-11 against real NSE chains (`forceFresh`,
+ * the same option every production round uses): a single fetch averages
+ * ~600ms (curl subprocess + Akamai handshake + response). 33 SEQUENTIAL
+ * fetches (the original one-fetch-at-a-time design applied naively to the
+ * wider set) took ~20.6s for one pass — fine for far-tier's once-per-minute
+ * cadence in isolation, but far-tier's 24 fetches alone, run sequentially
+ * INSIDE round 0 the way the old single-track design would have nested it,
+ * measured ~15.75s — that would push round 1's 15s-offset target ~5s late,
+ * compounding across rounds toward the 58s deadline on a slower day.
+ * `FAR_TIER_FETCH_CONCURRENCY` (3) fixes this: `runFarTierOnce` and
+ * `runNearTierRounds` run CONCURRENTLY (`Promise.all` in `runPremiumCapture`,
+ * not nested), and far-tier's own 24 fetches run 3-at-a-time instead of
+ * strictly sequential — live-measured 2026-08-11: ~4.9s for all 24 (a 3.2x
+ * speedup over sequential), with the SAME 4 deterministic failures both ways
+ * (FINNIFTY/MIDCPNIFTY/NIFTYNXT50's farthest listed expiry each 404s — a
+ * real gap between what `/api/option-chain-contract-info` lists as a future
+ * expiry and what `/api/option-chain-v3` has actual contract data for yet,
+ * not a concurrency-induced failure — confirmed by re-running both at
+ * concurrency 1 and 3 and diffing the failing pairs, identical both times).
+ * The single-stock slow track (up to `SLOW_TRACK_MAX_CANDIDATES`,
+ * sequential, unchanged) ALSO now runs concurrently alongside near/far
+ * rather than sequentially before them — the OLD single-track code awaited
+ * the slow track's fetch before starting the always-on round loop, which on
+ * a real 5-minute boundary (up to 40 sequential stock fetches, ~24s worst
+ * case) would have already eaten into round 0's timing budget before the
+ * round loop's own `runStartedAt`-anchored clock even got a chance to run;
+ * this pass fixes that pre-existing risk as a side effect of the restructure
+ * (all three tracks share one `runStartedAt` and run via a single
+ * `Promise.all`).
+ *
+ * Full live-measured invocation (near-tier round loop + far-tier concurrent
+ * pass, both anchored to one `runStartedAt`, matching the exact structure
+ * shipped here): round 0 at +3ms→+5.6s, far-tier done at +15.75s (never
+ * blocking round 1), round 1 at +15.0s→+20.6s, round 2 at +30.0s→+35.8s,
+ * round 3 at +45.0s→+50.4s. TOTAL: ~50.4s, a ~7.6s (13%) margin inside
+ * `ALWAYS_ON_ROUND_HARD_DEADLINE_MS` (58s) — tight but real, and the
+ * pre-existing deadline-skip guard (`nearTierRoundsSkippedByDeadline`)
+ * degrades gracefully (skips a late round rather than corrupting the
+ * schedule) if a slower day erodes that margin further. Worth monitoring,
+ * not worth over-engineering further today.
+ *
+ * WRITE-VOLUME MATH, live-measured (not assumed) by running the exact
+ * ATM±10 windowing this file uses against all 33 real chains: near tier (9
+ * candidates) = 378 usable rows/round × 4 rounds/min × 375 min/day =
+ * 567,000 rows/day. Far tier (24 candidates, several genuinely thin —
+ * farthest LEAPS carry as few as 2-24 usable rows, not the full 42) = 590
+ * usable rows/round × 1 round/min × 375 min/day = 221,250 rows/day. TOTAL:
+ * ~788,250 rows/day — well under the ~2.08M/day a naive "all 33 at 15s×4"
+ * design would have written (the tiering is a real ~62% reduction, not
+ * theoretical), and also under the brief's own rough 1.5-2M/day estimate
+ * (which assumed the naive design, before this tiering was worked out).
+ * `createMany` batch sizes stay tiny in practice — 378 and 590 rows/round,
+ * nowhere near needing manual chunking; Postgres/Neon handles either in one
+ * round trip.
+ *
+ * STORAGE, measured (not hand-waved) via `pg_relation_size` on local dev
+ * Postgres after seeding 500,000 synthetic rows matching this table's real
+ * column shapes and value distributions, then `VACUUM ANALYZE`: ~402
+ * bytes/row table+indexes combined (64MB/502,335 table-only ≈ 134
+ * bytes/row, 128MB/502,335 indexes ≈ 268 bytes/row across the 3 existing
+ * indexes). Against `FINE_GRAINED_RETENTION_DAYS` (10 days, unchanged, still
+ * covers both this file's 15s and 60s cadences since both are <=60s) and
+ * this file's own measured ~788,250 rows/day, steady state ≈ 7,882,500 rows
+ * ≈ 3.17 GB for the fine-grained tier — roughly 2.5x the nearest-weekly-only
+ * design's ~1.27GB fine-grained steady state, but still under the ~5GB
+ * flag-prominently threshold. WORTH FLAGGING AS A WATCH ITEM regardless
+ * (Neon quota is an existing tracked concern per prior sprints' project
+ * notes) — this is the single largest jump in this table's steady-state
+ * size since the column existed, even though it doesn't cross the hard
+ * threshold. Recommendation only, not acted on here per the brief's own
+ * constraint: if this needs tightening later, the cheapest lever is
+ * shortening `FINE_GRAINED_RETENTION_DAYS` below 10, not touching capture
+ * scope (the whole point of this pass was NOT to narrow scope).
+ *
+ * `OptionPremiumSnapshot`'s existing `[captureIntervalSec, capturedAt]`
+ * index (schema-defined, unchanged) already covers the prune cron's delete
+ * filter at this volume. The prune cron's own `deleteMany` had NO batching
+ * at all before this pass — a single unbounded delete against a table now
+ * writing ~788K rows/day into its fine-grained tier is a bigger single
+ * transaction than the prior design ever produced, so this pass ALSO adds
+ * chunked deletion there (see that route's own doc) as a direct response to
+ * the brief's "adjust if it would fall behind" instruction — not a
+ * hypothetical, the marginal nightly delete volume (~788K rows, one day's
+ * production sliding out of the 10-day window) is real and growing with
+ * this change.
  */
 
 import { isNseWeekdayMarketHours } from "@predict-future/business-rules/papertrading/marketHours";
@@ -208,72 +247,56 @@ const ENGINE_ORDER_SELECT = {
 const STRIKES_AROUND_ATM = 10;
 const RECENTLY_VIEWED_WINDOW_MS = 15 * 60_000;
 
-/** Fast track (index underlyings) — 1-minute cadence during market hours, for demand-driven (non-always-on) candidates only; see module doc's 2026-08-11 section. */
-const FAST_TRACK_CAPTURE_INTERVAL_SEC = 60;
-/** Slow track (single-stock underlyings) — unchanged 5-minute cadence. */
+/** Single-stock (slow) track — unchanged 5-minute demand-driven cadence, see module doc. */
 const SLOW_TRACK_CAPTURE_INTERVAL_SEC = 300;
+const SLOW_TRACK_MAX_CANDIDATES = 40;
 
 /**
- * 15-second always-on cadence (2026-08-11) — see module doc. Applies ONLY to
- * `alwaysOn: true` candidates (the 5 index underlyings' own nearest weekly
- * expiry), captured `ALWAYS_ON_ROUND_OFFSETS_MS.length` times per invocation.
+ * All-expiry index capture (2026-08-11) — see module doc for the full
+ * tiering rationale and the live measurements behind every constant below.
  */
-const ALWAYS_ON_CAPTURE_INTERVAL_SEC = 15;
+const NEAR_TERM_MAX_DAYS = 40;
+const ALWAYS_ON_NEAR_CAPTURE_INTERVAL_SEC = 15;
+const ALWAYS_ON_FAR_CAPTURE_INTERVAL_SEC = 60;
 /** Fixed offsets (ms) from the invocation's own start — anchored, not chained, so per-round latency never accumulates drift across rounds. */
 const ALWAYS_ON_ROUND_OFFSETS_MS = [0, 15_000, 30_000, 45_000];
 /** A round scheduled to start after this many ms from invocation start is skipped, not delayed — keeps the whole sequence bounded well inside the ~60s window before the next cron invocation. */
 const ALWAYS_ON_ROUND_HARD_DEADLINE_MS = 58_000;
-
-/**
- * Defensive circuit breakers, NEW as of the interval-parity project — see
- * module doc's "Defensive candidate caps" section for the full reasoning and
- * the numbers behind these values. A candidate with an open position is
- * NEVER dropped by either cap (see `capCandidates` below); only excess
- * merely-viewed candidates are truncated, most-recently-viewed first.
- */
-const FAST_TRACK_MAX_CANDIDATES = 12;
-const SLOW_TRACK_MAX_CANDIDATES = 40;
+/** Live-measured 2026-08-11: 3-way concurrent far-tier fetch is ~3.2x faster than sequential (4.9s vs 15.75s for 24 candidates) with the identical failure set — see module doc. */
+const FAR_TIER_FETCH_CONCURRENCY = 3;
 
 export interface PremiumCaptureRunResult {
   ranOutsideMarketHours: boolean;
-  /**
-   * 15-second cadence project (2026-08-11) — true when this invocation was
-   * skipped in its entirety because a PRIOR invocation was still running
-   * (the re-entrancy guard, see module-level `captureInProgress`). Every
-   * other field is left at its zero-value default when this is true. Should
-   * be rare in steady state (the whole sequence is bounded by
-   * `ALWAYS_ON_ROUND_HARD_DEADLINE_MS`, well inside the ~60s window before
-   * the next invocation) — a nonzero rate of this over time is a real signal
-   * something upstream (NSE latency, DB latency) is running slower than this
-   * file's own timing budget assumes.
-   */
+  /** True when this invocation was skipped in its entirety because a PRIOR invocation was still running (see module-level `captureInProgress`). Every other field is left at its zero-value default when this is true. */
   skippedDueToOverlap: boolean;
   /** True when this invocation's `now` didn't land on a real 5-minute IST boundary — the slow (stock) track was skipped this run by design, not a failure. */
   slowTrackSkipped: boolean;
-  candidateContracts: number;
-  fastTrackCandidates: number;
+  /** All-expiry project (2026-08-11) — total (underlying, expiry) pairs observed across the 5 index underlyings' live expiry lists this run. Live-measured baseline 2026-08-11: 33 (NIFTY 18 + BANKNIFTY 6 + FINNIFTY 3 + MIDCPNIFTY 3 + NIFTYNXT50 3). A big drop signals a chain-fetch problem for one or more underlyings, not a real product state (an index option chain never has zero expiries). */
+  indexExpiriesObserved: number;
+  /** Index expiries captured at 15s x 4-round cadence this run — real near-dated expiries (<= NEAR_TERM_MAX_DAYS) plus any far-dated expiry currently holding an open position, promoted regardless of date. Live baseline 2026-08-11: 9. */
+  nearTierCandidates: number;
+  /** Index expiries beyond NEAR_TERM_MAX_DAYS with no open position — captured once this run at 60s cadence, FAR_TIER_FETCH_CONCURRENCY-way concurrent. Live baseline 2026-08-11: 24. */
+  farTierCandidates: number;
   slowTrackCandidates: number;
-  /** Always-on index capture (2026-08-11) — how many of the 5 index underlyings successfully resolved a nearest-weekly-expiry candidate this run; less than 5 signals a chain-fetch problem for one or more underlyings (see collectAlwaysOnIndexCandidates), not a cap/traffic issue. */
-  alwaysOnIndexCandidates: number;
-  /** Count of purely-viewed (no open position) candidates dropped by the defensive cap this run — 0 in the overwhelmingly common case; a nonzero value here is a real signal this app's usage has outgrown FAST_TRACK_MAX_CANDIDATES/SLOW_TRACK_MAX_CANDIDATES and they should be revisited. */
+  /** Count of merely-viewed (no open position) STOCK candidates dropped by the slow-track defensive cap this run — 0 in the overwhelmingly common case. Index tiers are never capped (see module doc — membership is derived from live NSE data + real positions, not user traffic). */
   candidatesDroppedByCap: number;
   chainFetchFailures: number;
   snapshotsWritten: number;
   errors: number;
-  /** 15-second cadence project (2026-08-11) — how many of the (up to) 4 always-on rounds this invocation actually ran; less than the offsets-array length (normally 4) means one or more late rounds were skipped by `ALWAYS_ON_ROUND_HARD_DEADLINE_MS`, see `alwaysOnRoundsSkippedByDeadline`. 0 whenever `alwaysOnIndexCandidates` itself is 0 (nothing to capture). */
-  alwaysOnRoundsCompleted: number;
-  /** 15-second cadence project (2026-08-11) — count of always-on rounds skipped this invocation because they would have started past the hard deadline. 0 in the overwhelmingly common case; a nonzero value is a real signal this invocation is running slower than the timing budget assumes (see module doc). */
-  alwaysOnRoundsSkippedByDeadline: number;
+  /** How many of the (up to) 4 near-tier rounds this invocation actually ran; less than 4 means one or more late rounds were skipped by ALWAYS_ON_ROUND_HARD_DEADLINE_MS — see nearTierRoundsSkippedByDeadline. 0 whenever nearTierCandidates itself is 0. */
+  nearTierRoundsCompleted: number;
+  /** Count of near-tier rounds skipped this invocation because they would have started past the hard deadline. 0 in the overwhelmingly common case; a nonzero value is a real signal this invocation is running slower than the ~50.4s measured baseline (see module doc). */
+  nearTierRoundsSkippedByDeadline: number;
 }
 
-interface Candidate {
+interface CaptureCandidate {
   underlying: string;
   expiryStr: string; // NSE "DD-MMM-YYYY"
-  /** True if ANY account currently holds an open position in this contract — see capCandidates's "never drop real exposure" rule. */
+}
+
+/** Stock (slow) track only — carries the signals `capStockCandidates` needs. Index tiers use the bare `CaptureCandidate` shape; nothing caps them (see module doc). */
+interface StockCandidate extends CaptureCandidate {
   hasOpenPosition: boolean;
-  /** Always-on index capture (2026-08-11) — true for one of the 5 index underlyings' own nearest-weekly-expiry pair, regardless of viewing/positions. Never dropped by capCandidates, same as hasOpenPosition — see module doc. */
-  alwaysOn: boolean;
-  /** Epoch ms this pair was last requested through the chain endpoint — 0 for a candidate that only ever showed up via an open position or always-on capture. Prioritizes which merely-viewed candidates survive the cap; never decides capture eligibility itself. */
   lastViewedAt: number;
 }
 
@@ -285,19 +308,22 @@ function candidateKey(c: { underlying: string; expiryStr: string }): string {
  * Scans every account with at least one option order and collects the
  * (underlyingSymbol, expiryDate) pairs it currently holds an open position in
  * — generalized from optionsExpiry.ts's "expiring today" scan to "any open
- * position, regardless of expiry date" per the brief. Paper Trading trade
- * volumes are low (single-retail-feature scale, same assumption every other
- * read-side query in this domain already makes — see queries.ts), so a
- * per-account replay is cheap here.
+ * position, regardless of expiry date" per the brief. Returns pairs across
+ * BOTH index and single-stock underlyings — callers split by isIndexUnderlying
+ * for their own purposes (index-position promotion vs. the stock slow
+ * track's hasOpenPosition signal). Paper Trading trade volumes are low
+ * (single-retail-feature scale, same assumption every other read-side query
+ * in this domain already makes — see queries.ts), so a per-account replay is
+ * cheap here.
  */
-async function collectOpenPositionCandidates(): Promise<Array<{ underlying: string; expiryStr: string }>> {
+async function collectOpenPositionCandidates(): Promise<CaptureCandidate[]> {
   const accountsWithOptionOrders = await prisma.paperOrder.findMany({
     where: { instrumentKind: { in: ["INDEX_OPTION", "STOCK_OPTION"] } },
     select: { accountId: true },
     distinct: ["accountId"]
   });
 
-  const seen = new Map<string, { underlying: string; expiryStr: string }>();
+  const seen = new Map<string, CaptureCandidate>();
   for (const { accountId } of accountsWithOptionOrders) {
     const orderRows = await prisma.paperOrder.findMany({
       where: { accountId },
@@ -318,76 +344,77 @@ function collectRecentlyViewedCandidates(): Array<{ underlying: string; expirySt
 }
 
 /**
- * Always-on index capture (2026-08-11, see module doc) — one candidate per
- * index underlying, pinned to that underlying's OWN nearest weekly expiry
- * (`fetchOptionChainExpiries` is documented "nearest first" — never assumed,
- * that ordering is this function's whole contract). A per-underlying fetch
- * failure (chain endpoint down, no expiries returned) drops just that one
- * underlying for this run — never throws, matching every other function in
- * this file's failure posture — so one flaky underlying can't blank out
- * always-on capture for the other four.
+ * All-expiry index capture (2026-08-11, see module doc) — every listed
+ * expiry of every index underlying (`INDEX_OPTION_UNDERLYINGS`, the shared
+ * registry, never a locally duplicated list), with `daysToExpiry` computed
+ * against `asOfDate` so the near/far split below can be date-driven. A
+ * per-underlying fetch failure (chain endpoint down, no expiries returned)
+ * drops just that one underlying's expiries for this run — never throws,
+ * matching every other function in this file's failure posture.
  */
-async function collectAlwaysOnIndexCandidates(): Promise<Array<{ underlying: string; expiryStr: string }>> {
+async function collectIndexExpiryCandidates(
+  asOfDate: Date
+): Promise<Array<{ underlying: string; expiryStr: string; daysToExpiry: number }>> {
+  const todayUtcMidnight = Date.UTC(asOfDate.getUTCFullYear(), asOfDate.getUTCMonth(), asOfDate.getUTCDate());
+
   const results = await Promise.all(
-    INDEX_OPTION_UNDERLYINGS.map(async (underlying): Promise<{ underlying: string; expiryStr: string } | null> => {
+    INDEX_OPTION_UNDERLYINGS.map(async (underlying: string) => {
       try {
         const expiries = await fetchOptionChainExpiries(underlying);
-        const nearest = expiries[0];
-        return nearest ? { underlying, expiryStr: nearest } : null;
+        return expiries
+          .map((expiryStr) => {
+            const expiryDate = parseNseExpiryDate(expiryStr);
+            if (!expiryDate) return null;
+            const daysToExpiry = Math.round((expiryDate.getTime() - todayUtcMidnight) / 86_400_000);
+            return { underlying, expiryStr, daysToExpiry };
+          })
+          .filter((c): c is { underlying: string; expiryStr: string; daysToExpiry: number } => c !== null);
       } catch {
-        return null;
+        return [];
       }
     })
   );
-  return results.filter((c): c is { underlying: string; expiryStr: string } => c !== null);
+  return results.flat();
 }
 
 /**
- * Merges the three candidate sources into one deduped list carrying
- * `hasOpenPosition`, `alwaysOn`, and `lastViewedAt` — the signals
- * `capCandidates` below needs to decide what survives a defensive cap. A
- * pair present in multiple sources keeps every `true` flag it earned from
- * ANY source (never downgraded) and the MAX `lastViewedAt` across sources.
+ * Merges open-position + recently-viewed signals for the STOCK slow track
+ * only (index tiers are handled separately — see collectIndexExpiryCandidates
+ * and the near/far split in runPremiumCapture). A pair present in both
+ * sources keeps `hasOpenPosition: true` (never downgraded) and the MAX
+ * `lastViewedAt` across sources.
  */
-function mergeCandidates(
-  openPositions: Array<{ underlying: string; expiryStr: string }>,
-  recentlyViewed: Array<{ underlying: string; expiryStr: string; lastViewedAt: number }>,
-  alwaysOn: Array<{ underlying: string; expiryStr: string }>
-): Candidate[] {
-  const byKey = new Map<string, Candidate>();
+function mergeStockCandidates(
+  openPositions: CaptureCandidate[],
+  recentlyViewed: Array<{ underlying: string; expiryStr: string; lastViewedAt: number }>
+): StockCandidate[] {
+  const byKey = new Map<string, StockCandidate>();
   for (const c of openPositions) {
-    byKey.set(candidateKey(c), { underlying: c.underlying, expiryStr: c.expiryStr, hasOpenPosition: true, alwaysOn: false, lastViewedAt: 0 });
-  }
-  for (const c of alwaysOn) {
-    const existing = byKey.get(candidateKey(c));
-    if (existing) {
-      existing.alwaysOn = true;
-    } else {
-      byKey.set(candidateKey(c), { underlying: c.underlying, expiryStr: c.expiryStr, hasOpenPosition: false, alwaysOn: true, lastViewedAt: 0 });
-    }
+    byKey.set(candidateKey(c), { underlying: c.underlying, expiryStr: c.expiryStr, hasOpenPosition: true, lastViewedAt: 0 });
   }
   for (const c of recentlyViewed) {
     const existing = byKey.get(candidateKey(c));
     if (existing) {
       existing.lastViewedAt = Math.max(existing.lastViewedAt, c.lastViewedAt);
     } else {
-      byKey.set(candidateKey(c), { underlying: c.underlying, expiryStr: c.expiryStr, hasOpenPosition: false, alwaysOn: false, lastViewedAt: c.lastViewedAt });
+      byKey.set(candidateKey(c), { underlying: c.underlying, expiryStr: c.expiryStr, hasOpenPosition: false, lastViewedAt: c.lastViewedAt });
     }
   }
   return [...byKey.values()];
 }
 
 /**
- * Defensive circuit breaker (see module doc) — every `hasOpenPosition` OR
- * `alwaysOn` candidate always survives, however many there are (real account
- * exposure and the always-on index floor are never sacrificed to a
- * write-volume budget); remaining slots up to `max` are filled by
- * merely-viewed candidates, most-recently-viewed first. Returns the kept
- * list plus how many merely-viewed candidates were dropped.
+ * Defensive circuit breaker for the STOCK slow track only — guards against
+ * unbounded VIEWING traffic (bot/scripted re-viewing many chains), a vector
+ * that does NOT apply to the index near/far tiers (their membership is
+ * derived from live NSE expiry lists + real account positions, never user
+ * traffic — see module doc). Every `hasOpenPosition` candidate always
+ * survives; remaining slots up to `max` are filled by merely-viewed
+ * candidates, most-recently-viewed first.
  */
-function capCandidates(candidates: Candidate[], max: number): { kept: Candidate[]; dropped: number } {
-  const neverDropped = candidates.filter((c) => c.hasOpenPosition || c.alwaysOn);
-  const viewedOnly = candidates.filter((c) => !c.hasOpenPosition && !c.alwaysOn).sort((a, b) => b.lastViewedAt - a.lastViewedAt);
+function capStockCandidates(candidates: StockCandidate[], max: number): { kept: StockCandidate[]; dropped: number } {
+  const neverDropped = candidates.filter((c) => c.hasOpenPosition);
+  const viewedOnly = candidates.filter((c) => !c.hasOpenPosition).sort((a, b) => b.lastViewedAt - a.lastViewedAt);
 
   const remainingSlots = Math.max(0, max - neverDropped.length);
   const keptViewedOnly = viewedOnly.slice(0, remainingSlots);
@@ -396,7 +423,7 @@ function capCandidates(candidates: Candidate[], max: number): { kept: Candidate[
   return { kept: [...neverDropped, ...keptViewedOnly], dropped };
 }
 
-/** Nearest strike to the chain's own live underlyingValue — same "nearest wins" definition option-chain-browser.tsx uses client-side for its ATM highlight. */
+/** Nearest strike to the chain's own live underlyingValue — same "nearest wins" definition option-chain-browser.tsx uses client-side for its ATM highlight. Per-expiry: each fetchOptionChain call returns ONLY that expiry's own strikes (verified live 2026-08-11 — see module doc's "MECHANICAL FACT CHECKED" section), windowed here against the shared live underlyingValue (correct by construction — ATM is defined against the current spot, which is the same number regardless of which expiry is being windowed). */
 function findAtmStrike(chain: OptionChainSnapshot): number | null {
   if (chain.strikes.length === 0) return null;
   return chain.strikes.reduce((best, s) =>
@@ -457,32 +484,49 @@ function isFiveMinuteBoundary(now: Date): boolean {
   return now.getUTCMinutes() % 5 === 0;
 }
 
+/**
+ * Fetches + windows every candidate, writing rows into `allRows`. Runs
+ * `concurrency` fetches in flight at once (default 1 — the original
+ * strictly-sequential no-hammer behavior, still used for the near-tier
+ * rounds and the stock slow track). Only the far-tier pass opts into
+ * `concurrency: FAR_TIER_FETCH_CONCURRENCY` — see module doc for the
+ * live-measured 3.2x speedup and confirmation that concurrency doesn't
+ * change which fetches fail.
+ */
 async function captureTrack(
-  candidates: Candidate[],
+  candidates: CaptureCandidate[],
   captureIntervalSec: number,
   capturedAt: Date,
   result: PremiumCaptureRunResult,
-  options: { forceFresh?: boolean } = {}
+  options: { forceFresh?: boolean; concurrency?: number } = {}
 ): Promise<Prisma.OptionPremiumSnapshotCreateManyInput[]> {
   const allRows: Prisma.OptionPremiumSnapshotCreateManyInput[] = [];
-  for (const candidate of candidates) {
-    try {
-      const expiryDate = parseNseExpiryDate(candidate.expiryStr);
-      if (!expiryDate) {
+  const concurrency = Math.max(1, Math.min(options.concurrency ?? 1, candidates.length || 1));
+  let nextIndex = 0;
+
+  async function worker(): Promise<void> {
+    while (nextIndex < candidates.length) {
+      const candidate = candidates[nextIndex++];
+      try {
+        const expiryDate = parseNseExpiryDate(candidate.expiryStr);
+        if (!expiryDate) {
+          result.errors += 1;
+          continue;
+        }
+        const chain = await fetchOptionChain(candidate.underlying, candidate.expiryStr, { forceFresh: options.forceFresh });
+        if (!chain) {
+          result.chainFetchFailures += 1;
+          continue;
+        }
+        allRows.push(...buildSnapshotRows(chain, expiryDate, capturedAt, captureIntervalSec));
+      } catch (err) {
         result.errors += 1;
-        continue;
+        console.error(`[paperTrading/premiumCapture] candidate ${candidateKey(candidate)} failed:`, err);
       }
-      const chain = await fetchOptionChain(candidate.underlying, candidate.expiryStr, { forceFresh: options.forceFresh });
-      if (!chain) {
-        result.chainFetchFailures += 1;
-        continue;
-      }
-      allRows.push(...buildSnapshotRows(chain, expiryDate, capturedAt, captureIntervalSec));
-    } catch (err) {
-      result.errors += 1;
-      console.error(`[paperTrading/premiumCapture] candidate ${candidateKey(candidate)} failed:`, err);
     }
   }
+
+  await Promise.all(Array.from({ length: concurrency }, worker));
   return allRows;
 }
 
@@ -491,30 +535,30 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * 15-second always-on cadence (2026-08-11, see module doc) — runs
- * `alwaysOnCandidates` through `ALWAYS_ON_ROUND_OFFSETS_MS.length` rounds
- * (normally 4), each anchored to a fixed offset from `runStartedAt` rather
- * than chained off the PREVIOUS round's own finish time, so per-round
- * latency (a slow underlying, upstream jitter) never compounds into
- * schedule drift across the sequence. Each round fetches with
- * `forceFresh: true` (bypassing the chain cache's read-side throttle
- * entirely) rather than trusting elapsed wall-clock time to have outrun the
- * cache TTL — the TTL and the round spacing are both 15s, so a timing-only
- * approach would race that boundary. Writes each round's rows immediately
- * (not batched to the end) so a mid-sequence failure still preserves
- * whatever rounds already completed. A round whose target start time has
- * already passed `ALWAYS_ON_ROUND_HARD_DEADLINE_MS` is skipped outright,
- * never delayed — keeps the whole sequence bounded well inside the ~60s
- * window before the next cron invocation.
+ * Near-tier index rounds (2026-08-11, see module doc) — runs `nearCandidates`
+ * through `ALWAYS_ON_ROUND_OFFSETS_MS.length` rounds (normally 4), each
+ * anchored to a fixed offset from `runStartedAt` rather than chained off the
+ * PREVIOUS round's own finish time, so per-round latency (a slow underlying,
+ * upstream jitter) never compounds into schedule drift across the sequence.
+ * Each round fetches with `forceFresh: true` (bypassing the chain cache's
+ * read-side throttle entirely) rather than trusting elapsed wall-clock time
+ * to have outrun the cache TTL — the TTL and the round spacing are both 15s,
+ * so a timing-only approach would race that boundary. Writes each round's
+ * rows immediately (not batched to the end) so a mid-sequence failure still
+ * preserves whatever rounds already completed. A round whose target start
+ * time has already passed `ALWAYS_ON_ROUND_HARD_DEADLINE_MS` is skipped
+ * outright, never delayed.
  */
-async function runAlwaysOnRounds(
-  alwaysOnCandidates: Candidate[],
+async function runNearTierRounds(
+  nearCandidates: CaptureCandidate[],
   runStartedAt: number,
   result: PremiumCaptureRunResult
 ): Promise<void> {
+  if (nearCandidates.length === 0) return;
+
   for (const offsetMs of ALWAYS_ON_ROUND_OFFSETS_MS) {
     if (Date.now() - runStartedAt > ALWAYS_ON_ROUND_HARD_DEADLINE_MS) {
-      result.alwaysOnRoundsSkippedByDeadline += 1;
+      result.nearTierRoundsSkippedByDeadline += 1;
       continue;
     }
 
@@ -522,54 +566,97 @@ async function runAlwaysOnRounds(
     if (waitMs > 0) await sleep(waitMs);
 
     const capturedAt = new Date();
-    const rows = await captureTrack(alwaysOnCandidates, ALWAYS_ON_CAPTURE_INTERVAL_SEC, capturedAt, result, { forceFresh: true });
+    const rows = await captureTrack(nearCandidates, ALWAYS_ON_NEAR_CAPTURE_INTERVAL_SEC, capturedAt, result, { forceFresh: true });
     if (rows.length > 0) {
       const written = await prisma.optionPremiumSnapshot.createMany({ data: rows });
       result.snapshotsWritten += written.count;
     }
-    result.alwaysOnRoundsCompleted += 1;
+    result.nearTierRoundsCompleted += 1;
   }
 }
 
 /**
- * 15-second cadence project (2026-08-11) — process-local re-entrancy guard.
- * `runPremiumCapture` can now take up to `ALWAYS_ON_ROUND_HARD_DEADLINE_MS`
- * (58s) to complete, close to the every-minute cron cadence itself; without
- * this guard an unusually slow invocation overlapping the next one would
- * risk two concurrent runs racing writes/chain-cache state. Single boolean
- * is sufficient — this route runs single-instance (same accepted limitation
- * `optionChain.ts`'s in-module caches already carry).
+ * Far-tier index pass (2026-08-11, see module doc) — captures `farCandidates`
+ * exactly once per invocation at `ALWAYS_ON_FAR_CAPTURE_INTERVAL_SEC` (60s)
+ * cadence, fetching `FAR_TIER_FETCH_CONCURRENCY`-way concurrent rather than
+ * sequential — live-measured 2026-08-11 at ~4.9s for 24 real candidates vs
+ * ~15.75s sequential, with an identical failure set at both concurrency
+ * levels. Runs concurrently ALONGSIDE `runNearTierRounds` (see
+ * `runPremiumCapture`'s `Promise.all`), never nested inside round 0 — nesting
+ * it there was the original naive design and measured as pushing round 1's
+ * 15s-offset target ~5s late.
+ */
+async function runFarTierOnce(farCandidates: CaptureCandidate[], result: PremiumCaptureRunResult): Promise<void> {
+  if (farCandidates.length === 0) return;
+
+  const capturedAt = new Date();
+  const rows = await captureTrack(farCandidates, ALWAYS_ON_FAR_CAPTURE_INTERVAL_SEC, capturedAt, result, {
+    forceFresh: true,
+    concurrency: FAR_TIER_FETCH_CONCURRENCY
+  });
+  if (rows.length > 0) {
+    const written = await prisma.optionPremiumSnapshot.createMany({ data: rows });
+    result.snapshotsWritten += written.count;
+  }
+}
+
+/**
+ * Single-stock slow track (unchanged cadence/candidate-selection logic,
+ * restructured 2026-08-11 to run CONCURRENTLY with the index near/far tiers
+ * instead of sequentially before them — see module doc's TIMING section for
+ * why the old sequential-before ordering was a pre-existing latent risk on
+ * real 5-minute boundaries).
+ */
+async function runSlowTrackOnce(slowCandidates: StockCandidate[], result: PremiumCaptureRunResult): Promise<void> {
+  if (slowCandidates.length === 0) return;
+
+  const capturedAt = new Date();
+  const rows = await captureTrack(slowCandidates, SLOW_TRACK_CAPTURE_INTERVAL_SEC, capturedAt, result);
+  if (rows.length > 0) {
+    const written = await prisma.optionPremiumSnapshot.createMany({ data: rows });
+    result.snapshotsWritten += written.count;
+  }
+}
+
+/**
+ * Process-local re-entrancy guard. `runPremiumCapture` can now take up to
+ * `ALWAYS_ON_ROUND_HARD_DEADLINE_MS` (58s) to complete, close to the
+ * every-minute cron cadence itself; without this guard an unusually slow
+ * invocation overlapping the next one would risk two concurrent runs racing
+ * writes/chain-cache state. Single boolean is sufficient — this route runs
+ * single-instance (same accepted limitation `optionChain.ts`'s in-module
+ * caches already carry).
  */
 let captureInProgress = false;
 
 /**
- * Captures one round of ATM ± 10 premium snapshots for every candidate
- * contract, split into three cadence tracks — always-on index (15s × 4
- * rounds), demand-driven index (60s × 1, every invocation), and stock (300s
- * × 1, every real 5-minute IST boundary) — see module doc for the full
- * cadence/volume reasoning. Self-gates on `isNseWeekdayMarketHours()`
- * regardless of when the cron itself fired — a slightly-loose crontab bound
- * (the brief's coarse hour-window filter) never writes off-session ticks.
- * Never throws — per-candidate failures are caught and counted. Guarded
- * against re-entrancy (see `captureInProgress`) — an overlapping invocation
- * returns immediately with `skippedDueToOverlap: true` rather than racing
- * the one already running.
+ * Captures premium snapshots for every candidate contract, split into three
+ * concurrent tracks — near-tier index (15s × 4 rounds), far-tier index (60s
+ * × 1, all listed expiries beyond NEAR_TERM_MAX_DAYS with no open position),
+ * and single-stock (300s × 1, every real 5-minute IST boundary) — see module
+ * doc for the full all-expiry tiering/timing/volume reasoning. Self-gates on
+ * `isNseWeekdayMarketHours()` regardless of when the cron itself fired — a
+ * slightly-loose crontab bound (the brief's coarse hour-window filter) never
+ * writes off-session ticks. Never throws — per-candidate failures are caught
+ * and counted. Guarded against re-entrancy (see `captureInProgress`) — an
+ * overlapping invocation returns immediately with `skippedDueToOverlap: true`
+ * rather than racing the one already running.
  */
 export async function runPremiumCapture(now: Date = new Date()): Promise<PremiumCaptureRunResult> {
   const result: PremiumCaptureRunResult = {
     ranOutsideMarketHours: false,
     skippedDueToOverlap: false,
     slowTrackSkipped: false,
-    candidateContracts: 0,
-    fastTrackCandidates: 0,
+    indexExpiriesObserved: 0,
+    nearTierCandidates: 0,
+    farTierCandidates: 0,
     slowTrackCandidates: 0,
-    alwaysOnIndexCandidates: 0,
     candidatesDroppedByCap: 0,
     chainFetchFailures: 0,
     snapshotsWritten: 0,
     errors: 0,
-    alwaysOnRoundsCompleted: 0,
-    alwaysOnRoundsSkippedByDeadline: 0
+    nearTierRoundsCompleted: 0,
+    nearTierRoundsSkippedByDeadline: 0
   };
 
   if (captureInProgress) {
@@ -588,48 +675,47 @@ export async function runPremiumCapture(now: Date = new Date()): Promise<Premium
     const runSlowTrack = isFiveMinuteBoundary(now);
     result.slowTrackSkipped = !runSlowTrack;
 
-    const [openPositionCandidates, recentlyViewedCandidates, alwaysOnIndexCandidates] = await Promise.all([
+    const [indexExpiryCandidates, openPositionCandidates, recentlyViewedCandidates] = await Promise.all([
+      collectIndexExpiryCandidates(now),
       collectOpenPositionCandidates(),
-      Promise.resolve(collectRecentlyViewedCandidates()),
-      collectAlwaysOnIndexCandidates()
+      Promise.resolve(collectRecentlyViewedCandidates())
     ]);
 
-    const allCandidates = mergeCandidates(openPositionCandidates, recentlyViewedCandidates, alwaysOnIndexCandidates);
-    result.candidateContracts = allCandidates.length;
-    result.alwaysOnIndexCandidates = alwaysOnIndexCandidates.length;
+    result.indexExpiriesObserved = indexExpiryCandidates.length;
 
-    const fastRaw = allCandidates.filter((c) => isIndexUnderlying(c.underlying));
-    const slowRaw = allCandidates.filter((c) => !isIndexUnderlying(c.underlying));
+    const openPositionKeySet = new Set(openPositionCandidates.map(candidateKey));
 
-    const fastCapped = capCandidates(fastRaw, FAST_TRACK_MAX_CANDIDATES);
-    const slowCapped = runSlowTrack ? capCandidates(slowRaw, SLOW_TRACK_MAX_CANDIDATES) : { kept: [], dropped: 0 };
+    // All-expiry index split: every listed index expiry lands in EXACTLY one
+    // of near/far — near if it's within NEAR_TERM_MAX_DAYS OR currently
+    // holds an open position (promoted regardless of date), far otherwise.
+    const nearTierCandidates: CaptureCandidate[] = [];
+    const farTierCandidates: CaptureCandidate[] = [];
+    for (const c of indexExpiryCandidates) {
+      const candidate = { underlying: c.underlying, expiryStr: c.expiryStr };
+      const isNearByDate = c.daysToExpiry <= NEAR_TERM_MAX_DAYS;
+      const hasOpenPosition = openPositionKeySet.has(candidateKey(candidate));
+      (isNearByDate || hasOpenPosition ? nearTierCandidates : farTierCandidates).push(candidate);
+    }
+    result.nearTierCandidates = nearTierCandidates.length;
+    result.farTierCandidates = farTierCandidates.length;
 
-    result.fastTrackCandidates = fastCapped.kept.length;
+    // Single-stock slow track: open positions + recently-viewed, STOCK
+    // underlyings only — index is fully covered by the near/far split above.
+    const stockOpenPositions = openPositionCandidates.filter((c) => !isIndexUnderlying(c.underlying));
+    const stockRecentlyViewed = recentlyViewedCandidates.filter((c) => !isIndexUnderlying(c.underlying));
+    const stockMerged = mergeStockCandidates(stockOpenPositions, stockRecentlyViewed);
+    const slowCapped = runSlowTrack ? capStockCandidates(stockMerged, SLOW_TRACK_MAX_CANDIDATES) : { kept: [] as StockCandidate[], dropped: 0 };
     result.slowTrackCandidates = slowCapped.kept.length;
-    result.candidatesDroppedByCap = fastCapped.dropped + slowCapped.dropped;
+    result.candidatesDroppedByCap = slowCapped.dropped;
 
-    // Split the fast track: always-on candidates get the 15s × 4-round
-    // treatment below; demand-driven fast candidates (viewed/held at an
-    // expiry other than the always-on nearest weekly) keep the original 60s
-    // single-round cadence, captured here alongside the stock track.
-    const alwaysOnFastCandidates = fastCapped.kept.filter((c) => c.alwaysOn);
-    const demandFastCandidates = fastCapped.kept.filter((c) => !c.alwaysOn);
-
-    const capturedAt = new Date();
-    const [demandFastRows, slowRows] = await Promise.all([
-      captureTrack(demandFastCandidates, FAST_TRACK_CAPTURE_INTERVAL_SEC, capturedAt, result),
-      captureTrack(slowCapped.kept, SLOW_TRACK_CAPTURE_INTERVAL_SEC, capturedAt, result)
+    // All three tracks run CONCURRENTLY, sharing one runStartedAt-anchored
+    // clock — see module doc's TIMING section for why sequential-before was
+    // a latent risk on 5-minute boundaries in the prior single-track design.
+    await Promise.all([
+      runNearTierRounds(nearTierCandidates, runStartedAt, result),
+      runFarTierOnce(farTierCandidates, result),
+      runSlowTrackOnce(slowCapped.kept, result)
     ]);
-    const immediateRows = [...demandFastRows, ...slowRows];
-
-    if (immediateRows.length > 0) {
-      const written = await prisma.optionPremiumSnapshot.createMany({ data: immediateRows });
-      result.snapshotsWritten += written.count;
-    }
-
-    if (alwaysOnFastCandidates.length > 0) {
-      await runAlwaysOnRounds(alwaysOnFastCandidates, runStartedAt, result);
-    }
 
     return result;
   } finally {

@@ -29,6 +29,25 @@
  * cutoff was judged not worth the added write-path complexity — deferred,
  * flagged here for whoever revisits retention next.
  *
+ * **All-expiry index capture project (2026-08-11)** — premiumCapture.ts's
+ * fine-grained (<=60s) track jumped from ~315,000 rows/day
+ * (nearest-weekly-only, single index expiry per underlying) to a
+ * live-measured ~788,250 rows/day (every listed expiry of all 5 index
+ * underlyings, tiered 15s/60s by proximity — see that file's own module doc
+ * for the full measurement). The marginal NIGHTLY delete volume this prune
+ * cron now needs to clear is therefore ~1 day's production sliding out of
+ * the 10-day window, ~788K rows, not the old design's ~315K. Both
+ * `deleteMany` calls below were previously UNBATCHED — one single
+ * transaction covering however many rows had aged out. At the new volume
+ * that's a meaningfully bigger single delete than this route was designed
+ * against, so both are now chunked (`deleteInChunks`, `PRUNE_CHUNK_SIZE`
+ * rows per `DELETE`, looped until nothing left) — each chunk is its own
+ * short transaction rather than one that could hold locks / grow the WAL
+ * for however long a ~788K-row delete takes on Neon. `PRUNE_CHUNK_SIZE`
+ * (25,000) is arbitrary-but-reasonable: ~32 chunks to clear a full day's
+ * fine-grained volume, each individually fast, well inside this route's own
+ * request timeout.
+ *
  * Recommended cadence — once nightly, at a low-traffic hour:
  *   0 14 * * * curl -s -X POST https://<host>/api/cron/paper-trading-premium-snapshot-prune \
  *       -H "Authorization: Bearer $CRON_SECRET"
@@ -41,13 +60,45 @@
 import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/prisma";
+import type { Prisma } from "@prisma/client";
 
-/** Fine-grained (1-minute, index-track) rows — see module doc. */
+/** Fine-grained (index-track, both the 15s near-tier and 60s far-tier — see premiumCapture.ts) rows. */
 const FINE_GRAINED_RETENTION_DAYS = 10;
 /** Everything else (5-minute stock track + legacy pre-column rows) — unchanged from the original design. */
 const STANDARD_RETENTION_DAYS = 45;
-/** The dividing line between "fine-grained" and "standard" retention — matches premiumCapture.ts's FAST_TRACK_CAPTURE_INTERVAL_SEC exactly (a row captured at <=60s cadence is fine-grained). */
+/** The dividing line between "fine-grained" and "standard" retention — matches premiumCapture.ts's ALWAYS_ON_FAR_CAPTURE_INTERVAL_SEC exactly (a row captured at <=60s cadence is fine-grained). */
 const FINE_GRAINED_MAX_INTERVAL_SEC = 60;
+/** Rows deleted per DELETE statement (see module doc's 2026-08-11 section) — each chunk is its own short-lived transaction rather than one unbounded delete covering a full day's ~788K-row fine-grained volume. */
+const PRUNE_CHUNK_SIZE = 25_000;
+/** Safety bound on chunk-loop iterations — 400 chunks x PRUNE_CHUNK_SIZE = 10,000,000 rows, comfortably above any volume this table should ever accumulate past retention in one night (a healthy nightly run clears ~1 day's production, ~32 chunks at current volume). Exists purely so a pathological runaway (retention job broken for weeks) can't loop unbounded inside one request. */
+const PRUNE_MAX_CHUNKS = 400;
+
+/**
+ * Deletes rows matching `where` in `PRUNE_CHUNK_SIZE`-row batches (via
+ * `findMany` id-select + `deleteMany({ id: { in } })`, the same
+ * Prisma-portable pattern used elsewhere in this codebase for bounded bulk
+ * deletes — no raw SQL / ctid tricks needed). Loops until a chunk comes back
+ * empty or `PRUNE_MAX_CHUNKS` is hit. Returns the total rows deleted.
+ */
+async function deleteInChunks(where: Prisma.OptionPremiumSnapshotWhereInput): Promise<number> {
+  let totalDeleted = 0;
+  for (let i = 0; i < PRUNE_MAX_CHUNKS; i++) {
+    const idsToDelete = await prisma.optionPremiumSnapshot.findMany({
+      where,
+      select: { id: true },
+      take: PRUNE_CHUNK_SIZE
+    });
+    if (idsToDelete.length === 0) break;
+
+    const { count } = await prisma.optionPremiumSnapshot.deleteMany({
+      where: { id: { in: idsToDelete.map((r) => r.id) } }
+    });
+    totalDeleted += count;
+
+    if (idsToDelete.length < PRUNE_CHUNK_SIZE) break; // last (partial) chunk — no more rows past this point
+  }
+  return totalDeleted;
+}
 
 function hasCronAccess(request: Request): boolean {
   const secret = process.env.CRON_SECRET;
@@ -71,20 +122,16 @@ async function run(request: Request) {
     const standardCutoff = daysAgo(STANDARD_RETENTION_DAYS);
 
     const [fineGrainedDeleted, standardDeleted] = await Promise.all([
-      prisma.optionPremiumSnapshot.deleteMany({
-        where: { captureIntervalSec: { lte: FINE_GRAINED_MAX_INTERVAL_SEC }, capturedAt: { lt: fineGrainedCutoff } }
-      }),
-      prisma.optionPremiumSnapshot.deleteMany({
-        where: { captureIntervalSec: { gt: FINE_GRAINED_MAX_INTERVAL_SEC }, capturedAt: { lt: standardCutoff } }
-      })
+      deleteInChunks({ captureIntervalSec: { lte: FINE_GRAINED_MAX_INTERVAL_SEC }, capturedAt: { lt: fineGrainedCutoff } }),
+      deleteInChunks({ captureIntervalSec: { gt: FINE_GRAINED_MAX_INTERVAL_SEC }, capturedAt: { lt: standardCutoff } })
     ]);
 
     return NextResponse.json({
       ok: true,
-      deletedCount: fineGrainedDeleted.count + standardDeleted.count,
-      fineGrainedDeleted: fineGrainedDeleted.count,
+      deletedCount: fineGrainedDeleted + standardDeleted,
+      fineGrainedDeleted,
       fineGrainedCutoff: fineGrainedCutoff.toISOString(),
-      standardDeleted: standardDeleted.count,
+      standardDeleted,
       standardCutoff: standardCutoff.toISOString()
     });
   } catch (err) {
