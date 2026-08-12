@@ -402,3 +402,37 @@ export async function getEtfSymbolSet(): Promise<Set<string>> {
   const { bySymbol } = await getCache();
   return new Set(bySymbol.keys());
 }
+
+/**
+ * Founder 2026-08-12: "funds do not have their original names, only ticker
+ * names — make them searchable using their names." StockEodQuote's
+ * companyName for an ETF is just the ticker duplicated (bhavcopy carries no
+ * real fund name), so name queries can never match through the equity
+ * fuzzy path. This searches the registry's OWN securityName/underlying
+ * ("Nippon India ETF Nifty 50 BeES", "NIFTY 50") so real-name and
+ * underlying-name queries surface funds.
+ */
+export async function searchEtfRegistryByName(q: string, limit = 12): Promise<EtfRegistryEntry[]> {
+  const needle = q.trim().toUpperCase();
+  if (!needle) return [];
+  const { bySymbol } = await getCache();
+  const hits: EtfRegistryEntry[] = [];
+  for (const entry of bySymbol.values()) {
+    if (
+      entry.securityName.toUpperCase().includes(needle) ||
+      entry.underlyingRaw.toUpperCase().includes(needle) ||
+      (entry.trackedIndexName ?? "").toUpperCase().includes(needle) ||
+      entry.symbol.toUpperCase().includes(needle)
+    ) {
+      hits.push(entry);
+      if (hits.length >= limit) break;
+    }
+  }
+  return hits;
+}
+
+/** symbol -> real fund name (registry securityName), for labeling fund results wherever StockEodQuote's ticker-as-name would otherwise show. */
+export async function getEtfNameMap(): Promise<Map<string, string>> {
+  const { bySymbol } = await getCache();
+  return new Map([...bySymbol.values()].map((e) => [e.symbol, e.securityName]));
+}

@@ -5,7 +5,7 @@ import { deriveIndexSymbol } from "@predict-future/business-rules/finance/indexU
 import { prisma } from "@/lib/prisma";
 import { fetchAllIndices } from "@/lib/finance/indices";
 import { INDEX_SLUG_TO_TRADABLE_UNDERLYING } from "@/lib/finance/indexTradableAlias";
-import { getEtfSymbolSet } from "@/lib/finance/etfRegistry";
+import { getEtfNameMap, getEtfSymbolSet, searchEtfRegistryByName } from "@/lib/finance/etfRegistry";
 import { isTradableOptionUnderlyingServer } from "@/lib/paperTrading/fnoUniverseServer";
 import { isFuturesTradingEnabled, isOptionsTradingEnabled } from "@/lib/paperTrading/featureFlags";
 
@@ -151,10 +151,13 @@ async function buildDefaults(): Promise<NextResponse> {
     })),
   ];
 
+  // Founder 2026-08-12: fund results display their REAL registry names —
+  // StockEodQuote.companyName for an ETF is the ticker duplicated.
+  const etfNames = await getEtfNameMap();
   const fundResults: SearchResultItem[] = topFunds.map((r) => ({
     href: `/instruments/${r.symbol}`,
     label: r.symbol,
-    sublabel: r.companyName,
+    sublabel: etfNames.get(r.symbol.toUpperCase()) ?? r.companyName,
     category: "fund" as const,
   }));
 
@@ -293,15 +296,32 @@ export async function GET(request: Request) {
     .filter((r) => !etfSymbols.has(r.symbol.toUpperCase()))
     .slice(0, MAX_PER_CATEGORY)
     .map((r) => ({ href: `/instruments/${r.symbol}`, label: r.symbol, sublabel: r.companyName, category: "stock" as const }));
-  const fundResults: SearchResultItem[] = orderedEquityRows
-    .filter((r) => etfSymbols.has(r.symbol.toUpperCase()))
+  // Founder 2026-08-12: funds must be searchable by their REAL names, and
+  // display them. StockEodQuote.companyName for an ETF is the ticker
+  // duplicated (bhavcopy has no fund names), so (a) name-matched registry
+  // entries are merged in as additional candidates the equity fuzzy query
+  // could never find ("nippon", "bees", an underlying's name), and (b) every
+  // fund result's sublabel prefers the registry securityName.
+  const [etfNameMatches, etfNames] = await Promise.all([searchEtfRegistryByName(q), getEtfNameMap()]);
+  const fuzzyFundRows = orderedEquityRows.filter((r) => etfSymbols.has(r.symbol.toUpperCase()));
+  const fuzzyFundSymbols = new Set(fuzzyFundRows.map((r) => r.symbol.toUpperCase()));
+  const nameOnlyFundRows = etfNameMatches
+    .filter((e) => !fuzzyFundSymbols.has(e.symbol))
+    .map((e) => ({ symbol: e.symbol, companyName: e.securityName, volume: 0 }));
+  const fundResults: SearchResultItem[] = [...fuzzyFundRows, ...nameOnlyFundRows]
     // ETF Layer (2026-08-12) — re-rank by liquidity (see fuzzyRows' own
     // comment): a broad query can alphabetically match 30+ ETFs, and the
     // well-known, heavily-traded fund should surface over a thin one that
-    // merely sorts earlier by name.
+    // merely sorts earlier by name. Name-only registry matches carry no
+    // same-session volume (volume 0) and so rank after ticker matches.
     .sort((a, b) => b.volume - a.volume)
     .slice(0, MAX_PER_CATEGORY)
-    .map((r) => ({ href: `/instruments/${r.symbol}`, label: r.symbol, sublabel: r.companyName, category: "fund" as const }));
+    .map((r) => ({
+      href: `/instruments/${r.symbol}`,
+      label: r.symbol,
+      sublabel: etfNames.get(r.symbol.toUpperCase()) ?? r.companyName,
+      category: "fund" as const,
+    }));
 
   // ── Options: direct chain links for F&O-eligible matches ──────────────────
   const optionCandidateSymbols = [
