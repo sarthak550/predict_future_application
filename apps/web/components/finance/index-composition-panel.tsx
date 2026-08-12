@@ -20,13 +20,18 @@ import { Card, CardContent } from "@/components/ui/card";
  * dropped — they render with a "—" change cell.
  *
  * WEIGHT COLUMN (2026-08-12 follow-up): when a constituent carries
- * `weightPct` (indexLiveWatch.ts's live free-float-mcap-share estimate — see
- * that file's module doc), this panel shows a "Wt." column and a "Top
- * weight" header callout for the single largest constituent. Labeled as an
- * ESTIMATE, never asserted to be NSE's own official (possibly capped)
- * published weight — the source CSVs still carry no weight column of their
- * own, and a plain-CSV index with no live-watch mapping renders exactly as
- * before (no Wt. column at all, `weightPct` all null).
+ * `weightPct`, this panel shows a "Wt." column and a "Top weight" header
+ * callout for the single largest constituent. Two sources feed this, and the
+ * callout's caveat text is source-aware via `weightIsEstimate`:
+ *   - NSE (`indexLiveWatch.ts`): a live free-float-mcap-share ESTIMATE — NSE
+ *     applies capping factors on top that this payload doesn't carry, so it's
+ *     labeled as an estimate, never asserted to be NSE's own official weight.
+ *   - BSE (`bseIndexConstituents.ts`, added 2026-08-12): BSE's OWN published
+ *     `Weightage` field from its live IndicesWatch feed — the real final
+ *     number, not derived by us, so no estimate caveat is shown.
+ * A plain-CSV index with no live-watch mapping (either exchange) renders
+ * exactly as before this feature existed (no Wt. column at all, `weightPct`
+ * all null).
  */
 
 function formatRupees(value: number): string {
@@ -40,8 +45,10 @@ export type IndexCompositionConstituent = {
   industry: string | null;
   close: number | null;
   changePercent: number | null;
-  /** Live free-float-mcap-share weight estimate (0-100), or undefined/null when unavailable — see this file's module doc. Optional so existing callers (a plain IndexConstituentQuoteRow with no weight field) keep compiling unchanged. */
+  /** Index weight (0-100) from either exchange's live source, or undefined/null when unavailable — see this file's module doc. Optional so existing callers (a plain IndexConstituentQuoteRow with no weight field) keep compiling unchanged. */
   weightPct?: number | null;
+  /** True for NSE's ffmc-share estimate, false for BSE's own published Weightage — governs which caveat (or none) the "Top weight" callout shows. See this file's module doc. */
+  weightIsEstimate?: boolean;
 };
 
 export type IndexCompositionPanelProps = {
@@ -90,7 +97,11 @@ export function IndexCompositionPanel({ constituents, advances, declines }: Inde
           <p className="mb-3 text-xs text-ink-500">
             Top weight: <span className="font-semibold text-ink-700">{topWeight.symbol}</span> ·{" "}
             {topWeight.weightPct.toFixed(1)}%{" "}
-            <span className="text-ink-300">(free-float mcap share, estimate — not NSE&apos;s published weight)</span>
+            <span className="text-ink-300">
+              {topWeight.weightIsEstimate === false
+                ? "(BSE’s own published index weight)"
+                : "(free-float mcap share, estimate — not NSE’s published weight)"}
+            </span>
           </p>
         )}
 

@@ -153,8 +153,10 @@ export interface IndexConstituentQuoteRow {
   industry: string | null;
   close: number | null;
   changePercent: number | null;
-  /** Free-float mcap share from NSE's live index watch (indexLiveWatch.ts) — an ESTIMATE of index weight (NSE's published weights apply capping factors we don't have); null when the live watch doesn't cover this index, and always null for a BSE index (no honest per-stock weight source found — see bseIndexConstituents.ts's module doc). */
+  /** For an NSE index: free-float mcap share from NSE's live index watch (indexLiveWatch.ts) — an ESTIMATE (NSE's published weights apply capping factors we don't have). For a BSE index: BSE's own published `Weightage` from bseIndexConstituents.ts's live weight feed — NOT an estimate, BSE's own final number. Null when neither source covers this index/constituent. See `weightIsEstimate` to distinguish the two when rendering a caveat. */
   weightPct: number | null;
+  /** True when `weightPct` is an estimate (the NSE branch, always true there when weightPct is non-null); false when it's a source-published weight (the BSE branch). Undefined/irrelevant when weightPct is null. */
+  weightIsEstimate?: boolean;
 }
 
 export interface InstrumentDetail {
@@ -947,6 +949,7 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
         close: q?.close ?? null,
         changePercent: q?.changePercent ?? null,
         weightPct: c.weightPct ?? null,
+        weightIsEstimate: c.weightPct != null ? true : undefined,
       };
     });
     // Design call (founder addendum, 2026-08-12): "change-ordered beats
@@ -987,6 +990,7 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
         close: q?.close ?? null,
         changePercent: q?.changePercent ?? null,
         weightPct: c.weightPct,
+        weightIsEstimate: c.weightPct != null ? false : undefined,
       };
     });
     const ranked = joined

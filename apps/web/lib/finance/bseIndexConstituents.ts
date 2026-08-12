@@ -66,15 +66,64 @@
  * honest-default discipline `indexConstituents.ts` already established for
  * NSE's own gaps.
  *
- * WEIGHTS: NOT carried by this endpoint (SCRIP_CODE/SCRIPNAME/Industry_name
- * only, no mcap/weight field) or by any other live BSE/Asia Index endpoint
- * checked this pass (`MarketCap/w` is index-level aggregate only; `IndexContri/w`
- * is a today's-price-move point-contribution ranking capped at ~15 rows, not
- * a stable weight, and would be actively misleading labeled as one;
- * `AsiaIndexDescriptionnew/w` carries only prose methodology text). Per this
- * codebase's "never fabricate weights" law, every BSE constituent row here
- * has `weightPct: null` — the panel already renders a no-weight index
- * exactly like a plain-CSV NSE index with no live-watch mapping.
+ * WEIGHTS (found in a follow-up pass, 2026-08-12, after the founder flagged
+ * "the BSE composition misses weights"): Asia Index's own endpoints
+ * (`Codewise_Indices`, `MarketCap/w`, `AsiaIndexDescriptionnew/w`) carry no
+ * per-stock weight field — that finding from the first pass stands. But
+ * BSE's OWN site, `www.bseindia.com` (a SEPARATE host from bseindices.com,
+ * already used keyless by `apps/api/lib/marketMoves/bse.ts`), publishes a
+ * live per-constituent weight page at
+ * `bseindia.com/sensex/IndicesWatch_Weight.aspx?iname=<code>&index_Code=<n>`
+ * — traced with the same headless-Chrome network-capture method, its Angular
+ * shell calls `GET https://api.bseindia.com/BseIndiaAPI/api/
+ * NS_IndexWeight_SPDJ_ng/w?iname=<Indx_Cd>`, returning one row per
+ * constituent with `Scrip_code`/`Scrip_Name`/`No_of_shrs`/`close_price`/
+ * `Adj_Factor`/`MKT_CAP`/`FreeFloat_MktCap`/**`Weightage`** — BSE's OWN
+ * field, literally named "Weightage", not a value we derive. Verified live
+ * 2026-08-12: SENSEX's 30 rows sum to 100.02% (rounding), BSE 100's 100 rows
+ * and BSE 500's 501 rows both match their Asia Index `SCRIP_CODE` sets
+ * EXACTLY (100/100 and 501/501 overlap, zero misses) — this is the real
+ * published weight, not an ffmc-share estimate (unlike NSE's
+ * `indexLiveWatch.ts`, which has to caveat its number as an estimate because
+ * NSE's own capping factors aren't in that payload — BSE's `Weightage` here
+ * needs no such caveat since it's BSE's own final number).
+ *
+ * COVERAGE: this lives on a DIFFERENT, smaller numeric-code universe than
+ * Asia Index's 133/133 — `Indx_Cd` only exists on bseindia.com's legacy
+ * `GetLinknew/w?Type=C&Category=Indices&Code=<n>` endpoint for indices that
+ * predate Asia Index's newer factor/strategy launches. Every one of the 133
+ * codes was probed live 2026-08-12: 77 resolved a real `Indx_Cd` AND a
+ * non-empty, ~100%-summing weight table (hand-verified below in
+ * `BSE_INDEX_WEIGHT_NAME`); the other 56 (mostly newer factor/quality/
+ * momentum/value strategy indices, the 3 DOLLEX USD variants — which
+ * resolved an `Indx_Cd` but returned zero weight rows, a genuine gap not a
+ * mapping bug — and every fixed-income/inverse/leverage index already
+ * excluded from `BSE_INDEX_CODE`'s constituent side) have NO honest weight
+ * source and keep `weightPct: null`, same "never fabricate" default as
+ * before. `IndexContri/w`, the point-contribution field dismissed by the
+ * first pass, was re-probed this pass at its previously-recorded path and
+ * now 404s — its exact live path wasn't rediscovered (not investigated
+ * further since `NS_IndexWeight_SPDJ_ng` already supersedes it as a
+ * genuine, non-estimate weight).
+ *
+ * TRANSPORT: `api.bseindia.com` — the SAME keyless host+pattern
+ * `apps/api/lib/marketMoves/bse.ts` already uses (plain `fetch()`, no
+ * cookie/session priming, standard UA + Origin/Referer to
+ * `https://www.bseindia.com/`), verified live with a bare `curl` (no
+ * subprocess dance needed, unlike NSE's Akamai-gated host).
+ *
+ * JOIN KEY: `Scrip_code` on this endpoint is the exact same BSE scrip code
+ * as `Codewise_Indices`'s `SCRIP_CODE` (both plain numeric strings, no
+ * leading-zero/format drift observed) — joined directly on that, NOT on
+ * `SCRIPNAME`, so the 30-char SCRIPNAME truncation this file's symbol
+ * resolver already works around (see `SCRIPNAME_TRUNCATION_LENGTH`) has zero
+ * bearing on the weight join.
+ *
+ * CACHE: 15-minute TTL (`WEIGHT_CACHE_TTL_MS`), far shorter than the 24h
+ * constituent-membership cache above — `Weightage` moves with every
+ * constituent's live price, unlike membership which only changes on a
+ * quarterly/semiannual reconstitution. Mirrors `indexLiveWatch.ts`'s
+ * identical 15-minute choice for NSE's own live weight feed.
  *
  * SYMBOL RESOLUTION / NO DEAD LINKS: many BSE constituents are BSE-only
  * listings with no StockEodQuote row (NSE-only table) — `symbol` is null for
@@ -245,13 +294,108 @@ export const BSE_INDEX_CODE: Record<string, string> = {
   "BSE Utilities": "97",
 };
 
+/**
+ * `BseIndexEodQuote.indexName` -> bseindia.com's own `Indx_Cd` (the `iname`
+ * query param `NS_IndexWeight_SPDJ_ng/w` needs) for every index that endpoint
+ * covers. Built 2026-08-12 by resolving `Indx_Cd` from bseindia.com's legacy
+ * `GetLinknew/w?Type=C&Category=Indices&Code=<n>` (keyed off `BSE_INDEX_CODE`'s
+ * SAME numeric codes above) for all 133 known indices, then live-probing
+ * `NS_IndexWeight_SPDJ_ng/w?iname=<Indx_Cd>` for each resolved code — only
+ * the 77 below returned both a real `Indx_Cd` AND a non-empty weight table
+ * summing to ~100%; see module doc for why the other 56 have none. A future
+ * pass can re-probe the 56 (a bseindia.com backend expansion could add
+ * coverage) but this list should NOT be hand-extended without a live check —
+ * `Indx_Cd` existing does not by itself guarantee a non-empty weight table
+ * (the 3 DOLLEX indices are the proof: they resolve an `Indx_Cd` but return
+ * zero weight rows).
+ */
+export const BSE_INDEX_WEIGHT_NAME: Record<string, string> = {
+  "BSE 100": "BSE100",
+  "BSE 100 ESG Index": "ESG100",
+  "BSE 100 LargeCap TMC Index": "LCTMCI",
+  "BSE 1000": "BS1000",
+  "BSE 150 MidCap Index": "MID150",
+  "BSE 200": "BSE200",
+  "BSE 200 EQUAL WEIGHT INDEX": "200EQW",
+  "BSE 250 LargeMidCap Index": "LMI250",
+  "BSE 250 SmallCap Index": "SML250",
+  "BSE 400 MidSmallCap Index": "MSL400",
+  "BSE 500": "BSE500",
+  "BSE 500 Dividend Leaders 50": "DIVY50",
+  "BSE 500 Momentum 50": "MOME50",
+  "BSE 500 Quality 50": "QUAL50",
+  "BSE AUTO": "AUTO",
+  "BSE BANKEX": "BANKEX",
+  "BSE Bharat 22 Index": "BHRT22",
+  "BSE CAPITAL GOODS": "BSECG",
+  "BSE CAPITAL MARKETS & INSURANCE": "CAPINS",
+  "BSE CONSUMER DURABLES": "BSECD",
+  "BSE CPSE": "CPSE",
+  "BSE Commodities": "COMDTY",
+  "BSE Consumer Discretionary": "CONDIS",
+  "BSE Diversified Financials Revenue Growth Index": "DFRGRI",
+  "BSE Dividend Stability Index": "BSEDSI",
+  "BSE Energy": "ENERGY",
+  "BSE Enhanced Value Index": "BSEEVI",
+  "BSE FOCUSED MIDCAP": "FOCMID",
+  "BSE Fast Moving Consumer Goods": "BSEFMCG",
+  "BSE Financial Services": "FINSER",
+  "BSE Focused IT": "FOCIT",
+  "BSE Healthcare": "BSEHC",
+  "BSE Hospitals": "BSHOSP",
+  "BSE Housing Finance": "BSHFIN",
+  "BSE INDIA SECTOR LEADERS": "INSLDR",
+  "BSE INTERNET ECONOMY": "INTECO",
+  "BSE IPO": "BSEIPO",
+  "BSE India 150": "IND150",
+  "BSE India Defence": "INDDEF",
+  "BSE India Infrastructure Index": "INFRA",
+  "BSE India Manufacturing Index": "MFG",
+  "BSE Industrials": "INDSTR",
+  "BSE Information Technology": "BSEIT",
+  "BSE Insurance": "INSURE",
+  "BSE LargeMid (60:40) Stable Dividend 50": "BLMD50",
+  "BSE Low Volatility Index": "BSELVI",
+  "BSE METAL": "METAL",
+  "BSE MidCap Select Index": "MIDSEL",
+  "BSE MidSmall Private Banks": "BSEMSP",
+  "BSE MidSmall Private Banks Quality Tilt": "BSMSPB",
+  "BSE Midcap 150 Momentum 30": "MMOM30",
+  "BSE Momentum Index": "BSEMOI",
+  "BSE OIL & GAS": "OILGAS",
+  "BSE POWER": "POWER",
+  "BSE POWER & ENERGY": "POWENE",
+  "BSE PREMIUM CONSUMPTION": "PRECON",
+  "BSE PSU": "BSEPSU",
+  "BSE PSU BANK": "PSUBNK",
+  "BSE Private Banks Index": "BSEPBI",
+  "BSE Quality Index": "BSEQUI",
+  "BSE REALTY": "REALTY",
+  "BSE SELECT BUSINESS GROUPS": "BBGEFS",
+  "BSE SELECT IPO": "SELIPO",
+  "BSE SENSEX": "BSE30",
+  "BSE SENSEX 50": "SNSX50",
+  "BSE SENSEX EQUAL WEIGHT": "SENEQW",
+  "BSE SENSEX NEXT 30": "SNXN30",
+  "BSE SENSEX Next 50": "SNXT50",
+  "BSE SENSEX SIXTY": "SNSX60",
+  "BSE SENSEX SIXTY 65:35": "SS6535",
+  "BSE SME IPO": "SMEIPO",
+  "BSE Services": "BSESER",
+  "BSE SmallCap Select Index": "SMLSEL",
+  "BSE TECK": "TECK",
+  "BSE Telecommunication": "TELCOM",
+  "BSE Top 10 Banks": "T10BNK",
+  "BSE Utilities": "UTILS",
+};
+
 export interface BseIndexConstituentRow {
   /** Resolved `/instruments/[symbol]` NSE code, or null when SCRIPNAME has no unambiguous match in our own StockEodQuote (BSE-only listing) — see module doc on "no dead links". */
   symbol: string | null;
   companyName: string;
   industry: string | null;
-  /** Always null — no honest per-stock weight source found for BSE, see module doc. Kept for shape-parity with IndexConstituentRow so instrument.ts can build one shared IndexConstituentQuoteRow either way. */
-  weightPct: null;
+  /** BSE's own published `Weightage` from `NS_IndexWeight_SPDJ_ng` (see module doc) — null when this index has no entry in `BSE_INDEX_WEIGHT_NAME` or the live weight fetch failed/didn't cover this specific constituent. NOT an estimate (unlike NSE's `indexLiveWatch.ts` ffmc-share number) — this is BSE's own final weight. */
+  weightPct: number | null;
 }
 
 /** Cheap sync check — true whenever this BSE index name has a verified Asia Index code, regardless of whether that code's constituent fetch has been attempted yet (a genuinely-empty code, e.g. "BSE 250 LARGEMIDCAP 65:35 INDEX", is only discovered on fetch — see module doc). */
@@ -357,16 +501,16 @@ interface CodewiseIndicesResponse {
   Table?: CodewiseIndicesRow[];
 }
 
-const constituentCache = new Map<string, { at: number; rows: BseIndexConstituentRow[] | null }>();
+const constituentCache = new Map<string, { at: number; rows: BaseConstituentRow[] | null }>();
 
-async function fetchAsiaIndexApi(path: string): Promise<unknown | null> {
+async function fetchJson(baseUrl: string, path: string, headers: Record<string, string>): Promise<unknown | null> {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     let res: Response;
     try {
-      res = await fetch(`${ASIA_INDEX_API_BASE}${path}`, {
-        headers: ASIA_INDEX_HEADERS,
+      res = await fetch(`${baseUrl}${path}`, {
+        headers,
         cache: "no-store",
         signal: controller.signal,
       });
@@ -380,14 +524,89 @@ async function fetchAsiaIndexApi(path: string): Promise<unknown | null> {
   }
 }
 
+async function fetchAsiaIndexApi(path: string): Promise<unknown | null> {
+  return fetchJson(ASIA_INDEX_API_BASE, path, ASIA_INDEX_HEADERS);
+}
+
+// ─── Live per-constituent weight (bseindia.com, NOT bseindices.com — see module doc) ───
+
+const BSE_INDIA_API_BASE = "https://api.bseindia.com/BseIndiaAPI/api";
+
+const BSE_INDIA_HEADERS = {
+  "User-Agent": BROWSER_UA,
+  Accept: "application/json, text/plain, */*",
+  Origin: "https://www.bseindia.com",
+  Referer: "https://www.bseindia.com/",
+};
+
+/** Real published weight is refreshed live all session — 15-minute TTL, matching indexLiveWatch.ts's identical choice for the analogous NSE feed (far shorter than constituentCache's 24h membership TTL above). */
+const WEIGHT_CACHE_TTL_MS = 15 * 60 * 1000;
+
+interface IndexWeightRow {
+  Scrip_code?: string | number | null;
+  Weightage?: number | null;
+}
+
+interface IndexWeightResponse {
+  Table?: IndexWeightRow[];
+}
+
+const weightCache = new Map<string, { at: number; weights: Map<string, number> | null }>();
+
+/**
+ * Live per-constituent BSE-published weight (`Weightage`), keyed by BSE scrip
+ * code (matches `Codewise_Indices`'s `SCRIP_CODE` exactly — see module doc).
+ * Returns null when this index isn't in `BSE_INDEX_WEIGHT_NAME` or the live
+ * fetch fails/returns no rows. Never throws.
+ */
+async function fetchBseIndexWeights(bseIndexName: string): Promise<Map<string, number> | null> {
+  const iname = BSE_INDEX_WEIGHT_NAME[bseIndexName];
+  if (!iname) return null;
+
+  const now = Date.now();
+  const cached = weightCache.get(iname);
+  if (cached && now - cached.at < WEIGHT_CACHE_TTL_MS) return cached.weights;
+
+  const raw = (await fetchJson(
+    BSE_INDIA_API_BASE,
+    `/NS_IndexWeight_SPDJ_ng/w?iname=${encodeURIComponent(iname)}`,
+    BSE_INDIA_HEADERS,
+  )) as IndexWeightResponse | null;
+  if (!raw) return cached?.weights ?? null;
+
+  const table = raw.Table ?? [];
+  const weights = new Map<string, number>();
+  for (const r of table) {
+    if (r.Scrip_code == null || r.Weightage == null) continue;
+    weights.set(String(r.Scrip_code).trim(), r.Weightage);
+  }
+  if (weights.size === 0) return cached?.weights ?? null;
+
+  weightCache.set(iname, { at: now, weights });
+  return weights;
+}
+
+/** Membership row shape cached for 24h — deliberately WITHOUT weightPct, which needs its own much-shorter TTL (see fetchBseIndexConstituents's doc on why the two are cached separately rather than one merged 24h-cached array). */
+interface BaseConstituentRow {
+  scripCode: string;
+  symbol: string | null;
+  companyName: string;
+  industry: string | null;
+}
+
 /**
  * Returns this BSE index's constituent list (member stocks resolved against
  * our own StockEodQuote where possible), or null when this index has no
  * verified code, the live fetch fails, or the code returned zero rows (e.g.
- * "BSE 250 LARGEMIDCAP 65:35 INDEX" — see module doc). 24h in-module cache
- * with stale-serve on a failed refetch, mirroring indexConstituents.ts's CSV
+ * "BSE 250 LARGEMIDCAP 65:35 INDEX" — see module doc). Membership (symbol/
+ * companyName/industry) is cached 24h, mirroring indexConstituents.ts's CSV
  * cache — BSE index membership rebalances at most quarterly, far slower than
- * this TTL. Never throws.
+ * this TTL. `weightPct` is deliberately NOT part of that 24h cache: it's
+ * merged in on EVERY call from `fetchBseIndexWeights`'s own independent
+ * 15-minute-TTL cache, so a page view 2 hours into the 24h membership-cache
+ * window still gets a weight no more than 15 minutes stale — caching the two
+ * together at 24h would have silently frozen weights for a full day. Never
+ * throws.
  */
 export async function fetchBseIndexConstituents(bseIndexName: string): Promise<BseIndexConstituentRow[] | null> {
   const code = BSE_INDEX_CODE[bseIndexName];
@@ -395,43 +614,66 @@ export async function fetchBseIndexConstituents(bseIndexName: string): Promise<B
 
   const now = Date.now();
   const cached = constituentCache.get(code);
-  if (cached && now - cached.at < CACHE_TTL_MS) return cached.rows;
+  const haveFreshBase = !!cached && now - cached.at < CACHE_TTL_MS;
 
-  const raw = (await fetchAsiaIndexApi(`/Codewise_Indices/w?code=${code}`)) as CodewiseIndicesResponse | null;
-  if (!raw) return cached?.rows ?? null;
+  // Membership and live weight table are fully independent live fetches
+  // (different hosts, different code spaces, different TTLs — see module
+  // doc) — run concurrently rather than sequentially awaited whenever both
+  // are needed, same latency-parity reasoning instrument.ts's own
+  // Promise.all already applies one level up. Weight is always (re)fetched
+  // regardless of the membership-cache state; membership is skipped when
+  // still fresh.
+  const [raw, weights] = await Promise.all([
+    haveFreshBase
+      ? Promise.resolve(null)
+      : (fetchAsiaIndexApi(`/Codewise_Indices/w?code=${code}`) as Promise<CodewiseIndicesResponse | null>),
+    fetchBseIndexWeights(bseIndexName),
+  ]);
 
-  const table = raw.Table ?? [];
-  if (table.length === 0) {
-    // A genuinely empty code (verified live 2026-08-12, see module doc) is a
-    // real, stable finding — cache it as null so future requests don't
-    // re-fetch every time, but never overwrite a previously-successful
-    // stale-serve with an empty result (a transient backend hiccup should
-    // fall back to last-known-good, not blank the panel).
-    if (cached?.rows) return cached.rows;
-    constituentCache.set(code, { at: now, rows: null });
-    return null;
+  let base: BaseConstituentRow[] | null;
+  if (haveFreshBase) {
+    base = cached!.rows;
+  } else if (!raw) {
+    base = cached?.rows ?? null;
+  } else {
+    const table = raw.Table ?? [];
+    if (table.length === 0) {
+      // A genuinely empty code (verified live 2026-08-12, see module doc) is
+      // a real, stable finding — cache it as null so future requests don't
+      // re-fetch every time, but never overwrite a previously-successful
+      // stale-serve with an empty result (a transient backend hiccup should
+      // fall back to last-known-good, not blank the panel).
+      base = cached?.rows ?? null;
+      if (!cached?.rows) constituentCache.set(code, { at: now, rows: null });
+    } else {
+      const nameMap = await getNameIndex();
+      const seen = new Set<string>();
+      const built: BaseConstituentRow[] = [];
+      for (const r of table) {
+        const scripName = r.SCRIPNAME?.trim();
+        if (!scripName) continue;
+        const scripCode = String(r.SCRIP_CODE ?? scripName);
+        if (seen.has(scripCode)) continue;
+        seen.add(scripCode);
+
+        const resolved = resolveScripName(scripName, nameMap);
+        built.push({
+          scripCode,
+          symbol: resolved?.symbol ?? null,
+          companyName: resolved?.companyName ?? titleCaseCompanyName(scripName),
+          industry: r.Industry_name?.trim() || null,
+        });
+      }
+      base = built.length > 0 ? built : (cached?.rows ?? null);
+      if (built.length > 0) constituentCache.set(code, { at: now, rows: built });
+    }
   }
 
-  const nameMap = await getNameIndex();
-  const seen = new Set<string>();
-  const rows: BseIndexConstituentRow[] = [];
-  for (const r of table) {
-    const scripName = r.SCRIPNAME?.trim();
-    if (!scripName) continue;
-    const dedupeKey = String(r.SCRIP_CODE ?? scripName);
-    if (seen.has(dedupeKey)) continue;
-    seen.add(dedupeKey);
-
-    const resolved = resolveScripName(scripName, nameMap);
-    rows.push({
-      symbol: resolved?.symbol ?? null,
-      companyName: resolved?.companyName ?? titleCaseCompanyName(scripName),
-      industry: r.Industry_name?.trim() || null,
-      weightPct: null,
-    });
-  }
-
-  if (rows.length === 0) return cached?.rows ?? null;
-  constituentCache.set(code, { at: now, rows });
-  return rows;
+  if (!base) return null;
+  return base.map((b) => ({
+    symbol: b.symbol,
+    companyName: b.companyName,
+    industry: b.industry,
+    weightPct: weights?.get(b.scripCode) ?? null,
+  }));
 }
