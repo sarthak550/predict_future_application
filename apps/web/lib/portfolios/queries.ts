@@ -13,6 +13,7 @@ import { deriveCash, deriveHoldings, valuePortfolio } from "@predict-future/busi
 import { isEligibleForPublicRanking } from "@predict-future/business-rules/portfolios/eligibility";
 
 import { getPortfolioOwnerUserLabel } from "@/lib/portfolios/displayName";
+import { getEtfNameMap, searchEtfRegistryByName } from "@/lib/finance/etfRegistry";
 import { prisma } from "@/lib/prisma";
 
 const EXECUTED_TX_SELECT = {
@@ -488,14 +489,35 @@ export async function searchSymbols(query: string, limit = 20): Promise<SymbolSe
   });
   if (!latestSession) return [];
 
+  // Founder 2026-08-12: ETFs must be findable by their real fund NAMES here
+  // too, not just tickers — StockEodQuote.companyName for an ETF is the
+  // ticker duplicated (bhavcopy carries no fund names), so a name query
+  // ("nippon", "bees", the tracked index's name) could never match through
+  // this table alone. Registry name-matches are merged in as extra symbol
+  // candidates, and matched ETFs get the registry's real securityName as
+  // their display companyName. Same treatment the public
+  // /api/instruments/search got (see that route's fund-category comment).
+  const [nameMatchedEtfs, etfNames] = await Promise.all([
+    searchEtfRegistryByName(trimmed, limit),
+    getEtfNameMap()
+  ]);
+
   const rows = await prisma.stockEodQuote.findMany({
     where: {
       sessionDate: latestSession.sessionDate,
-      OR: [{ symbol: { startsWith: trimmed.toUpperCase() } }, { companyName: { contains: trimmed, mode: "insensitive" } }]
+      OR: [
+        { symbol: { startsWith: trimmed.toUpperCase() } },
+        { companyName: { contains: trimmed, mode: "insensitive" } },
+        ...(nameMatchedEtfs.length > 0 ? [{ symbol: { in: nameMatchedEtfs.map((e) => e.symbol) } }] : [])
+      ]
     },
     select: { symbol: true, companyName: true, close: true, sessionDate: true },
     orderBy: { symbol: "asc" },
     take: limit
   });
-  return rows;
+  return rows.map((r) =>
+    etfNames.has(r.symbol.toUpperCase()) && r.companyName === r.symbol
+      ? { ...r, companyName: etfNames.get(r.symbol.toUpperCase())! }
+      : r
+  );
 }
