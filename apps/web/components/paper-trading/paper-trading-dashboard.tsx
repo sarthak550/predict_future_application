@@ -752,6 +752,35 @@ export function PaperTradingDashboard() {
     router.push(`/paper-trading/futures?underlying=${encodeURIComponent(pick.symbol)}&workbench=1`);
   }
 
+  /**
+   * Index Universe SPRINT B follow-up (2026-08-12b) — the docked/compact
+   * search rendered directly under the equity terminal's chart
+   * (`PaperTradingSymbolSearchInput`'s new `includeIndices` mode) picks an
+   * index through here, NOT through `handleWorkbenchSymbolPick` above: that
+   * function assumes the maximized workbench is already the thing rendering
+   * (it only ever fires from `ChartWorkbench`'s own `onSymbolPick`), so its
+   * view-only branch just calls `setFocusedIndexSymbol` and trusts an
+   * already-open workbench to pick the new `workbenchFeed` up. The docked
+   * search can fire with the workbench CLOSED (it's the box directly under
+   * the compact chart, and also the "search a symbol to start trading" empty
+   * state) — the compact `PriceChart` slot has no index-chart home of its
+   * own (`focusedIndexSymbol`'s own doc: StockEodQuote-backed, deliberately
+   * not retrofitted), so a view-only pick here also force-opens the
+   * maximized workbench, which DOES already know how to chart
+   * `feed:{kind:"index"}` honestly. A tradable index pick (one of the 5 F&O
+   * underlyings) has no order surface on this equity terminal either way, so
+   * it navigates to the futures terminal — byte-identical to
+   * `handleWorkbenchSymbolPick`'s own tradable branch.
+   */
+  function handleDockedIndexPick(pick: SymbolPick) {
+    if (pick.tradable === false) {
+      setFocusedIndexSymbol(pick.symbol);
+      setWorkbenchOpen(true);
+      return;
+    }
+    router.push(`/paper-trading/futures?underlying=${encodeURIComponent(pick.symbol)}&workbench=1`);
+  }
+
   if (state === "loading") {
     return (
       <Card>
@@ -1005,6 +1034,8 @@ export function PaperTradingDashboard() {
                 <PaperTradingSymbolSearchInput
                   value=""
                   onSelect={(opt: PaperSymbolOption) => setFocusedSymbol(opt.symbol)}
+                  includeIndices
+                  onSelectIndex={handleDockedIndexPick}
                 />
               </div>
             </div>
@@ -1012,7 +1043,12 @@ export function PaperTradingDashboard() {
             <div className="space-y-3">
               <p className="text-sm text-ink-500">Search a symbol to start trading.</p>
               <div className="max-w-xs">
-                <PaperTradingSymbolSearchInput value="" onSelect={(opt: PaperSymbolOption) => setFocusedSymbol(opt.symbol)} />
+                <PaperTradingSymbolSearchInput
+                  value=""
+                  onSelect={(opt: PaperSymbolOption) => setFocusedSymbol(opt.symbol)}
+                  includeIndices
+                  onSelectIndex={handleDockedIndexPick}
+                />
               </div>
             </div>
           )

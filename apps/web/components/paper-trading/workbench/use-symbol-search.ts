@@ -194,30 +194,51 @@ export function useSymbolSearch(query: string): {
 
   // Index Universe SPRINT B (2026-08-12) — tradable underlyings still lead
   // (unchanged ranking/behavior for the 5 existing rows — B3 regression),
-  // then view-only matches fill the remaining slots. A query like "nifty it"
-  // matches zero tradable underlyings and surfaces entirely from the
-  // view-only set; a broad query like "nifty" still shows the 5 tradable
-  // ones first. Each group capped independently at MAX_RESULTS_PER_GROUP so
-  // a broad view-only match (e.g. "nifty") can't crowd out the tradable
-  // five, then the combined list is capped at MAX_RESULTS_PER_GROUP so the
-  // popover never grows past its established size for a narrow query.
-  const upperTrimmed = trimmed.toUpperCase();
-  const tradableIndexMatches: SymbolSearchEntry[] =
-    trimmed.length === 0
-      ? []
-      : INDEX_OPTION_UNDERLYINGS.filter((sym) => sym.includes(upperTrimmed) || INDEX_DISPLAY_NAMES[sym].toUpperCase().includes(upperTrimmed))
-          .slice(0, MAX_RESULTS_PER_GROUP)
-          .map((sym) => ({ symbol: sym, label: INDEX_DISPLAY_NAMES[sym], tradable: true as const }));
-  const viewOnlyIndexMatches: SymbolSearchEntry[] =
-    trimmed.length === 0
-      ? []
-      : VIEW_ONLY_INDEX_ENTRIES.filter((e) => e.symbol.includes(upperTrimmed) || e.label.toUpperCase().includes(upperTrimmed)).slice(
-          0,
-          MAX_RESULTS_PER_GROUP
-        );
+  // then view-only matches fill the remaining slots. See `matchIndexEntries`
+  // below for the full reasoning (extracted 2026-08-12b so the paper-trading
+  // dashboard's docked search can share the exact same matching logic — see
+  // that extraction's own doc on `matchIndexEntries`).
+  const { tradableIndexMatches, viewOnlyIndexMatches } = matchIndexEntries(trimmed);
   const indexResults: SymbolSearchEntry[] = [...tradableIndexMatches, ...viewOnlyIndexMatches].slice(0, MAX_RESULTS_PER_GROUP);
 
   return { indexResults, stockResults, fnoSymbols, loading };
+}
+
+/**
+ * Index Universe SPRINT B follow-up (2026-08-12b) — extracted from this
+ * hook's own inline computation (previously duplicated verbatim, unwired,
+ * into `symbol-search-input.tsx`'s equity dashboard). Founder report: "the
+ * maximized workbench's popover finds indices, but the docked/compact
+ * search under the equity chart still doesn't" — that surface needed the
+ * SAME tradable-then-view-only index matching this hook already does, and a
+ * second hand-copy would silently drift the day either registry changes
+ * (e.g. a BSE index added). A pure function, no hook state, so a
+ * non-debounced caller (the docked search recomputes it on every keystroke,
+ * same as this hook's own inline `useSymbolSearch` body already did — it's
+ * cheap client-side filtering over two small static arrays, never a fetch)
+ * can call it directly.
+ *
+ * Each group capped independently at MAX_RESULTS_PER_GROUP so a broad
+ * view-only match (e.g. "nifty") can't crowd out the tradable five; the
+ * CALLER is responsible for combining + re-capping the two groups (this
+ * hook's own body above does `[...tradable, ...viewOnly].slice(0,
+ * MAX_RESULTS_PER_GROUP)` — the docked search does the same).
+ */
+export function matchIndexEntries(trimmed: string): {
+  tradableIndexMatches: SymbolSearchEntry[];
+  viewOnlyIndexMatches: SymbolSearchEntry[];
+} {
+  if (trimmed.length === 0) return { tradableIndexMatches: [], viewOnlyIndexMatches: [] };
+  const upperTrimmed = trimmed.toUpperCase();
+  const tradableIndexMatches: SymbolSearchEntry[] = INDEX_OPTION_UNDERLYINGS.filter(
+    (sym) => sym.includes(upperTrimmed) || INDEX_DISPLAY_NAMES[sym].toUpperCase().includes(upperTrimmed)
+  )
+    .slice(0, MAX_RESULTS_PER_GROUP)
+    .map((sym) => ({ symbol: sym, label: INDEX_DISPLAY_NAMES[sym], tradable: true as const }));
+  const viewOnlyIndexMatches: SymbolSearchEntry[] = VIEW_ONLY_INDEX_ENTRIES.filter(
+    (e) => e.symbol.includes(upperTrimmed) || e.label.toUpperCase().includes(upperTrimmed)
+  ).slice(0, MAX_RESULTS_PER_GROUP);
+  return { tradableIndexMatches, viewOnlyIndexMatches };
 }
 
 /** Last-5 recent picks (localStorage), most-recent-first, shared across ALL terminals (one global MRU — a TradingView-style symbol search remembers recents regardless of which chart you searched from). Never throws — private-mode/storage-disabled callers just see an always-empty recents list. */
