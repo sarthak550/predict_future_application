@@ -55,8 +55,12 @@ export async function generateMetadata({
     alternates: { canonical: url },
     // Indexable once we have a real price quote — a symbol we only know
     // through news/filings/opinions (no bhavcopy row yet) is too thin a page
-    // to submit to search.
-    robots: { index: instrument.quote != null, follow: true },
+    // to submit to search. BSE Expansion Phase 3A (2026-08-12) — a
+    // below-floor BSE-only equity (lib/finance/bseEquity.ts's
+    // MIN_BSE_EQUITY_LIQUIDITY_QTY) is EXPLICITLY noindexed even though it
+    // has a real quote — the brief's own "stored but noindex" rule for the
+    // thinnest tail of this universe.
+    robots: { index: instrument.quote != null && !instrument.belowBseEquityFloor, follow: true },
     openGraph: { title, description, type: "website", url },
     twitter: { card: "summary_large_image", title, description },
   };
@@ -126,7 +130,7 @@ export default async function InstrumentDetailPage({
         intradayEndpoint={hasLiveIndexPipe ? indexIntradayUrl : undefined}
         viewOnlyIndex={viewOnlyIndex}
         isEtf={instrument.isEtf}
-        exchange={instrument.isBseIndex ? "BSE" : "NSE"}
+        exchange={instrument.isBseIndex || instrument.isBseEquity ? "BSE" : "NSE"}
         quote={
           instrument.quote
             ? {
@@ -166,7 +170,15 @@ export default async function InstrumentDetailPage({
             // hasLiveIndexPipe index already avoided this (intradaySource
             // being set alone suppresses the default) — passing `false`
             // here is a no-op for it, explicit and harmless either way.
-            quoteSource={isIndex ? false : undefined}
+            //
+            // BSE Expansion Phase 3A (2026-08-12) — a BSE-only equity is the
+            // SAME EOD-only tier (no live intraday pipe, `intradaySource`
+            // unset) — the default equity poll would hit
+            // `/api/instruments/NSDL.BO/quote` forever for nothing (that
+            // route resolves NSE symbols only), so it must be explicitly
+            // disabled here too, same footgun this comment already warns
+            // about for indices.
+            quoteSource={isIndex || instrument.isBseEquity ? false : undefined}
           />
         </CardContent>
       </Card>

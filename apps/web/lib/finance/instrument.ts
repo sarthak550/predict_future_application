@@ -27,6 +27,7 @@ import { hasIndexConstituentList, fetchIndexConstituents } from "@/lib/finance/i
 import { hasBseIndexConstituents, fetchBseIndexConstituents } from "@/lib/finance/bseIndexConstituents";
 import { getEtfRegistryEntry, getEtfsTrackingIndex, type EtfRegistryEntry } from "@/lib/finance/etfRegistry";
 import { getIndexMembership, type IndexMembershipEntry } from "@/lib/finance/indexMembership";
+import { isBseEquitySymbolShape, bareBseEquityTicker, clearsBseEquityFloor } from "@/lib/finance/bseEquity";
 import { prisma } from "@/lib/prisma";
 
 // Enough sessions for a 1Y timeframe on the interactive chart (~250 trading
@@ -202,6 +203,27 @@ export interface InstrumentDetail {
    * exchanges so page.tsx needs no other BSE-specific branching.
    */
   isBseIndex: boolean;
+  /**
+   * BSE Expansion Phase 3A (2026-08-12) — true for a BSE-EXCLUSIVE equity
+   * page: a real `BseEodQuote` row exists for this `.BO`-suffixed symbol
+   * (the company failed NSE's dual-listing check at ingestion time — see
+   * `BseEodQuote`'s own schema doc). A distinct FOURTH page family alongside
+   * isIndex/isBseIndex/isEtf — mutually exclusive with all three (a `.BO`-
+   * suffixed symbol never matches any NSE index/BSE-index/ETF branch above,
+   * which is what `nseUnresolved`'s "collision-free by construction" note
+   * already establishes for the BSE-index branches; the same construction
+   * argument applies here).
+   */
+  isBseEquity: boolean;
+  /**
+   * True when `isBseEquity` AND this stock's latest volume does NOT clear
+   * `MIN_BSE_EQUITY_LIQUIDITY_QTY` (lib/finance/bseEquity.ts). The page
+   * still renders fully and honestly (never fabricated/withheld data) —
+   * this flag only drives `noindex` (page.tsx's generateMetadata) and
+   * exclusion from browse/search/sitemap surfaces. Always false for a
+   * non-BSE-equity page.
+   */
+  belowBseEquityFloor: boolean;
   /**
    * Instrument Page v2 (T3) — 1W/1M/3M/6M/1Y/FY-to-date returns computed
    * over `spark`. Was all-null for indices (no StockEodQuote series) until
@@ -398,6 +420,14 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
 
   const isIndex = hasLiveIndexPipe || isLongTailIndex || isBseIndex;
   const viewOnlyIndex = isIndex && !isIndexOptionUnderlying(symbol);
+
+  // BSE Expansion Phase 3A (2026-08-12) — BSE-EXCLUSIVE equities. The ".BO"
+  // suffix is the single, collision-free signal (see bseEquity.ts's own doc
+  // — no NSE symbol/BSE-index-derived-symbol/bond/ETF namespace ever
+  // contains a literal "."), so this only needs to be gated on `!isIndex`
+  // (an index symbol never has this shape anyway, but the guard costs
+  // nothing and keeps the branch ordering explicit/self-documenting).
+  const bseEquityTicker = !isIndex && isBseEquitySymbolShape(symbol) ? bareBseEquityTicker(symbol) : null;
   // Index History Stage 3 (2026-08-12) — founder bug report: "/instruments/
   // NIFTYCEMENT — no price history." Root cause: 10 of the 35 hasLiveIndexPipe
   // Yahoo tickers (the NIFTY_*.NS quote-page family — CEMENT, CHEMICALS,
@@ -462,7 +492,7 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     latestQuote,
     sparkRows,
     newsRows,
-    filings,
+    filingsInitial,
     opinionCandidates,
     indexSparkRows,
     ownedEodRows,
@@ -474,6 +504,8 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     etfDetails,
     etfsTrackingIndex,
     indexMembership,
+    bseEquityLatestRow,
+    bseEquitySparkRows,
   ] = await Promise.all([
     prisma.stockEodQuote.findFirst({
       where: { symbol },
@@ -546,7 +578,16 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
               ? { instrumentTicker: { equals: bseIndexYahooTicker } }
               : isBseLongTailIndex
                 ? { instrument: { equals: bseLongTailEntry!.name, mode: "insensitive" as const } }
-                : { instrumentTicker: { startsWith: `${symbol}.`, mode: "insensitive" as const } }),
+                : // BSE Expansion Phase 3A (2026-08-12) — a BSE-only equity's
+                  // ExpertOpinion.instrumentTicker is the exact page symbol
+                  // ITSELF ("NSDL.BO"), not a startsWith-prefixable
+                  // "SYMBOL.<exchange>" pattern the NSE-equity branch below
+                  // assumes (that branch's `${symbol}.` prefix would build
+                  // "NSDL.BO." — never matches anything real). Exact match,
+                  // same discipline as every ticker-equals branch above.
+                  bseEquityTicker
+                  ? { instrumentTicker: { equals: symbol, mode: "insensitive" as const } }
+                  : { instrumentTicker: { startsWith: `${symbol}.`, mode: "insensitive" as const } }),
         publishedAt: { gte: opinionSince },
       },
       orderBy: { publishedAt: "desc" },
@@ -663,6 +704,23 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     // plain in-memory Map read at worst (see indexMembership.ts's own doc on
     // why it never blocks on network I/O here).
     isIndex ? Promise.resolve([]) : getIndexMembership(symbol),
+    // BSE Expansion Phase 3A (2026-08-12) — a no-op Promise for every
+    // non-BSE-equity page. `bseEquityTicker` is the bare ticker (no ".BO"
+    // suffix) BseEodQuote.tickerSymbol is keyed by.
+    bseEquityTicker
+      ? prisma.bseEodQuote.findFirst({
+          where: { tickerSymbol: { equals: bseEquityTicker, mode: "insensitive" } },
+          orderBy: { sessionDate: "desc" },
+        })
+      : Promise.resolve(null),
+    bseEquityTicker
+      ? prisma.bseEodQuote.findMany({
+          where: { tickerSymbol: { equals: bseEquityTicker, mode: "insensitive" } },
+          orderBy: { sessionDate: "desc" },
+          take: SPARK_SESSIONS,
+          select: { sessionDate: true, close: true },
+        })
+      : Promise.resolve(null),
   ]);
 
   // Belt-and-suspenders re-check with the shared matcher, same as the API
@@ -695,17 +753,61 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
         o.instrument != null && normalizeIndexDisplayName(o.instrument) === normalizeIndexDisplayName(bseLongTailEntry!.name)
       );
     }
+    // BSE Expansion Phase 3A (2026-08-12) — exact-match re-check mirroring
+    // the query's own bseEquityTicker branch above. `nseSymbolMatchesInstrumentTicker`
+    // below strips a trailing suffix off `o.instrumentTicker` and compares
+    // the BARE result to `symbol` as-is — for a `.BO`-suffixed `symbol`
+    // ("NSDL.BO") that comparison can never succeed (it would compare
+    // "NSDL" to "NSDL.BO"), so this must be its own exact-equality branch,
+    // not routed through that matcher.
+    if (bseEquityTicker) {
+      return o.instrumentTicker != null && o.instrumentTicker.toUpperCase() === symbol.toUpperCase();
+    }
     if (o.instrumentTicker == null) return false;
     return nseSymbolMatchesInstrumentTicker(symbol, o.instrumentTicker);
   });
 
   const news = refineStockNews(newsRows, { limit: NEWS_LIMIT });
 
+  // BSE Expansion Phase 3A (2026-08-12) — `filingsInitial` (fetched
+  // unconditionally above, keyed on `tickerSymbol: symbol`) is ALWAYS empty
+  // for a BSE-equity page: apps/api's BSE announcements pipeline
+  // (lib/marketMoves/bse.ts) tags a BSE-only company's filings with
+  // `BSE:{scripCode}`, never the `.BO`-suffixed page symbol. A second,
+  // dependent query (only reachable once `bseEquityLatestRow.scripCode` is
+  // known — the same "second awaited round" pattern `indexComposition`
+  // already uses below for its own constituent-dependent join) fetches the
+  // REAL filings for this company via that honest, existing tag. Never
+  // fabricated: a BSE-only company with zero BSE announcements simply gets
+  // an empty filings list, same as any NSE equity would.
+  let filings = filingsInitial;
+  if (bseEquityTicker && bseEquityLatestRow) {
+    filings = await prisma.marketMoveEvent.findMany({
+      where: { tickerSymbol: `BSE:${bseEquityLatestRow.scripCode}` },
+      orderBy: [{ announcedAt: "desc" }, { id: "asc" }],
+      take: FILINGS_LIMIT,
+      select: {
+        id: true,
+        source: true,
+        tickerSymbol: true,
+        companyName: true,
+        eventType: true,
+        headline: true,
+        detailUrl: true,
+        announcedAt: true,
+      },
+    });
+  }
+
   // A known index ALWAYS resolves (a tradable/view-only page renders a live
   // 1D chart, a long-tail page renders its own self-owned OHLC history) even
-  // with zero stored content — the null gate only applies to unknown symbols.
+  // with zero stored content — the null gate only applies to unknown
+  // symbols. A known BSE-equity symbol (a real BseEodQuote row exists) is
+  // the same "always resolves" case, one level over — see
+  // `bseEquityLatestRow`'s own doc.
+  const isBseEquity = bseEquityLatestRow != null;
   const hasAnyContent = latestQuote != null || news.length > 0 || filings.length > 0 || matchedOpinions.length > 0;
-  if (!hasAnyContent && !isIndex) return null;
+  if (!hasAnyContent && !isIndex && !isBseEquity) return null;
 
   // ETF Layer (2026-08-12) — an ETF's StockEodQuote.companyName is just its
   // bare symbol (bhavcopy resolves company names off the EQUITY master,
@@ -729,6 +831,12 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     // long tail above.
     BSE_INDEX_DISPLAY_NAME[symbol] ??
     bseLongTailEntry?.name ??
+    // BSE Expansion Phase 3A (2026-08-12) — BseEodQuote.companyName is the
+    // UDiFF bhavcopy's own `FinInstrmNm` (real, exchange-sourced), same
+    // authority tier as StockEodQuote.companyName below — checked before
+    // the ETF/latestQuote branch since a BSE-equity symbol never has a
+    // `latestQuote` (StockEodQuote is NSE-only) to fall through to anyway.
+    bseEquityLatestRow?.companyName ??
     (etfDetails && latestQuote?.companyName === symbol ? etfDetails.displayName : latestQuote?.companyName) ??
     filings[0]?.companyName ??
     newsRows[0]?.companyName ??
@@ -816,6 +924,28 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     }
   }
 
+  // BSE Expansion Phase 3A (2026-08-12) — quote header + close-price history
+  // sourced entirely from BseEodQuote. NO live intraday chart — the brief's
+  // own honesty law ("no quote = noindex... never fabricate a 1D chart from
+  // EOD data alone"): no verified live BSE equity quote source exists,
+  // matching the exact same discipline the long-tail NSE/BSE INDEX branches
+  // already follow for their own EOD-only tiers. `deliveryPct` is null —
+  // UDiFF's equity bhavcopy carries no delivery-percentage column (unlike
+  // NSE's DELIV_PER).
+  let bseEquityQuote: InstrumentQuote | null = null;
+  if (isBseEquity && bseEquityLatestRow) {
+    bseEquityQuote = {
+      sessionDate: bseEquityLatestRow.sessionDate,
+      close: bseEquityLatestRow.close,
+      prevClose: bseEquityLatestRow.prevClose,
+      changePercent: bseEquityLatestRow.changePercent,
+      volume: bseEquityLatestRow.volume,
+      deliveryPct: null,
+    };
+  }
+  /** BSE Expansion Phase 3A (2026-08-12) — see InstrumentDetail's own doc on why this flag never hides/drops data, only gates presentation surfaces downstream (page.tsx robots, search, sitemap). */
+  const belowBseEquityFloor = isBseEquity && !clearsBseEquityFloor(bseEquityLatestRow?.volume);
+
   const sentimentCounts = matchedOpinions.reduce(
     (acc, o) => {
       if (o.direction === "BULLISH") acc.bullish += 1;
@@ -842,23 +972,36 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
   // comfortable multi-month depth, unlike the NSE gap OWNED_SPARK_FLOOR was
   // built to paper over).
   const bseOwnedSpark = (bseOwnedEodRows ?? []).slice().reverse().map((r) => ({ sessionDate: r.sessionDate, close: r.close }));
+  // BSE Expansion Phase 3A (2026-08-12) — self-owned BseEodQuote is the ONLY
+  // spark source for a BSE-only equity (no Yahoo daily-archive fallback
+  // wired here — same "EOD-only, no live pipe" tier as the BSE index long
+  // tail).
+  const bseEquitySpark = (bseEquitySparkRows ?? []).slice().reverse().map((r) => ({ sessionDate: r.sessionDate, close: r.close }));
   const spark = isIndex
     ? isBseIndex
       ? bseOwnedSpark
       : ownedSpark.length >= OWNED_SPARK_FLOOR
         ? ownedSpark
         : (indexSparkRows ?? ownedSpark)
-    : sparkRows.slice().reverse();
+    : isBseEquity
+      ? bseEquitySpark
+      : sparkRows.slice().reverse();
 
   // Instrument Page v2 (T3) — pure, zero extra query/network call over the
   // spark series already resolved above (equity or index).
-  const performance = computeReturnsStrip(spark, latestQuote?.sessionDate);
+  const performance = computeReturnsStrip(spark, (latestQuote ?? bseEquityLatestRow)?.sessionDate);
 
   // Instrument Page v2 (T4) — indices have no financial statements/dividend
   // history to enrich; skip the Yahoo/DB round trip entirely rather than
   // fetching fundamentals for "^NSEI.NS". (Unrelated to the daily price
   // history above, which indices DO now get — see `spark`.)
-  const enrichment = isIndex ? EMPTY_INSTRUMENT_ENRICHMENT : await getOrFetchInstrumentEnrichment(symbol, companyName);
+  //
+  // BSE Expansion Phase 3A (2026-08-12) — a BSE-only equity DOES get
+  // enrichment, via Yahoo's `.BO` ticker suffix (live-verified real
+  // coverage — see enrichment.ts's own doc on this `exchange` param).
+  const enrichment = isIndex
+    ? EMPTY_INSTRUMENT_ENRICHMENT
+    : await getOrFetchInstrumentEnrichment(symbol, companyName, isBseEquity ? "BSE" : "NSE");
   // ETF Layer (2026-08-12, AMFI addendum) — Yahoo's fund long name is now
   // ONLY the fallback for the rare ETF AMFI's ISIN join didn't resolve.
   // `displayName === securityName` is exactly that "AMFI didn't resolve"
@@ -964,23 +1107,43 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     indexComposition = [...ranked, ...unranked];
   } else if (bseConstituentListRows && bseConstituentListRows.length > 0) {
     // BSE Index Composition (2026-08-12) — same day-change join pattern as
-    // the NSE branch above, EXCEPT only members bseIndexConstituents.ts
-    // resolved to a real NSE symbol (many BSE constituents are BSE-only
-    // listings with no StockEodQuote row — see that file's module doc). A
-    // member with `symbol: null` is never queried and never linked, but
-    // still rendered (plain text, no change columns) — a real index member,
-    // just not one we can price or link yet.
-    const constituentSymbols = bseConstituentListRows.map((r) => r.symbol).filter((s): s is string => s != null);
-    const constituentQuotes =
-      constituentSymbols.length > 0
-        ? await prisma.stockEodQuote.findMany({
-            where: { symbol: { in: constituentSymbols } },
+    // the NSE branch above. A member with `symbol: null` is never queried
+    // and never linked, but still rendered (plain text, no change columns)
+    // — a real index member, just not one we can price or link yet.
+    //
+    // BSE Expansion Phase 3A (2026-08-12), founder: "so BSE composition do
+    // not suffer with missing stocks" — `bseIndexConstituents.ts` now
+    // resolves a constituent against EITHER StockEodQuote (dual-listed, NSE
+    // canonical, `symbolExchange: "NSE"`) OR BseEodQuote (BSE-only, exact
+    // scrip-code join, `symbolExchange: "BSE"`). Split the batched price
+    // join accordingly — two indexed `IN (...)` queries (one per table),
+    // never N+1.
+    const nseSymbols = bseConstituentListRows.filter((r) => r.symbolExchange === "NSE" && r.symbol).map((r) => r.symbol!);
+    const bseSymbols = bseConstituentListRows.filter((r) => r.symbolExchange === "BSE" && r.symbol).map((r) => r.symbol!);
+    const bseTickers = bseSymbols.map((s) => s.replace(/\.BO$/i, ""));
+
+    const [nseConstituentQuotes, bseConstituentQuotes] = await Promise.all([
+      nseSymbols.length > 0
+        ? prisma.stockEodQuote.findMany({
+            where: { symbol: { in: nseSymbols } },
             orderBy: [{ symbol: "asc" }, { sessionDate: "desc" }],
             distinct: ["symbol"],
             select: { symbol: true, close: true, changePercent: true },
           })
-        : [];
-    const quoteBySymbol = new Map(constituentQuotes.map((q) => [q.symbol, q]));
+        : Promise.resolve([]),
+      bseTickers.length > 0
+        ? prisma.bseEodQuote.findMany({
+            where: { tickerSymbol: { in: bseTickers } },
+            orderBy: [{ tickerSymbol: "asc" }, { sessionDate: "desc" }],
+            distinct: ["tickerSymbol"],
+            select: { tickerSymbol: true, close: true, changePercent: true },
+          })
+        : Promise.resolve([]),
+    ]);
+    const quoteBySymbol = new Map(nseConstituentQuotes.map((q) => [q.symbol, { close: q.close, changePercent: q.changePercent }]));
+    for (const q of bseConstituentQuotes) {
+      quoteBySymbol.set(`${q.tickerSymbol.toUpperCase()}.BO`, { close: q.close, changePercent: q.changePercent });
+    }
     const joined: IndexConstituentQuoteRow[] = bseConstituentListRows.map((c) => {
       const q = c.symbol ? quoteBySymbol.get(c.symbol) : undefined;
       return {
@@ -1003,7 +1166,7 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
   return {
     symbol,
     companyName,
-    quote: isIndex ? (isBseIndex ? bseOwnedQuote : ownedQuote) : latestQuote,
+    quote: isIndex ? (isBseIndex ? bseOwnedQuote : ownedQuote) : isBseEquity ? bseEquityQuote : latestQuote,
     spark,
     news,
     filings,
@@ -1043,5 +1206,7 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     etfDetails,
     etfsTrackingIndex,
     indexMembership,
+    isBseEquity,
+    belowBseEquityFloor,
   };
 }

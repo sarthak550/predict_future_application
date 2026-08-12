@@ -16,6 +16,15 @@
  * is never killed mid-request, so an un-awaited promise keeps running on the
  * same event loop after the response is sent. Do not port this pattern to a
  * serverless/Vercel context without re-checking that assumption.
+ *
+ * BSE Expansion Phase 3A (2026-08-12) — `getOrFetchInstrumentEnrichment`'s
+ * new optional `exchange` param ("NSE" default, unchanged for every existing
+ * caller) lets a BSE-only-equity page opt into Yahoo's `.BO` ticker suffix
+ * instead of `.NS`. Live-verified 2026-08-12: Yahoo genuinely covers
+ * BSE-only small/mid-caps under `.BO` (e.g. "NSDL.BO", "AMBALALSA.BO",
+ * "ANDHRAPET.BO" all returned real, price-matching `chart` data) — the
+ * assigning brief's fallback ("if Yahoo lacks BSE-only names, ship without
+ * enrichment") does not apply; coverage exists, so it's wired through.
  */
 
 import type { Prisma } from "@prisma/client";
@@ -93,7 +102,11 @@ export const EMPTY_INSTRUMENT_ENRICHMENT: InstrumentEnrichmentData = {
  * degrades to "some series refreshed, others kept their last good value,"
  * never a wipe.
  */
-async function refreshFundamentalsInBackground(symbol: string, companyName: string): Promise<void> {
+async function refreshFundamentalsInBackground(
+  symbol: string,
+  companyName: string,
+  exchange: "NSE" | "BSE" = "NSE"
+): Promise<void> {
   const now = new Date();
   try {
     await prisma.instrumentEnrichment.upsert({
@@ -106,11 +119,20 @@ async function refreshFundamentalsInBackground(symbol: string, companyName: stri
     return;
   }
 
+  // BSE Expansion Phase 3A (2026-08-12) — `symbol` (the cache key / row
+  // identity, e.g. "NSDL.BO") already carries the page's ".BO" suffix for a
+  // BSE-only equity, but every fundamentals.ts fetcher appends its OWN
+  // exchange suffix onto whatever ticker it's given — passing the full
+  // ".BO"-suffixed symbol straight through would build a broken
+  // "NSDL.BO.BO" Yahoo URL. Strip it back to the bare ticker here.
+  const yahooTicker = exchange === "BSE" ? symbol.replace(/\.BO$/i, "") : symbol;
+  const yahooSuffix: "NS" | "BO" = exchange === "BSE" ? "BO" : "NS";
+
   const [annual, quarterly, dividends, debtCoverage] = await Promise.all([
-    fetchAnnualFundamentals(symbol),
-    fetchQuarterlyFundamentals(symbol),
-    fetchDividendHistory(symbol),
-    fetchDebtCoverage(symbol),
+    fetchAnnualFundamentals(yahooTicker, yahooSuffix),
+    fetchQuarterlyFundamentals(yahooTicker, yahooSuffix),
+    fetchDividendHistory(yahooTicker, yahooSuffix),
+    fetchDebtCoverage(yahooTicker, yahooSuffix),
   ]);
 
   const data: Prisma.InstrumentEnrichmentUpdateInput = {};
@@ -197,7 +219,8 @@ async function refreshNewsInBackground(symbol: string, companyName: string): Pro
  */
 export async function getOrFetchInstrumentEnrichment(
   rawSymbol: string,
-  companyName: string
+  companyName: string,
+  exchange: "NSE" | "BSE" = "NSE"
 ): Promise<InstrumentEnrichmentData> {
   const symbol = rawSymbol.trim().toUpperCase();
   if (!symbol) return EMPTY_INSTRUMENT_ENRICHMENT;
@@ -212,13 +235,16 @@ export async function getOrFetchInstrumentEnrichment(
   const fundamentalsStale =
     !row?.fundamentalsFetchedAt || Date.now() - row.fundamentalsFetchedAt.getTime() > FUNDAMENTALS_TTL_MS;
   if (fundamentalsStale) {
-    void refreshFundamentalsInBackground(symbol, companyName).catch((err) =>
+    void refreshFundamentalsInBackground(symbol, companyName, exchange).catch((err) =>
       console.error(`[enrichment] unhandled fundamentals refresh error for ${symbol}:`, err)
     );
   }
 
   const newsStale = !row?.newsLastCheckedAt || Date.now() - row.newsLastCheckedAt.getTime() > NEWS_TTL_MS;
   if (newsStale) {
+    // Google News on-demand refresh is exchange-agnostic (a plain search by
+    // ticker + company name, no Yahoo-suffix concept) — works unchanged for
+    // a BSE-only company's full page symbol.
     void refreshNewsInBackground(symbol, companyName).catch((err) =>
       console.error(`[enrichment] unhandled news refresh error for ${symbol}:`, err)
     );
@@ -226,7 +252,7 @@ export async function getOrFetchInstrumentEnrichment(
 
   const keyStatsStale = !row?.keyStatsFetchedAt || Date.now() - row.keyStatsFetchedAt.getTime() > KEY_STATS_TTL_MS;
   if (keyStatsStale) {
-    void refreshKeyStatsInBackground(symbol, companyName).catch((err) =>
+    void refreshKeyStatsInBackground(symbol, companyName, exchange).catch((err) =>
       console.error(`[enrichment] unhandled key-stats refresh error for ${symbol}:`, err)
     );
   }
@@ -266,7 +292,7 @@ export async function getOrFetchInstrumentEnrichment(
  * snapshot as a base so a fresh success on only one side still lands
  * without silently wiping the other side's last-known-good values.
  */
-async function refreshKeyStatsInBackground(symbol: string, companyName: string): Promise<void> {
+async function refreshKeyStatsInBackground(symbol: string, companyName: string, exchange: "NSE" | "BSE" = "NSE"): Promise<void> {
   const now = new Date();
   let previous: KeyStats | null = null;
   try {
@@ -281,7 +307,13 @@ async function refreshKeyStatsInBackground(symbol: string, companyName: string):
     return;
   }
 
-  const [stats, betas] = await Promise.all([fetchKeyStats(symbol), computeBetas(symbol)]);
+  // See refreshFundamentalsInBackground's identical comment on why the
+  // page's ".BO"-suffixed symbol must be stripped back to a bare ticker
+  // before it's handed to fundamentals.ts's Yahoo fetchers.
+  const yahooTicker = exchange === "BSE" ? symbol.replace(/\.BO$/i, "") : symbol;
+  const yahooSuffix: "NS" | "BO" = exchange === "BSE" ? "BO" : "NS";
+
+  const [stats, betas] = await Promise.all([fetchKeyStats(yahooTicker, yahooSuffix), computeBetas(yahooTicker, yahooSuffix)]);
   const statsChanged = stats !== null && Object.keys(stats).length > 0;
   const betasChanged = betas.beta1Y != null || betas.beta5Y != null;
   if (!statsChanged && !betasChanged) return; // total failure on both sides → keep previous snapshot untouched

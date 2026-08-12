@@ -7,6 +7,7 @@ import { fetchLatestBseIndices } from "@/lib/finance/bseIndices";
 import { INDEX_SLUG_TO_TRADABLE_UNDERLYING } from "@/lib/finance/indexTradableAlias";
 import { getPublicProfileStats } from "@/lib/finance/publicProfile";
 import { listPublicEligiblePortfolioSlugsForSitemap } from "@/lib/portfolios/queries";
+import { bseEquityPageSymbol, clearsBseEquityFloor } from "@/lib/finance/bseEquity";
 import { prisma } from "@/lib/prisma";
 
 const SITE_URL = "https://predictfuture.app";
@@ -128,6 +129,33 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     priority: 0.4,
   }));
 
+  // BSE Expansion Phase 3A (2026-08-12) — BSE-EXCLUSIVE equities above the
+  // volume floor (lib/finance/bseEquity.ts) from the MOST RECENT BseEodQuote
+  // session, mirroring `instrumentEntries`' own "latest session only, not
+  // the full historical backlog" pattern above. A below-floor row is
+  // deliberately EXCLUDED here — page.tsx's own generateMetadata already
+  // noindexes it, submitting it to the sitemap would be the same "noindex
+  // page in the sitemap" contradiction this file's own doc comment already
+  // guards against for every other entry type.
+  const latestBseEquitySession = await prisma.bseEodQuote.findFirst({
+    orderBy: { sessionDate: "desc" },
+    select: { sessionDate: true },
+  });
+  const bseEquityRows = latestBseEquitySession
+    ? await prisma.bseEodQuote.findMany({
+        where: { sessionDate: latestBseEquitySession.sessionDate },
+        select: { tickerSymbol: true, volume: true },
+      })
+    : [];
+  const bseEquityEntries: MetadataRoute.Sitemap = bseEquityRows
+    .filter((row) => clearsBseEquityFloor(row.volume))
+    .map((row) => ({
+      url: `${SITE_URL}/instruments/${bseEquityPageSymbol(row.tickerSymbol)}`,
+      lastModified: latestBseEquitySession!.sessionDate,
+      changeFrequency: "daily",
+      priority: 0.3,
+    }));
+
   return [
     {
       url: SITE_URL,
@@ -170,5 +198,6 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     ...portfolioEntries,
     ...indexEntries,
     ...bseIndexEntries,
+    ...bseEquityEntries,
   ];
 }

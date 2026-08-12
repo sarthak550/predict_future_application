@@ -970,6 +970,15 @@ enum InstrumentResolutionSource {
   /// quote row exists yet, e.g. a freshly-listed symbol our bhavcopy
   /// ingestion hasn't caught up to.
   NSE_EQUITY_MASTER
+  /// BSE Expansion Phase 3A (2026-08-12) — a `.BO`-suffixed ticker that did
+  /// NOT resolve via STOCK_EOD_QUOTE/NSE_EQUITY_MASTER above (i.e. genuinely
+  /// not NSE-listed) matched a real BseEodQuote row by ticker/company-name.
+  /// This is the fallback that finally links a BSE-only-ticker opinion — see
+  /// instrumentAlias.ts's own doc comment for why NSE resolution is always
+  /// attempted FIRST regardless of a ticker's `.BO` suffix (dual-listed
+  /// regression law: RELIANCE.BO must still resolve here as NSE RELIANCE,
+  /// STOCK_EOD_QUOTE, never reaching this branch).
+  BSE_EOD_QUOTE
 }
 
 /// Persistent instrument-identity resolution — the instrument-side mirror of
@@ -1897,6 +1906,80 @@ model BseIndexEodQuote {
 
   @@unique([indexName, sessionDate])
   @@index([indexName, sessionDate(sort: Desc)])
+}
+
+/// BSE Expansion Phase 3A (2026-08-12) — BSE-EXCLUSIVE equities (companies BSE
+/// lists that have no NSE-listed twin). Same "separate table, never touch the
+/// NSE-sourced one" discipline as BondEodQuote/BseIndexEodQuote: StockEodQuote
+/// is NSE-bhavcopy-sourced and every downstream consumer (movers/search/
+/// enrichment-warm-cron/paper-trading order validation/shadow portfolios)
+/// implicitly assumes `StockEodQuote.symbol` means "NSE-tradeable" — polluting
+/// that assumption with BSE-only rows would be a correctness bug across a
+/// dozen call sites. Ingestion (apps/api/lib/marketMoves/bseBhavcopy.ts) fills
+/// this ONLY with rows that fail a dual-listing check (ISIN-exact match
+/// against NSE's own equity master AND ETF master, then
+/// resolveNseSymbolByCompanyName as a fallback — see that module's own doc for
+/// why ISIN is the primary signal, not the brief's originally-suggested
+/// ticker-symbol coincidence, which a live check proved unsafe: BSE ticker
+/// "KALYANI" = Kalyani Cast-Tech Limited, NSE ticker "KALYANI" = an unrelated
+/// Kalyani Commercials Limited — same mnemonic, different companies, would
+/// have wrongly suppressed a real BSE-only listing).
+///
+/// Source: BSE's UDiFF unified equity bhavcopy CSV (SEBI-mandated format,
+/// verified live 2026-08-12, archive depth back to ~Nov 2024 — see
+/// bseBhavcopy.ts's module doc for the Accept-header gotcha and full
+/// verification evidence).
+model BseEodQuote {
+  id            String   @id @default(cuid())
+  /// Trading-session date (IST calendar day), stored at IST midnight
+  /// converted to UTC — same convention as StockEodQuote.sessionDate.
+  sessionDate   DateTime
+  /// BSE numeric scrip code (UDiFF's `FinInstrmId`, matches bse.ts's own
+  /// SCRIP_CD/bseIndexConstituents.ts's SCRIP_CODE convention) — the STABLE
+  /// primary identity for a BSE-listed company (survives a ticker rename,
+  /// unlike `tickerSymbol` below). PRIMARY LOOKUP KEY per the brief — the
+  /// index-composition hook (bseIndexConstituents.ts) joins on this field
+  /// exactly, never on name.
+  scripCode     String
+  /// BSE's own short ticker (UDiFF's `TckrSymb`) — builds this row's
+  /// `/instruments/[symbol]` URL as `${tickerSymbol}.BO` (Phase 3A namespace
+  /// decision: reuses the existing `.BO` suffix convention
+  /// instrumentMatch.ts/shadow.ts already parse, collision-free against every
+  /// NSE symbol/index/bond namespace by construction — none of those ever
+  /// contain a literal "." — verified live against the full current universe,
+  /// see the shipping ticket's report). Verified unique within the BSE-only,
+  /// equity-series universe as of 2026-08-12 (zero collisions among 2,034
+  /// rows) but NOT declared `@unique` here — a future BSE ticker-reuse event
+  /// is plausible and must degrade to "ambiguous, skip" at ingestion time
+  /// rather than a hard constraint violation blocking the whole day's cron.
+  tickerSymbol  String
+  /// UDiFF's `ISIN` — kept for traceability/debugging of the dedup decision
+  /// (not used for any lookup path; scripCode is the primary key).
+  isin          String?
+  companyName   String
+  /// BSE's own `SctySrs` (surveillance/market-cap group: A/B/M/MS/MT/T/X/XT/
+  /// Z/ZP) — kept for transparency (e.g. surfacing a "Z group" caveat later)
+  /// but never filtered on after ingestion; the ingestion-time filter already
+  /// restricted to common-equity groups (excludes BSE's E/F fund series, G
+  /// government-securities series, IF InvIT/REIT trusts, and P/R
+  /// preference-share/rights-entitlement series — see bseBhavcopy.ts's
+  /// module doc for the full classification).
+  securityGroup String
+  prevClose     Float
+  close         Float
+  changePercent Float
+  /// UDiFF's `TtlTradgVol` — BSE-exclusive names trade far thinner than NSE's
+  /// (see the Volume Floor decision in bseBhavcopy.ts's module doc); this raw
+  /// value is ALWAYS stored regardless of liquidity ("informational parity —
+  /// never silently drop data," same law as StockEodQuote/BondEodQuote) — the
+  /// floor gate is applied only at the presentation layer (apps/web: page
+  /// robots/noindex, browse/search inclusion, sitemap), never at ingestion.
+  volume        Float
+  createdAt     DateTime @default(now())
+
+  @@unique([sessionDate, scripCode])
+  @@index([scripCode, sessionDate(sort: Desc)])
+  @@index([tickerSymbol, sessionDate(sort: Desc)])
 }
 
 // ─── Portfolios (P3.1) ──────────────────────────────────────────────────────────

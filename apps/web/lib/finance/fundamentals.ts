@@ -217,14 +217,15 @@ type FundamentalsTimeseriesResult = {
 async function fetchFundamentalsTimeseries(
   symbol: string,
   typeKeys: string[],
-  lookbackYears: number
+  lookbackYears: number,
+  exchangeSuffix: "NS" | "BO" = "NS"
 ): Promise<FundamentalsTimeseriesResult> {
   const series = new Map<string, FundamentalsPoint[]>();
   const currencyCodes = new Map<string, string>();
   const empty: FundamentalsTimeseriesResult = { series, currencyCodes };
   const period2 = Math.floor(Date.now() / 1000);
   const period1 = period2 - Math.floor(lookbackYears * 365.25 * ONE_DAY_S);
-  const url = `${FUNDAMENTALS_TIMESERIES_BASE}/${encodeURIComponent(symbol)}.NS?type=${typeKeys.join(",")}&period1=${period1}&period2=${period2}`;
+  const url = `${FUNDAMENTALS_TIMESERIES_BASE}/${encodeURIComponent(symbol)}.${exchangeSuffix}?type=${typeKeys.join(",")}&period1=${period1}&period2=${period2}`;
 
   let response: Response;
   try {
@@ -275,12 +276,19 @@ async function fetchFundamentalsTimeseries(
   return { series, currencyCodes };
 }
 
-/** Annual revenue, net income, diluted EPS. Each field null when Yahoo has no coverage for that series on this symbol. */
-export async function fetchAnnualFundamentals(symbol: string): Promise<AnnualFundamentals> {
+/**
+ * Annual revenue, net income, diluted EPS. Each field null when Yahoo has no
+ * coverage for that series on this symbol. `exchangeSuffix` (BSE Expansion
+ * Phase 3A, 2026-08-12) defaults to "NS" — every existing NSE/ETF/index
+ * caller is byte-for-byte unchanged; only the BSE-only-equity page passes
+ * "BO" explicitly (see enrichment.ts's own doc comment on why this exists).
+ */
+export async function fetchAnnualFundamentals(symbol: string, exchangeSuffix: "NS" | "BO" = "NS"): Promise<AnnualFundamentals> {
   const { series } = await fetchFundamentalsTimeseries(
     symbol,
     ["annualTotalRevenue", "annualNetIncome", "annualDilutedEPS"],
-    ANNUAL_LOOKBACK_YEARS
+    ANNUAL_LOOKBACK_YEARS,
+    exchangeSuffix
   );
   return {
     revenue: series.get("annualTotalRevenue") ?? null,
@@ -289,12 +297,13 @@ export async function fetchAnnualFundamentals(symbol: string): Promise<AnnualFun
   };
 }
 
-/** Quarterly revenue, net income, diluted EPS (latest ~5 quarters). Each field null when Yahoo has no coverage. */
-export async function fetchQuarterlyFundamentals(symbol: string): Promise<QuarterlyFundamentals> {
+/** Quarterly revenue, net income, diluted EPS (latest ~5 quarters). Each field null when Yahoo has no coverage. `exchangeSuffix` — see fetchAnnualFundamentals's doc comment. */
+export async function fetchQuarterlyFundamentals(symbol: string, exchangeSuffix: "NS" | "BO" = "NS"): Promise<QuarterlyFundamentals> {
   const { series } = await fetchFundamentalsTimeseries(
     symbol,
     ["quarterlyTotalRevenue", "quarterlyNetIncome", "quarterlyDilutedEPS"],
-    QUARTERLY_LOOKBACK_YEARS
+    QUARTERLY_LOOKBACK_YEARS,
+    exchangeSuffix
   );
   return {
     revenue: series.get("quarterlyTotalRevenue") ?? null,
@@ -309,8 +318,13 @@ export async function fetchQuarterlyFundamentals(symbol: string): Promise<Quarte
  * empty array is a valid, honest "no dividends declared" answer and must
  * render differently from "we couldn't check."
  */
-async function fetchDividendEvents(symbol: string, period1: number, period2: number): Promise<DividendPoint[] | null> {
-  const url = `${CHART_BASE}/${encodeURIComponent(symbol)}.NS?interval=1d&period1=${period1}&period2=${period2}&events=div`;
+async function fetchDividendEvents(
+  symbol: string,
+  period1: number,
+  period2: number,
+  exchangeSuffix: "NS" | "BO" = "NS"
+): Promise<DividendPoint[] | null> {
+  const url = `${CHART_BASE}/${encodeURIComponent(symbol)}.${exchangeSuffix}?interval=1d&period1=${period1}&period2=${period2}&events=div`;
 
   let response: Response;
   try {
@@ -421,8 +435,13 @@ async function fetchDailyClosesForTicker(yahooTicker: string, period1: number, p
  * returns the full daily series and leaves the reduction to
  * `closeOnOrBefore` below.
  */
-async function fetchDailyCloses(symbol: string, period1: number, period2: number): Promise<DailyClose[] | null> {
-  return fetchDailyClosesForTicker(`${symbol}.NS`, period1, period2);
+async function fetchDailyCloses(
+  symbol: string,
+  period1: number,
+  period2: number,
+  exchangeSuffix: "NS" | "BO" = "NS"
+): Promise<DailyClose[] | null> {
+  return fetchDailyClosesForTicker(`${symbol}.${exchangeSuffix}`, period1, period2);
 }
 
 /** Last close on or before `targetDate` (ISO "YYYY-MM-DD"), or null if `closes` has no entry that old. `closes` must be ascending-sorted (as `fetchDailyCloses` returns). Linear scan — the series is at most a few years of trading days, called once per rendered payout during a background refresh, not a hot path. */
@@ -473,14 +492,14 @@ function closeOnOrBefore(closes: DailyClose[], targetDate: string): number | nul
  * (never 0%/∞%) whenever the prior-year TTM total is 0 — a new payer's
  * "growth" from a zero base isn't a meaningful percentage.
  */
-export async function fetchDividendHistory(symbol: string): Promise<DividendPayoutRow[] | null> {
+export async function fetchDividendHistory(symbol: string, exchangeSuffix: "NS" | "BO" = "NS"): Promise<DividendPayoutRow[] | null> {
   const period2 = Math.floor(Date.now() / 1000);
   const displayPeriod1 = period2 - Math.floor(DIVIDEND_LOOKBACK_YEARS * 365.25 * ONE_DAY_S);
   const pricesPeriod1 = displayPeriod1 - DIVIDEND_TTM_WINDOW_DAYS * ONE_DAY_S; // unchanged from pre-T1.1 behavior
   const eventsPeriod1 = displayPeriod1 - 2 * DIVIDEND_TTM_WINDOW_DAYS * ONE_DAY_S; // widened one more trailing year (T1.1)
   const displayPeriod1Iso = new Date(displayPeriod1 * 1000).toISOString().slice(0, 10);
 
-  const events = await fetchDividendEvents(symbol, eventsPeriod1, period2);
+  const events = await fetchDividendEvents(symbol, eventsPeriod1, period2, exchangeSuffix);
   if (events === null) return null; // genuine fetch failure — distinct from "no dividends."
   if (events.length === 0) return []; // valid chart, zero dividend events — honest empty answer.
 
@@ -488,7 +507,7 @@ export async function fetchDividendHistory(symbol: string): Promise<DividendPayo
   // null; the ₹ bars and ttmDividendTotal(/PrevYear)/growthPct still render
   // on their own — dividends without price context is a normal, honest
   // partial state here.
-  const closes = await fetchDailyCloses(symbol, pricesPeriod1, period2);
+  const closes = await fetchDailyCloses(symbol, pricesPeriod1, period2, exchangeSuffix);
 
   /** Sum of `events` with `date` in `(windowStartIso, windowEndIso]` — the shared building block for both TTM windows below. */
   const sumInWindow = (windowStartIso: string, windowEndIso: string): number =>
@@ -617,11 +636,11 @@ export interface KeyStats {
  * NOTE: Yahoo's `beta` here is its 5Y-monthly convention — label it as such,
  * it is NOT TradingView's "Beta (1Y)".
  */
-export async function fetchKeyStats(symbol: string): Promise<KeyStats | null> {
+export async function fetchKeyStats(symbol: string, exchangeSuffix: "NS" | "BO" = "NS"): Promise<KeyStats | null> {
   // calendarEvents added 2026-08-02 (founder: "upcoming earnings"); price
   // added 2026-08-12 (ETF Layer — see KeyStats.yahooLongName's doc comment).
   // Same crumb-gated request each time, one more module, zero extra HTTP cost.
-  const data = await fetchQuoteSummary(`${symbol}.NS`, ["summaryDetail", "defaultKeyStatistics", "calendarEvents", "assetProfile", "price"]);
+  const data = await fetchQuoteSummary(`${symbol}.${exchangeSuffix}`, ["summaryDetail", "defaultKeyStatistics", "calendarEvents", "assetProfile", "price"]);
   if (!data) return null;
   const result = ((data as Record<string, unknown>)?.quoteSummary as Record<string, unknown> | undefined)?.result as
     | Record<string, unknown>[]
@@ -796,12 +815,15 @@ export async function fetchIndexInstrumentSpark(yahooTicker: string): Promise<In
  * lacked a resolvable price history or `computeBeta` found insufficient
  * aligned points / zero index variance for that mode.
  */
-export async function computeBetas(symbol: string): Promise<{ beta1Y: number | null; beta5Y: number | null }> {
+export async function computeBetas(
+  symbol: string,
+  exchangeSuffix: "NS" | "BO" = "NS"
+): Promise<{ beta1Y: number | null; beta5Y: number | null }> {
   const period2 = Math.floor(Date.now() / 1000);
   const period1 = period2 - Math.floor(BETA_LOOKBACK_YEARS * 365.25 * ONE_DAY_S);
 
   const [stockCloses, indexCloses] = await Promise.all([
-    fetchDailyCloses(symbol, period1, period2),
+    fetchDailyCloses(symbol, period1, period2, exchangeSuffix),
     fetchIndexDailyCloses(period1, period2),
   ]);
 
@@ -908,7 +930,7 @@ export interface DebtCoverage {
   currencyCode: string | null;
 }
 
-export async function fetchDebtCoverage(symbol: string): Promise<DebtCoverage> {
+export async function fetchDebtCoverage(symbol: string, exchangeSuffix: "NS" | "BO" = "NS"): Promise<DebtCoverage> {
   const { series, currencyCodes } = await fetchFundamentalsTimeseries(
     symbol,
     [
@@ -926,7 +948,8 @@ export async function fetchDebtCoverage(symbol: string): Promise<DebtCoverage> {
       "annualCurrentAssets",
       "annualInventory",
     ],
-    ANNUAL_LOOKBACK_YEARS
+    ANNUAL_LOOKBACK_YEARS,
+    exchangeSuffix
   );
 
   const distinctCodes = new Set(currencyCodes.values());

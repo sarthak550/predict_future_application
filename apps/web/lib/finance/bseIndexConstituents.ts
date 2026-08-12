@@ -130,8 +130,20 @@
  * any SCRIPNAME the company-name resolver can't match, and the composition
  * panel (index-composition-panel.tsx) renders those rows as plain text
  * (never a Link) per the founder's explicit "no dead links" instruction.
- * BSE-only names stay unlinked until a future BSE-equity-pages phase gives
- * them a real `/instruments/[symbol]` destination.
+ *
+ * BSE Expansion Phase 3A (2026-08-12) — founder: "so BSE composition do not
+ * suffer with missing stocks." A constituent that misses the NSE
+ * company-name resolver above now gets a SECOND chance: an exact join
+ * against `BseEodQuote.scripCode` — the SAME `SCRIP_CODE` this endpoint's
+ * own rows already carry (`Codewise_Indices`'s `SCRIP_CODE` field, a clean
+ * numeric join, explicitly NOT a second name-matcher, per the brief's own
+ * instruction). When that resolves, the row gets a real `/instruments/
+ * [symbol].BO` link (day-change data joined from BseEodQuote, not
+ * StockEodQuote — see `symbolExchange`) instead of staying unlinked
+ * plain-text. Genuinely BSE-only members that ALSO fail the scrip-code join
+ * (not yet ingested by BseEodQuote, or below the dual-listing dedup's
+ * equity-series filter — e.g. an InvIT/G-Sec/preference-share index member)
+ * remain unlinked, same "no dead links" honesty rule as before.
  */
 
 import { prisma } from "@/lib/prisma";
@@ -390,8 +402,10 @@ export const BSE_INDEX_WEIGHT_NAME: Record<string, string> = {
 };
 
 export interface BseIndexConstituentRow {
-  /** Resolved `/instruments/[symbol]` NSE code, or null when SCRIPNAME has no unambiguous match in our own StockEodQuote (BSE-only listing) — see module doc on "no dead links". */
+  /** Resolved `/instruments/[symbol]` code — either a bare NSE symbol OR (BSE Expansion Phase 3A) a `.BO`-suffixed BSE-only-equity symbol — or null when SCRIPNAME has no unambiguous match against EITHER our own StockEodQuote or BseEodQuote. See module doc on "no dead links". */
   symbol: string | null;
+  /** Which table `symbol`'s day-change data should be joined from — null iff `symbol` is null. See module doc's Phase 3A addendum. */
+  symbolExchange: "NSE" | "BSE" | null;
   companyName: string;
   industry: string | null;
   /** BSE's own published `Weightage` from `NS_IndexWeight_SPDJ_ng` (see module doc) — null when this index has no entry in `BSE_INDEX_WEIGHT_NAME` or the live weight fetch failed/didn't cover this specific constituent. NOT an estimate (unlike NSE's `indexLiveWatch.ts` ffmc-share number) — this is BSE's own final weight. */
@@ -590,8 +604,41 @@ async function fetchBseIndexWeights(bseIndexName: string): Promise<Map<string, n
 interface BaseConstituentRow {
   scripCode: string;
   symbol: string | null;
+  symbolExchange: "NSE" | "BSE" | null;
   companyName: string;
   industry: string | null;
+}
+
+/**
+ * BSE Expansion Phase 3A (2026-08-12) — batch-resolves every constituent
+ * scrip code the NSE company-name resolver missed against `BseEodQuote` by
+ * its OWN `scripCode` — the exact same numeric code this endpoint's rows
+ * already carry (`SCRIP_CODE`), a clean join, never a second name matcher
+ * (per the brief's own instruction). ONE indexed `IN (...)` query regardless
+ * of how many constituents are unresolved, mirroring `indexComposition`'s
+ * own batched-join discipline in instrument.ts. Never throws — a query
+ * failure (e.g. BseEodQuote not pushed to this DB yet) degrades to "still
+ * unresolved," not a panel-breaking error.
+ */
+async function resolveScripCodesAgainstBseEquities(
+  scripCodes: string[]
+): Promise<Map<string, { symbol: string; companyName: string }>> {
+  const result = new Map<string, { symbol: string; companyName: string }>();
+  if (scripCodes.length === 0) return result;
+  try {
+    const rows = await prisma.bseEodQuote.findMany({
+      where: { scripCode: { in: scripCodes } },
+      orderBy: [{ scripCode: "asc" }, { sessionDate: "desc" }],
+      distinct: ["scripCode"],
+      select: { scripCode: true, tickerSymbol: true, companyName: true },
+    });
+    for (const r of rows) {
+      result.set(r.scripCode, { symbol: `${r.tickerSymbol.toUpperCase()}.BO`, companyName: r.companyName });
+    }
+  } catch (err) {
+    console.warn(`[bseIndexConstituents] BseEodQuote scrip-code resolution failed: ${err instanceof Error ? err.message : err}`);
+  }
+  return result;
 }
 
 /**
@@ -648,7 +695,7 @@ export async function fetchBseIndexConstituents(bseIndexName: string): Promise<B
     } else {
       const nameMap = await getNameIndex();
       const seen = new Set<string>();
-      const built: BaseConstituentRow[] = [];
+      const provisional: (BaseConstituentRow & { scripName: string })[] = [];
       for (const r of table) {
         const scripName = r.SCRIPNAME?.trim();
         if (!scripName) continue;
@@ -657,13 +704,35 @@ export async function fetchBseIndexConstituents(bseIndexName: string): Promise<B
         seen.add(scripCode);
 
         const resolved = resolveScripName(scripName, nameMap);
-        built.push({
+        provisional.push({
           scripCode,
           symbol: resolved?.symbol ?? null,
+          symbolExchange: resolved ? "NSE" : null,
           companyName: resolved?.companyName ?? titleCaseCompanyName(scripName),
           industry: r.Industry_name?.trim() || null,
+          scripName,
         });
       }
+
+      // BSE Expansion Phase 3A (2026-08-12) — second chance for every row the
+      // NSE resolver missed: exact scrip-code join against BseEodQuote (see
+      // module doc + resolveScripCodesAgainstBseEquities's own doc).
+      const unresolvedScripCodes = provisional.filter((p) => p.symbol == null).map((p) => p.scripCode);
+      const bseResolved = await resolveScripCodesAgainstBseEquities(unresolvedScripCodes);
+      const built: BaseConstituentRow[] = provisional.map((p) => {
+        const row: BaseConstituentRow = {
+          scripCode: p.scripCode,
+          symbol: p.symbol,
+          symbolExchange: p.symbolExchange,
+          companyName: p.companyName,
+          industry: p.industry,
+        };
+        if (row.symbol != null) return row;
+        const bseMatch = bseResolved.get(row.scripCode);
+        if (!bseMatch) return row;
+        return { ...row, symbol: bseMatch.symbol, symbolExchange: "BSE", companyName: bseMatch.companyName };
+      });
+
       base = built.length > 0 ? built : (cached?.rows ?? null);
       if (built.length > 0) constituentCache.set(code, { at: now, rows: built });
     }
@@ -672,6 +741,7 @@ export async function fetchBseIndexConstituents(bseIndexName: string): Promise<B
   if (!base) return null;
   return base.map((b) => ({
     symbol: b.symbol,
+    symbolExchange: b.symbolExchange,
     companyName: b.companyName,
     industry: b.industry,
     weightPct: weights?.get(b.scripCode) ?? null,

@@ -9,6 +9,7 @@ import { INDEX_SLUG_TO_TRADABLE_UNDERLYING } from "@/lib/finance/indexTradableAl
 import { getEtfNameMap, getEtfSymbolSet, searchEtfRegistryByName } from "@/lib/finance/etfRegistry";
 import { isTradableOptionUnderlyingServer } from "@/lib/paperTrading/fnoUniverseServer";
 import { isFuturesTradingEnabled, isOptionsTradingEnabled } from "@/lib/paperTrading/featureFlags";
+import { bseEquityPageSymbol, clearsBseEquityFloor } from "@/lib/finance/bseEquity";
 
 /**
  * GET /api/instruments/search?q= — global nav-bar search (public), CATEGORIZED
@@ -20,6 +21,18 @@ import { isFuturesTradingEnabled, isOptionsTradingEnabled } from "@/lib/paperTra
  * Categories and their honest limits:
  *  - "stock": StockEodQuote equities (exact-symbol match ranked first — a
  *    "REL" query must never push RELIANCE out of the window; found live).
+ *    BSE Expansion Phase 3A (2026-08-12) — ALSO includes BSE-EXCLUSIVE
+ *    equities (BseEodQuote, above lib/finance/bseEquity.ts's volume floor —
+ *    a below-floor row is stored but deliberately excluded from every
+ *    browse/search surface, per the brief's "stored but noindex" rule),
+ *    sublabeled "· BSE" (never blending into an NSE result unlabeled) and
+ *    linked to the SAME `.BO`-suffixed `/instruments/[symbol]` namespace
+ *    the instrument page itself uses. Terminal search
+ *    (/api/paper-trading/symbols/search) deliberately does NOT get this —
+ *    that route only ever queries StockEodQuote (Paper Trading's tradeable
+ *    universe is NSE equities only; BSE-only names have no PaperOrder path,
+ *    verified: they lack a StockEodQuote row so a paper order for one
+ *    correctly rejects with "No live price available").
  *  - "fund": ETF rows from the same store, membership decided by
  *    lib/finance/etfRegistry.ts's verified NSE registry (eq_etfseclist.csv —
  *    342 ETFs live as of 2026-08-12) rather than a name/symbol heuristic —
@@ -328,10 +341,37 @@ export async function GET(request: Request) {
   // ── Stocks vs funds (ETFs split out of the same EQ-series store) ──────────
   const dedupedFuzzy = fuzzyRows.filter((r) => r.symbol.toUpperCase() !== needle);
   const orderedEquityRows = [...(exactStock ? [exactStock] : []), ...dedupedFuzzy];
-  const stockResults: SearchResultItem[] = orderedEquityRows
+  const nseStockResults: SearchResultItem[] = orderedEquityRows
     .filter((r) => !etfSymbols.has(r.symbol.toUpperCase()))
     .slice(0, MAX_PER_CATEGORY)
     .map((r) => ({ href: `/instruments/${r.symbol}`, label: r.symbol, sublabel: r.companyName, category: "stock" as const }));
+
+  // BSE Expansion Phase 3A (2026-08-12) — BSE-EXCLUSIVE equities above the
+  // volume floor, fuzzy-matched by ticker or company name against the
+  // latest ingested BseEodQuote session. Sublabeled "· BSE" — see this
+  // route's own module doc.
+  const bseEquityRows = await (async () => {
+    const latest = await prisma.bseEodQuote.findFirst({ orderBy: { sessionDate: "desc" }, select: { sessionDate: true } });
+    if (!latest) return [];
+    return prisma.bseEodQuote.findMany({
+      where: {
+        sessionDate: latest.sessionDate,
+        OR: [{ tickerSymbol: { contains: q, mode: "insensitive" } }, { companyName: { contains: q, mode: "insensitive" } }],
+      },
+      orderBy: { volume: "desc" },
+      take: MAX_PER_CATEGORY,
+      select: { tickerSymbol: true, companyName: true, volume: true },
+    });
+  })();
+  const bseStockResults: SearchResultItem[] = bseEquityRows
+    .filter((r) => clearsBseEquityFloor(r.volume))
+    .map((r) => ({
+      href: `/instruments/${bseEquityPageSymbol(r.tickerSymbol)}`,
+      label: r.tickerSymbol,
+      sublabel: `${r.companyName} · BSE`,
+      category: "stock" as const,
+    }));
+  const stockResults: SearchResultItem[] = [...nseStockResults, ...bseStockResults].slice(0, MAX_PER_CATEGORY);
   // Founder 2026-08-12: funds must be searchable by their REAL names, and
   // display them. StockEodQuote.companyName for an ETF is the ticker
   // duplicated (bhavcopy has no fund names), so (a) name-matched registry

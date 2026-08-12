@@ -71,6 +71,21 @@ function bareEquitySymbol(ticker: string): string | null {
   return m ? m[1].toUpperCase() : null;
 }
 
+/**
+ * BSE Expansion Phase 3A (2026-08-12) — the `.BO` sibling of
+ * `bareEquitySymbol`. Kept as a SEPARATE function (not a generalized
+ * "any suffix" parser) deliberately: a `.BO` ticker's resolution path is NOT
+ * symmetric with `.NS` (see `resolveAuthoritatively`'s own comment) — NSE
+ * resolution is always tried FIRST for a `.BO` ticker too (dual-listed
+ * regression law), and only a genuine miss falls through to the BSE-only
+ * fallback below. Collapsing both into one "parse suffix" helper would
+ * obscure that asymmetry at the call site.
+ */
+function bareBseTicker(ticker: string): string | null {
+  const m = /^([A-Z0-9&-]+)\.BO$/i.exec(ticker);
+  return m ? m[1].toUpperCase() : null;
+}
+
 export interface InstrumentAliasResolution {
   resolved: boolean;
   symbol: string | null;
@@ -99,6 +114,24 @@ function toResolution(row: InstrumentAlias): InstrumentAliasResolution {
  *      nseSymbolResolver.ts) carries this symbol. Used when no EOD quote row
  *      exists yet, e.g. a freshly-listed symbol our bhavcopy ingestion
  *      hasn't caught up to.
+ *   4. BSE_EOD_QUOTE (BSE Expansion Phase 3A, 2026-08-12) — ONLY reached for
+ *      a `.BO`-suffixed ticker that missed BOTH of the above. Real BseEodQuote
+ *      row exists for this bare ticker (the /instruments/[symbol] page is
+ *      `${tickerSymbol}.BO` — see BseEodQuote's own schema doc on the
+ *      namespace decision).
+ *
+ * DUAL-LISTED REGRESSION LAW (critical, do not reorder): a `.BO`-suffixed
+ * ticker is NOT special-cased to skip straight to BSE_EOD_QUOTE — it is
+ * checked against STOCK_EOD_QUOTE/NSE_EQUITY_MASTER FIRST, identically to a
+ * `.NS` ticker, using the exact same bare symbol. This is what makes
+ * "RELIANCE.BO" resolve to NSE's real RELIANCE row (STOCK_EOD_QUOTE) rather
+ * than ever reaching the BSE-only fallback — BseEodQuote is populated ONLY
+ * with rows that already failed an NSE dual-listing check at ingestion time
+ * (see bseBhavcopy.ts), so in practice a dual-listed `.BO` ticker would
+ * never match a BseEodQuote row anyway, but resolving via the stronger NSE
+ * signal first (when both theoretically could match) is the correct,
+ * intentional precedence, not an accident of ordering.
+ *
  * Commodity futures, FX pairs, sectoral indices, and any ticker matching
  * none of the above return null — genuinely unresolvable, not a gap in this
  * function.
@@ -112,7 +145,8 @@ async function resolveAuthoritatively(
   const known = KNOWN_INDEX_IDENTITIES[ticker];
   if (known) return { ...known, resolutionSource: "KNOWN_INDEX" };
 
-  const bare = bareEquitySymbol(ticker);
+  const bseBareTicker = bareBseTicker(ticker);
+  const bare = bareEquitySymbol(ticker) ?? bseBareTicker;
   if (!bare) return null;
 
   const eodRows = await prisma.stockEodQuote.findMany({
@@ -129,6 +163,35 @@ async function resolveAuthoritatively(
   const companyName = equityNames.get(bare);
   if (companyName) {
     return { symbol: bare, canonicalName: companyName, resolutionSource: "NSE_EQUITY_MASTER" };
+  }
+
+  // BSE Expansion Phase 3A (2026-08-12) — BSE-only fallback, ONLY for a
+  // `.BO`-suffixed ticker that missed both NSE paths above (see this
+  // function's own doc on why the check order matters). Defensive against
+  // BseEodQuote not existing yet in a given database (prod push is the
+  // coordinator's own call, same convention as InstrumentAlias's own
+  // "ADDITIVE, NOT YET PUSHED" schema doc) — a P2021 here degrades this ONE
+  // branch to "not found," it must never crash the extraction pipeline this
+  // function is called from mid-persist.
+  if (bseBareTicker) {
+    try {
+      const bseRows = await prisma.bseEodQuote.findMany({
+        where: { tickerSymbol: { equals: bseBareTicker, mode: "insensitive" } },
+        orderBy: { sessionDate: "desc" },
+        take: 1,
+        select: { tickerSymbol: true, companyName: true },
+      });
+      if (bseRows[0]) {
+        return {
+          symbol: `${bseRows[0].tickerSymbol.toUpperCase()}.BO`,
+          canonicalName: bseRows[0].companyName,
+          resolutionSource: "BSE_EOD_QUOTE",
+        };
+      }
+    } catch (err) {
+      const isMissingTable = typeof err === "object" && err !== null && "code" in err && (err as { code?: string }).code === "P2021";
+      if (!isMissingTable) throw err;
+    }
   }
 
   return null;
