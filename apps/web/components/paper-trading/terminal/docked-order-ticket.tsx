@@ -17,6 +17,21 @@
  *     computeOptionOrderCosts call, same extracted submitOptionOrder()
  *     helper (see lib/paperTrading/optionOrdersClient.ts) — only the chrome
  *     and the pre-fill trigger are new.
+ *   - "index-view-only": Index Universe SPRINT B (2026-08-12), founder:
+ *     "even though the Indices are not tradable we should be able to get
+ *     their charts... when something non-tradable they open, the disclaimer
+ *     that it's not traded should be there with buy/sell getting disabled."
+ *     A NEW, deliberately separate body (`IndexViewOnlyTicketBody`, below) —
+ *     NOT a `disabled` prop threaded through `NewTradeForm`, which owns real
+ *     submit/validation logic this mode must never accidentally reach (a
+ *     disabled-but-still-wired form is a bigger regression surface than a
+ *     small inert lookalike). Visually mirrors the equity ticket's Buy/Sell
+ *     segmented control + quantity stepper shape (so the ticket panel
+ *     doesn't visually "jump" when the focused symbol becomes a view-only
+ *     index) but every control is `disabled` and nothing here ever calls an
+ *     order-placement endpoint. Renders an inline disclaimer, plus — when
+ *     the index has registry-confirmed tracking ETFs — a "trade via ETF"
+ *     pointer to the equity ticket instead.
  */
 import { useEffect, useRef, useState } from "react";
 
@@ -121,7 +136,18 @@ interface FuturesTicketProps {
   presetTriggerPrice?: number;
 }
 
-export type DockedOrderTicketProps = EquityTicketProps | OptionTicketProps | FuturesTicketProps;
+interface IndexViewOnlyTicketProps {
+  kind: "index-view-only";
+  /** `/instruments/[symbol]` code (e.g. "NIFTYIT") — display only, this ticket never submits anything. */
+  symbol: string;
+  displayName: string;
+  /** Registry-confirmed ETFs tracking this index (`getEtfsTrackingIndex`), for the "trade via ETF" pointer — empty array (never omitted) when none exist. */
+  trackingEtfs: { symbol: string; displayName: string }[];
+  /** Switches the equity ticket to the clicked ETF's symbol in place. Optional so a bare caller degrades to plain (non-clickable) ETF text rather than a crash. */
+  onTradeEtf?: (symbol: string) => void;
+}
+
+export type DockedOrderTicketProps = EquityTicketProps | OptionTicketProps | FuturesTicketProps | IndexViewOnlyTicketProps;
 
 export function DockedOrderTicket(props: DockedOrderTicketProps) {
   if (props.kind === "equity") {
@@ -145,6 +171,19 @@ export function DockedOrderTicket(props: DockedOrderTicketProps) {
           presetLimitPrice={props.presetLimitPrice}
           presetTriggerPrice={props.presetTriggerPrice}
           liveLtp={props.liveLtp}
+        />
+      </DockedTicketChrome>
+    );
+  }
+
+  if (props.kind === "index-view-only") {
+    return (
+      <DockedTicketChrome subtitle={`${props.displayName} — index, not tradable`}>
+        <IndexViewOnlyTicketBody
+          symbol={props.symbol}
+          displayName={props.displayName}
+          trackingEtfs={props.trackingEtfs}
+          onTradeEtf={props.onTradeEtf}
         />
       </DockedTicketChrome>
     );
@@ -543,6 +582,98 @@ function OptionTicketBody({
                 : `Confirm ${side.toLowerCase()} order`}
         </Button>
       </form>
+    </div>
+  );
+}
+
+/**
+ * Index Universe SPRINT B (2026-08-12) — see this file's own module doc for
+ * why this is a separate, deliberately inert body rather than a `disabled`
+ * prop threaded through `NewTradeForm`. Wrapped in a native `<fieldset
+ * disabled>` (belt-and-suspenders alongside each control's own `disabled`
+ * attribute) — no control here can ever be interacted with regardless of
+ * whether a future edit forgets one spot's own disabled prop, and no
+ * click handler in this function ever calls an order-placement endpoint.
+ */
+function IndexViewOnlyTicketBody({
+  symbol,
+  displayName,
+  trackingEtfs,
+  onTradeEtf
+}: {
+  symbol: string;
+  displayName: string;
+  trackingEtfs: { symbol: string; displayName: string }[];
+  onTradeEtf?: (symbol: string) => void;
+}) {
+  return (
+    <div className="space-y-4">
+      <div>
+        <p className="text-lg font-semibold text-ink-900">{displayName}</p>
+        <p className="mt-0.5 text-xs text-ink-500">{symbol} · Index</p>
+      </div>
+
+      <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs leading-5 text-amber-800">
+        Indices aren&apos;t directly tradable — chart and analyze here, then trade via the index&apos;s constituent
+        stocks or an index ETF.
+        {trackingEtfs.length > 0 && (
+          <>
+            {" "}
+            Trade via ETF:{" "}
+            {trackingEtfs.map((etf, i) => (
+              <span key={etf.symbol}>
+                {i > 0 && ", "}
+                {onTradeEtf ? (
+                  <button
+                    type="button"
+                    onClick={() => onTradeEtf(etf.symbol)}
+                    className="font-semibold underline underline-offset-2 hover:text-amber-900"
+                    title={etf.displayName}
+                  >
+                    {etf.symbol}
+                  </button>
+                ) : (
+                  <span className="font-semibold">{etf.symbol}</span>
+                )}
+              </span>
+            ))}
+          </>
+        )}
+      </div>
+
+      <fieldset disabled className="space-y-4">
+        <div className="inline-flex rounded-2xl border border-ink-200 bg-white p-1 opacity-50">
+          <button type="button" disabled className="cursor-not-allowed rounded-xl px-4 py-2 text-sm font-medium text-ink-600">
+            Buy
+          </button>
+          <button type="button" disabled className="cursor-not-allowed rounded-xl px-4 py-2 text-sm font-medium text-ink-600">
+            Sell
+          </button>
+        </div>
+
+        <div className="flex items-center gap-3 opacity-50">
+          <span className="text-sm text-ink-600">Quantity</span>
+          <div className="inline-flex items-center rounded-2xl border border-ink-200">
+            <button type="button" disabled className="h-11 w-11 cursor-not-allowed text-lg text-ink-400">
+              −
+            </button>
+            <input
+              type="text"
+              value=""
+              disabled
+              placeholder="0"
+              className="w-14 cursor-not-allowed border-0 bg-transparent text-center text-sm font-medium text-ink-400"
+            />
+            <button type="button" disabled className="h-11 w-11 cursor-not-allowed text-lg text-ink-400">
+              +
+            </button>
+          </div>
+        </div>
+
+        <Button type="button" variant="primary" disabled className="w-full cursor-not-allowed">
+          Not tradable
+        </Button>
+      </fieldset>
     </div>
   );
 }

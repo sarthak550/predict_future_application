@@ -51,6 +51,15 @@
  * HTML here, it's a known bug shape. Being real `<button>`s also gives the
  * chips native Tab reachability for free, satisfying the "reachable but
  * don't over-engineer" keyboard bar without any custom focus management.
+ *
+ * Index Universe SPRINT B (2026-08-12) — a view-only index row (`entry.kind
+ * === "index" && !entry.tradable`) gets the visually distinct badge "Index ·
+ * view only" (never plain "Index," which the 5 tradable underlyings keep)
+ * and a single `[Chart]` chip whose target is always `"chart"` — never
+ * `"optionChain"`/`"futures"`, which don't exist for these. The primary row
+ * click carries `tradable: false` through in its own `SymbolPick` too (see
+ * `pick()` call sites below), so a receiving terminal never has to
+ * re-derive it.
  */
 import { useEffect, useRef, useState } from "react";
 import { Search, X } from "lucide-react";
@@ -62,8 +71,10 @@ interface FlatEntry {
   symbol: string;
   label: string;
   badge: string;
-  /** Only meaningful for kind "equity" — drives whether the row gets an "Option chain" chip. Always false for an index row (indices get their own fixed [Options][Futures] pair regardless of this flag). */
+  /** Only meaningful for kind "equity" — drives whether the row gets an "Option chain" chip. Always false for an index row (indices get their own fixed chip set regardless of this flag — see `chipsFor`). */
   isFno: boolean;
+  /** Only meaningful for kind "index" — see `SymbolSearchEntry.tradable`'s own doc. Ignored (always effectively true) for kind "equity". */
+  tradable: boolean;
 }
 
 interface ActionChip {
@@ -71,9 +82,15 @@ interface ActionChip {
   target: NonNullable<SymbolPick["target"]>;
 }
 
-/** See this file's own module doc for why indices get 2 chips, not the brief's literal 3. */
+/**
+ * See this file's own module doc for why TRADABLE indices get 2 chips, not
+ * the brief's literal 3. A VIEW-ONLY index (Index Universe SPRINT B,
+ * 2026-08-12) gets exactly one `[Chart]` chip — there is no options chain or
+ * futures ladder for these, so offering those chips would be a dead end.
+ */
 function chipsFor(entry: FlatEntry): ActionChip[] {
   if (entry.kind === "index") {
+    if (!entry.tradable) return [{ label: "Chart", target: "chart" }];
     return [
       { label: "Options", target: "optionChain" },
       { label: "Futures", target: "futures" }
@@ -109,28 +126,45 @@ export function SymbolSearchPopover({
   const { indexResults, stockResults, fnoSymbols, loading } = useSymbolSearch(query);
 
   const flatResults: FlatEntry[] = showingRecents
-    ? recents.map((r) => ({
-        kind: r.kind,
-        symbol: r.symbol,
-        label: r.label,
-        badge: r.kind === "index" ? "Index" : "Stock",
-        isFno: r.kind === "equity" && fnoSymbols.has(r.symbol)
-      }))
+    ? recents.map((r) => {
+        // Index Universe SPRINT B (2026-08-12) — a recent saved before this
+        // change never had `tradable` persisted; `!== false` defaults an
+        // absent value to `true`, matching the only kind of index pick that
+        // could have been saved before today (one of the 5 tradable
+        // underlyings) — never misrenders an old recent as view-only.
+        const indexTradable = r.tradable !== false;
+        return {
+          kind: r.kind,
+          symbol: r.symbol,
+          label: r.label,
+          badge: r.kind === "index" ? (indexTradable ? "Index" : "Index · view only") : "Stock",
+          isFno: r.kind === "equity" && fnoSymbols.has(r.symbol),
+          tradable: r.kind === "index" ? indexTradable : true
+        };
+      })
     : [
-        ...indexResults.map((r) => ({ kind: "index" as const, symbol: r.symbol, label: r.label, badge: "Index", isFno: false })),
+        ...indexResults.map((r) => ({
+          kind: "index" as const,
+          symbol: r.symbol,
+          label: r.label,
+          badge: r.tradable ? "Index" : "Index · view only",
+          isFno: false,
+          tradable: r.tradable
+        })),
         ...stockResults.map((r) => ({
           kind: "equity" as const,
           symbol: r.symbol,
           label: r.label,
           badge: fnoSymbols.has(r.symbol) ? "F&O" : "Stock",
-          isFno: fnoSymbols.has(r.symbol)
+          isFno: fnoSymbols.has(r.symbol),
+          tradable: true
         }))
       ];
   const clampedHighlight = Math.min(highlightIdx, Math.max(0, flatResults.length - 1));
 
   /** Primary row click (today's behavior, `target` undefined) AND every action-chip click (explicit `target`) both funnel through here — a chip pick is just as much a "recent" as a plain pick. */
   function pick(entry: SymbolPick) {
-    saveRecentSymbolPick({ kind: entry.kind, symbol: entry.symbol, label: entry.label });
+    saveRecentSymbolPick({ kind: entry.kind, symbol: entry.symbol, label: entry.label, tradable: entry.tradable });
     onPick(entry);
     onClose();
   }
@@ -193,8 +227,8 @@ export function SymbolSearchPopover({
                     entry={entry}
                     highlighted={i === clampedHighlight}
                     onMouseEnter={() => setHighlightIdx(i)}
-                    onClick={() => pick({ kind: entry.kind, symbol: entry.symbol, label: entry.label })}
-                    onNavigate={(target) => pick({ kind: entry.kind, symbol: entry.symbol, label: entry.label, target })}
+                    onClick={() => pick({ kind: entry.kind, symbol: entry.symbol, label: entry.label, tradable: entry.tradable })}
+                    onNavigate={(target) => pick({ kind: entry.kind, symbol: entry.symbol, label: entry.label, target, tradable: entry.tradable })}
                   />
                 ))}
               </>
@@ -212,8 +246,8 @@ export function SymbolSearchPopover({
                       entry={entry}
                       highlighted={i === clampedHighlight}
                       onMouseEnter={() => setHighlightIdx(i)}
-                      onClick={() => pick({ kind: "index", symbol: entry.symbol, label: entry.label })}
-                      onNavigate={(target) => pick({ kind: "index", symbol: entry.symbol, label: entry.label, target })}
+                      onClick={() => pick({ kind: "index", symbol: entry.symbol, label: entry.label, tradable: entry.tradable })}
+                      onNavigate={(target) => pick({ kind: "index", symbol: entry.symbol, label: entry.label, target, tradable: entry.tradable })}
                     />
                   ))}
                 </>

@@ -24,6 +24,26 @@
  * `symbol-search-input.tsx`'s own doc already makes for Portfolios vs.
  * Paper Trading).
  *
+ * Index Universe SPRINT B (2026-08-12), founder: "even though the Indices
+ * are not tradable we should be able to get their charts... user can search
+ * indices in Paper Trading." Widens `indexResults` with every Yahoo-verified
+ * VIEW-ONLY index from `INDEX_UNIVERSE` (NSE, 35) + `BSE_INDEX_UNIVERSE`
+ * (BSE, 18) — the same two registries the candles/quote/intraday routes
+ * already resolve against (see `apps/api`'s index candles route, widened
+ * alongside this file). Each entry now carries `tradable` so a consuming
+ * popover can render a visually distinct "view only" badge and so
+ * `SymbolPick.tradable` lets the receiving terminal decide in-place-chart
+ * vs. navigate-to-futures — a view-only pick's `target` is NEVER set to
+ * `"optionChain"`/`"futures"` (there is no such surface for these), only
+ * ever `"chart"` or `undefined` (both resolve to the same in-place chart
+ * switch on the equity terminal, its only currently-reachable consumer;
+ * F&O terminals are gated coming-soon and don't mount this popover's own
+ * navigation logic for this case). Deliberately excludes the DB-only "long
+ * tail" indices (no live Yahoo intraday feed, daily-only) — those stay
+ * off search entirely rather than offering a chart that would either fake
+ * intraday granularity or need a second, degraded code path here; see the
+ * SPRINT B report for the full reasoning.
+ *
  * F&O badge: reuses `fetchFnoUniverseClient()` (already cached client-side,
  * same in-flight-dedupe module `option-chain-browser.tsx`'s Stock-mode
  * combobox depends on) to badge a stock result "F&O" instead of plain
@@ -42,6 +62,8 @@
 import { useEffect, useRef, useState } from "react";
 
 import { INDEX_OPTION_UNDERLYINGS } from "@predict-future/business-rules/papertrading/optionContract";
+import { INDEX_UNIVERSE } from "@predict-future/business-rules/finance/indexUniverse";
+import { BSE_INDEX_UNIVERSE } from "@predict-future/business-rules/finance/bseIndexUniverse";
 
 import { fetchFnoUniverseClient } from "@/lib/paperTrading/fnoUniverseClient";
 
@@ -59,11 +81,35 @@ const INDEX_DISPLAY_NAMES: Record<string, string> = {
   NIFTYNXT50: "Nifty Next 50"
 };
 
+/**
+ * Index Universe SPRINT B (2026-08-12) — every view-only index searchable
+ * from this popover: NSE's `INDEX_UNIVERSE` (35) + BSE's
+ * `BSE_INDEX_UNIVERSE` (18), computed once at module load (both source
+ * arrays are static/readonly — see each registry's own module doc for the
+ * Yahoo-verification bar every entry already cleared). `symbol` is the
+ * `/instruments/[symbol]` code (also what the candles/quote/intraday routes
+ * key on); `label` is the hand-written display name.
+ */
+const VIEW_ONLY_INDEX_ENTRIES: SymbolSearchEntry[] = [
+  ...INDEX_UNIVERSE.map((e) => ({ symbol: e.symbol, label: e.displayName, tradable: false as const })),
+  ...BSE_INDEX_UNIVERSE.map((e) => ({ symbol: e.symbol, label: e.displayName, tradable: false as const }))
+];
+
 export type SymbolSearchKind = "equity" | "index";
 
 export interface SymbolSearchEntry {
   symbol: string;
   label: string;
+  /**
+   * Only meaningful for `kind: "index"` results — `true` for the 5 F&O
+   * underlyings (options/futures tradable), `false` for a view-only
+   * `INDEX_UNIVERSE`/`BSE_INDEX_UNIVERSE` index (chart-only, no order
+   * surface exists). Always `true` for an equity result (every searchable
+   * stock is, by construction, tradable on the equity ticket) — see
+   * `optionChainBrowser`'s parallel F&O badge for the closest equity
+   * analogue, though that one is a separate "also F&O-eligible" concept.
+   */
+  tradable: boolean;
 }
 
 /**
@@ -86,8 +132,10 @@ export interface SymbolPick {
   kind: SymbolSearchKind;
   symbol: string;
   label: string;
-  /** "chart" = the symbol's own dedicated chart surface (equity dashboard for a stock; the futures terminal's underlying chart for an index — there is no separate index-only chart page). "optionChain" = the options terminal, chain loaded for this underlying. "futures" = the futures terminal, ready to trade. Undefined on a plain row click (today's in-place-where-possible behavior, unchanged). */
+  /** "chart" = the symbol's own dedicated chart surface (equity dashboard for a stock; the futures terminal's underlying chart for a tradable index — there is no separate index-only chart page for those. A VIEW-ONLY index's chart is the equity terminal's own in-place workbench switch, same as "chart" resolves to for an equity). "optionChain" = the options terminal, chain loaded for this underlying. "futures" = the futures terminal, ready to trade. Undefined on a plain row click (today's in-place-where-possible behavior, unchanged). */
   target?: "chart" | "optionChain" | "futures";
+  /** Index Universe SPRINT B (2026-08-12) — carried through from `SymbolSearchEntry.tradable` so the receiving terminal's `handleWorkbenchSymbolPick` can tell a tradable index pick (navigate to futures/options, unchanged) apart from a view-only one (switch the chart in place, order ticket disabled) without re-deriving it. Only meaningful for `kind: "index"`. */
+  tradable?: boolean;
 }
 
 export function useSymbolSearch(query: string): {
@@ -130,7 +178,7 @@ export function useSymbolSearch(query: string): {
         .then((data) => {
           if (requestId !== requestIdRef.current) return; // a later keystroke's request already superseded this one.
           const raw: { symbol: string; companyName: string }[] = Array.isArray(data?.results) ? data.results : [];
-          setStockResults(raw.slice(0, MAX_RESULTS_PER_GROUP).map((r) => ({ symbol: r.symbol, label: r.companyName })));
+          setStockResults(raw.slice(0, MAX_RESULTS_PER_GROUP).map((r) => ({ symbol: r.symbol, label: r.companyName, tradable: true })));
         })
         .catch(() => {
           if (requestId === requestIdRef.current) setStockResults([]);
@@ -144,12 +192,30 @@ export function useSymbolSearch(query: string): {
     };
   }, [trimmed]);
 
-  const indexResults: SymbolSearchEntry[] =
+  // Index Universe SPRINT B (2026-08-12) — tradable underlyings still lead
+  // (unchanged ranking/behavior for the 5 existing rows — B3 regression),
+  // then view-only matches fill the remaining slots. A query like "nifty it"
+  // matches zero tradable underlyings and surfaces entirely from the
+  // view-only set; a broad query like "nifty" still shows the 5 tradable
+  // ones first. Each group capped independently at MAX_RESULTS_PER_GROUP so
+  // a broad view-only match (e.g. "nifty") can't crowd out the tradable
+  // five, then the combined list is capped at MAX_RESULTS_PER_GROUP so the
+  // popover never grows past its established size for a narrow query.
+  const upperTrimmed = trimmed.toUpperCase();
+  const tradableIndexMatches: SymbolSearchEntry[] =
     trimmed.length === 0
       ? []
-      : INDEX_OPTION_UNDERLYINGS.filter((sym) => sym.includes(trimmed.toUpperCase()) || INDEX_DISPLAY_NAMES[sym].toUpperCase().includes(trimmed.toUpperCase()))
+      : INDEX_OPTION_UNDERLYINGS.filter((sym) => sym.includes(upperTrimmed) || INDEX_DISPLAY_NAMES[sym].toUpperCase().includes(upperTrimmed))
           .slice(0, MAX_RESULTS_PER_GROUP)
-          .map((sym) => ({ symbol: sym, label: INDEX_DISPLAY_NAMES[sym] }));
+          .map((sym) => ({ symbol: sym, label: INDEX_DISPLAY_NAMES[sym], tradable: true as const }));
+  const viewOnlyIndexMatches: SymbolSearchEntry[] =
+    trimmed.length === 0
+      ? []
+      : VIEW_ONLY_INDEX_ENTRIES.filter((e) => e.symbol.includes(upperTrimmed) || e.label.toUpperCase().includes(upperTrimmed)).slice(
+          0,
+          MAX_RESULTS_PER_GROUP
+        );
+  const indexResults: SymbolSearchEntry[] = [...tradableIndexMatches, ...viewOnlyIndexMatches].slice(0, MAX_RESULTS_PER_GROUP);
 
   return { indexResults, stockResults, fnoSymbols, loading };
 }

@@ -129,6 +129,8 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { formatNseExpiryDate } from "@predict-future/business-rules/papertrading/optionContract";
+import { getIndexUniverseEntry } from "@predict-future/business-rules/finance/indexUniverse";
+import { getBseIndexUniverseEntry } from "@predict-future/business-rules/finance/bseIndexUniverse";
 
 import { PriceChart, type ChartOrderLine } from "@/components/finance/price-chart";
 import { EMPTY_ORDER_LINES } from "@/components/finance/chart-order-lines";
@@ -412,6 +414,50 @@ export function PaperTradingDashboard() {
   const [focusedSymbol, setFocusedSymbolState] = useState<string | null>(null);
   const [restoredLastFocus, setRestoredLastFocus] = useState<string | null | undefined>(undefined); // undefined = not yet read from storage
 
+  // Index Universe SPRINT B (2026-08-12), founder: "even though the Indices
+  // are not tradable we should be able to get their charts... user can
+  // search indices in Paper Trading but when something non-tradable they
+  // open, the disclaimer that it's not traded should be there with buy/sell
+  // getting disabled." A picked VIEW-ONLY index (never one of the 5 tradable
+  // underlyings, which keep navigating to the futures terminal exactly as
+  // before — see `handleWorkbenchSymbolPick`). Non-null only while the
+  // maximized workbench is showing that index's read-only chart in place of
+  // the equity `focusedSymbol` — deliberately NOT persisted to localStorage/
+  // URL like `focusedSymbol` is: a view-only index is a transient "look at
+  // this" detour from the equity terminal, not a resumable focus, and this
+  // terminal's compact (non-maximized) chart slot stays equity-only (see
+  // this ticket's own report for why the compact `PriceChart`/`useEodSeries`
+  // pair — StockEodQuote-backed — was left untouched rather than retrofitted
+  // for indices; the workbench's already-generic `feed:{kind:"index"}` path
+  // is the one surface built to chart these honestly).
+  const [focusedIndexSymbol, setFocusedIndexSymbol] = useState<string | null>(null);
+  const [indexTrackingEtfs, setIndexTrackingEtfs] = useState<{ symbol: string; displayName: string }[]>([]);
+
+  // "Trade via ETF" pointer (bonus, brief-sanctioned) — fetched from the new
+  // small JSON route wrapping `getEtfsTrackingIndex` (Prisma-backed, so it
+  // can't be called directly from this Client Component). Never blocks or
+  // errors the ticket render — an empty array just omits the pointer.
+  useEffect(() => {
+    if (!focusedIndexSymbol) {
+      setIndexTrackingEtfs([]);
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/paper-trading/instruments/${encodeURIComponent(focusedIndexSymbol)}/etfs`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (cancelled) return;
+        const rows: { symbol: string; displayName: string }[] = Array.isArray(data?.etfs) ? data.etfs : [];
+        setIndexTrackingEtfs(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setIndexTrackingEtfs([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [focusedIndexSymbol]);
+
   useEffect(() => {
     try {
       setRestoredLastFocus(window.localStorage.getItem(LAST_FOCUSED_SYMBOL_KEY));
@@ -570,10 +616,13 @@ export function PaperTradingDashboard() {
   // focused symbol must never compute the position line's P&L for the NEW
   // one, even for the one render between a symbol change and the chart's own
   // first `onQuoteChange` report. Keyed on the primitive `focusedSymbol`
-  // string, never on the chart's own quote object.
+  // string, never on the chart's own quote object. Index Universe SPRINT B
+  // (2026-08-12) widens the key with `focusedIndexSymbol` — a view-only
+  // index's own onQuoteChange reports must never leak into the equity
+  // position line's P&L math either, in both directions of the detour.
   useEffect(() => {
     setChartQuote(null);
-  }, [focusedSymbol]);
+  }, [focusedSymbol, focusedIndexSymbol]);
 
   // Charting Workbench (W2) — the maximize state lives here (not inside
   // WorkbenchMaximizeButton) because the ticket single-mount rule requires
@@ -652,24 +701,35 @@ export function PaperTradingDashboard() {
    * uses (search-select, a holdings-row click — see that function's own
    * doc), so `focusedSymbol` changing is what drives the still-mounted
    * `ChartWorkbench` instance's `feed`/`chartKey`/`title` props to the new
-   * symbol with no remount. An INDEX pick (one of the 5 F&O underlyings)
-   * has no in-place home here — this terminal has no index feed wiring at
-   * all — so it NAVIGATES to the futures terminal instead, with
-   * `?workbench=1` auto-maximizing that terminal's own workbench on
-   * arrival (see `use-workbench-url-param.ts`'s `useWorkbenchAutoRestore`
-   * for the mechanics: `underlying` resolves synchronously there, so the
-   * restore fires on the very first render). Never fakes an in-place
-   * switch with the wrong feed kind.
+   * symbol with no remount. A TRADABLE index pick (one of the 5 F&O
+   * underlyings) has no in-place home here — this terminal has no order
+   * surface for options/futures at all — so it NAVIGATES to the futures
+   * terminal instead, with `?workbench=1` auto-maximizing that terminal's
+   * own workbench on arrival (see `use-workbench-url-param.ts`'s
+   * `useWorkbenchAutoRestore` for the mechanics: `underlying` resolves
+   * synchronously there, so the restore fires on the very first render).
+   * Never fakes an in-place switch with the wrong feed kind.
+   *
+   * Index Universe SPRINT B (2026-08-12) — a VIEW-ONLY index pick (anything
+   * in `INDEX_UNIVERSE`/`BSE_INDEX_UNIVERSE`, `pick.tradable === false`) DOES
+   * now have an in-place home: `feed:{kind:"index"}` is generic (the candles
+   * route was widened alongside this file to resolve any Yahoo-verified
+   * index ticker, not just the 5 tradable ones), so this switches the
+   * still-open workbench in place via `setFocusedIndexSymbol`, exactly the
+   * same "no remount" mechanics the equity branch already relies on — never
+   * navigates away for these.
    *
    * Founder bug fix (2026-08-07b) — action-chip targets. "Chart" on an
    * equity row here is a plain in-place switch (already this terminal's own
    * default equity behavior — the chip is only reachable on an equity row
-   * to begin with). "Option chain"/"Futures" ALWAYS navigate, even though
-   * `pick.symbol` could in principle already be `focusedSymbol` — this is a
-   * genuine cross-terminal jump, never something this page can satisfy
-   * in-place (no option-chain or futures-contract UI lives on the equity
-   * dashboard). See symbol-search-popover.tsx's own doc for which chips a
-   * row actually gets.
+   * to begin with). Same for "Chart" on a view-only index row (new,
+   * 2026-08-12) — it resolves to the identical in-place index switch a
+   * plain row click already does; see `symbol-search-popover.tsx`'s own doc
+   * for why a view-only index gets exactly that one chip. "Option chain"/
+   * "Futures" ALWAYS navigate — a genuine cross-terminal jump, never
+   * reachable from a view-only index row to begin with (see
+   * `chipsFor` in that file). See that file's own doc for which chips a row
+   * actually gets.
    */
   function handleWorkbenchSymbolPick(pick: SymbolPick) {
     if (pick.target === "optionChain") {
@@ -681,10 +741,15 @@ export function PaperTradingDashboard() {
       return;
     }
     if (pick.kind === "equity") {
+      setFocusedIndexSymbol(null);
       setFocusedSymbol(pick.symbol);
-    } else {
-      router.push(`/paper-trading/futures?underlying=${encodeURIComponent(pick.symbol)}&workbench=1`);
+      return;
     }
+    if (pick.tradable === false) {
+      setFocusedIndexSymbol(pick.symbol);
+      return;
+    }
+    router.push(`/paper-trading/futures?underlying=${encodeURIComponent(pick.symbol)}&workbench=1`);
   }
 
   if (state === "loading") {
@@ -833,6 +898,43 @@ export function PaperTradingDashboard() {
     />
   );
 
+  // Index Universe SPRINT B (2026-08-12) — the view-only index ticket
+  // (single instance, same "reused verbatim" discipline as `ticketElement`
+  // above, mounted ONLY inside the workbench — a view-only index never has
+  // a compact/non-maximized slot, see `focusedIndexSymbol`'s own doc).
+  // `indexDisplayName` looks up whichever registry (NSE or BSE) minted
+  // `focusedIndexSymbol` — both are pure, side-effect-free lookups safe to
+  // call at render time.
+  const indexDisplayName = focusedIndexSymbol
+    ? (getIndexUniverseEntry(focusedIndexSymbol)?.displayName ??
+        getBseIndexUniverseEntry(focusedIndexSymbol)?.displayName ??
+        focusedIndexSymbol)
+    : "";
+  const indexTicketElement = focusedIndexSymbol ? (
+    <DockedOrderTicket
+      key={`index-${focusedIndexSymbol}`}
+      kind="index-view-only"
+      symbol={focusedIndexSymbol}
+      displayName={indexDisplayName}
+      trackingEtfs={indexTrackingEtfs}
+      onTradeEtf={(etfSymbol) => {
+        setFocusedIndexSymbol(null);
+        setFocusedSymbol(etfSymbol);
+      }}
+    />
+  ) : null;
+
+  // The workbench's own feed/chartKey/title — index-focused takes priority
+  // over the equity `focusedSymbol` whenever both happen to be set (the
+  // equity value is deliberately never cleared on an index pick, see
+  // `focusedIndexSymbol`'s own doc, so this terminal can fall straight back
+  // to the last equity the instant the index detour ends).
+  const workbenchFeed = focusedIndexSymbol
+    ? ({ kind: "index" as const, symbol: focusedIndexSymbol })
+    : focusedSymbol
+      ? ({ kind: "equity" as const, symbol: focusedSymbol })
+      : null;
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -924,18 +1026,34 @@ export function PaperTradingDashboard() {
         }
       />
 
-      {workbenchOpen && focusedSymbol && (
+      {workbenchOpen && workbenchFeed && (
         <DynamicChartWorkbench
-          feed={{ kind: "equity", symbol: focusedSymbol }}
-          chartKey={`EQ:${focusedSymbol}`}
-          title={focusedSymbol}
-          onClose={() => setWorkbenchOpen(false)}
-          orderLines={orderLines}
-          onOrderIntentConfirm={handleOrderIntentConfirm}
-          onOrderLineDrag={handleOrderLineDrag}
-          onOrderLineCancel={handleOrderLineCancel}
+          feed={workbenchFeed}
+          chartKey={workbenchFeed.kind === "index" ? `INDEX:${workbenchFeed.symbol}` : `EQ:${workbenchFeed.symbol}`}
+          title={workbenchFeed.kind === "index" ? indexDisplayName : workbenchFeed.symbol}
+          onClose={() => {
+            setWorkbenchOpen(false);
+            // Index Universe SPRINT B (2026-08-12) — a view-only index is a
+            // transient detour (see `focusedIndexSymbol`'s own doc); closing
+            // the workbench always drops back to the equity terminal, never
+            // reopens straight into the same index next time.
+            setFocusedIndexSymbol(null);
+          }}
+          // A view-only index gets NO order lines and NO trade affordances
+          // anywhere on the chart — `onOrderIntentConfirm`/
+          // `onOrderLineDrag`/`onOrderLineCancel` all `undefined` is the
+          // SAME idiom this codebase already uses to fully suppress the
+          // price-axis "+" button and right-click Buy/Sell menu (see
+          // chart-workbench.tsx's own `onAxisHoverChange`/
+          // `onSurfaceContextMenu`, both gated on `onOrderIntentConfirm`
+          // being present — the options terminal's underlying-only
+          // maximized workbench already relies on this same gate).
+          orderLines={focusedIndexSymbol ? EMPTY_ORDER_LINES : orderLines}
+          onOrderIntentConfirm={focusedIndexSymbol ? undefined : handleOrderIntentConfirm}
+          onOrderLineDrag={focusedIndexSymbol ? undefined : handleOrderLineDrag}
+          onOrderLineCancel={focusedIndexSymbol ? undefined : handleOrderLineCancel}
           onQuoteChange={(q) => setChartQuote(q ? { price: q.price } : null)}
-          ticket={ticketElement}
+          ticket={focusedIndexSymbol ? indexTicketElement : ticketElement}
           onSymbolPick={handleWorkbenchSymbolPick}
         />
       )}

@@ -1,26 +1,38 @@
 import { NextResponse } from "next/server";
 
 import { isIndexOptionUnderlying, type IndexOptionUnderlying } from "@predict-future/business-rules/papertrading/optionContract";
+import { getIndexUniverseEntry } from "@predict-future/business-rules/finance/indexUniverse";
+import { getBseIndexUniverseEntry } from "@predict-future/business-rules/finance/bseIndexUniverse";
 
 import { YAHOO_INDEX_TICKER } from "@/lib/paperTrading/optionsExpiry";
 import { fetchYahooCandles, isCandleInterval } from "@/lib/marketMoves/candles";
 
 export const dynamic = "force-dynamic";
 
-function isIndexUnderlying(value: string): value is IndexOptionUnderlying {
-  return isIndexOptionUnderlying(value);
+/**
+ * Index Universe SPRINT B (2026-08-12) — same two-registry resolution as the
+ * sibling `/intraday` and `/quote` routes (see those files' own docs): the 5
+ * tradable underlyings (`YAHOO_INDEX_TICKER`, unchanged) fall through to
+ * `INDEX_UNIVERSE` (NSE view-only) then `BSE_INDEX_UNIVERSE` (BSE view-only).
+ * Was previously the ONE index route still hardcoded to `isIndexOptionUnderlying`
+ * only — this closes that gap so the charting workbench's full
+ * indicator/drawing toolkit works for every Yahoo-verified index, not just
+ * the 5 F&O underlyings. `null` when `symbol` is in none of the three.
+ */
+function resolveIndexYahooTicker(symbol: string): string | null {
+  if (isIndexOptionUnderlying(symbol)) return YAHOO_INDEX_TICKER[symbol as IndexOptionUnderlying];
+  return getIndexUniverseEntry(symbol)?.yahooTicker ?? getBseIndexUniverseEntry(symbol)?.yahooTicker ?? null;
 }
 
 /**
  * GET /api/finance/instruments/index/[symbol]/candles?interval=1m|5m|15m|30m|60m|1d
  *
- * Charting Workbench (W1) — index sibling of the equity candles route,
- * mirroring `/api/finance/instruments/index/[symbol]/intraday`'s symbol
- * validation exactly: `symbol` must be one of the index underlyings in
- * `YAHOO_INDEX_TICKER` (NIFTY/BANKNIFTY/FINNIFTY/MIDCPNIFTY/NIFTYNXT50 —
- * the same set the futures/options terminals already trade), anything else
- * 400s. The futures terminal charts this same endpoint under its
- * underlying's `INDEX:` key (see the ChartDrawing schema doc comment) —
+ * Charting Workbench (W1) — index sibling of the equity candles route.
+ * `symbol` must resolve via `resolveIndexYahooTicker` above — either one of
+ * the 5 tradable F&O underlyings or a view-only `INDEX_UNIVERSE`/
+ * `BSE_INDEX_UNIVERSE` index (Index Universe SPRINT B, 2026-08-12) —
+ * anything else 400s. The futures terminal charts this same endpoint under
+ * its underlying's `INDEX:` key (see the ChartDrawing schema doc comment) —
  * there is deliberately no separate futures-specific candles route.
  *
  * Response shape is byte-identical to the equity candles route's success
@@ -35,7 +47,8 @@ export async function GET(request: Request, { params }: { params: { symbol: stri
     return NextResponse.json({ error: "Symbol is required." }, { status: 400 });
   }
   const symbol = rawSymbol.trim().toUpperCase();
-  if (!isIndexUnderlying(symbol)) {
+  const yahooTicker = resolveIndexYahooTicker(symbol);
+  if (!yahooTicker) {
     return NextResponse.json({ error: "Unsupported index symbol." }, { status: 400 });
   }
 
@@ -48,7 +61,6 @@ export async function GET(request: Request, { params }: { params: { symbol: stri
   }
   const interval = rawInterval;
 
-  const yahooTicker = YAHOO_INDEX_TICKER[symbol];
   const series = await fetchYahooCandles(yahooTicker, interval);
   if (!series || series.candles.length === 0) {
     return NextResponse.json({ error: "No candle data available for this index." }, { status: 404 });
