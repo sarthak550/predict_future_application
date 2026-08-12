@@ -23,6 +23,7 @@ import type { InstrumentAlias, InstrumentResolutionSource, PrismaClient } from "
 
 import { normalizeInstrumentRawName } from "@predict-future/business-rules/instruments/instrumentDedup";
 import { INDEX_UNIVERSE } from "@predict-future/business-rules/finance/indexUniverse";
+import { BSE_INDEX_UNIVERSE } from "@predict-future/business-rules/finance/bseIndexUniverse";
 import { sanitizeExtractedValue } from "@/lib/ai/sanitizeExtractedValue";
 import { fetchEquityNames } from "@/lib/marketMoves/nse";
 
@@ -53,6 +54,14 @@ const KNOWN_INDEX_IDENTITIES: Record<string, { symbol: string; canonicalName: st
   "^NSMIDCP": { symbol: "NIFTYNXT50", canonicalName: "NIFTY NEXT 50" },
   ...Object.fromEntries(
     INDEX_UNIVERSE.map((e) => [e.yahooTicker, { symbol: e.symbol, canonicalName: e.displayName }]),
+  ),
+  // BSE Expansion Phase 2 (2026-08-12) — the founder-visible win this phase
+  // ships: prod has real SENSEX opinions carrying "^BSESN" with nowhere to
+  // resolve (see business-rules/bseIndexUniverse.ts's own module doc for the
+  // live verification). Generated from BSE_INDEX_UNIVERSE, never
+  // hand-duplicated, same discipline as the INDEX_UNIVERSE spread above.
+  ...Object.fromEntries(
+    BSE_INDEX_UNIVERSE.map((e) => [e.yahooTicker, { symbol: e.symbol, canonicalName: e.displayName }]),
   ),
 };
 

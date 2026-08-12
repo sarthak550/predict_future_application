@@ -9,12 +9,19 @@ import {
   INDEX_UNIVERSE_OPINION_TICKER,
   INDEX_UNIVERSE_DISPLAY_NAME,
 } from "@predict-future/business-rules/finance/indexUniverse";
+import {
+  isBseIndexUniverseSymbol,
+  getBseIndexUniverseEntry,
+  BSE_INDEX_UNIVERSE_OPINION_TICKER,
+  BSE_INDEX_UNIVERSE_DISPLAY_NAME,
+} from "@predict-future/business-rules/finance/bseIndexUniverse";
 import type { OpinionDirection, OpinionResolutionStatus } from "@prisma/client";
 
 import { EMPTY_INSTRUMENT_ENRICHMENT, getOrFetchInstrumentEnrichment, type InstrumentEnrichmentData } from "@/lib/finance/enrichment";
 import { fetchIndexInstrumentSpark } from "@/lib/finance/fundamentals";
 import { fetchIndexBySlug } from "@/lib/finance/indices";
 import { getLongTailIndexBySymbol } from "@/lib/finance/indexLongTail";
+import { getBseLongTailIndexBySymbol } from "@/lib/finance/bseIndexLongTail";
 import { TRADABLE_UNDERLYING_TO_INDEX_SLUG } from "@/lib/finance/indexTradableAlias";
 import { hasIndexConstituentList, fetchIndexConstituents } from "@/lib/finance/indexConstituents";
 import { getEtfRegistryEntry, getEtfsTrackingIndex, type EtfRegistryEntry } from "@/lib/finance/etfRegistry";
@@ -181,6 +188,17 @@ export interface InstrumentDetail {
    */
   hasLiveIndexPipe: boolean;
   /**
+   * BSE Expansion Phase 2 (2026-08-12) — true for ANY BSE index page (the 18
+   * BSE_INDEX_UNIVERSE Yahoo-verified indices AND the ~115-index BSE long
+   * tail — see lib/finance/bseIndexLongTail.ts). Mutually exclusive with a
+   * true `isIndex` from the NSE side — a symbol is either an NSE index, a
+   * BSE index, an ETF, or a plain equity, never two of those. Drives
+   * QuoteHeader's "NSE"/"BSE" exchange label; everything else (`isIndex`,
+   * `viewOnlyIndex`, `hasLiveIndexPipe`) already generalizes across both
+   * exchanges so page.tsx needs no other BSE-specific branching.
+   */
+  isBseIndex: boolean;
+  /**
    * Instrument Page v2 (T3) — 1W/1M/3M/6M/1Y/FY-to-date returns computed
    * over `spark`. Was all-null for indices (no StockEodQuote series) until
    * Index History (2026-08-11) gave indices a real daily `spark` too — now
@@ -282,6 +300,24 @@ const INDEX_OPINION_TICKER: Record<string, string> = {
   ...INDEX_UNIVERSE_OPINION_TICKER,
 };
 
+/**
+ * BSE Expansion Phase 2 (2026-08-12) — the BSE-side sibling of
+ * INDEX_OPINION_TICKER: `{ symbol -> verified Yahoo ticker }` for the 18
+ * BSE_INDEX_UNIVERSE indices, doubling as the ExpertOpinion.instrumentTicker
+ * value their opinions resolve under (e.g. "^BSESN" for BSE Sensex — the
+ * ticker prod's existing, currently-unlinked SENSEX opinions already carry).
+ * A BSE long-tail index (not in this map) matches by raw `instrument` text
+ * instead, same asymmetry as the NSE long tail's own `isLongTailIndex`
+ * branch below.
+ */
+const BSE_INDEX_OPINION_TICKER: Record<string, string> = {
+  ...BSE_INDEX_UNIVERSE_OPINION_TICKER,
+};
+/** BSE-side sibling of INDEX_DISPLAY_NAME, sourced from BSE_INDEX_UNIVERSE (business-rules) so the two never drift. */
+const BSE_INDEX_DISPLAY_NAME: Record<string, string> = {
+  ...BSE_INDEX_UNIVERSE_DISPLAY_NAME,
+};
+
 export async function fetchInstrumentDetail(rawSymbol: string): Promise<InstrumentDetail | null> {
   // Next.js App Router dynamic params arrive PERCENT-ENCODED ("M%26M" for
   // /instruments/M&M) — without decoding, every ampersand ticker (M&M,
@@ -329,7 +365,34 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
   // — equities — is negligible).
   const longTailEntry = hasLiveIndexPipe ? null : await getLongTailIndexBySymbol(symbol);
   const isLongTailIndex = longTailEntry != null;
-  const isIndex = hasLiveIndexPipe || isLongTailIndex;
+
+  // BSE Expansion Phase 2 (2026-08-12) — additive-only BSE resolution,
+  // evaluated ONLY when the NSE side found nothing (a plain equity falls
+  // into this branch too, same as the NSE long-tail lookup above — the BSE
+  // long-tail cache is a 5-minute in-memory Map after the first call, so the
+  // added cost for the overwhelming majority of page views is negligible).
+  // `nseUnresolved` is a defensive gate, not real disambiguation: every
+  // BSE-derived symbol is "BSE"-prefixed by construction (see
+  // business-rules/bseIndexUniverse.ts's own module doc — collision-checked
+  // against the full NSE index/equity/bond universe via
+  // apps/api/scripts/check-bse-collisions.ts) and therefore can never equal
+  // an `hasLiveIndexPipe`/NSE-long-tail symbol in the first place. NONE of
+  // the NSE branches above (`hasLiveIndexPipe`, `longTailEntry`,
+  // `isLongTailIndex`) are touched by this block — the 35 hasLiveIndexPipe
+  // pages and the NSE long tail remain byte-for-byte unchanged.
+  const nseUnresolved = !hasLiveIndexPipe && !isLongTailIndex;
+  const hasLiveBseIndexPipe = nseUnresolved && isBseIndexUniverseSymbol(symbol);
+  const bseUniverseEntry = hasLiveBseIndexPipe ? getBseIndexUniverseEntry(symbol) : null;
+  const bseLongTailEntry =
+    nseUnresolved && !hasLiveBseIndexPipe ? await getBseLongTailIndexBySymbol(symbol) : null;
+  const isBseLongTailIndex = bseLongTailEntry != null;
+  const isBseIndex = hasLiveBseIndexPipe || isBseLongTailIndex;
+  /** BseIndexEodQuote.indexName join key for either BSE branch — verbatim BSE display name, same role as `ownedIndexName` on the NSE side. */
+  const bseIndexName = bseUniverseEntry?.name ?? bseLongTailEntry?.name ?? null;
+  /** BSE Yahoo tier's ExpertOpinion ticker (see BSE_INDEX_OPINION_TICKER's own doc) — undefined for the BSE long tail, which matches by raw instrument text instead. */
+  const bseIndexYahooTicker = hasLiveBseIndexPipe ? BSE_INDEX_OPINION_TICKER[symbol] : undefined;
+
+  const isIndex = hasLiveIndexPipe || isLongTailIndex || isBseIndex;
   const viewOnlyIndex = isIndex && !isIndexOptionUnderlying(symbol);
   // Index History Stage 3 (2026-08-12) — founder bug report: "/instruments/
   // NIFTYCEMENT — no price history." Root cause: 10 of the 35 hasLiveIndexPipe
@@ -394,6 +457,7 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     opinionCandidates,
     indexSparkRows,
     ownedEodRows,
+    bseOwnedEodRows,
     longTailLiveQuote,
     metricsSnapshotRow,
     constituentListRows,
@@ -464,7 +528,15 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
           ? { instrumentTicker: { equals: indexYahooTicker } }
           : isLongTailIndex
             ? { instrument: { equals: longTailEntry!.name, mode: "insensitive" as const } }
-            : { instrumentTicker: { startsWith: `${symbol}.`, mode: "insensitive" as const } }),
+            : // BSE Expansion Phase 2 (2026-08-12) — same two-tier match as the
+              // NSE branches above, additive: only reached when NEITHER NSE
+              // branch matched (indexYahooTicker unset AND isLongTailIndex
+              // false), which is guaranteed for every BSE-prefixed symbol.
+              bseIndexYahooTicker
+              ? { instrumentTicker: { equals: bseIndexYahooTicker } }
+              : isBseLongTailIndex
+                ? { instrument: { equals: bseLongTailEntry!.name, mode: "insensitive" as const } }
+                : { instrumentTicker: { startsWith: `${symbol}.`, mode: "insensitive" as const } }),
         publishedAt: { gte: opinionSince },
       },
       orderBy: { publishedAt: "desc" },
@@ -507,6 +579,28 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
           orderBy: { sessionDate: "desc" },
           take: SPARK_SESSIONS,
           select: { sessionDate: true, close: true, changeAbs: true, changePercent: true, volume: true },
+        })
+      : Promise.resolve(null),
+    // BSE Expansion Phase 2 (2026-08-12) — self-owned daily OHLC, the ONLY
+    // price/spark source for a BSE index page (no NSE-style live
+    // /api/allIndices-equivalent snapshot exists for BSE here — the Yahoo
+    // tier's freshness comes entirely from QuoteHeader's client-side live
+    // overlay, same intraday-pipe mechanism the 35 NSE hasLiveIndexPipe
+    // symbols already use, not a second server-side snapshot fetch). Desc
+    // order (newest first), same convention as `ownedEodRows`.
+    isBseIndex && bseIndexName
+      ? prisma.bseIndexEodQuote.findMany({
+          where: { indexName: { equals: bseIndexName, mode: "insensitive" } },
+          orderBy: { sessionDate: "desc" },
+          take: SPARK_SESSIONS,
+          select: {
+            sessionDate: true,
+            close: true,
+            changeAbs: true,
+            changePercent: true,
+            previousClose: true,
+            volume: true,
+          },
         })
       : Promise.resolve(null),
     // Index History Stage 2 (2026-08-11) — live level/change from NSE's own
@@ -562,6 +656,16 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     if (isLongTailIndex) {
       return o.instrument != null && normalizeIndexDisplayName(o.instrument) === normalizeIndexDisplayName(longTailEntry!.name);
     }
+    // BSE Expansion Phase 2 (2026-08-12) — same additive two-tier re-check as
+    // the query's own `where` clause above. Unreachable for any NSE symbol
+    // (both checks above already returned).
+    const bseTicker = BSE_INDEX_OPINION_TICKER[symbol];
+    if (bseTicker) return o.instrumentTicker === bseTicker;
+    if (isBseLongTailIndex) {
+      return (
+        o.instrument != null && normalizeIndexDisplayName(o.instrument) === normalizeIndexDisplayName(bseLongTailEntry!.name)
+      );
+    }
     if (o.instrumentTicker == null) return false;
     return nseSymbolMatchesInstrumentTicker(symbol, o.instrumentTicker);
   });
@@ -590,6 +694,12 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
   let companyName =
     INDEX_DISPLAY_NAME[symbol] ??
     longTailEntry?.name ??
+    // BSE Expansion Phase 2 (2026-08-12) — Yahoo tier prefers its
+    // hand-written displayName (matches INDEX_DISPLAY_NAME's role); the BSE
+    // long tail falls back to BSE's own verbatim indexName, same as the NSE
+    // long tail above.
+    BSE_INDEX_DISPLAY_NAME[symbol] ??
+    bseLongTailEntry?.name ??
     (etfDetails && latestQuote?.companyName === symbol ? etfDetails.displayName : latestQuote?.companyName) ??
     filings[0]?.companyName ??
     newsRows[0]?.companyName ??
@@ -652,6 +762,31 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     }
   }
 
+  // BSE Expansion Phase 2 (2026-08-12) — no NSE-style live allIndices
+  // snapshot exists for BSE here, so unlike `ownedQuote` above there is no
+  // `liveSnapshot` override: the server quote is simply the latest
+  // self-owned BseIndexEodQuote row. BseIndexEodQuote carries a real
+  // `previousClose` field BSE publishes directly (see that model's own
+  // schema doc) — preferred over the derived `close - changeAbs` NSE's table
+  // requires, falling back to the derivation only when BSE's own field is
+  // null. Same-day freshness for the 18 Yahoo-tier symbols comes entirely
+  // from QuoteHeader's client-side live overlay (hasLiveIndexPipe below),
+  // exactly like the 35 NSE hasLiveIndexPipe symbols.
+  let bseOwnedQuote: InstrumentQuote | null = null;
+  if (isBseIndex) {
+    const latestBseRow = bseOwnedEodRows?.[0] ?? null;
+    if (latestBseRow) {
+      bseOwnedQuote = {
+        sessionDate: latestBseRow.sessionDate,
+        close: latestBseRow.close,
+        prevClose: latestBseRow.previousClose ?? latestBseRow.close - latestBseRow.changeAbs,
+        changePercent: latestBseRow.changePercent,
+        volume: latestBseRow.volume ?? 0,
+        deliveryPct: null,
+      };
+    }
+  }
+
   const sentimentCounts = matchedOpinions.reduce(
     (acc, o) => {
       if (o.direction === "BULLISH") acc.bullish += 1;
@@ -672,10 +807,18 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
   // reduces to the unchanged long-tail behavior). `sparkRows` (StockEodQuote)
   // stays the equity-only path, untouched.
   const ownedSpark = (ownedEodRows ?? []).slice().reverse().map((r) => ({ sessionDate: r.sessionDate, close: r.close }));
+  // BSE Expansion Phase 2 (2026-08-12) — self-owned BseIndexEodQuote is the
+  // ONLY spark source for a BSE index (no Yahoo daily-archive fallback is
+  // wired for BSE — Phase 1's backfill already gives every BSE index
+  // comfortable multi-month depth, unlike the NSE gap OWNED_SPARK_FLOOR was
+  // built to paper over).
+  const bseOwnedSpark = (bseOwnedEodRows ?? []).slice().reverse().map((r) => ({ sessionDate: r.sessionDate, close: r.close }));
   const spark = isIndex
-    ? ownedSpark.length >= OWNED_SPARK_FLOOR
-      ? ownedSpark
-      : (indexSparkRows ?? ownedSpark)
+    ? isBseIndex
+      ? bseOwnedSpark
+      : ownedSpark.length >= OWNED_SPARK_FLOOR
+        ? ownedSpark
+        : (indexSparkRows ?? ownedSpark)
     : sparkRows.slice().reverse();
 
   // Instrument Page v2 (T3) — pure, zero extra query/network call over the
@@ -759,7 +902,7 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
   return {
     symbol,
     companyName,
-    quote: isIndex ? ownedQuote : latestQuote,
+    quote: isIndex ? (isBseIndex ? bseOwnedQuote : ownedQuote) : latestQuote,
     spark,
     news,
     filings,
@@ -786,7 +929,13 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     enrichment,
     isIndex,
     viewOnlyIndex,
-    hasLiveIndexPipe,
+    // BSE Expansion Phase 2 (2026-08-12) — widened to also grant the live 1D
+    // intraday pipe to the 18 BSE_INDEX_UNIVERSE symbols, same treatment as
+    // the 35 NSE hasLiveIndexPipe symbols. Zero change for any NSE/equity
+    // symbol: hasLiveBseIndexPipe is only ever true for a BSE-prefixed
+    // symbol (see `nseUnresolved`'s own doc above).
+    hasLiveIndexPipe: hasLiveIndexPipe || hasLiveBseIndexPipe,
+    isBseIndex,
     indexMetrics,
     indexComposition,
     isEtf: etfDetails != null,

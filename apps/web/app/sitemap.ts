@@ -3,6 +3,7 @@ import type { MetadataRoute } from "next";
 import { deriveIndexSymbol } from "@predict-future/business-rules/finance/indexUniverse";
 
 import { fetchAllIndices } from "@/lib/finance/indices";
+import { fetchLatestBseIndices } from "@/lib/finance/bseIndices";
 import { INDEX_SLUG_TO_TRADABLE_UNDERLYING } from "@/lib/finance/indexTradableAlias";
 import { getPublicProfileStats } from "@/lib/finance/publicProfile";
 import { listPublicEligiblePortfolioSlugsForSitemap } from "@/lib/portfolios/queries";
@@ -112,6 +113,21 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     };
   });
 
+  // BSE Expansion Phase 2 (2026-08-12) — every BSE index now has a real
+  // /instruments/[symbol] page too (self-owned BseIndexEodQuote history at
+  // minimum, live Yahoo feed for the 18 BSE_INDEX_UNIVERSE ones), same
+  // symbol-derivation rule as the NSE indexEntries above (deriveIndexSymbol,
+  // reused not reimplemented). fetchLatestBseIndices never throws (empty
+  // array before the cron has ever run), so this degrades to zero entries
+  // rather than a broken sitemap build.
+  const bseIndices = await fetchLatestBseIndices();
+  const bseIndexEntries: MetadataRoute.Sitemap = bseIndices.map((row) => ({
+    url: `${SITE_URL}/instruments/${deriveIndexSymbol(row.indexName)}`,
+    lastModified: now,
+    changeFrequency: "daily",
+    priority: 0.4,
+  }));
+
   return [
     {
       url: SITE_URL,
@@ -153,5 +169,6 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     ...instrumentEntries,
     ...portfolioEntries,
     ...indexEntries,
+    ...bseIndexEntries,
   ];
 }

@@ -40,6 +40,14 @@ export type QuoteHeaderProps = {
   viewOnlyIndex?: boolean;
   /** ETF Layer (2026-08-12) — true for a registry-confirmed ETF (lib/finance/etfRegistry.ts). Renders a small "ETF" badge in the same slot `viewOnlyIndex` uses — mutually exclusive with it in practice (an ETF is never an index), but not enforced here since the two props are independent booleans supplied by the same caller. */
   isEtf?: boolean;
+  /**
+   * BSE Expansion Phase 2 (2026-08-12) — which exchange this instrument's
+   * quote is sourced from. Defaults to "NSE" (byte-identical rendering for
+   * every existing caller). "BSE" swaps the top-left "SYMBOL · NSE" label to
+   * "SYMBOL · BSE" and the view-only badge copy to "BSE Index · View only"
+   * so a BSE index page never reads as an NSE one.
+   */
+  exchange?: "NSE" | "BSE";
   quote: {
     close: number;
     prevClose: number;
@@ -89,7 +97,15 @@ function formatIstTime(epochMs: number): string {
   }).format(new Date(epochMs));
 }
 
-export function QuoteHeader({ symbol, companyName, quote, intradayEndpoint, viewOnlyIndex, isEtf }: QuoteHeaderProps) {
+export function QuoteHeader({
+  symbol,
+  companyName,
+  quote,
+  intradayEndpoint,
+  viewOnlyIndex,
+  isEtf,
+  exchange = "NSE",
+}: QuoteHeaderProps) {
   const [live, setLive] = useState<LiveQuote | null>(null);
   const fetchedFor = useRef<string | null>(null);
 
@@ -154,12 +170,21 @@ export function QuoteHeader({ symbol, companyName, quote, intradayEndpoint, view
       <CardContent className="p-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-white/50">{symbol} · NSE</p>
+            {/* Two literal-suffix branches (not `{symbol} · {exchange}`) deliberately —
+                two ADJACENT dynamic expression children force React to emit an extra
+                hydration boundary comment between them, which would make every existing
+                NSE page's SSR HTML byte-diverge from before this prop existed. Each
+                branch below keeps the second child a plain string literal, exactly like
+                the original single-exchange markup, so the NSE branch's output is
+                byte-identical to pre-BSE-Expansion HTML. */}
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-white/50">
+              {exchange === "BSE" ? <>{symbol} · BSE</> : <>{symbol} · NSE</>}
+            </p>
             <h1 className="mt-1 text-2xl font-semibold">{companyName}</h1>
             {viewOnlyIndex && (
               <p className="mt-1.5 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-xs font-medium text-white/70">
                 <BarChart3 className="h-3.5 w-3.5" aria-hidden="true" />
-                Index · View only — not on the trading terminal
+                {exchange === "BSE" ? "BSE Index · View only — not on the trading terminal" : "Index · View only — not on the trading terminal"}
               </p>
             )}
             {isEtf && (

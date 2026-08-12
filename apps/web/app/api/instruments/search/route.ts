@@ -4,6 +4,7 @@ import { deriveIndexSymbol } from "@predict-future/business-rules/finance/indexU
 
 import { prisma } from "@/lib/prisma";
 import { fetchAllIndices } from "@/lib/finance/indices";
+import { fetchLatestBseIndices } from "@/lib/finance/bseIndices";
 import { INDEX_SLUG_TO_TRADABLE_UNDERLYING } from "@/lib/finance/indexTradableAlias";
 import { getEtfNameMap, getEtfSymbolSet, searchEtfRegistryByName } from "@/lib/finance/etfRegistry";
 import { isTradableOptionUnderlyingServer } from "@/lib/paperTrading/fnoUniverseServer";
@@ -32,7 +33,12 @@ import { isFuturesTradingEnabled, isOptionsTradingEnabled } from "@/lib/paperTra
  *    lib/finance/indexLongTail.ts). /indices/[slug] (the slim directory)
  *    still exists and itself now links onward to /instruments/[symbol], but
  *    search no longer routes there directly — was the pre-Stage-2 behavior,
- *    when most indices had no instrument page yet.
+ *    when most indices had no instrument page yet. BSE Expansion Phase 2
+ *    (2026-08-12) — all 133 BSE indices ALSO link to /instruments/[symbol]
+ *    now (self-owned BseIndexEodQuote history at minimum, live Yahoo feed
+ *    for the 18 BSE_INDEX_UNIVERSE ones), sourced from
+ *    lib/finance/bseIndices.ts and clearly sublabeled "BSE index" so a
+ *    result never reads as an NSE one.
  *  - "option": for any F&O-eligible match (stock or index), a direct link
  *    into its option chain on the options terminal.
  *  - "future": Phase 4 (Sprint 2) — the 5 index futures (same registry as
@@ -76,8 +82,9 @@ const FUZZY_FETCH = 30;
  * index option chains.
  */
 async function buildDefaults(): Promise<NextResponse> {
-  const [allIndices, latestMoverSession, latestEodSession, latestBondSession, etfSymbols] = await Promise.all([
+  const [allIndices, bseIndices, latestMoverSession, latestEodSession, latestBondSession, etfSymbols] = await Promise.all([
     fetchAllIndices(),
+    fetchLatestBseIndices(),
     prisma.marketMoverSnapshot.findFirst({ orderBy: { sessionDate: "desc" }, select: { sessionDate: true } }),
     prisma.stockEodQuote.findFirst({ orderBy: { sessionDate: "desc" }, select: { sessionDate: true } }),
     prisma.bondEodQuote.findFirst({ orderBy: { sessionDate: "desc" }, select: { sessionDate: true } }),
@@ -136,6 +143,13 @@ async function buildDefaults(): Promise<NextResponse> {
     .filter((idx) => !(idx.slug in INDEX_SLUG_TO_TRADABLE_UNDERLYING))
     .sort((a, b) => Math.abs(b.changePercent ?? 0) - Math.abs(a.changePercent ?? 0))
     .slice(0, 3);
+  // BSE Expansion Phase 2 (2026-08-12) — top-moving BSE indices, same
+  // "reserve a few default slots" shape as topMovingInfoIndices above,
+  // clearly sublabeled so they never read as NSE results.
+  const topMovingBseIndices = bseIndices
+    .slice()
+    .sort((a, b) => Math.abs(b.changePercent) - Math.abs(a.changePercent))
+    .slice(0, 2);
   const indexResults: SearchResultItem[] = [
     ...TRADABLE_INDEX_ENTRIES.map((e) => ({
       href: `/instruments/${e.symbol}`,
@@ -147,6 +161,12 @@ async function buildDefaults(): Promise<NextResponse> {
       href: `/instruments/${deriveIndexSymbol(idx.name)}`,
       label: idx.name,
       sublabel: idx.changePercent != null ? pct(idx.changePercent) : "NSE index",
+      category: "index" as const,
+    })),
+    ...topMovingBseIndices.map((idx) => ({
+      href: `/instruments/${deriveIndexSymbol(idx.indexName)}`,
+      label: idx.indexName,
+      sublabel: `BSE index · ${pct(idx.changePercent)}`,
       category: "index" as const,
     })),
   ];
@@ -215,7 +235,7 @@ export async function GET(request: Request) {
 
   const needle = q.toUpperCase();
 
-  const [exactStock, fuzzyRows, allIndices, bondRows, etfSymbols] = await Promise.all([
+  const [exactStock, fuzzyRows, allIndices, bseIndices, bondRows, etfSymbols] = await Promise.all([
     prisma.stockEodQuote.findFirst({
       where: { symbol: { equals: needle, mode: "insensitive" } },
       orderBy: { sessionDate: "desc" },
@@ -244,6 +264,10 @@ export async function GET(request: Request) {
     })(),
     // 60s-cached at the apps/api layer (allIndices.ts).
     fetchAllIndices(),
+    // BSE Expansion Phase 2 (2026-08-12) — the latest ingested session's full
+    // BSE index set (~133 rows), filtered by name below same as NSE's
+    // allIndices.
+    fetchLatestBseIndices(),
     // Bonds: fuzzy match against symbol OR the parsed displayName (so "GOI" /
     // "gold bond"-style queries surface results, not just raw NSE symbols).
     (async () => {
@@ -273,6 +297,12 @@ export async function GET(request: Request) {
     .filter((idx) => !(idx.slug in INDEX_SLUG_TO_TRADABLE_UNDERLYING))
     .filter((idx) => idx.name.toUpperCase().includes(needle))
     .sort((a, b) => a.name.localeCompare(b.name));
+  // BSE Expansion Phase 2 (2026-08-12) — same fuzzy name-contains match,
+  // clearly sublabeled "BSE index" (never "NSE index") so a founder/user
+  // searching e.g. "sensex" or "bankex" can tell the two apart at a glance.
+  const bseIndexMatches = bseIndices
+    .filter((idx) => idx.indexName.toUpperCase().includes(needle))
+    .sort((a, b) => a.indexName.localeCompare(b.indexName));
 
   const indexResults: SearchResultItem[] = [
     ...tradableIndexMatches.map((e) => ({
@@ -285,6 +315,12 @@ export async function GET(request: Request) {
       href: `/instruments/${deriveIndexSymbol(idx.name)}`,
       label: idx.name,
       sublabel: "NSE index",
+      category: "index" as const,
+    })),
+    ...bseIndexMatches.map((idx) => ({
+      href: `/instruments/${deriveIndexSymbol(idx.indexName)}`,
+      label: idx.indexName,
+      sublabel: "BSE index",
       category: "index" as const,
     })),
   ].slice(0, MAX_PER_CATEGORY);

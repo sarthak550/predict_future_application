@@ -7,6 +7,7 @@ export const dynamic = "force-dynamic";
 
 import { isIndexOptionUnderlying, type IndexOptionUnderlying } from "@predict-future/business-rules/papertrading/optionContract";
 import { getIndexUniverseEntry } from "@predict-future/business-rules/finance/indexUniverse";
+import { getBseIndexUniverseEntry } from "@predict-future/business-rules/finance/bseIndexUniverse";
 
 /**
  * Resolves `symbol` to a Yahoo ticker from EITHER of the two independent
@@ -14,10 +15,15 @@ import { getIndexUniverseEntry } from "@predict-future/business-rules/finance/in
  * unchanged) or the view-only `INDEX_UNIVERSE` (Index Universe Expansion,
  * Sprint A, 2026-08-09) — without widening `isIndexOptionUnderlying` itself,
  * which stays scoped to "can this trade." Null when `symbol` is in neither.
+ *
+ * BSE Expansion Phase 2 (2026-08-12) — additive third fallback: the 18
+ * BSE_INDEX_UNIVERSE symbols (business-rules), same "symbol is only a cache
+ * key" contract fetchIndexIntradaySeries already documents, so this is a
+ * zero-risk widening for every existing NSE/tradable caller.
  */
 function resolveIndexYahooTicker(symbol: string): string | null {
   if (isIndexOptionUnderlying(symbol)) return YAHOO_INDEX_TICKER[symbol as IndexOptionUnderlying];
-  return getIndexUniverseEntry(symbol)?.yahooTicker ?? null;
+  return getIndexUniverseEntry(symbol)?.yahooTicker ?? getBseIndexUniverseEntry(symbol)?.yahooTicker ?? null;
 }
 
 /**

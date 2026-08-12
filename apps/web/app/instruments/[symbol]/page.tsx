@@ -126,6 +126,7 @@ export default async function InstrumentDetailPage({
         intradayEndpoint={hasLiveIndexPipe ? indexIntradayUrl : undefined}
         viewOnlyIndex={viewOnlyIndex}
         isEtf={instrument.isEtf}
+        exchange={instrument.isBseIndex ? "BSE" : "NSE"}
         quote={
           instrument.quote
             ? {

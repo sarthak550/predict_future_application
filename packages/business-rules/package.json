@@ -19,6 +19,7 @@
     "./finance/voteTallies": "./src/finance/voteTallies.ts",
     "./finance/indexSlug": "./src/finance/indexSlug.ts",
     "./finance/indexUniverse": "./src/finance/indexUniverse.ts",
+    "./finance/bseIndexUniverse": "./src/finance/bseIndexUniverse.ts",
     "./experts/firmAliases": "./src/experts/firmAliases.ts",
     "./instruments/instrumentDedup": "./src/instruments/instrumentDedup.ts",
     "./news/category-map": "./src/news/category-map.ts",

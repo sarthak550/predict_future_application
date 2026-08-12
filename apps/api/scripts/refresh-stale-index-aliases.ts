@@ -26,6 +26,7 @@
 import { PrismaClient } from "@prisma/client";
 
 import { INDEX_UNIVERSE } from "@predict-future/business-rules/finance/indexUniverse";
+import { BSE_INDEX_UNIVERSE } from "@predict-future/business-rules/finance/bseIndexUniverse";
 
 const prisma = new PrismaClient();
 const LIVE = process.argv.includes("--live");
@@ -43,12 +44,26 @@ const TICKER_IDENTITIES: Record<string, { symbol: string; canonicalName: string 
   ...Object.fromEntries(
     INDEX_UNIVERSE.map((e) => [e.yahooTicker, { symbol: e.symbol, canonicalName: e.displayName }]),
   ),
+  // BSE Expansion Phase 2 (2026-08-12) — mirrors the same addition to
+  // apps/api's lib/finance/instrumentAlias.ts KNOWN_INDEX_IDENTITIES. This is
+  // what re-opens any existing negative-cache InstrumentAlias row for
+  // "^BSESN" (or another BSE_INDEX_UNIVERSE ticker) once this ticket's code
+  // is live — run this script (--live) after deploy, same as the original
+  // Index Identity Audit runbook.
+  ...Object.fromEntries(
+    BSE_INDEX_UNIVERSE.map((e) => [e.yahooTicker, { symbol: e.symbol, canonicalName: e.displayName }]),
+  ),
 };
 
 /** Label-shaped rawNames (rows created from opinions with no ticker) match on the lowercased NSE display name. */
-const NAME_IDENTITIES: Record<string, { symbol: string; canonicalName: string }> = Object.fromEntries(
-  INDEX_UNIVERSE.map((e) => [e.displayName.toLowerCase(), { symbol: e.symbol, canonicalName: e.displayName }]),
-);
+const NAME_IDENTITIES: Record<string, { symbol: string; canonicalName: string }> = {
+  ...Object.fromEntries(INDEX_UNIVERSE.map((e) => [e.displayName.toLowerCase(), { symbol: e.symbol, canonicalName: e.displayName }])),
+  // BSE Expansion Phase 2 (2026-08-12) — same label-shaped fallback for BSE
+  // (e.g. an opinion whose extraction only kept a bare "Sensex" label).
+  ...Object.fromEntries(
+    BSE_INDEX_UNIVERSE.map((e) => [e.displayName.toLowerCase(), { symbol: e.symbol, canonicalName: e.displayName }]),
+  ),
+};
 
 function identityFor(rawName: string): { symbol: string; canonicalName: string } | null {
   return TICKER_IDENTITIES[rawName] ?? NAME_IDENTITIES[rawName.toLowerCase()] ?? null;
