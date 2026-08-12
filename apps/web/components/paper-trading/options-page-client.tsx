@@ -144,7 +144,14 @@ function isIndexUnderlying(symbol: string): boolean {
  * feature on 2026-07-25 — every ladder tap now pre-fills the docked ticket
  * for one explicit Confirm, no instant-fill path exists.)
  */
-export function OptionsPageClient({ tradingEnabled }: { tradingEnabled: boolean }) {
+export function OptionsPageClient({
+  tradingEnabled,
+  futuresTradingEnabled
+}: {
+  tradingEnabled: boolean;
+  /** Derivatives gate follow-up (2026-08-12c) — this terminal's own maximized-workbench popover can offer a "Futures" chip on an index row; see symbol-search-popover.tsx's own doc. */
+  futuresTradingEnabled: boolean;
+}) {
   const searchParams = useSearchParams();
   // Founder bug fix (2026-08-06) — the `?workbench=` param (see
   // use-workbench-url-param.ts) must NOT be part of this remount key, for
@@ -167,10 +174,10 @@ export function OptionsPageClient({ tradingEnabled }: { tradingEnabled: boolean 
     params.delete("side");
     return params.toString();
   }, [searchParams]);
-  return <OptionsPageClientInner key={remountKey} tradingEnabled={tradingEnabled} />;
+  return <OptionsPageClientInner key={remountKey} tradingEnabled={tradingEnabled} futuresTradingEnabled={futuresTradingEnabled} />;
 }
 
-function OptionsPageClientInner({ tradingEnabled }: { tradingEnabled: boolean }) {
+function OptionsPageClientInner({ tradingEnabled, futuresTradingEnabled }: { tradingEnabled: boolean; futuresTradingEnabled: boolean }) {
   // Founder bug fix (2026-08-04b) — `deepLinkSide` is one-shot and gets
   // stripped from the live URL shortly after mount; reading every deep-link
   // field from the FROZEN snapshot (not live `searchParams`) means the
@@ -1012,6 +1019,8 @@ function OptionsPageClientInner({ tradingEnabled }: { tradingEnabled: boolean })
           chain={chainElement}
           chartModeSwitcher={selectedContract ? { label: "Contract premium", onClick: handleSwitchToPremium } : undefined}
           onSymbolPick={handleWorkbenchSymbolPick}
+          optionsTradingEnabled={tradingEnabled}
+          futuresTradingEnabled={futuresTradingEnabled}
         />
       )}
 
@@ -1041,6 +1050,8 @@ function OptionsPageClientInner({ tradingEnabled }: { tradingEnabled: boolean })
           chain={chainElement}
           chartModeSwitcher={{ label: "Underlying", onClick: handleSwitchToUnderlying }}
           onSymbolPick={handleWorkbenchSymbolPick}
+          optionsTradingEnabled={tradingEnabled}
+          futuresTradingEnabled={futuresTradingEnabled}
         />
       )}
 

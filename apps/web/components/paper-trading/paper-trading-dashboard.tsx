@@ -128,7 +128,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
-import { formatNseExpiryDate } from "@predict-future/business-rules/papertrading/optionContract";
+import { formatNseExpiryDate, isIndexOptionUnderlying } from "@predict-future/business-rules/papertrading/optionContract";
 import { getIndexUniverseEntry } from "@predict-future/business-rules/finance/indexUniverse";
 import { getBseIndexUniverseEntry } from "@predict-future/business-rules/finance/bseIndexUniverse";
 
@@ -257,7 +257,24 @@ function pnlTone(value: number): "up" | "down" | undefined {
  * `app/paper-trading/page.tsx` still wraps it in a `<Suspense>` boundary —
  * that requirement is independent of any remount mechanism.
  */
-export function PaperTradingDashboard() {
+export function PaperTradingDashboard({
+  optionsTradingEnabled,
+  futuresTradingEnabled
+}: {
+  /**
+   * Derivatives gate follow-up (2026-08-12c), founder: "the charts for
+   * tradable indices are not accessible — they are blocked since options and
+   * futures are disabled for now." Read server-side (`app/paper-trading/
+   * page.tsx`, same `featureFlags.ts` convention `app/paper-trading/
+   * futures/page.tsx`/`options/page.tsx` already use for their own gate) and
+   * threaded down here so `handleWorkbenchSymbolPick`/`handleDockedIndexPick`
+   * can fall back to this terminal's own view-only-chart flow for a tradable
+   * index instead of navigating into a destination terminal that would just
+   * show `ComingSoonPanel` — see those handlers' own doc.
+   */
+  optionsTradingEnabled: boolean;
+  futuresTradingEnabled: boolean;
+}) {
   const searchParams = useSearchParams();
   const searchParamsString = searchParams.toString();
   const router = useRouter();
@@ -730,14 +747,38 @@ export function PaperTradingDashboard() {
    * reachable from a view-only index row to begin with (see
    * `chipsFor` in that file). See that file's own doc for which chips a row
    * actually gets.
+   *
+   * Derivatives gate follow-up (2026-08-12c), founder: "the charts for
+   * tradable indices are not accessible — they are blocked since options and
+   * futures are disabled for now." Every branch that used to unconditionally
+   * navigate to the futures/options terminal now checks the matching flag
+   * first: `symbol-search-popover.tsx`'s `chipsFor` already hides the
+   * Options/Futures chip when its flag is off (so a gated chip is normally
+   * unreachable), but this handler ALSO gates the plain-click / `"chart"`-
+   * target fallback (the ONLY path that isn't chip-gated — a plain click on
+   * a tradable index row never had a target at all) — belt-and-suspenders,
+   * and the actual fix for the founder's report, which came from the plain
+   * click, not a chip. Falls back to `setFocusedIndexSymbol` exactly like a
+   * genuinely view-only index — same in-place chart, same disabled ticket —
+   * `indexTicketElement`'s own `comingSoon` derivation (via
+   * `isIndexOptionUnderlying`) is what swaps in the "coming soon" copy
+   * instead of "not tradable, ever" for these.
    */
   function handleWorkbenchSymbolPick(pick: SymbolPick) {
     if (pick.target === "optionChain") {
-      router.push(`/paper-trading/options?underlying=${encodeURIComponent(pick.symbol)}&workbench=underlying`);
+      if (optionsTradingEnabled) {
+        router.push(`/paper-trading/options?underlying=${encodeURIComponent(pick.symbol)}&workbench=underlying`);
+        return;
+      }
+      setFocusedIndexSymbol(pick.symbol);
       return;
     }
     if (pick.target === "futures") {
-      router.push(`/paper-trading/futures?underlying=${encodeURIComponent(pick.symbol)}&workbench=1`);
+      if (futuresTradingEnabled) {
+        router.push(`/paper-trading/futures?underlying=${encodeURIComponent(pick.symbol)}&workbench=1`);
+        return;
+      }
+      setFocusedIndexSymbol(pick.symbol);
       return;
     }
     if (pick.kind === "equity") {
@@ -746,6 +787,13 @@ export function PaperTradingDashboard() {
       return;
     }
     if (pick.tradable === false) {
+      setFocusedIndexSymbol(pick.symbol);
+      return;
+    }
+    // Tradable index, plain click (or a "chart"-target chip click, when both
+    // derivative flags are off — see `chipsFor`) — historically always meant
+    // "go to the futures terminal," so gate on `futuresTradingEnabled` alone.
+    if (!futuresTradingEnabled) {
       setFocusedIndexSymbol(pick.symbol);
       return;
     }
@@ -771,9 +819,17 @@ export function PaperTradingDashboard() {
    * underlyings) has no order surface on this equity terminal either way, so
    * it navigates to the futures terminal — byte-identical to
    * `handleWorkbenchSymbolPick`'s own tradable branch.
+   *
+   * Derivatives gate follow-up (2026-08-12c) — this is the exact handler the
+   * founder's "the charts for tradable indices are not accessible" report
+   * traced back to: the docked search never offers an Options-chain route
+   * (no chip UI here at all, unlike the popover), so its tradable-index pick
+   * only ever meant "go to futures" — gated on `futuresTradingEnabled`
+   * alone, same reasoning as `handleWorkbenchSymbolPick`'s own bottom
+   * fallback.
    */
   function handleDockedIndexPick(pick: SymbolPick) {
-    if (pick.tradable === false) {
+    if (pick.tradable === false || !futuresTradingEnabled) {
       setFocusedIndexSymbol(pick.symbol);
       setWorkbenchOpen(true);
       return;
@@ -950,6 +1006,13 @@ export function PaperTradingDashboard() {
         setFocusedIndexSymbol(null);
         setFocusedSymbol(etfSymbol);
       }}
+      // Derivatives gate follow-up (2026-08-12c) — `focusedIndexSymbol` only
+      // ever holds one of the 5 F&O underlyings when its route is GATED
+      // (`handleWorkbenchSymbolPick`/`handleDockedIndexPick` navigate away
+      // instead whenever the relevant flag is on), so `isIndexOptionUnderlying`
+      // alone is enough to tell "tradable, just gated right now" apart from
+      // "genuinely never tradable" — no need to re-check the flags here too.
+      comingSoon={isIndexOptionUnderlying(focusedIndexSymbol)}
     />
   ) : null;
 
@@ -1036,6 +1099,8 @@ export function PaperTradingDashboard() {
                   onSelect={(opt: PaperSymbolOption) => setFocusedSymbol(opt.symbol)}
                   includeIndices
                   onSelectIndex={handleDockedIndexPick}
+                  optionsTradingEnabled={optionsTradingEnabled}
+                  futuresTradingEnabled={futuresTradingEnabled}
                 />
               </div>
             </div>
@@ -1048,6 +1113,8 @@ export function PaperTradingDashboard() {
                   onSelect={(opt: PaperSymbolOption) => setFocusedSymbol(opt.symbol)}
                   includeIndices
                   onSelectIndex={handleDockedIndexPick}
+                  optionsTradingEnabled={optionsTradingEnabled}
+                  futuresTradingEnabled={futuresTradingEnabled}
                 />
               </div>
             </div>
@@ -1091,6 +1158,8 @@ export function PaperTradingDashboard() {
           onQuoteChange={(q) => setChartQuote(q ? { price: q.price } : null)}
           ticket={focusedIndexSymbol ? indexTicketElement : ticketElement}
           onSymbolPick={handleWorkbenchSymbolPick}
+          optionsTradingEnabled={optionsTradingEnabled}
+          futuresTradingEnabled={futuresTradingEnabled}
         />
       )}
 

@@ -4,7 +4,7 @@ import { Suspense } from "react";
 import { ArrowLeft } from "lucide-react";
 
 import { FuturesPageClient } from "@/components/paper-trading/futures-page-client";
-import { isFuturesTradingEnabled } from "@/lib/paperTrading/featureFlags";
+import { isFuturesTradingEnabled, isOptionsTradingEnabled } from "@/lib/paperTrading/featureFlags";
 
 // Signed-in personal utility page — never indexed.
 export const metadata: Metadata = {
@@ -20,6 +20,12 @@ export default function PaperTradingFuturesPage() {
   // Product-level derivatives gate (2026-08-11) — see the matching comment
   // in app/paper-trading/options/page.tsx; same pattern, own flag.
   const tradingEnabled = isFuturesTradingEnabled();
+  // Derivatives gate follow-up (2026-08-12c) — this terminal's own maximized
+  // workbench popover can offer an "Options" chip on an index row (a genuine
+  // cross-terminal jump to /paper-trading/options), which needed BOTH flags
+  // to know whether that destination is actually gated too — see
+  // symbol-search-popover.tsx's own doc.
+  const optionsTradingEnabled = isOptionsTradingEnabled();
 
   return (
     <div className="space-y-6">
@@ -36,7 +42,7 @@ export default function PaperTradingFuturesPage() {
         </p>
       </div>
       <Suspense>
-        <FuturesPageClient tradingEnabled={tradingEnabled} />
+        <FuturesPageClient tradingEnabled={tradingEnabled} optionsTradingEnabled={optionsTradingEnabled} />
       </Suspense>
     </div>
   );

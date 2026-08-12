@@ -60,6 +60,34 @@
  * click carries `tradable: false` through in its own `SymbolPick` too (see
  * `pick()` call sites below), so a receiving terminal never has to
  * re-derive it.
+ *
+ * Derivatives gate follow-up (2026-08-12c), founder: "the charts for
+ * tradable indices are not accessible — they are blocked since options and
+ * futures are disabled for now." A TRADABLE index's `[Options]`/`[Futures]`
+ * chips are a genuine cross-terminal jump (see this file's own module doc
+ * above) — while `PAPER_TRADING_OPTIONS_ENABLED`/`PAPER_TRADING_FUTURES_
+ * ENABLED` are off, that jump lands on the destination terminal's own
+ * `ComingSoonPanel` dead end for anyone with no existing position there, so
+ * `chipsFor` now hides whichever chip's flag is off (`optionsTradingEnabled`/
+ * `futuresTradingEnabled`, new props, threaded from each terminal's own
+ * server page — see `chart-workbench.tsx`'s own doc). A tradable row with
+ * BOTH hidden falls back to the same single `[Chart]` chip a view-only row
+ * already gets — the receiving terminal's `handleWorkbenchSymbolPick`
+ * resolves `target: "chart"` (and a plain click, `target: undefined`) on a
+ * gated-tradable index to the SAME in-place view-only-style chart the
+ * `!entry.tradable` case already uses, just with tradable-flavored copy (see
+ * `docked-order-ticket.tsx`'s `IndexViewOnlyTicketProps.comingSoon`).
+ *
+ * Badge stays plain "Index" as long as AT LEAST ONE derivative route is
+ * actually live (`optionsTradingEnabled || futuresTradingEnabled`) — a
+ * mixed on/off state still has a real destination, so nothing is
+ * misleading. Only when BOTH are off does the badge read "Index ·
+ * derivatives soon", distinct from a genuinely-never-tradable row's "Index ·
+ * view only". This is a deliberate simplification (documented, not an
+ * oversight): the two flags are launched together in practice (both default
+ * off, per `featureFlags.ts`), so the badge doesn't attempt to describe
+ * "Options only" / "Futures only" as separate states — the CHIPS themselves
+ * already carry that precision.
  */
 import { useEffect, useRef, useState } from "react";
 import { Search, X } from "lucide-react";
@@ -87,14 +115,25 @@ interface ActionChip {
  * the brief's literal 3. A VIEW-ONLY index (Index Universe SPRINT B,
  * 2026-08-12) gets exactly one `[Chart]` chip — there is no options chain or
  * futures ladder for these, so offering those chips would be a dead end.
+ *
+ * Derivatives gate follow-up (2026-08-12c) — a TRADABLE index's chips are
+ * now individually gated on `optionsTradingEnabled`/`futuresTradingEnabled`;
+ * whichever is off drops its chip entirely (never a chip that's shown but
+ * disabled — this codebase's established idiom for "the destination doesn't
+ * exist right now" is to not offer the affordance, matching the view-only
+ * case's own "no chip, not a disabled chip" precedent). If BOTH are off, the
+ * row falls back to the SAME single `[Chart]` chip a view-only row gets —
+ * see this file's own module doc for what that resolves to on the receiving
+ * end.
  */
-function chipsFor(entry: FlatEntry): ActionChip[] {
+function chipsFor(entry: FlatEntry, optionsTradingEnabled: boolean, futuresTradingEnabled: boolean): ActionChip[] {
   if (entry.kind === "index") {
     if (!entry.tradable) return [{ label: "Chart", target: "chart" }];
-    return [
-      { label: "Options", target: "optionChain" },
-      { label: "Futures", target: "futures" }
-    ];
+    const chips: ActionChip[] = [];
+    if (optionsTradingEnabled) chips.push({ label: "Options", target: "optionChain" });
+    if (futuresTradingEnabled) chips.push({ label: "Futures", target: "futures" });
+    if (chips.length === 0) chips.push({ label: "Chart", target: "chart" });
+    return chips;
   }
   const chips: ActionChip[] = [{ label: "Chart", target: "chart" }];
   if (entry.isFno) chips.push({ label: "Option chain", target: "optionChain" });
@@ -105,12 +144,17 @@ export function SymbolSearchPopover({
   left,
   top,
   onPick,
-  onClose
+  onClose,
+  optionsTradingEnabled,
+  futuresTradingEnabled
 }: {
   left: number;
   top: number;
   onPick: (pick: SymbolPick) => void;
   onClose: () => void;
+  /** Derivatives gate follow-up (2026-08-12c) — see this file's own module doc and `chipsFor`'s. */
+  optionsTradingEnabled: boolean;
+  futuresTradingEnabled: boolean;
 }) {
   const [query, setQuery] = useState("");
   const [highlightIdx, setHighlightIdx] = useState(0);
@@ -125,6 +169,12 @@ export function SymbolSearchPopover({
   const showingRecents = trimmed.length === 0;
   const { indexResults, stockResults, fnoSymbols, loading } = useSymbolSearch(query);
 
+  // Derivatives gate follow-up (2026-08-12c) — see this file's own module
+  // doc for why the badge only distinguishes "at least one route live" vs
+  // "both gated," not each flag individually.
+  const derivativesLive = optionsTradingEnabled || futuresTradingEnabled;
+  const indexBadge = (tradable: boolean) => (tradable ? (derivativesLive ? "Index" : "Index · derivatives soon") : "Index · view only");
+
   const flatResults: FlatEntry[] = showingRecents
     ? recents.map((r) => {
         // Index Universe SPRINT B (2026-08-12) — a recent saved before this
@@ -137,7 +187,7 @@ export function SymbolSearchPopover({
           kind: r.kind,
           symbol: r.symbol,
           label: r.label,
-          badge: r.kind === "index" ? (indexTradable ? "Index" : "Index · view only") : "Stock",
+          badge: r.kind === "index" ? indexBadge(indexTradable) : "Stock",
           isFno: r.kind === "equity" && fnoSymbols.has(r.symbol),
           tradable: r.kind === "index" ? indexTradable : true
         };
@@ -147,7 +197,7 @@ export function SymbolSearchPopover({
           kind: "index" as const,
           symbol: r.symbol,
           label: r.label,
-          badge: r.tradable ? "Index" : "Index · view only",
+          badge: indexBadge(r.tradable),
           isFno: false,
           tradable: r.tradable
         })),
@@ -229,6 +279,8 @@ export function SymbolSearchPopover({
                     onMouseEnter={() => setHighlightIdx(i)}
                     onClick={() => pick({ kind: entry.kind, symbol: entry.symbol, label: entry.label, tradable: entry.tradable })}
                     onNavigate={(target) => pick({ kind: entry.kind, symbol: entry.symbol, label: entry.label, target, tradable: entry.tradable })}
+                    optionsTradingEnabled={optionsTradingEnabled}
+                    futuresTradingEnabled={futuresTradingEnabled}
                   />
                 ))}
               </>
@@ -248,6 +300,8 @@ export function SymbolSearchPopover({
                       onMouseEnter={() => setHighlightIdx(i)}
                       onClick={() => pick({ kind: "index", symbol: entry.symbol, label: entry.label, tradable: entry.tradable })}
                       onNavigate={(target) => pick({ kind: "index", symbol: entry.symbol, label: entry.label, target, tradable: entry.tradable })}
+                      optionsTradingEnabled={optionsTradingEnabled}
+                      futuresTradingEnabled={futuresTradingEnabled}
                     />
                   ))}
                 </>
@@ -263,6 +317,8 @@ export function SymbolSearchPopover({
                       onMouseEnter={() => setHighlightIdx(indexResults.length + i)}
                       onClick={() => pick({ kind: "equity", symbol: entry.symbol, label: entry.label })}
                       onNavigate={(target) => pick({ kind: "equity", symbol: entry.symbol, label: entry.label, target })}
+                      optionsTradingEnabled={optionsTradingEnabled}
+                      futuresTradingEnabled={futuresTradingEnabled}
                     />
                   ))}
                 </>
@@ -288,7 +344,9 @@ function ResultRow({
   highlighted,
   onClick,
   onNavigate,
-  onMouseEnter
+  onMouseEnter,
+  optionsTradingEnabled,
+  futuresTradingEnabled
 }: {
   entry: FlatEntry;
   highlighted: boolean;
@@ -297,8 +355,11 @@ function ResultRow({
   /** Chip click: explicit navigate, see use-symbol-search.ts's `SymbolPick.target` doc. */
   onNavigate: (target: NonNullable<SymbolPick["target"]>) => void;
   onMouseEnter: () => void;
+  /** Derivatives gate follow-up (2026-08-12c) — see `chipsFor`'s own doc. */
+  optionsTradingEnabled: boolean;
+  futuresTradingEnabled: boolean;
 }) {
-  const chips = chipsFor(entry);
+  const chips = chipsFor(entry, optionsTradingEnabled, futuresTradingEnabled);
   return (
     <div
       onMouseEnter={onMouseEnter}

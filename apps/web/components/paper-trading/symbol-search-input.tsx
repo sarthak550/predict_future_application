@@ -39,6 +39,21 @@
  * chart home of its own — `focusedIndexSymbol`'s doc — so a view-only pick
  * opens the maximized workbench on it instead of trying to fake an in-place
  * switch).
+ *
+ * Derivatives gate follow-up (2026-08-12c) — `optionsTradingEnabled`/
+ * `futuresTradingEnabled` (both default `false`, the safe/gated default —
+ * see `featureFlags.ts`'s own doc), new optional props threaded down from
+ * `paper-trading-dashboard.tsx`, drive the badge on a TRADABLE index row
+ * only: "Index" while at least one derivative route is actually live,
+ * "Index · derivatives soon" while both are gated — same formula and same
+ * documented simplification `symbol-search-popover.tsx`'s own doc explains
+ * (the two flags launch together in practice, so this doesn't attempt to
+ * distinguish "options only" from "futures only" in the badge text). A
+ * genuinely-never-tradable view-only index keeps its existing "Index · view
+ * only" badge regardless of these props. Routing itself (what happens when a
+ * gated tradable row is actually clicked) lives entirely in the caller's
+ * `onSelectIndex` handler, not here — this component only decides what the
+ * badge SAYS.
  */
 import { useEffect, useRef, useState } from "react";
 
@@ -58,6 +73,8 @@ export function PaperTradingSymbolSearchInput({
   onSelect,
   onSelectIndex,
   includeIndices,
+  optionsTradingEnabled = false,
+  futuresTradingEnabled = false,
   disabled
 }: {
   value: string;
@@ -66,6 +83,9 @@ export function PaperTradingSymbolSearchInput({
   onSelectIndex?: (pick: SymbolPick) => void;
   /** Default off — see this file's own module doc for why the New Trade form must never turn this on. */
   includeIndices?: boolean;
+  /** Derivatives gate follow-up (2026-08-12c) — badge-only, see this file's own module doc. Ignored when `includeIndices` is off. */
+  optionsTradingEnabled?: boolean;
+  futuresTradingEnabled?: boolean;
   disabled?: boolean;
 }) {
   const [query, setQuery] = useState(value);
@@ -110,6 +130,13 @@ export function PaperTradingSymbolSearchInput({
     : { tradableIndexMatches: [], viewOnlyIndexMatches: [] };
   const indexMatches = [...tradableIndexMatches, ...viewOnlyIndexMatches];
 
+  // Derivatives gate follow-up (2026-08-12c) — see this file's own module doc.
+  const derivativesLive = optionsTradingEnabled || futuresTradingEnabled;
+  function indexBadge(tradable: boolean): string {
+    if (!tradable) return "Index · view only";
+    return derivativesLive ? "Index" : "Index · derivatives soon";
+  }
+
   function pickIndex(pick: SymbolPick) {
     onSelectIndex?.(pick);
     setQuery(pick.symbol);
@@ -152,7 +179,7 @@ export function PaperTradingSymbolSearchInput({
                     <span className="text-ink-400">{entry.label}</span>
                   </span>
                   <span className="shrink-0 rounded-md bg-ink-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-ink-400">
-                    {entry.tradable ? "Index" : "Index · view only"}
+                    {indexBadge(entry.tradable)}
                   </span>
                 </button>
               ))}

@@ -268,7 +268,9 @@ export function ChartWorkbench({
   chain,
   chainLabel = "Chain",
   chartModeSwitcher,
-  onSymbolPick
+  onSymbolPick,
+  optionsTradingEnabled = false,
+  futuresTradingEnabled = false
 }: {
   feed: WorkbenchFeed;
   /** `EQ:SYMBOL` / `INDEX:SYMBOL` / `OPT:UNDERLYING:EXPIRY:STRIKE:TYPE` — drives `use-chart-drawings.ts`'s per-chart persistence (W3). Futures and the options terminal's underlying chart deliberately share the SAME `INDEX:` key (W1's schema design) so a trendline drawn on one appears on the other. */
@@ -290,6 +292,19 @@ export function ChartWorkbench({
   chartModeSwitcher?: { label: string; onClick: () => void };
   /** Founder feature (2026-08-07) — makes the header title clickable, opening the symbol-search popover; see this file's own module doc for the full feature and the caller-owned in-place-vs-navigate decision. Optional so a bare caller keeps the plain, non-interactive title. */
   onSymbolPick?: (pick: SymbolPick) => void;
+  /**
+   * Derivatives gate follow-up (2026-08-12c) — threaded straight through to
+   * `SymbolSearchPopover` (only meaningful when `onSymbolPick` is also wired
+   * — the popover doesn't mount otherwise) so a tradable index row's
+   * Options/Futures chips can hide themselves when the destination terminal
+   * is actually gated, instead of handing out a chip that leads to
+   * `ComingSoonPanel`. Default `false` (gated) — the safe default this
+   * codebase's env-flag convention already establishes (see
+   * `featureFlags.ts`'s own doc) — so a caller that forgets to wire these
+   * fails closed (chips hidden, "Chart" only) rather than open.
+   */
+  optionsTradingEnabled?: boolean;
+  futuresTradingEnabled?: boolean;
 }) {
   const isPremiumMode = feed.kind === "optionPremium";
   // Interval-parity cadence project (2026-08-07) — the offered timeframe
@@ -1550,6 +1565,8 @@ export function ChartWorkbench({
             onSymbolPick(pick);
           }}
           onClose={() => setSymbolSearchAnchor(null)}
+          optionsTradingEnabled={optionsTradingEnabled}
+          futuresTradingEnabled={futuresTradingEnabled}
         />
       )}
     </div>

@@ -145,6 +145,22 @@ interface IndexViewOnlyTicketProps {
   trackingEtfs: { symbol: string; displayName: string }[];
   /** Switches the equity ticket to the clicked ETF's symbol in place. Optional so a bare caller degrades to plain (non-clickable) ETF text rather than a crash. */
   onTradeEtf?: (symbol: string) => void;
+  /**
+   * Derivatives gate follow-up (2026-08-12c), founder: "the charts for
+   * tradable indices are not accessible — they are blocked since options and
+   * futures are disabled for now." `true` for one of the 5 F&O underlyings
+   * (NIFTY/BANKNIFTY/FINNIFTY/MIDCPNIFTY/NIFTYNXT50) landing in this
+   * view-only ticket ONLY because `PAPER_TRADING_OPTIONS_ENABLED`/
+   * `PAPER_TRADING_FUTURES_ENABLED` are currently off (see
+   * `paper-trading-dashboard.tsx`'s `handleWorkbenchSymbolPick`/
+   * `handleDockedIndexPick` — they never set `focusedIndexSymbol` for a
+   * tradable underlying unless its route is gated) — `false` (default) for
+   * a genuinely-never-tradable `INDEX_UNIVERSE`/`BSE_INDEX_UNIVERSE` index.
+   * Swaps the "not tradable, ever" copy for "coming soon" copy — same inert
+   * fieldset, same ETF pointer, different words, since the underlying truth
+   * is different (a launch flag flip away vs. structurally never tradable).
+   */
+  comingSoon?: boolean;
 }
 
 export type DockedOrderTicketProps = EquityTicketProps | OptionTicketProps | FuturesTicketProps | IndexViewOnlyTicketProps;
@@ -178,12 +194,13 @@ export function DockedOrderTicket(props: DockedOrderTicketProps) {
 
   if (props.kind === "index-view-only") {
     return (
-      <DockedTicketChrome subtitle={`${props.displayName} — index, not tradable`}>
+      <DockedTicketChrome subtitle={`${props.displayName} — ${props.comingSoon ? "derivatives coming soon" : "index, not tradable"}`}>
         <IndexViewOnlyTicketBody
           symbol={props.symbol}
           displayName={props.displayName}
           trackingEtfs={props.trackingEtfs}
           onTradeEtf={props.onTradeEtf}
+          comingSoon={props.comingSoon}
         />
       </DockedTicketChrome>
     );
@@ -599,12 +616,15 @@ function IndexViewOnlyTicketBody({
   symbol,
   displayName,
   trackingEtfs,
-  onTradeEtf
+  onTradeEtf,
+  comingSoon
 }: {
   symbol: string;
   displayName: string;
   trackingEtfs: { symbol: string; displayName: string }[];
   onTradeEtf?: (symbol: string) => void;
+  /** Derivatives gate follow-up (2026-08-12c) — see `IndexViewOnlyTicketProps.comingSoon`'s own doc. */
+  comingSoon?: boolean;
 }) {
   return (
     <div className="space-y-4">
@@ -614,8 +634,9 @@ function IndexViewOnlyTicketBody({
       </div>
 
       <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs leading-5 text-amber-800">
-        Indices aren&apos;t directly tradable — chart and analyze here, then trade via the index&apos;s constituent
-        stocks or an index ETF.
+        {comingSoon
+          ? `${displayName} derivatives trading is coming soon — chart and analyze meanwhile.`
+          : "Indices aren't directly tradable — chart and analyze here, then trade via the index's constituent stocks or an index ETF."}
         {trackingEtfs.length > 0 && (
           <>
             {" "}
@@ -671,7 +692,7 @@ function IndexViewOnlyTicketBody({
         </div>
 
         <Button type="button" variant="primary" disabled className="w-full cursor-not-allowed">
-          Not tradable
+          {comingSoon ? "Coming soon" : "Not tradable"}
         </Button>
       </fieldset>
     </div>

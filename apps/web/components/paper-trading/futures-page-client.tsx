@@ -122,7 +122,14 @@ function formatSignedRupeesShort(value: number): string {
 
 const EMPTY_SERIES: PricePoint[] = [];
 
-export function FuturesPageClient({ tradingEnabled }: { tradingEnabled: boolean }) {
+export function FuturesPageClient({
+  tradingEnabled,
+  optionsTradingEnabled
+}: {
+  tradingEnabled: boolean;
+  /** Derivatives gate follow-up (2026-08-12c) — this terminal's own maximized-workbench popover can offer an "Options" chip on an index row; see symbol-search-popover.tsx's own doc. */
+  optionsTradingEnabled: boolean;
+}) {
   const searchParams = useSearchParams();
   // Founder bug fix (2026-08-06) — the `?workbench=` param (see
   // use-workbench-url-param.ts) must NOT be part of this remount key: this
@@ -151,10 +158,10 @@ export function FuturesPageClient({ tradingEnabled }: { tradingEnabled: boolean 
     params.delete("side");
     return params.toString();
   }, [searchParams]);
-  return <FuturesPageClientInner key={remountKey} tradingEnabled={tradingEnabled} />;
+  return <FuturesPageClientInner key={remountKey} tradingEnabled={tradingEnabled} optionsTradingEnabled={optionsTradingEnabled} />;
 }
 
-function FuturesPageClientInner({ tradingEnabled }: { tradingEnabled: boolean }) {
+function FuturesPageClientInner({ tradingEnabled, optionsTradingEnabled }: { tradingEnabled: boolean; optionsTradingEnabled: boolean }) {
   const router = useRouter();
   // Founder bug fix (2026-08-04b) — `deepLinkSide` is genuinely one-shot
   // (see this file's own module doc) and gets stripped from the live URL
@@ -693,6 +700,8 @@ function FuturesPageClientInner({ tradingEnabled }: { tradingEnabled: boolean })
           chain={contractTableElement}
           chainLabel="Contracts"
           onSymbolPick={handleWorkbenchSymbolPick}
+          optionsTradingEnabled={optionsTradingEnabled}
+          futuresTradingEnabled={tradingEnabled}
         />
       )}
 
