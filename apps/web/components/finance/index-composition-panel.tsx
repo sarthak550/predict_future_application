@@ -10,14 +10,14 @@ import { Card, CardContent } from "@/components/ui/card";
  * hand-verified constituent CSV (lib/finance/indexConstituents.ts) — never
  * for a plain equity or a long-tail index with no verified list.
  *
- * ORDERING (explicit design call, per the founder's own "your design call,
- * but change-ordered beats alphabetical" allowance): biggest gainers first,
- * biggest losers last, sorted purely by day change% — computed and sorted
- * server-side in lib/finance/instrument.ts, this component just renders the
- * order it's given. Constituents with no StockEodQuote row yet (thin/newly
- * listed coverage) are grouped at the very end with a "—" change cell rather
- * than dropped — still real members, just unrankable by a change that
- * doesn't exist.
+ * ORDERING (founder, 2026-08-12 follow-up: weights "not sorted in
+ * decreasing order — it would be great if we can do that"): when weights
+ * exist, rows sort by weight DESCENDING (heaviest first — supersedes the
+ * earlier day-change ordering for weighted indices; weightless members
+ * fall to the end, then by change). Indices with no weight data keep the
+ * original day-change order (gainers first, losers last) the server
+ * already provides. Constituents with no StockEodQuote row are never
+ * dropped — they render with a "—" change cell.
  *
  * WEIGHT COLUMN (2026-08-12 follow-up): when a constituent carries
  * `weightPct` (indexLiveWatch.ts's live free-float-mcap-share estimate — see
@@ -61,9 +61,14 @@ export function IndexCompositionPanel({ constituents, advances, declines }: Inde
   const listClassName = constituents.length > SCROLL_THRESHOLD ? "max-h-[560px] overflow-y-auto" : "";
 
   const hasWeights = constituents.some((c) => c.weightPct != null);
-  const topWeight = hasWeights
-    ? constituents.reduce((max, c) => ((c.weightPct ?? -1) > (max.weightPct ?? -1) ? c : max), constituents[0])
-    : null;
+  // Weight-descending presentation order (founder 2026-08-12) — weightless
+  // members sink to the end, ranked among themselves by day change.
+  const ordered = hasWeights
+    ? [...constituents].sort(
+        (a, b) => (b.weightPct ?? -1) - (a.weightPct ?? -1) || (b.changePercent ?? -Infinity) - (a.changePercent ?? -Infinity),
+      )
+    : constituents;
+  const topWeight = hasWeights ? ordered[0] : null;
 
   return (
     <Card>
@@ -76,7 +81,9 @@ export function IndexCompositionPanel({ constituents, advances, declines }: Inde
           </p>
         </div>
         <p className={topWeight ? "mb-1 text-xs text-ink-400" : "mb-3 text-xs text-ink-400"}>
-          Member stocks, ranked by today&apos;s change — biggest gainers first, biggest losers last.
+          {hasWeights
+            ? "Member stocks, ranked by index weight — heaviest first."
+            : "Member stocks, ranked by today's change — biggest gainers first, biggest losers last."}
         </p>
         {topWeight && topWeight.weightPct != null && (
           <p className="mb-3 text-xs text-ink-500">
@@ -86,9 +93,25 @@ export function IndexCompositionPanel({ constituents, advances, declines }: Inde
           </p>
         )}
 
+        {/* Fixed-width right columns (founder 2026-08-12: "weights are not
+            in 1 column") — a header row plus per-row grid tracks so Weight,
+            Price, and Change each align vertically down the whole list
+            instead of drifting with the name block's width. Literal class
+            strings (grid track lists included) per the Tailwind purge law. */}
+        <div
+          className={
+            hasWeights
+              ? "grid grid-cols-[minmax(0,1fr)_4rem_9rem] gap-3 border-b border-ink-100 pb-1.5 text-[11px] font-medium uppercase tracking-wide text-ink-400"
+              : "grid grid-cols-[minmax(0,1fr)_9rem] gap-3 border-b border-ink-100 pb-1.5 text-[11px] font-medium uppercase tracking-wide text-ink-400"
+          }
+        >
+          <span>Stock</span>
+          {hasWeights && <span className="text-right">Weight</span>}
+          <span className="text-right">Price · Day</span>
+        </div>
         <div className={listClassName}>
           <ul className="divide-y divide-ink-100">
-            {constituents.map((c) => {
+            {ordered.map((c) => {
               const hasChange = c.changePercent != null;
               const isUp = hasChange && (c.changePercent as number) >= 0;
               const Icon = isUp ? TrendingUp : TrendingDown;
@@ -98,7 +121,11 @@ export function IndexCompositionPanel({ constituents, advances, declines }: Inde
                 <li key={c.symbol}>
                   <Link
                     href={`/instruments/${c.symbol}`}
-                    className="flex items-center justify-between gap-3 rounded-md py-2.5 transition-colors hover:bg-ink-50/60"
+                    className={
+                      hasWeights
+                        ? "grid grid-cols-[minmax(0,1fr)_4rem_9rem] items-center gap-3 rounded-md py-2.5 transition-colors hover:bg-ink-50/60"
+                        : "grid grid-cols-[minmax(0,1fr)_9rem] items-center gap-3 rounded-md py-2.5 transition-colors hover:bg-ink-50/60"
+                    }
                   >
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium text-ink-900">{c.symbol}</p>
@@ -108,14 +135,11 @@ export function IndexCompositionPanel({ constituents, advances, declines }: Inde
                       </p>
                     </div>
                     {hasWeights && (
-                      <div className="shrink-0 text-right">
-                        <p className="text-xs text-ink-400">Wt.</p>
-                        <p className="text-sm font-medium text-ink-700 tabular-nums">
-                          {c.weightPct != null ? `${c.weightPct.toFixed(1)}%` : "—"}
-                        </p>
-                      </div>
+                      <p className="text-right text-sm font-medium text-ink-700 tabular-nums">
+                        {c.weightPct != null ? `${c.weightPct.toFixed(1)}%` : "—"}
+                      </p>
                     )}
-                    <div className="shrink-0 text-right">
+                    <div className="text-right">
                       {c.close != null && <p className="text-sm text-ink-700 tabular-nums">{formatRupees(c.close)}</p>}
                       {hasChange ? (
                         <p className={`flex items-center justify-end gap-1 text-sm font-semibold tabular-nums ${toneClass}`}>
