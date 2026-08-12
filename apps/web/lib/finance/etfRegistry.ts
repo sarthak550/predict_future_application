@@ -80,13 +80,50 @@ import { INDEX_SLUG_TO_TRADABLE_UNDERLYING } from "@/lib/finance/indexTradableAl
  * needs the tiered resolver (`resolveIndexNameToSymbol`) because the
  * `/instruments/[symbol]` CODE differs per tier (tradable underlyings use a
  * short mnemonic, "NIFTY", not `deriveIndexSymbol` of their full name).
+ *
+ * AMFI DISPLAY-NAME JOIN (2026-08-12 addendum, founder ask: fund search
+ * results show ugly abbreviated names, e.g. "BIRLASLAMC - ABGSEC" — upgrade
+ * every ETF display name to its REAL full name via an exact-ISIN join
+ * against AMFI's public scheme master). NSE's own `SecurityName` column is
+ * an internal abbreviation, barely better than the raw ticker. AMFI
+ * publishes every registered scheme's real name at
+ * `portal.amfiindia.com/spages/NAVAll.txt` (semicolon-delimited,
+ * `SchemeCode;ISIN Div Payout/Growth;ISIN Div Reinvestment;SchemeName;NAV;
+ * Date`, with bare section-header lines interspersed — parsed defensively:
+ * exactly 6 `;`-fields AND a numeric scheme code, or the line is skipped).
+ * `parseAmfiIsinMap` builds an ISIN -> scheme-name map from BOTH ISIN
+ * columns (either can be "-"), and `parseEtfCsv` exact-joins it against each
+ * ETF's own `ISINNumber` from NSE's eq_etfseclist.csv. Verified live
+ * 2026-08-12 against the full ~14.2k-row AMFI file and all 342 ETF ISINs:
+ * 339/342 resolve (99.1%) — the 3 misses (HDFCNIMEG, MOOILGAS, MOMETAL,
+ * apparently not AMFI-registered under this ISIN) are left on
+ * `securityName`, never guessed. `cleanAmfiName` strips a trailing
+ * plan-only suffix ("- Growth" / "- Growth Option" / "GROWTH", any
+ * casing/spacing — end-anchored regex, 33 of the 339 matches carry one) that
+ * AMFI's NAV-file convention appends but the exchange-listed unit doesn't
+ * carry; an IDCW suffix is NEVER stripped — several liquid/overnight ETFs
+ * (e.g. "Aditya Birla Sun Life CRISIL Liquid Overnight ETF - IDCW Daily
+ * Reinvestment with Weekly Payout") are IDCW-only funds where that suffix
+ * IS the real name, not plan noise. `displayName` = this cleaned AMFI name,
+ * falling back to `securityName` for the 3 misses.
+ *
+ * AMFI-vs-Yahoo-longName quality check (used by instrument.ts's
+ * `companyName` resolution): the only 3 ETFs with a cached Yahoo `longName`
+ * available locally 2026-08-12 (NIFTYBEES/BANKBEES/GOLDBEES) matched AMFI's
+ * name byte-for-byte. Given equal quality, AMFI wins outright — 99.1%
+ * instant coverage from this same fetch vs. Yahoo's crumb-gated call this
+ * app only caches for ~1.5% of instruments locally (see fundamentals.ts's
+ * KeyStats.yahooLongName doc). Yahoo's longName is kept ONLY as the
+ * fallback for the ~1% AMFI doesn't resolve.
  */
 
 export interface EtfRegistryEntry {
   /** NSE trading symbol, e.g. "NIFTYBEES" — the same code StockEodQuote/the instrument page key off. */
   symbol: string;
-  /** NSE's own fund/security name, e.g. "NIPINDETFNIFTYBEES" — often abbreviated/ALL-CAPS; the instrument page prefers Yahoo's `price.longName` when available (see fundamentals.ts's KeyStats.yahooLongName) and falls back to this. */
+  /** NSE's own fund/security name, e.g. "NIPINDETFNIFTYBEES" — often abbreviated/ALL-CAPS. Superseded as the default display name by `displayName` below (AMFI addendum, 2026-08-12); kept as the honest final fallback for the ~1% AMFI doesn't resolve. */
   securityName: string;
+  /** Best available REAL fund name — AMFI's own scheme-master name (exact ISIN join against the daily NAVAll.txt, mechanical plan-suffix trim applied) when resolved, else this entry's own `securityName`. This is what `getEtfNameMap`/`searchEtfRegistryByName` and every search/list surface show — see module doc's 2026-08-12 AMFI-join addendum. Equal to `securityName` exactly when AMFI didn't resolve (the signal instrument.ts's companyName resolution uses to still consider Yahoo's longName). */
+  displayName: string;
   /** NSE's raw, as-published Underlying text — always shown verbatim when `trackedIndexName` is null, so an honest "Tracks: <raw text>" never silently disappears just because it didn't resolve. */
   underlyingRaw: string;
   dateOfListing: Date | null;
@@ -100,10 +137,89 @@ export interface EtfRegistryEntry {
 }
 
 const NSE_ETF_LIST_URL = "https://nsearchives.nseindia.com/content/equities/eq_etfseclist.csv";
+// Portal host serves the file directly; the www host 302s here (verified live 2026-08-12) — use portal to avoid an extra redirect hop.
+const AMFI_NAV_URL = "https://portal.amfiindia.com/spages/NAVAll.txt";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 15_000;
 const BROWSER_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
+// ── AMFI scheme-master display-name join ───────────────────────────────────
+
+/** End-anchored, mechanical only — never matches a "Growth"/"IDCW" token that isn't the trailing plan designation (e.g. "HDFC NIFTY GROWTH SECTORS 15 ETF" keeps its real index name; see `cleanAmfiName`'s doc). */
+const TRAILING_GROWTH_SUFFIX_RE = /(\s*-\s*|\s+)growth(\s+(option|plan))?\s*$/i;
+
+/**
+ * Strips a trailing AMFI plan-designation suffix ("- Growth", "- Growth
+ * Option", "- Growth Plan", "GROWTH", any casing/spacing) and collapses
+ * stray double-spaces AMFI's own data occasionally contains. Deliberately
+ * does NOT strip an IDCW suffix — verified live 2026-08-12 that several
+ * liquid/overnight ETFs (e.g. "Aditya Birla Sun Life CRISIL Liquid Overnight
+ * ETF - IDCW Daily Reinvestment with Weekly Payout") are IDCW-only funds
+ * where that suffix IS the fund's real, only-listed identity, not
+ * interchangeable plan noise the way a redundant "- Growth" is on a
+ * single-plan ETF. Cross-checked against all 342 ETF ISINs: 33 rows carry a
+ * mechanical trailing Growth-only suffix, all genuinely redundant, zero
+ * over-trims (a mid-name "GROWTH" like "HDFC NIFTY GROWTH SECTORS 15 ETF -
+ * Growth Option" -> "HDFC NIFTY GROWTH SECTORS 15 ETF" is unaffected since
+ * the regex only matches at the end of string).
+ */
+function cleanAmfiName(raw: string): string {
+  const stripped = TRAILING_GROWTH_SUFFIX_RE.test(raw) ? raw.replace(TRAILING_GROWTH_SUFFIX_RE, "") : raw;
+  return stripped.replace(/\s{2,}/g, " ").trim();
+}
+
+/**
+ * Parses AMFI's NAVAll.txt into an ISIN -> real scheme-name map, checking
+ * BOTH ISIN columns (either can be a "-" placeholder). Defensive against the
+ * file's interspersed section-header lines ("Open Ended Schemes(Exchange
+ * Traded Funds (ETFs) - Debt ETF)") and blank separator lines: a data row is
+ * recognized only by having exactly 6 `;`-delimited fields AND a numeric
+ * first field (the scheme code) — this also skips the literal column-header
+ * row ("Scheme Code;ISIN Div Payout/...;..."). On a rare ISIN collision (13
+ * observed across the full ~14.2k-row file, 2026-08-12 — none among ETF
+ * ISINs) the first-seen name wins rather than silently overwriting.
+ */
+function parseAmfiIsinMap(text: string): Map<string, string> {
+  const map = new Map<string, string>();
+  const lines = text.split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || !trimmed.includes(";")) continue;
+    const parts = trimmed.split(";");
+    if (parts.length !== 6) continue;
+    const [schemeCode, isinPayoutGrowth, isinReinvestment, schemeName] = parts;
+    if (!/^\d+$/.test(schemeCode.trim())) continue;
+    const name = schemeName.trim();
+    if (!name) continue;
+    for (const isinRaw of [isinPayoutGrowth, isinReinvestment]) {
+      const isin = isinRaw.trim().toUpperCase();
+      if (isin && isin !== "-" && !map.has(isin)) map.set(isin, name);
+    }
+  }
+  return map;
+}
+
+async function fetchAmfiIsinMap(): Promise<Map<string, string> | null> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    let res: Response;
+    try {
+      res = await fetch(AMFI_NAV_URL, { headers: { "User-Agent": BROWSER_UA }, cache: "no-store", signal: controller.signal });
+    } finally {
+      clearTimeout(timeout);
+    }
+    if (!res.ok) {
+      console.warn(`[etfRegistry] AMFI NAVAll.txt returned ${res.status}`);
+      return null;
+    }
+    return parseAmfiIsinMap(await res.text());
+  } catch (err) {
+    console.warn(`[etfRegistry] AMFI NAVAll.txt fetch error: ${err instanceof Error ? err.message : err}`);
+    return null;
+  }
+}
 
 // ── Underlying -> canonical index name resolution ─────────────────────────
 
@@ -278,7 +394,11 @@ function parseFloatOrNull(raw: string): number | null {
   return Number.isFinite(v) ? v : null;
 }
 
-function parseEtfCsv(csv: string, canonByNorm: Map<string, string | typeof AMBIGUOUS>): EtfRegistryEntry[] {
+function parseEtfCsv(
+  csv: string,
+  canonByNorm: Map<string, string | typeof AMBIGUOUS>,
+  amfiIsinMap: Map<string, string>
+): EtfRegistryEntry[] {
   const rows: EtfRegistryEntry[] = [];
   const lines = csv.split(/\r?\n/);
   for (let i = 1; i < lines.length; i++) {
@@ -291,12 +411,16 @@ function parseEtfCsv(csv: string, canonByNorm: Map<string, string | typeof AMBIG
     const symbol = symbolRaw?.trim();
     if (!symbol) continue;
     const tracked = resolveTrackedIndex(underlyingRaw ?? "", canonByNorm);
+    const securityName = securityNameRaw?.trim() ?? symbol;
+    const isin = isinRaw?.trim() ?? "";
+    const amfiName = isin ? amfiIsinMap.get(isin.toUpperCase()) : undefined;
     rows.push({
       symbol,
-      securityName: securityNameRaw?.trim() ?? symbol,
+      securityName,
+      displayName: amfiName ? cleanAmfiName(amfiName) : securityName,
       underlyingRaw: (underlyingRaw ?? "").trim(),
       dateOfListing: parseNseListingDate(dateRaw ?? ""),
-      isin: isinRaw?.trim() ?? "",
+      isin,
       faceValue: parseFloatOrNull(faceValueRaw ?? ""),
       marketLot: parseFloatOrNull(marketLotRaw ?? ""),
       trackedIndexName: tracked?.name ?? null,
@@ -340,12 +464,13 @@ async function fetchCsv(): Promise<string | null> {
 
 async function buildRegistry(): Promise<RegistryCache> {
   const now = Date.now();
-  const [csv, indexNameRows] = await Promise.all([
+  const [csv, indexNameRows, amfiIsinMap] = await Promise.all([
     fetchCsv(),
     prisma.indexEodQuote.findMany({ distinct: ["indexName"], select: { indexName: true } }).catch((err) => {
       console.error("[etfRegistry] IndexEodQuote name lookup failed:", err);
       return [] as { indexName: string }[];
     }),
+    fetchAmfiIsinMap(),
   ]);
 
   if (!csv) {
@@ -355,7 +480,17 @@ async function buildRegistry(): Promise<RegistryCache> {
   }
 
   const canonByNorm = buildCanonIndex(indexNameRows.map((r) => r.indexName));
-  const entries = parseEtfCsv(csv, canonByNorm);
+  const entries = parseEtfCsv(csv, canonByNorm, amfiIsinMap ?? new Map());
+
+  // AMFI join hit-rate — reported honestly every build, per this ticket's
+  // brief ("report the join hit-rate ... report misses honestly").
+  if (amfiIsinMap) {
+    const matched = entries.filter((e) => e.isin && amfiIsinMap.has(e.isin.toUpperCase())).length;
+    const pct = entries.length > 0 ? ((matched / entries.length) * 100).toFixed(1) : "0.0";
+    console.info(`[etfRegistry] AMFI display-name join: ${matched}/${entries.length} ETFs (${pct}%) resolved a real fund name`);
+  } else {
+    console.warn("[etfRegistry] AMFI NAVAll.txt unavailable this build — displayName falls back to NSE securityName for every ETF.");
+  }
 
   const bySymbol = new Map<string, EtfRegistryEntry>();
   const byTrackedIndexSymbol = new Map<string, EtfRegistryEntry[]>();
@@ -408,8 +543,10 @@ export async function getEtfSymbolSet(): Promise<Set<string>> {
  * names — make them searchable using their names." StockEodQuote's
  * companyName for an ETF is just the ticker duplicated (bhavcopy carries no
  * real fund name), so name queries can never match through the equity
- * fuzzy path. This searches the registry's OWN securityName/underlying
- * ("Nippon India ETF Nifty 50 BeES", "NIFTY 50") so real-name and
+ * fuzzy path. This searches the registry's OWN displayName/securityName/
+ * underlying ("Aditya Birla Sun Life Nifty 50 ETF", "NIFTY 50") so real-name,
+ * fund-house-name (the AMFI name naturally contains the fund house, e.g.
+ * "aditya birla" now matches without any separate normalization table), and
  * underlying-name queries surface funds.
  */
 export async function searchEtfRegistryByName(q: string, limit = 12): Promise<EtfRegistryEntry[]> {
@@ -419,6 +556,7 @@ export async function searchEtfRegistryByName(q: string, limit = 12): Promise<Et
   const hits: EtfRegistryEntry[] = [];
   for (const entry of bySymbol.values()) {
     if (
+      entry.displayName.toUpperCase().includes(needle) ||
       entry.securityName.toUpperCase().includes(needle) ||
       entry.underlyingRaw.toUpperCase().includes(needle) ||
       (entry.trackedIndexName ?? "").toUpperCase().includes(needle) ||
@@ -431,8 +569,8 @@ export async function searchEtfRegistryByName(q: string, limit = 12): Promise<Et
   return hits;
 }
 
-/** symbol -> real fund name (registry securityName), for labeling fund results wherever StockEodQuote's ticker-as-name would otherwise show. */
+/** symbol -> best-available real fund name (registry `displayName` — AMFI's scheme-master name when resolved, else `securityName`), for labeling fund results wherever StockEodQuote's ticker-as-name would otherwise show. */
 export async function getEtfNameMap(): Promise<Map<string, string>> {
   const { bySymbol } = await getCache();
-  return new Map([...bySymbol.values()].map((e) => [e.symbol, e.securityName]));
+  return new Map([...bySymbol.values()].map((e) => [e.symbol, e.displayName]));
 }

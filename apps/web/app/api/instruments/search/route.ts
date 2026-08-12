@@ -307,7 +307,7 @@ export async function GET(request: Request) {
   const fuzzyFundSymbols = new Set(fuzzyFundRows.map((r) => r.symbol.toUpperCase()));
   const nameOnlyFundRows = etfNameMatches
     .filter((e) => !fuzzyFundSymbols.has(e.symbol))
-    .map((e) => ({ symbol: e.symbol, companyName: e.securityName, volume: 0 }));
+    .map((e) => ({ symbol: e.symbol, companyName: e.displayName, volume: 0 }));
   const fundResults: SearchResultItem[] = [...fuzzyFundRows, ...nameOnlyFundRows]
     // ETF Layer (2026-08-12) — re-rank by liquidity (see fuzzyRows' own
     // comment): a broad query can alphabetically match 30+ ETFs, and the

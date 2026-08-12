@@ -32,7 +32,7 @@ export function EtfDetailsPanel({
   trailingPE,
 }: {
   symbol: string;
-  /** Best-available fund identity — instrument.ts already resolves Yahoo's `price.longName` over the registry's own SecurityName over the bare symbol; passed through as `companyName` elsewhere on the page, repeated here for the panel's own heading. */
+  /** Best-available fund identity — instrument.ts's companyName resolution: registry `displayName` (AMFI's real scheme-master name, exact-ISIN-joined) first, Yahoo's `price.longName` only for the rare ETF AMFI didn't resolve, else the bare symbol; passed through as `companyName` elsewhere on the page, repeated here for the panel's own heading. */
   fundName: string;
   etf: EtfRegistryEntry;
   /** Yahoo's basket P/E (`summaryDetail.trailingPE`), when cached — honestly labeled below as index-basket P/E, never presented as the fund's own earnings ratio (a fund has none). */

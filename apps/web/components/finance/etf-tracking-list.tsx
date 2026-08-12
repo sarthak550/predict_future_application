@@ -32,7 +32,7 @@ export function EtfTrackingList({ etfs }: { etfs: EtfRegistryEntry[] }) {
               >
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium text-ink-900">{etf.symbol}</p>
-                  <p className="truncate text-xs text-ink-400">{etf.securityName}</p>
+                  <p className="truncate text-xs text-ink-400">{etf.displayName}</p>
                 </div>
                 <span className="shrink-0 rounded-full border border-ink-200 px-2 py-0.5 text-[11px] font-medium text-ink-500">
                   ETF

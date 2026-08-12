@@ -283,7 +283,19 @@ const INDEX_OPINION_TICKER: Record<string, string> = {
 };
 
 export async function fetchInstrumentDetail(rawSymbol: string): Promise<InstrumentDetail | null> {
-  const symbol = rawSymbol.trim().toUpperCase();
+  // Next.js App Router dynamic params arrive PERCENT-ENCODED ("M%26M" for
+  // /instruments/M&M) — without decoding, every ampersand ticker (M&M,
+  // M&MFIN, J&KBANK, GMRP&UI, ...) 404s despite real StockEodQuote rows.
+  // Founder-reported live 2026-08-12. try/catch: a genuinely malformed
+  // percent-sequence in the URL must degrade to the raw string (-> normal
+  // not-found), never throw a 500.
+  let decoded = rawSymbol;
+  try {
+    decoded = decodeURIComponent(rawSymbol);
+  } catch {
+    decoded = rawSymbol;
+  }
+  const symbol = decoded.trim().toUpperCase();
   if (!symbol) return null;
   // Index Universe Expansion (Sprint A, 2026-08-09) — broadened from
   // isIndexOptionUnderlying alone (the 5 tradable underlyings) to also
@@ -565,14 +577,20 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
   // ETF Layer (2026-08-12) — an ETF's StockEodQuote.companyName is just its
   // bare symbol (bhavcopy resolves company names off the EQUITY master,
   // which doesn't carry fund names — verified live: NIFTYBEES/GOLDBEES/
-  // BANKBEES/etc all store companyName === symbol today). Prefer NSE's own
-  // registry SecurityName over that no-op fallback; overridden below with
-  // Yahoo's `price.longName` (a fuller, better-cased fund name — see
-  // fundamentals.ts's KeyStats.yahooLongName doc) once enrichment resolves.
+  // BANKBEES/etc all store companyName === symbol today). Prefer the
+  // registry's `displayName` over that no-op fallback — AMFI's real,
+  // ISIN-exact-joined scheme name when resolved (339/342 ETFs, 99.1% —
+  // see etfRegistry.ts's 2026-08-12 AMFI addendum), else NSE's own
+  // abbreviated SecurityName. Overridden below with Yahoo's `price.longName`
+  // ONLY for the ~1% AMFI didn't resolve — a live comparison found AMFI's
+  // name byte-identical to Yahoo's longName wherever both existed, so AMFI's
+  // far higher, same-fetch coverage wins outright rather than waiting on
+  // Yahoo's crumb-gated, sparsely-cached fetch (see fundamentals.ts's
+  // KeyStats.yahooLongName doc).
   let companyName =
     INDEX_DISPLAY_NAME[symbol] ??
     longTailEntry?.name ??
-    (etfDetails && latestQuote?.companyName === symbol ? etfDetails.securityName : latestQuote?.companyName) ??
+    (etfDetails && latestQuote?.companyName === symbol ? etfDetails.displayName : latestQuote?.companyName) ??
     filings[0]?.companyName ??
     newsRows[0]?.companyName ??
     symbol;
@@ -669,9 +687,12 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
   // fetching fundamentals for "^NSEI.NS". (Unrelated to the daily price
   // history above, which indices DO now get — see `spark`.)
   const enrichment = isIndex ? EMPTY_INSTRUMENT_ENRICHMENT : await getOrFetchInstrumentEnrichment(symbol, companyName);
-  // ETF Layer (2026-08-12) — Yahoo's fund long name, when cached, beats both
-  // the registry SecurityName and the bare-symbol fallback above.
-  if (etfDetails && enrichment.keyStats?.yahooLongName) {
+  // ETF Layer (2026-08-12, AMFI addendum) — Yahoo's fund long name is now
+  // ONLY the fallback for the rare ETF AMFI's ISIN join didn't resolve.
+  // `displayName === securityName` is exactly that "AMFI didn't resolve"
+  // signal (see etfRegistry.ts's EtfRegistryEntry doc) — when AMFI DID
+  // resolve, its name is kept as-is rather than overwritten.
+  if (etfDetails && enrichment.keyStats?.yahooLongName && etfDetails.displayName === etfDetails.securityName) {
     companyName = enrichment.keyStats.yahooLongName;
   }
 
