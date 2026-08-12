@@ -910,7 +910,21 @@ export async function runPremiumCapture(now: Date = new Date()): Promise<Premium
       // 15s near-tier round loop, capped by LEGACY_NEAR_TRACK_MAX_CANDIDATES
       // (never dropping an always-on or open-position candidate). No far
       // tier at all in this mode.
-      const nearestWeekly = await collectNearestWeeklyIndexCandidates();
+      //
+      // PREMIUM_CAPTURE_ALWAYS_ON (founder, 2026-08-12): with F&O gated
+      // "coming soon" AND the Neon free tier's 512MB cap hit (~125MB/session
+      // write rate vs 22MB headroom — the capture was the largest growing
+      // table), the always-on nearest-weekly leg is ALSO env-gated, default
+      // OFF: "we can remove the option premium capture, as that's something
+      // we are [not] launching right now." Demand-driven capture (open
+      // positions + recently-viewed) STAYS — position holders' charts keep
+      // ticking at trivial write volume. Launch runbook: set
+      // PREMIUM_CAPTURE_ALWAYS_ON=true (and optionally
+      // PREMIUM_CAPTURE_ALL_EXPIRIES=true) in ~/.env.prod + rm/run pf-api a
+      // few weeks BEFORE flipping the F&O UI flags, so charts launch with
+      // real history depth.
+      const alwaysOnEnabled = process.env.PREMIUM_CAPTURE_ALWAYS_ON === "true";
+      const nearestWeekly = alwaysOnEnabled ? await collectNearestWeeklyIndexCandidates() : [];
       result.nearestWeeklyResolved = nearestWeekly.length;
 
       const legacyMerged = mergeLegacyIndexCandidates(nearestWeekly, indexOpenPositions, indexRecentlyViewed);
