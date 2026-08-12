@@ -7,6 +7,7 @@ import { EtfTrackingList } from "@/components/finance/etf-tracking-list";
 import { ExpandableCallsTable } from "@/components/finance/expandable-calls-table";
 import { FundamentalsPanel } from "@/components/finance/fundamentals-panel";
 import { IndexCompositionPanel } from "@/components/finance/index-composition-panel";
+import { IndexMembershipStrip } from "@/components/finance/index-membership-strip";
 import { IndexMetricsPanel } from "@/components/finance/index-metrics-panel";
 import { InstrumentSentimentGauge } from "@/components/finance/instrument-sentiment-gauge";
 import { PriceChart } from "@/components/finance/price-chart";
@@ -267,20 +268,31 @@ export default async function InstrumentDetailPage({
           trailingPE={instrument.enrichment.keyStats?.trailingPE}
         />
       ) : (
-        <FundamentalsPanel
-          symbol={instrument.symbol}
-          companyName={instrument.companyName}
-          annualRevenue={instrument.enrichment.annualRevenue}
-          annualNetIncome={instrument.enrichment.annualNetIncome}
-          annualDilutedEps={instrument.enrichment.annualDilutedEps}
-          quarterlyRevenue={instrument.enrichment.quarterlyRevenue}
-          quarterlyNetIncome={instrument.enrichment.quarterlyNetIncome}
-          quarterlyDilutedEps={instrument.enrichment.quarterlyDilutedEps}
-          dividends={instrument.enrichment.dividends}
-          keyStats={instrument.enrichment.keyStats}
-          debtCoverage={instrument.enrichment.debtCoverage}
-          fetchedAt={instrument.enrichment.fundamentalsFetchedAt}
-        />
+        <>
+          <FundamentalsPanel
+            symbol={instrument.symbol}
+            companyName={instrument.companyName}
+            annualRevenue={instrument.enrichment.annualRevenue}
+            annualNetIncome={instrument.enrichment.annualNetIncome}
+            annualDilutedEps={instrument.enrichment.annualDilutedEps}
+            quarterlyRevenue={instrument.enrichment.quarterlyRevenue}
+            quarterlyNetIncome={instrument.enrichment.quarterlyNetIncome}
+            quarterlyDilutedEps={instrument.enrichment.quarterlyDilutedEps}
+            dividends={instrument.enrichment.dividends}
+            keyStats={instrument.enrichment.keyStats}
+            debtCoverage={instrument.enrichment.debtCoverage}
+            fetchedAt={instrument.enrichment.fundamentalsFetchedAt}
+          />
+          {/* Index Membership (2026-08-12) — plain-equity-only, symmetric with
+              EtfTrackingList on the index side (see that component's own
+              doc). Never rendered for an ETF (isEtf is the branch above, not
+              this one) — an ETF page already shows its own "Tracks: <index>"
+              line via EtfDetailsPanel, and a second membership section would
+              be redundant for the one index an ETF actually cares about.
+              Self-hides when the reverse map has nothing for this symbol
+              (indexMembership.ts's honest-until-warm/zero-membership gate). */}
+          <IndexMembershipStrip memberships={instrument.indexMembership} />
+        </>
       )}
 
       <PulseTabs

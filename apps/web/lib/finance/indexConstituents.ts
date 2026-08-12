@@ -86,7 +86,7 @@
  * session hiccup); indexLiveWatch is secondary/overlay + gap-fill only.
  */
 
-import { hasIndexLiveWatch, fetchIndexLiveWatch } from "./indexLiveWatch";
+import { hasIndexLiveWatch, fetchIndexLiveWatch, LIVE_INDEX_WATCH_SYMBOL } from "./indexLiveWatch";
 
 const CONSTITUENT_CSV_SLUG: Record<string, string> = {
   // 5 F&O-tradable underlyings (apps/web/lib/finance/indexTradableAlias.ts)
@@ -310,6 +310,20 @@ for (const symbol of Object.keys(CONSTITUENT_CSV_SLUG)) {
     throw new Error(`[indexConstituents] "${symbol}" is in both CONSTITUENT_CSV_SLUG and KNOWN_NO_CONSTITUENT_LIST`);
   }
 }
+
+/**
+ * Every `/instruments/[symbol]` index code with a real constituent source
+ * (CSV, live-watch, or both) — the union of CONSTITUENT_CSV_SLUG's and
+ * LIVE_INDEX_WATCH_SYMBOL's keys, i.e. exactly the set `hasIndexConstituentList`
+ * returns true for. Exported so a reverse-membership sweep (lib/finance/
+ * indexMembership.ts's "what indices is THIS stock in" feature) can enumerate
+ * every index worth fetching without re-deriving or hand-duplicating this
+ * list — one source of truth, same discipline this file's own module doc
+ * describes for the CSV filenames themselves.
+ */
+export const ALL_INDEX_SYMBOLS_WITH_CONSTITUENTS: readonly string[] = Array.from(
+  new Set([...Object.keys(CONSTITUENT_CSV_SLUG), ...Object.keys(LIVE_INDEX_WATCH_SYMBOL)])
+);
 
 const NSE_ARCHIVES_BASE = "https://nsearchives.nseindia.com/content/indices";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;

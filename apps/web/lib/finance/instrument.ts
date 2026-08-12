@@ -18,6 +18,7 @@ import { getLongTailIndexBySymbol } from "@/lib/finance/indexLongTail";
 import { TRADABLE_UNDERLYING_TO_INDEX_SLUG } from "@/lib/finance/indexTradableAlias";
 import { hasIndexConstituentList, fetchIndexConstituents } from "@/lib/finance/indexConstituents";
 import { getEtfRegistryEntry, getEtfsTrackingIndex, type EtfRegistryEntry } from "@/lib/finance/etfRegistry";
+import { getIndexMembership, type IndexMembershipEntry } from "@/lib/finance/indexMembership";
 import { prisma } from "@/lib/prisma";
 
 // Enough sessions for a 1Y timeframe on the interactive chart (~250 trading
@@ -210,6 +211,19 @@ export interface InstrumentDetail {
   etfDetails: EtfRegistryEntry | null;
   /** ETF Layer (2026-08-12) Ask 3 — every registry-confirmed ETF hand-verified to track THIS index. Always empty for a non-index page. */
   etfsTrackingIndex: EtfRegistryEntry[];
+  /**
+   * Index Membership (2026-08-12) — every covered index this stock is a
+   * verified member of (lib/finance/indexMembership.ts's reverse of
+   * indexConstituents.ts/indexLiveWatch.ts). Always empty for an index page
+   * (an index isn't "a member of" other indices in any sense this app
+   * models) — populated for both a plain equity AND an ETF, since ETF
+   * membership is a real, if slightly unusual, fact (some ETFs are
+   * themselves NSE index constituents); the page only RENDERS it for a
+   * plain equity (see page.tsx — an ETF already shows its "Tracks" line).
+   * Never fabricated: empty means "not a member of any of the ~115 covered
+   * indices, or the reverse map isn't warm yet" — see that module's own doc.
+   */
+  indexMembership: IndexMembershipEntry[];
 }
 
 /**
@@ -373,6 +387,7 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     constituentListRows,
     etfDetails,
     etfsTrackingIndex,
+    indexMembership,
   ] = await Promise.all([
     prisma.stockEodQuote.findFirst({
       where: { symbol },
@@ -508,6 +523,11 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     isIndex ? Promise.resolve(null) : getEtfRegistryEntry(symbol),
     // ETF Layer (2026-08-12) Ask 3 — a no-op Promise for every non-index page.
     isIndex ? getEtfsTrackingIndex(symbol) : Promise.resolve([]),
+    // Index Membership (2026-08-12) — a no-op Promise for an index page (see
+    // this field's own doc on InstrumentDetail); always resolves fast, a
+    // plain in-memory Map read at worst (see indexMembership.ts's own doc on
+    // why it never blocks on network I/O here).
+    isIndex ? Promise.resolve([]) : getIndexMembership(symbol),
   ]);
 
   // Belt-and-suspenders re-check with the shared matcher, same as the API
@@ -751,5 +771,6 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     isEtf: etfDetails != null,
     etfDetails,
     etfsTrackingIndex,
+    indexMembership,
   };
 }
