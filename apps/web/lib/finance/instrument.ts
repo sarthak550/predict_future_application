@@ -24,6 +24,7 @@ import { getLongTailIndexBySymbol } from "@/lib/finance/indexLongTail";
 import { getBseLongTailIndexBySymbol } from "@/lib/finance/bseIndexLongTail";
 import { TRADABLE_UNDERLYING_TO_INDEX_SLUG } from "@/lib/finance/indexTradableAlias";
 import { hasIndexConstituentList, fetchIndexConstituents } from "@/lib/finance/indexConstituents";
+import { hasBseIndexConstituents, fetchBseIndexConstituents } from "@/lib/finance/bseIndexConstituents";
 import { getEtfRegistryEntry, getEtfsTrackingIndex, type EtfRegistryEntry } from "@/lib/finance/etfRegistry";
 import { getIndexMembership, type IndexMembershipEntry } from "@/lib/finance/indexMembership";
 import { prisma } from "@/lib/prisma";
@@ -146,12 +147,13 @@ export interface InstrumentIndexMetrics {
  * the member, per the founder's explicit instruction.
  */
 export interface IndexConstituentQuoteRow {
-  symbol: string;
+  /** Null for a BSE-only constituent our own company-name resolver couldn't link to an `/instruments/[symbol]` page (see bseIndexConstituents.ts's module doc, "no dead links") — the panel renders it as plain text, never a Link. Always non-null for every NSE constituent. */
+  symbol: string | null;
   companyName: string;
   industry: string | null;
   close: number | null;
   changePercent: number | null;
-  /** Free-float mcap share from NSE's live index watch (indexLiveWatch.ts) — an ESTIMATE of index weight (NSE's published weights apply capping factors we don't have); null when the live watch doesn't cover this index. */
+  /** Free-float mcap share from NSE's live index watch (indexLiveWatch.ts) — an ESTIMATE of index weight (NSE's published weights apply capping factors we don't have); null when the live watch doesn't cover this index, and always null for a BSE index (no honest per-stock weight source found — see bseIndexConstituents.ts's module doc). */
   weightPct: number | null;
 }
 
@@ -446,6 +448,11 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
   // is skipped entirely for every plain equity and every index without a
   // hand-verified list (see indexConstituents.ts's coverage doc).
   const wantsConstituents = hasIndexConstituentList(symbol);
+  // BSE Index Composition (2026-08-12) — same cheap sync check, gated on the
+  // BSE branch's own join key (`bseIndexName`, the BseIndexEodQuote.indexName
+  // this symbol resolved to above) rather than `symbol` itself, since
+  // bseIndexConstituents.ts's dictionary is keyed by BSE's own display name.
+  const bseWantsConstituents = isBseIndex && bseIndexName != null && hasBseIndexConstituents(bseIndexName);
 
   const opinionSince = new Date(Date.now() - OPINION_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
 
@@ -461,6 +468,7 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     longTailLiveQuote,
     metricsSnapshotRow,
     constituentListRows,
+    bseConstituentListRows,
     etfDetails,
     etfsTrackingIndex,
     indexMembership,
@@ -600,6 +608,18 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
             changePercent: true,
             previousClose: true,
             volume: true,
+            // BSE Index Metrics addendum (2026-08-12, founder: "if we already
+            // have indices information like Div Yield, P/E why are they
+            // missing on their pages") — widened beyond Phase 2's original
+            // spark-only selection so the SAME query (already fetched for
+            // every BSE index page) also feeds IndexMetricsPanel below,
+            // rather than a second round trip.
+            open: true,
+            high: true,
+            low: true,
+            peRatio: true,
+            pbRatio: true,
+            dividendYield: true,
           },
         })
       : Promise.resolve(null),
@@ -623,6 +643,13 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     // in-memory read on every request but the first per index per day. A
     // no-op Promise for any symbol without a verified list.
     wantsConstituents ? fetchIndexConstituents(symbol) : Promise.resolve(null),
+    // BSE Index Composition (2026-08-12) — same shape/role as
+    // `constituentListRows` above, sourced from Asia Index Pvt Ltd's own
+    // live per-index constituent feed (bseIndexConstituents.ts) rather than
+    // an NSE CSV. A no-op Promise for every non-BSE-index page and for a
+    // BSE index whose code returned an empty Table (see that file's module
+    // doc on the 11 non-equity gaps).
+    bseWantsConstituents ? fetchBseIndexConstituents(bseIndexName!) : Promise.resolve(null),
     // ETF Layer (2026-08-12) — a no-op Promise for every index (an index is
     // never itself an ETF); cheap in-memory Map lookup after the registry's
     // first fetch in any 24h window for every equity/ETF symbol.
@@ -843,6 +870,41 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
   // SAME IndexRow shape (`fetchIndexBySlug`'s return type). Sourced from
   // `liveSnapshot`, computed once above (Index History Stage 3) and shared
   // with `ownedQuote`'s derivation rather than re-branched a second time.
+  // BSE Index Metrics addendum (2026-08-12) — no NSE-style live allIndices
+  // snapshot exists for BSE (see `bseOwnedQuote`'s own doc above), so this
+  // reads entirely off the SAME self-owned BseIndexEodQuote history already
+  // fetched for the spark chart (`bseOwnedEodRows`, desc order, [0] latest,
+  // ~1y of sessions via SPARK_SESSIONS) rather than a second query.
+  // yearHigh/yearLow are REAL 52-week extremes computed from our own
+  // archive — high/low when BSE's feed populated them for that session,
+  // falling back to close on the rows where it didn't (e.g. sovereign-bond
+  // indices, which publish a blank Open/High/Low but a real Close — see
+  // BseIndexEodQuote's own schema doc). advances/declines/unchanged stay
+  // null: BSE publishes no per-index breadth count anywhere this pass found
+  // (unlike NSE's allIndices snapshot) — IndexMetricsPanel already renders
+  // the "Member stocks today" block's absence gracefully.
+  const bseIndexMetrics: InstrumentIndexMetrics | null = (() => {
+    if (!isBseIndex || !bseOwnedEodRows || bseOwnedEodRows.length === 0) return null;
+    const latest = bseOwnedEodRows[0];
+    const highs = bseOwnedEodRows.map((r) => r.high ?? r.close).filter((v): v is number => v != null);
+    const lows = bseOwnedEodRows.map((r) => r.low ?? r.close).filter((v): v is number => v != null);
+    return {
+      peRatio: latest.peRatio,
+      pbRatio: latest.pbRatio,
+      dividendYield: latest.dividendYield,
+      advances: null,
+      declines: null,
+      unchanged: null,
+      open: latest.open,
+      high: latest.high,
+      low: latest.low,
+      previousClose: latest.previousClose ?? latest.close - latest.changeAbs,
+      yearHigh: highs.length > 0 ? Math.max(...highs) : null,
+      yearLow: lows.length > 0 ? Math.min(...lows) : null,
+      asOf: latest.sessionDate.toISOString(),
+    };
+  })();
+
   const indexMetrics: InstrumentIndexMetrics | null = liveSnapshot
     ? {
         peRatio: liveSnapshot.peRatio,
@@ -859,7 +921,7 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
         yearLow: liveSnapshot.yearLow,
         asOf: liveSnapshot.asOf,
       }
-    : null;
+    : bseIndexMetrics;
 
   // Indices Consolidation (2026-08-12) Ask 2b, founder addendum — the price
   // join is a SECOND awaited step (not folded into the Promise.all above)
@@ -892,6 +954,41 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     // with no StockEodQuote row yet has no change to rank by, so it's
     // grouped at the very end rather than interleaved into the ranked
     // portion — never dropped (still a real member), just not orderable.
+    const ranked = joined
+      .filter((r) => r.changePercent != null)
+      .sort((a, b) => (b.changePercent as number) - (a.changePercent as number));
+    const unranked = joined.filter((r) => r.changePercent == null);
+    indexComposition = [...ranked, ...unranked];
+  } else if (bseConstituentListRows && bseConstituentListRows.length > 0) {
+    // BSE Index Composition (2026-08-12) — same day-change join pattern as
+    // the NSE branch above, EXCEPT only members bseIndexConstituents.ts
+    // resolved to a real NSE symbol (many BSE constituents are BSE-only
+    // listings with no StockEodQuote row — see that file's module doc). A
+    // member with `symbol: null` is never queried and never linked, but
+    // still rendered (plain text, no change columns) — a real index member,
+    // just not one we can price or link yet.
+    const constituentSymbols = bseConstituentListRows.map((r) => r.symbol).filter((s): s is string => s != null);
+    const constituentQuotes =
+      constituentSymbols.length > 0
+        ? await prisma.stockEodQuote.findMany({
+            where: { symbol: { in: constituentSymbols } },
+            orderBy: [{ symbol: "asc" }, { sessionDate: "desc" }],
+            distinct: ["symbol"],
+            select: { symbol: true, close: true, changePercent: true },
+          })
+        : [];
+    const quoteBySymbol = new Map(constituentQuotes.map((q) => [q.symbol, q]));
+    const joined: IndexConstituentQuoteRow[] = bseConstituentListRows.map((c) => {
+      const q = c.symbol ? quoteBySymbol.get(c.symbol) : undefined;
+      return {
+        symbol: c.symbol,
+        companyName: c.companyName,
+        industry: c.industry,
+        close: q?.close ?? null,
+        changePercent: q?.changePercent ?? null,
+        weightPct: c.weightPct,
+      };
+    });
     const ranked = joined
       .filter((r) => r.changePercent != null)
       .sort((a, b) => (b.changePercent as number) - (a.changePercent as number));

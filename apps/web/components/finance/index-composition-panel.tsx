@@ -34,7 +34,8 @@ function formatRupees(value: number): string {
 }
 
 export type IndexCompositionConstituent = {
-  symbol: string;
+  /** Null for a BSE-only constituent our own company-name resolver couldn't link to an `/instruments/[symbol]` page (see bseIndexConstituents.ts's module doc, "no dead links") — renders as plain text instead of a Link. Always non-null for every NSE constituent (indexConstituents.ts derives it directly from NSE's own published Symbol column). */
+  symbol: string | null;
   companyName: string;
   industry: string | null;
   close: number | null;
@@ -116,42 +117,53 @@ export function IndexCompositionPanel({ constituents, advances, declines }: Inde
               const isUp = hasChange && (c.changePercent as number) >= 0;
               const Icon = isUp ? TrendingUp : TrendingDown;
               const toneClass = isUp ? "text-emerald-600" : "text-rose-600";
+              const rowClassName = hasWeights
+                ? "grid grid-cols-[minmax(0,1fr)_4rem_9rem] items-center gap-3 rounded-md py-2.5 transition-colors"
+                : "grid grid-cols-[minmax(0,1fr)_9rem] items-center gap-3 rounded-md py-2.5 transition-colors";
+
+              const rowContent = (
+                <>
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-ink-900">{c.symbol ?? c.companyName}</p>
+                    <p className="truncate text-xs text-ink-400">
+                      {c.companyName}
+                      {c.industry ? <span className="text-ink-300"> · {c.industry}</span> : null}
+                    </p>
+                  </div>
+                  {hasWeights && (
+                    <p className="text-right text-sm font-medium text-ink-700 tabular-nums">
+                      {c.weightPct != null ? `${c.weightPct.toFixed(1)}%` : "—"}
+                    </p>
+                  )}
+                  <div className="text-right">
+                    {c.close != null && <p className="text-sm text-ink-700 tabular-nums">{formatRupees(c.close)}</p>}
+                    {hasChange ? (
+                      <p className={`flex items-center justify-end gap-1 text-sm font-semibold tabular-nums ${toneClass}`}>
+                        <Icon className="h-3.5 w-3.5" />
+                        {isUp ? "+" : ""}
+                        {(c.changePercent as number).toFixed(2)}%
+                      </p>
+                    ) : (
+                      <p className="text-sm text-ink-300">—</p>
+                    )}
+                  </div>
+                </>
+              );
 
               return (
-                <li key={c.symbol}>
-                  <Link
-                    href={`/instruments/${c.symbol}`}
-                    className={
-                      hasWeights
-                        ? "grid grid-cols-[minmax(0,1fr)_4rem_9rem] items-center gap-3 rounded-md py-2.5 transition-colors hover:bg-ink-50/60"
-                        : "grid grid-cols-[minmax(0,1fr)_9rem] items-center gap-3 rounded-md py-2.5 transition-colors hover:bg-ink-50/60"
-                    }
-                  >
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium text-ink-900">{c.symbol}</p>
-                      <p className="truncate text-xs text-ink-400">
-                        {c.companyName}
-                        {c.industry ? <span className="text-ink-300"> · {c.industry}</span> : null}
-                      </p>
+                <li key={c.symbol ?? c.companyName}>
+                  {c.symbol ? (
+                    <Link href={`/instruments/${c.symbol}`} className={`${rowClassName} hover:bg-ink-50/60`}>
+                      {rowContent}
+                    </Link>
+                  ) : (
+                    // No StockEodQuote match for this BSE-only listing (see
+                    // IndexCompositionConstituent's own doc) — a real member,
+                    // rendered honestly, but never a dead Link.
+                    <div className={rowClassName} title="Not yet linked to an instrument page">
+                      {rowContent}
                     </div>
-                    {hasWeights && (
-                      <p className="text-right text-sm font-medium text-ink-700 tabular-nums">
-                        {c.weightPct != null ? `${c.weightPct.toFixed(1)}%` : "—"}
-                      </p>
-                    )}
-                    <div className="text-right">
-                      {c.close != null && <p className="text-sm text-ink-700 tabular-nums">{formatRupees(c.close)}</p>}
-                      {hasChange ? (
-                        <p className={`flex items-center justify-end gap-1 text-sm font-semibold tabular-nums ${toneClass}`}>
-                          <Icon className="h-3.5 w-3.5" />
-                          {isUp ? "+" : ""}
-                          {(c.changePercent as number).toFixed(2)}%
-                        </p>
-                      ) : (
-                        <p className="text-sm text-ink-300">—</p>
-                      )}
-                    </div>
-                  </Link>
+                  )}
                 </li>
               );
             })}
