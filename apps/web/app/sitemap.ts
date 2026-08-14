@@ -134,29 +134,33 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     priority: 0.4,
   }));
 
-  // BSE Expansion Phase 3A (2026-08-12) — BSE-EXCLUSIVE equities above the
-  // volume floor (lib/finance/bseEquity.ts) from the MOST RECENT BseEodQuote
-  // session, mirroring `instrumentEntries`' own "latest session only, not
-  // the full historical backlog" pattern above. A below-floor row is
-  // deliberately EXCLUDED here — page.tsx's own generateMetadata already
-  // noindexes it, submitting it to the sitemap would be the same "noindex
-  // page in the sitemap" contradiction this file's own doc comment already
-  // guards against for every other entry type.
-  const latestBseEquitySession = await prisma.bseEodQuote.findFirst({
-    orderBy: { sessionDate: "desc" },
-    select: { sessionDate: true },
-  });
-  const bseEquityRows = latestBseEquitySession
-    ? await prisma.bseEodQuote.findMany({
-        where: { sessionDate: latestBseEquitySession.sessionDate },
-        select: { tickerSymbol: true, volume: true },
-      })
-    : [];
-  const bseEquityEntries: MetadataRoute.Sitemap = bseEquityRows
-    .filter((row) => clearsBseEquityFloor(row.volume))
+  // BSE Expansion Phase 3A (2026-08-12), reworked 2026-08-14 — BSE-EXCLUSIVE
+  // equities above the turnover floor (lib/finance/bseEquity.ts), swept
+  // over the trailing BSE_EQUITY_FLOOR_WINDOW_SESSIONS sessions rather than
+  // only the single most-recent one: a thin name that legitimately skipped
+  // trading on the latest calendar day (verified live: 140 symbols present
+  // on 2026-08-09 were absent from the very next session) is otherwise
+  // wrongly dropped from the sitemap even when it's well above the floor —
+  // same root cause as the search route's fix, see bseEquity.ts's module
+  // doc for the full writeup. A below-floor row is deliberately EXCLUDED
+  // here — page.tsx's own generateMetadata already noindexes it, submitting
+  // it to the sitemap would be the same "noindex page in the sitemap"
+  // contradiction this file's own doc comment already guards against for
+  // every other entry type.
+  const recentBseEquitySessionDates = await getRecentBseEquitySessionDates();
+  const bseEquityWindowRows =
+    recentBseEquitySessionDates.length > 0
+      ? await prisma.bseEodQuote.findMany({
+          where: { sessionDate: { in: recentBseEquitySessionDates } },
+          select: { tickerSymbol: true, companyName: true, sessionDate: true, close: true, volume: true },
+        })
+      : [];
+  const bseEquitySummaries = summarizeBseEquityWindow(bseEquityWindowRows);
+  const bseEquityEntries: MetadataRoute.Sitemap = bseEquitySummaries
+    .filter((row) => clearsBseEquityFloor(row.maxTurnoverInWindow))
     .map((row) => ({
       url: `${SITE_URL}/instruments/${bseEquityPageSymbol(row.tickerSymbol)}`,
-      lastModified: latestBseEquitySession!.sessionDate,
+      lastModified: row.latestSessionDate,
       changeFrequency: "daily",
       priority: 0.3,
     }));

@@ -28,7 +28,13 @@ import { hasBseIndexConstituents, fetchBseIndexConstituents } from "@/lib/financ
 import { getEtfRegistryEntry, getEtfsTrackingIndex, type EtfRegistryEntry } from "@/lib/finance/etfRegistry";
 import { getBseFundRegistryEntry, getBseFundsTrackingIndex, type BseFundRegistryEntry } from "@/lib/finance/bseFundRegistry";
 import { getIndexMembership, type IndexMembershipEntry } from "@/lib/finance/indexMembership";
-import { isBseEquitySymbolShape, bareBseEquityTicker, clearsBseEquityFloor } from "@/lib/finance/bseEquity";
+import {
+  isBseEquitySymbolShape,
+  bareBseEquityTicker,
+  clearsBseEquityFloor,
+  bseEquityTurnover,
+  BSE_EQUITY_FLOOR_WINDOW_SESSIONS,
+} from "@/lib/finance/bseEquity";
 import { prisma } from "@/lib/prisma";
 
 // Enough sessions for a 1Y timeframe on the interactive chart (~250 trading
@@ -217,12 +223,13 @@ export interface InstrumentDetail {
    */
   isBseEquity: boolean;
   /**
-   * True when `isBseEquity` AND this stock's latest volume does NOT clear
-   * `MIN_BSE_EQUITY_LIQUIDITY_QTY` (lib/finance/bseEquity.ts). The page
-   * still renders fully and honestly (never fabricated/withheld data) —
-   * this flag only drives `noindex` (page.tsx's generateMetadata) and
-   * exclusion from browse/search/sitemap surfaces. Always false for a
-   * non-BSE-equity page.
+   * True when `isBseEquity` AND this stock's MAX turnover across its
+   * trailing BSE_EQUITY_FLOOR_WINDOW_SESSIONS does NOT clear
+   * `MIN_BSE_EQUITY_TURNOVER_RS` (lib/finance/bseEquity.ts — turnover-based,
+   * not raw share volume, since 2026-08-14's floor rework). The page still
+   * renders fully and honestly (never fabricated/withheld data) — this flag
+   * only drives `noindex` (page.tsx's generateMetadata) and exclusion from
+   * browse/search/sitemap surfaces. Always false for a non-BSE-equity page.
    */
   belowBseEquityFloor: boolean;
   /**
@@ -745,12 +752,17 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
           orderBy: { sessionDate: "desc" },
         })
       : Promise.resolve(null),
+    // `volume` is also selected here (spark otherwise only needs `close`) —
+    // Floor Rework (2026-08-14): the first BSE_EQUITY_FLOOR_WINDOW_SESSIONS
+    // entries of this same, already-fetched array double as the floor's
+    // turnover window, avoiding a second query. See `belowBseEquityFloor`
+    // below and bseEquity.ts's module doc for why.
     bseEquityTicker
       ? prisma.bseEodQuote.findMany({
           where: { tickerSymbol: { equals: bseEquityTicker, mode: "insensitive" } },
           orderBy: { sessionDate: "desc" },
           take: SPARK_SESSIONS,
-          select: { sessionDate: true, close: true },
+          select: { sessionDate: true, close: true, volume: true },
         })
       : Promise.resolve(null),
     // BSE Expansion Phase 3B (2026-08-14) — a no-op Promise for every
@@ -988,8 +1000,17 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
       deliveryPct: null,
     };
   }
+  // Floor Rework (2026-08-14) — turnover (close × volume), MAXed over the
+  // trailing BSE_EQUITY_FLOOR_WINDOW_SESSIONS, not a single day's raw
+  // volume (see bseEquity.ts's module doc for the full root-cause writeup;
+  // this is the single-symbol equivalent of `summarizeBseEquityWindow` —
+  // no second query needed since `bseEquitySparkRows` already holds this
+  // symbol's recent sessions, most-recent-first).
+  const bseEquityMaxTurnoverInWindow = (bseEquitySparkRows ?? [])
+    .slice(0, BSE_EQUITY_FLOOR_WINDOW_SESSIONS)
+    .reduce((max, r) => Math.max(max, bseEquityTurnover(r)), 0);
   /** BSE Expansion Phase 3A (2026-08-12) — see InstrumentDetail's own doc on why this flag never hides/drops data, only gates presentation surfaces downstream (page.tsx robots, search, sitemap). */
-  const belowBseEquityFloor = isBseEquity && !clearsBseEquityFloor(bseEquityLatestRow?.volume);
+  const belowBseEquityFloor = isBseEquity && !clearsBseEquityFloor(bseEquityMaxTurnoverInWindow);
 
   const sentimentCounts = matchedOpinions.reduce(
     (acc, o) => {

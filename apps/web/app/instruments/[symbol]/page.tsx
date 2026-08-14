@@ -55,11 +55,11 @@ export async function generateMetadata({
     alternates: { canonical: url },
     // Indexable once we have a real price quote — a symbol we only know
     // through news/filings/opinions (no bhavcopy row yet) is too thin a page
-    // to submit to search. BSE Expansion Phase 3A (2026-08-12) — a
-    // below-floor BSE-only equity (lib/finance/bseEquity.ts's
-    // MIN_BSE_EQUITY_LIQUIDITY_QTY) is EXPLICITLY noindexed even though it
-    // has a real quote — the brief's own "stored but noindex" rule for the
-    // thinnest tail of this universe.
+    // to submit to search. BSE Expansion Phase 3A (2026-08-12), reworked
+    // 2026-08-14 to a turnover floor — a below-floor BSE-only equity
+    // (lib/finance/bseEquity.ts's MIN_BSE_EQUITY_TURNOVER_RS) is EXPLICITLY
+    // noindexed even though it has a real quote — the brief's own "stored
+    // but noindex" rule for the thinnest tail of this universe.
     robots: { index: instrument.quote != null && !instrument.belowBseEquityFloor, follow: true },
     openGraph: { title, description, type: "website", url },
     twitter: { card: "summary_large_image", title, description },
@@ -309,6 +309,7 @@ export default async function InstrumentDetailPage({
             keyStats={instrument.enrichment.keyStats}
             debtCoverage={instrument.enrichment.debtCoverage}
             fetchedAt={instrument.enrichment.fundamentalsFetchedAt}
+            isBseOnlyEquity={instrument.isBseEquity}
           />
           {/* Index Membership (2026-08-12) — plain-equity-only, symmetric with
               EtfTrackingList on the index side (see that component's own

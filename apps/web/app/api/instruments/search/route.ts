@@ -14,7 +14,13 @@ import {
 } from "@/lib/finance/bseFundRegistry";
 import { isTradableOptionUnderlyingServer } from "@/lib/paperTrading/fnoUniverseServer";
 import { isFuturesTradingEnabled, isOptionsTradingEnabled } from "@/lib/paperTrading/featureFlags";
-import { bseEquityPageSymbol, clearsBseEquityFloor } from "@/lib/finance/bseEquity";
+import {
+  bseEquityPageSymbol,
+  clearsBseEquityFloor,
+  getRecentBseEquitySessionDates,
+  summarizeBseEquityWindow,
+  type BseEquityWindowSummary,
+} from "@/lib/finance/bseEquity";
 
 /**
  * GET /api/instruments/search?q= — global nav-bar search (public), CATEGORIZED
@@ -382,23 +388,43 @@ export async function GET(request: Request) {
     .slice(0, MAX_PER_CATEGORY)
     .map((r) => ({ href: `/instruments/${r.symbol}`, label: r.symbol, sublabel: r.companyName, category: "stock" as const }));
 
-  // BSE Expansion Phase 3A (2026-08-12) — BSE-EXCLUSIVE equities above the
-  // volume floor, fuzzy-matched by ticker or company name against the
-  // latest ingested BseEodQuote session. Sublabeled "· BSE" — see this
-  // route's own module doc.
-  const [bseEquityRows, bseFundSymbols] = await Promise.all([
+  // BSE Expansion Phase 3A (2026-08-12), reworked 2026-08-14 — BSE-EXCLUSIVE
+  // equities above the turnover floor, fuzzy-matched by ticker or company
+  // name against the trailing BSE_EQUITY_FLOOR_WINDOW_SESSIONS sessions
+  // (NOT just the single latest global session — founder report "The Yamuna
+  // Syndicate Ltd" doesn't trade every day, so a single-session lookup can
+  // miss it entirely even when it's well above the floor; see
+  // bseEquity.ts's module doc for the full root-cause writeup). Sublabeled
+  // "· BSE" — see this route's own module doc.
+  const [bseEquitySummaries, bseFundSymbols] = await Promise.all([
     (async () => {
-      const latest = await prisma.bseEodQuote.findFirst({ orderBy: { sessionDate: "desc" }, select: { sessionDate: true } });
-      if (!latest) return [];
-      return prisma.bseEodQuote.findMany({
+      const recentSessionDates = await getRecentBseEquitySessionDates();
+      if (recentSessionDates.length === 0) return [];
+      // Step 1: bounded set of DISTINCT symbols whose ticker OR company name
+      // matches anywhere in the window — this is the only step the text
+      // query narrows on, so it's the take()-bound the audit law wants.
+      const matchedTickers = await prisma.bseEodQuote.findMany({
         where: {
-          sessionDate: latest.sessionDate,
+          sessionDate: { in: recentSessionDates },
           OR: [{ tickerSymbol: { contains: q, mode: "insensitive" } }, { companyName: { contains: q, mode: "insensitive" } }],
         },
-        orderBy: { volume: "desc" },
+        distinct: ["tickerSymbol"],
+        orderBy: { tickerSymbol: "asc" },
         take: MAX_PER_CATEGORY * 2, // over-fetch: some matches get pulled out into the fund category below
-        select: { tickerSymbol: true, companyName: true, volume: true },
+        select: { tickerSymbol: true },
       });
+      if (matchedTickers.length === 0) return [];
+      // Step 2: every window row for exactly those matched symbols (bounded
+      // to candidateCount × window size) so `summarizeBseEquityWindow` can
+      // compute a real MAX-turnover-in-window instead of one day's number.
+      const windowRows = await prisma.bseEodQuote.findMany({
+        where: {
+          tickerSymbol: { in: matchedTickers.map((t) => t.tickerSymbol) },
+          sessionDate: { in: recentSessionDates },
+        },
+        select: { tickerSymbol: true, companyName: true, sessionDate: true, close: true, volume: true },
+      });
+      return summarizeBseEquityWindow(windowRows).sort((a, b) => b.maxTurnoverInWindow - a.maxTurnoverInWindow);
     })(),
     getBseFundSymbolSet(),
   ]);
@@ -406,8 +432,8 @@ export async function GET(request: Request) {
   // registry-confirmed fund surfaces under "fund" instead (see below), never
   // both — same "never double-count" rule the NSE stock/fund split already
   // follows via `etfSymbols`.
-  const bseStockResults: SearchResultItem[] = bseEquityRows
-    .filter((r) => clearsBseEquityFloor(r.volume) && !bseFundSymbols.has(bseEquityPageSymbol(r.tickerSymbol)))
+  const bseStockResults: SearchResultItem[] = bseEquitySummaries
+    .filter((r) => clearsBseEquityFloor(r.maxTurnoverInWindow) && !bseFundSymbols.has(bseEquityPageSymbol(r.tickerSymbol)))
     .slice(0, MAX_PER_CATEGORY)
     .map((r) => ({
       href: `/instruments/${bseEquityPageSymbol(r.tickerSymbol)}`,
@@ -445,17 +471,19 @@ export async function GET(request: Request) {
   // BSE Expansion Phase 3B (2026-08-14) — BSE-only funds, same
   // fuzzy-ticker/companyName-match-plus-name-only-registry-search shape as
   // the NSE branch above, sublabeled "· BSE" so a result never reads as an
-  // NSE fund. `bseEquityRows` (fetched above for the stock split) already
+  // NSE fund. `bseEquitySummaries` (fetched above for the stock split, now
+  // window-based not single-session — see that block's own doc) already
   // carries every ticker/companyName match for this query; filter down to
   // the fund-classified subset and merge in registry name-only hits.
-  const bseFuzzyFundRows = bseEquityRows.filter((r) => bseFundSymbols.has(bseEquityPageSymbol(r.tickerSymbol)));
+  const bseFuzzyFundRows = bseEquitySummaries.filter((r) => bseFundSymbols.has(bseEquityPageSymbol(r.tickerSymbol)));
   const bseFuzzyFundSymbols = new Set(bseFuzzyFundRows.map((r) => bseEquityPageSymbol(r.tickerSymbol)));
   const [bseFundNameMatches, bseFundNames] = await Promise.all([searchBseFundRegistryByName(q), getBseFundNameMap()]);
-  const bseNameOnlyFundRows = bseFundNameMatches
-    .filter((e) => !bseFuzzyFundSymbols.has(e.symbol))
-    .map((e) => ({ tickerSymbol: e.tickerSymbol, companyName: e.displayName, volume: 0 }));
+  const bseNameOnlyFundRows: Array<Pick<BseEquityWindowSummary, "tickerSymbol" | "companyName" | "maxTurnoverInWindow">> =
+    bseFundNameMatches
+      .filter((e) => !bseFuzzyFundSymbols.has(e.symbol))
+      .map((e) => ({ tickerSymbol: e.tickerSymbol, companyName: e.displayName, maxTurnoverInWindow: 0 }));
   const bseFundResults: SearchResultItem[] = [...bseFuzzyFundRows, ...bseNameOnlyFundRows]
-    .sort((a, b) => b.volume - a.volume)
+    .sort((a, b) => b.maxTurnoverInWindow - a.maxTurnoverInWindow)
     .map((r) => ({
       href: `/instruments/${bseEquityPageSymbol(r.tickerSymbol)}`,
       label: r.tickerSymbol,
