@@ -8,11 +8,13 @@
  *   npx tsx scripts/measure-index-membership-build.ts   (from apps/web)
  */
 
-import { buildIndexMembershipMap } from "@/lib/finance/indexMembership";
+import { buildIndexMembershipMap, ALL_BSE_INDEX_NAMES_WITH_CONSTITUENTS } from "@/lib/finance/indexMembership";
 import { ALL_INDEX_SYMBOLS_WITH_CONSTITUENTS } from "@/lib/finance/indexConstituents";
 
 async function main() {
-  console.log(`Sweeping ${ALL_INDEX_SYMBOLS_WITH_CONSTITUENTS.length} covered indices (cold — no warm per-index cache)...`);
+  console.log(
+    `Sweeping ${ALL_INDEX_SYMBOLS_WITH_CONSTITUENTS.length} NSE + ${ALL_BSE_INDEX_NAMES_WITH_CONSTITUENTS.length} BSE covered indices (cold — no warm per-index cache; NSE+BSE sweeps run concurrently)...`,
+  );
   const start = Date.now();
   const map = await buildIndexMembershipMap();
   const elapsedMs = Date.now() - start;

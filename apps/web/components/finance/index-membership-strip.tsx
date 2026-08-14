@@ -26,6 +26,20 @@ import type { IndexMembershipEntry } from "@/lib/finance/indexMembership";
  * applied here across DIFFERENT indices' weights for the SAME stock rather
  * than across different stocks' weights within one index.
  *
+ * WEIGHT DISCLOSURE, SOURCE-AWARE (BSE Index Membership Sweep, 2026-08-14):
+ * memberships now come from BOTH NSE (indexConstituents.ts, an ffmc-share
+ * ESTIMATE) and BSE (bseIndexConstituents.ts, BSE's own PUBLISHED
+ * `Weightage`) — the two are never conflated. `weightIsEstimate` (see
+ * IndexMembershipEntry's own doc) distinguishes them per-entry; the single
+ * footer disclosure line becomes source-aware/dual depending on which kinds
+ * of weighted memberships are actually present in this stock's list, same
+ * spirit as `IndexCompositionPanel`'s own per-callout `weightIsEstimate`
+ * caveat (that panel shows one index's constituents, all one source, so its
+ * caveat is always single-source; this strip mixes exchanges for one stock,
+ * so its caveat can be dual). No per-chip exchange badge — BSE index display
+ * names already read as "BSE ..." (vs NSE's "Nifty ..."), visually
+ * distinguishable without extra chrome.
+ *
  * CAP: a large-cap sitting in 30+ indices (RELIANCE will) gets a "+N more"
  * expansion rather than an unbounded chip wall.
  */
@@ -47,6 +61,14 @@ export function IndexMembershipStrip({ memberships }: { memberships: IndexMember
 
   const visible = expanded ? ordered : ordered.slice(0, VISIBLE_CAP);
   const remaining = ordered.length - visible.length;
+
+  const hasNseEstimateWeight = memberships.some((m) => m.weightIsEstimate === true);
+  const hasBsePublishedWeight = memberships.some((m) => m.weightIsEstimate === false);
+  const weightDisclosure = hasNseEstimateWeight
+    ? hasBsePublishedWeight
+      ? "NSE weights are a free-float market-cap-share estimate, not NSE’s own published (and sometimes capped) index weight. BSE weights are BSE’s own published index weight, not an estimate. Indices without weight data are listed without one, in alphabetical order after the weighted ones."
+      : "Weight is a free-float market-cap-share estimate from NSE’s live index data, not NSE’s own published (and sometimes capped) index weight. Indices without a live weight feed are listed without one, in alphabetical order after the weighted ones."
+    : "Weight is BSE’s own published index weight. Indices without weight data are listed without one, in alphabetical order after the weighted ones.";
 
   return (
     <Card>
@@ -80,13 +102,7 @@ export function IndexMembershipStrip({ memberships }: { memberships: IndexMember
             </button>
           )}
         </div>
-        {hasWeights && (
-          <p className="mt-3 border-t border-ink-100 pt-3 text-[11px] leading-5 text-ink-400">
-            Weight is a free-float market-cap-share estimate from NSE&apos;s live index data, not NSE&apos;s own
-            published (and sometimes capped) index weight. Indices without a live weight feed are listed without
-            one, in alphabetical order after the weighted ones.
-          </p>
-        )}
+        {hasWeights && <p className="mt-3 border-t border-ink-100 pt-3 text-[11px] leading-5 text-ink-400">{weightDisclosure}</p>}
       </CardContent>
     </Card>
   );
