@@ -819,7 +819,10 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     return nseSymbolMatchesInstrumentTicker(symbol, o.instrumentTicker);
   });
 
-  const news = refineStockNews(newsRows, { limit: NEWS_LIMIT });
+  // `let`, not `const`: an index page's news is re-scoped to its
+  // constituents once the composition join below resolves (Index
+  // Constituent News, 2026-08-15) — see that block's own comment.
+  let news = refineStockNews(newsRows, { limit: NEWS_LIMIT });
 
   // BSE Expansion Phase 3A (2026-08-12) — `filingsInitial` (fetched
   // unconditionally above, keyed on `tickerSymbol: symbol`) is ALWAYS empty
@@ -1214,6 +1217,39 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
       .sort((a, b) => (b.changePercent as number) - (a.changePercent as number));
     const unranked = joined.filter((r) => r.changePercent == null);
     indexComposition = [...ranked, ...unranked];
+  }
+
+  // Index Constituent News (2026-08-15, founder ask) — an index page's Stock
+  // News tab aggregates its MEMBERS' news: the direct `tickerSymbol: symbol`
+  // query above is structurally empty for an index (no pipeline ever stores
+  // news under an index code), so the tab sat empty on every index page.
+  // One bounded IN query over the composition just resolved above — the
+  // constituent symbols are already in MarketMoveNews's own namespace (bare
+  // NSE / `.BO`), and refineStockNews's per-ticker cap keeps one noisy
+  // large-cap from monopolizing the tab. PulseTabs already renders a
+  // per-item ticker badge, so each headline self-identifies its stock. The
+  // "load more" continuation resolves the same scope server-side via
+  // resolveIndexNewsScope (indexNewsScope.ts) in /api/pulse/news.
+  if (isIndex && indexComposition && indexComposition.length > 0) {
+    const memberSymbols = indexComposition.map((c) => c.symbol).filter((s): s is string => Boolean(s));
+    if (memberSymbols.length > 0) {
+      const memberNewsRows = await prisma.marketMoveNews.findMany({
+        where: { tickerSymbol: { in: memberSymbols } },
+        orderBy: [{ publishedAt: "desc" }, { id: "asc" }],
+        take: NEWS_LIMIT * NEWS_FETCH_MULTIPLE,
+        select: {
+          id: true,
+          tickerSymbol: true,
+          companyName: true,
+          headline: true,
+          publisher: true,
+          sourceUrl: true,
+          publishedAt: true,
+          summary: true,
+        },
+      });
+      news = refineStockNews(memberNewsRows, { limit: NEWS_LIMIT });
+    }
   }
 
   return {

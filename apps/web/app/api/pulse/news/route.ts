@@ -6,6 +6,7 @@ import {
   encodeNewsPageCursor,
   fetchNewsPage,
 } from "@/lib/finance/newsPage";
+import { resolveIndexNewsScope } from "@/lib/finance/indexNewsScope";
 
 export const dynamic = "force-dynamic";
 
@@ -40,7 +41,13 @@ export async function GET(request: Request) {
   const tickerSymbol = rawSymbol && rawSymbol.length > 0 ? rawSymbol : undefined;
 
   try {
-    const page = await fetchNewsPage({ cursor, take, tickerSymbol });
+    // Index Constituent News (2026-08-15): an index symbol's continuation
+    // pages over its MEMBERS' news — same scope the instrument page's
+    // server-rendered first batch used (see instrument.ts's aggregation
+    // block), so the cursor sequence stays consistent. Non-index symbols
+    // resolve to null and keep the plain single-ticker filter.
+    const indexScope = tickerSymbol ? await resolveIndexNewsScope(tickerSymbol) : null;
+    const page = await fetchNewsPage({ cursor, take, tickerSymbol, tickerSymbols: indexScope ?? undefined });
 
     return NextResponse.json({
       items: page.items.map((item) => ({

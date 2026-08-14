@@ -98,6 +98,8 @@ export async function fetchNewsPage(input: {
   cursor: NewsPageCursor | null;
   take: number;
   tickerSymbol?: string;
+  /** Index Constituent News (2026-08-15): scope to a SET of tickers (an index's members) instead of one. Takes precedence over `tickerSymbol` when both are passed. */
+  tickerSymbols?: string[];
 }): Promise<NewsPageResult> {
   const take = Math.max(1, Math.min(Math.floor(input.take) || DEFAULT_NEWS_PAGE_TAKE, MAX_NEWS_PAGE_TAKE));
 
@@ -109,7 +111,11 @@ export async function fetchNewsPage(input: {
     const dbTake = take * FETCH_MULTIPLE;
     const rows = await prisma.marketMoveNews.findMany({
       where: {
-        ...(input.tickerSymbol ? { tickerSymbol: input.tickerSymbol } : {}),
+        ...(input.tickerSymbols && input.tickerSymbols.length > 0
+          ? { tickerSymbol: { in: input.tickerSymbols } }
+          : input.tickerSymbol
+            ? { tickerSymbol: input.tickerSymbol }
+            : {}),
         ...(cursor
           ? {
               OR: [

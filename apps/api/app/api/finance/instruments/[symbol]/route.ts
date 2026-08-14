@@ -24,7 +24,13 @@ const OPINION_LOOKBACK_DAYS = 90;
  * shared shape.
  *
  * `symbol` is an NSE symbol (case-insensitive on input, uppercased before any
- * query — every ticker column in this schema stores NSE symbols uppercase).
+ * query — every ticker column in this schema stores NSE symbols uppercase),
+ * OR a `.BO`-suffixed BSE-only page symbol (BSE Movers, 2026-08-15: the
+ * merged "ALL" movers universe now carries `.BO` rows, and the mobile
+ * bottom-sheet opens them through this same route — quote/spark come from
+ * BseEodQuote, filings from the `BSE:{scripCode}` announcement namespace,
+ * news from MarketMoveNews under the full `.BO` symbol, exactly the joins
+ * apps/web's own BSE instrument branch uses).
  *
  * Response shape:
  *   { symbol, companyName,
@@ -56,17 +62,50 @@ export async function GET(_request: Request, { params }: { params: { symbol: str
 
   const opinionSince = new Date(Date.now() - OPINION_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
 
-  const [latestQuote, sparkRows, newsRows, filings, opinionCandidates] = await Promise.all([
-    prisma.stockEodQuote.findFirst({
-      where: { symbol },
-      orderBy: { sessionDate: "desc" },
-    }),
-    prisma.stockEodQuote.findMany({
-      where: { symbol },
-      orderBy: { sessionDate: "desc" },
-      take: SPARK_SESSIONS,
-      select: { sessionDate: true, close: true },
-    }),
+  const isBse = /\.BO$/.test(symbol);
+  const bareTicker = isBse ? symbol.slice(0, -3) : symbol;
+
+  const [latestQuote, sparkRows, newsRows, filingsNse, opinionCandidates] = await Promise.all([
+    isBse
+      ? prisma.bseEodQuote
+          .findFirst({
+            where: { tickerSymbol: bareTicker },
+            orderBy: { sessionDate: "desc" },
+          })
+          .then((r) =>
+            r
+              ? {
+                  sessionDate: r.sessionDate,
+                  companyName: r.companyName,
+                  close: r.close,
+                  prevClose: r.prevClose,
+                  changePercent: r.changePercent,
+                  volume: Math.round(r.volume),
+                  // BSE's UDiFF bhavcopy carries no delivery data — honest null, never fabricated.
+                  deliveryPct: null as number | null,
+                  scripCode: r.scripCode as string | null,
+                }
+              : null
+          )
+      : prisma.stockEodQuote
+          .findFirst({
+            where: { symbol },
+            orderBy: { sessionDate: "desc" },
+          })
+          .then((r) => (r ? { ...r, scripCode: null as string | null } : null)),
+    isBse
+      ? prisma.bseEodQuote.findMany({
+          where: { tickerSymbol: bareTicker },
+          orderBy: { sessionDate: "desc" },
+          take: SPARK_SESSIONS,
+          select: { sessionDate: true, close: true },
+        })
+      : prisma.stockEodQuote.findMany({
+          where: { symbol },
+          orderBy: { sessionDate: "desc" },
+          take: SPARK_SESSIONS,
+          select: { sessionDate: true, close: true },
+        }),
     prisma.marketMoveNews.findMany({
       where: { tickerSymbol: symbol },
       orderBy: [{ publishedAt: "desc" }, { id: "asc" }],
@@ -106,7 +145,10 @@ export async function GET(_request: Request, { params }: { params: { symbol: str
     prisma.expertOpinion.findMany({
       where: {
         suppressedAt: null,
-        instrumentTicker: { startsWith: `${symbol}.`, mode: "insensitive" },
+        // Bare ticker, not the page symbol: instrumentTicker is Yahoo-style
+        // ("RELIANCE.NS" / "YSL.BO"), so a BSE page symbol's own ".BO" would
+        // double-suffix the prefix ("YSL.BO.") and match nothing.
+        instrumentTicker: { startsWith: `${bareTicker}.`, mode: "insensitive" },
         publishedAt: { gte: opinionSince },
       },
       orderBy: { publishedAt: "desc" },
@@ -126,8 +168,32 @@ export async function GET(_request: Request, { params }: { params: { symbol: str
   // symbol collision slips past the DB prefix filter) — cheap over an
   // already-small, already-filtered in-memory set.
   const matchedOpinions = opinionCandidates.filter(
-    (o) => o.instrumentTicker != null && nseSymbolMatchesInstrumentTicker(symbol, o.instrumentTicker)
+    (o) => o.instrumentTicker != null && nseSymbolMatchesInstrumentTicker(bareTicker, o.instrumentTicker)
   );
+
+  // BSE filings live under the `BSE:{scripCode}` announcement namespace, not
+  // the ticker — a dependent query (needs the latest quote's scripCode), so
+  // it can't fold into the Promise.all above. Same join apps/web's BSE
+  // instrument branch uses.
+  const filings =
+    isBse && latestQuote?.scripCode
+      ? await prisma.marketMoveEvent.findMany({
+          where: { tickerSymbol: `BSE:${latestQuote.scripCode}` },
+          orderBy: [{ announcedAt: "desc" }, { id: "asc" }],
+          take: FILINGS_LIMIT,
+          select: {
+            id: true,
+            source: true,
+            tickerSymbol: true,
+            companyName: true,
+            eventType: true,
+            headline: true,
+            detailUrl: true,
+            rawText: true,
+            announcedAt: true,
+          },
+        })
+      : filingsNse;
 
   const news = refineStockNews(newsRows, { limit: NEWS_LIMIT });
 

@@ -77,8 +77,10 @@
  */
 
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 
 import { fetchBhavcopySession, type FetchedBondQuote, type FetchedEodQuote } from "@/lib/marketMoves/bhavcopy";
+import { fetchBseOnlyMovers } from "@/lib/marketMoves/bseMovers";
 import { fetchNseMovers, type FetchedMoversByUniverse } from "@/lib/marketMoves/nse";
 import type { FetchedMarketMover } from "@/lib/marketMoves/types";
 import { isNseWeekdayMarketHours, getIstSessionDate } from "@/lib/marketMoves/marketHours";
@@ -125,14 +127,20 @@ async function upsertMovers(
   // for any symbol whose mover row didn't resolve one (e.g. missing from the
   // equity master) before falling back to the raw ticker.
   const symbols = movers.map((m) => m.tickerSymbol);
-  const knownCompanies = await prisma.marketMoveEvent.findMany({
-    where: { tickerSymbol: { in: symbols }, source: "NSE" },
-    select: { tickerSymbol: true, companyName: true },
-    // orderBy before distinct → Postgres DISTINCT ON (tickerSymbol) ORDER BY
-    // announcedAt DESC, so we get the MOST RECENT company name per symbol.
-    orderBy: { announcedAt: "desc" },
-    distinct: ["tickerSymbol"],
-  });
+  // Raw DISTINCT ON (2026-08-15): the previous findMany({distinct}) claimed
+  // "Postgres DISTINCT ON" in its comment but Prisma emulates distinct
+  // CLIENT-SIDE — it fetched every announcement row for every symbol here
+  // (this cron runs every 5 minutes). Same finding class as the search
+  // route's 75s bug; see apps/web/lib/finance/latestQuotes.ts's module doc.
+  const knownCompanies =
+    symbols.length > 0
+      ? await prisma.$queryRaw<Array<{ tickerSymbol: string; companyName: string }>>`
+          SELECT DISTINCT ON ("tickerSymbol") "tickerSymbol", "companyName"
+          FROM "MarketMoveEvent"
+          WHERE "source" = 'NSE' AND "tickerSymbol" IN (${Prisma.join(symbols)})
+          ORDER BY "tickerSymbol" ASC, "announcedAt" DESC
+        `
+      : [];
   const companyNameBySymbol = new Map(knownCompanies.map((c) => [c.tickerSymbol, c.companyName]));
 
   const volumes = movers.map((m) => m.volume).filter((v) => v > 0);
@@ -354,11 +362,21 @@ async function runEodPass(sessionDate: Date): Promise<ReturnType<typeof NextResp
   const bondsResult = await upsertBonds(bonds, sessionDate);
   const bondsJson = { fetched: bonds.length, ...bondsResult };
 
-  const all = await upsertUniverse(allMovers, sessionDate, TOP_N_PER_DIRECTION_EOD, "ALL");
+  // BSE Movers (2026-08-15) — merge that session's BSE-only movers into the
+  // "ALL" universe before ranking, so top gainers/losers cover BOTH
+  // exchanges. `.BO`-suffixed tickers, today's-turnover floor — see
+  // bseMovers.ts's module doc (incl. why the */5 rerun cadence makes the
+  // BSE-ingest timing a non-issue). POPULAR stays NIFTY 100 by definition.
+  const bseMovers = await fetchBseOnlyMovers(sessionDate).catch((err: unknown) => {
+    console.error("[cron/market-moves-movers] BSE movers read failed:", err);
+    return [];
+  });
+
+  const all = await upsertUniverse([...allMovers, ...bseMovers], sessionDate, TOP_N_PER_DIRECTION_EOD, "ALL");
   const popular = await upsertUniverse(popularMovers, sessionDate, TOP_N_PER_DIRECTION_EOD, "POPULAR");
 
   await notifyWebRevalidate(["/pulse", "/", ["/instruments/[symbol]", "page"], "/bonds", ["/bonds/[symbol]", "page"]]);
-  return NextResponse.json({ ok: true, source: "eod", all, popular, quotes: quotesJson, bonds: bondsJson });
+  return NextResponse.json({ ok: true, source: "eod", all, popular, bseMerged: bseMovers.length, quotes: quotesJson, bonds: bondsJson });
 }
 
 async function run(request: Request) {
