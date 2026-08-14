@@ -129,7 +129,7 @@ export default async function InstrumentDetailPage({
         companyName={instrument.companyName}
         intradayEndpoint={hasLiveIndexPipe ? indexIntradayUrl : undefined}
         viewOnlyIndex={viewOnlyIndex}
-        isEtf={instrument.isEtf}
+        isEtf={instrument.isEtf || instrument.isBseFund}
         exchange={instrument.isBseIndex || instrument.isBseEquity ? "BSE" : "NSE"}
         quote={
           instrument.quote
@@ -279,6 +279,20 @@ export default async function InstrumentDetailPage({
           fundName={instrument.companyName}
           etf={instrument.etfDetails}
           trailingPE={instrument.enrichment.keyStats?.trailingPE}
+        />
+      ) : instrument.isBseFund && instrument.bseFundDetails ? (
+        // BSE Expansion Phase 3B (2026-08-14) — the BSE-only-fund sibling of
+        // the branch above, same "never both" rule. See bseFundRegistry.ts's
+        // own doc for why the "Tracks" resolution is a weaker, honestly
+        // labeled guarantee than the NSE branch's exact-Underlying-column
+        // match.
+        <EtfDetailsPanel
+          symbol={instrument.symbol}
+          fundName={instrument.companyName}
+          etf={instrument.bseFundDetails}
+          trailingPE={instrument.enrichment.keyStats?.trailingPE}
+          exchange="BSE"
+          bseScripCode={instrument.bseFundDetails.scripCode}
         />
       ) : (
         <>

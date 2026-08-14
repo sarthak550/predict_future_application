@@ -26,6 +26,7 @@ import { TRADABLE_UNDERLYING_TO_INDEX_SLUG } from "@/lib/finance/indexTradableAl
 import { hasIndexConstituentList, fetchIndexConstituents } from "@/lib/finance/indexConstituents";
 import { hasBseIndexConstituents, fetchBseIndexConstituents } from "@/lib/finance/bseIndexConstituents";
 import { getEtfRegistryEntry, getEtfsTrackingIndex, type EtfRegistryEntry } from "@/lib/finance/etfRegistry";
+import { getBseFundRegistryEntry, getBseFundsTrackingIndex, type BseFundRegistryEntry } from "@/lib/finance/bseFundRegistry";
 import { getIndexMembership, type IndexMembershipEntry } from "@/lib/finance/indexMembership";
 import { isBseEquitySymbolShape, bareBseEquityTicker, clearsBseEquityFloor } from "@/lib/finance/bseEquity";
 import { prisma } from "@/lib/prisma";
@@ -253,8 +254,27 @@ export interface InstrumentDetail {
   isEtf: boolean;
   /** Registry facts (Underlying/tracked index/listing date/ISIN/face value) for this ETF — null for a plain equity or an index. */
   etfDetails: EtfRegistryEntry | null;
-  /** ETF Layer (2026-08-12) Ask 3 — every registry-confirmed ETF hand-verified to track THIS index. Always empty for a non-index page. */
-  etfsTrackingIndex: EtfRegistryEntry[];
+  /**
+   * ETF Layer (2026-08-12) Ask 3, widened by BSE Phase 3B (2026-08-14) —
+   * every registry-confirmed fund (NSE ETF registry OR BSE fund registry,
+   * merged) hand-verified/embedding-matched to track THIS index. Always
+   * empty for a non-index page. A mixed array by design: both entry shapes
+   * structurally satisfy `{ symbol, displayName }`, all `EtfTrackingList`
+   * actually reads — see that component's own doc.
+   */
+  etfsTrackingIndex: (EtfRegistryEntry | BseFundRegistryEntry)[];
+  /**
+   * BSE Expansion Phase 3B (2026-08-14) — true when this `.BO` symbol is a
+   * registry-confirmed BSE-only fund (lib/finance/bseFundRegistry.ts — an
+   * AMFI-ISIN-matched BseEodQuote row; see that module's own doc for why
+   * this is the fund signal, not BSE's SctySrs). Mutually exclusive with
+   * `isEtf` (that flag is NSE-registry-only) but drives the SAME "ETF" badge
+   * and details-panel swap on page.tsx. Always false for a non-BSE-equity
+   * page.
+   */
+  isBseFund: boolean;
+  /** Registry facts for this BSE-only fund — null for a plain BSE equity, an NSE symbol, or an index. */
+  bseFundDetails: BseFundRegistryEntry | null;
   /**
    * Index Membership (2026-08-12) — every covered index this stock is a
    * verified member of (lib/finance/indexMembership.ts's reverse of
@@ -506,6 +526,7 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     indexMembership,
     bseEquityLatestRow,
     bseEquitySparkRows,
+    bseFundDetails,
   ] = await Promise.all([
     prisma.stockEodQuote.findFirst({
       where: { symbol },
@@ -697,8 +718,19 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     // never itself an ETF); cheap in-memory Map lookup after the registry's
     // first fetch in any 24h window for every equity/ETF symbol.
     isIndex ? Promise.resolve(null) : getEtfRegistryEntry(symbol),
-    // ETF Layer (2026-08-12) Ask 3 — a no-op Promise for every non-index page.
-    isIndex ? getEtfsTrackingIndex(symbol) : Promise.resolve([]),
+    // ETF Layer (2026-08-12) Ask 3, widened by BSE Phase 3B (2026-08-14) — a
+    // no-op Promise for every non-index page; for an index page, merges the
+    // NSE ETF registry's tracking list with the BSE fund registry's (see
+    // InstrumentDetail.etfsTrackingIndex's own doc on the mixed-array shape).
+    // getEtfsTrackingIndex ALSO now returns BSE-index trackers for free (the
+    // NSE registry's canon was merged with BSE index names — see
+    // indexNameResolver.ts), so a BSE index page can show an NSE-listed
+    // fund here (e.g. an NSE ETF tracking BSE Sensex) alongside its own
+    // BSE-only funds — both legitimately "track this index," exchange of
+    // listing is a separate fact `EtfTrackingList` doesn't need to show.
+    isIndex
+      ? Promise.all([getEtfsTrackingIndex(symbol), getBseFundsTrackingIndex(symbol)]).then(([nse, bse]) => [...nse, ...bse])
+      : Promise.resolve([]),
     // Index Membership (2026-08-12) — a no-op Promise for an index page (see
     // this field's own doc on InstrumentDetail); always resolves fast, a
     // plain in-memory Map read at worst (see indexMembership.ts's own doc on
@@ -721,6 +753,11 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
           select: { sessionDate: true, close: true },
         })
       : Promise.resolve(null),
+    // BSE Expansion Phase 3B (2026-08-14) — a no-op Promise for every
+    // non-BSE-equity page; cheap in-memory Map lookup after the fund
+    // registry's first fetch in any 24h window (same caching shape as
+    // `etfDetails` above).
+    bseEquityTicker ? getBseFundRegistryEntry(bseEquityTicker) : Promise.resolve(null),
   ]);
 
   // Belt-and-suspenders re-check with the shared matcher, same as the API
@@ -806,6 +843,8 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
   // the same "always resolves" case, one level over — see
   // `bseEquityLatestRow`'s own doc.
   const isBseEquity = bseEquityLatestRow != null;
+  /** BSE Expansion Phase 3B (2026-08-14) — see InstrumentDetail's own doc. Computed from the registry lookup already fetched above, not re-derived. */
+  const isBseFund = bseFundDetails != null;
   const hasAnyContent = latestQuote != null || news.length > 0 || filings.length > 0 || matchedOpinions.length > 0;
   if (!hasAnyContent && !isIndex && !isBseEquity) return null;
 
@@ -831,6 +870,12 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     // long tail above.
     BSE_INDEX_DISPLAY_NAME[symbol] ??
     bseLongTailEntry?.name ??
+    // BSE Expansion Phase 3B (2026-08-14) — prefer the fund registry's
+    // AMFI-joined real scheme name over BSE's own (often abbreviated)
+    // FinInstrmNm, same "AMFI wins when resolved" rule as the NSE ETF
+    // branch below. Checked before the plain BseEodQuote.companyName
+    // fallback immediately after.
+    bseFundDetails?.displayName ??
     // BSE Expansion Phase 3A (2026-08-12) — BseEodQuote.companyName is the
     // UDiFF bhavcopy's own `FinInstrmNm` (real, exchange-sourced), same
     // authority tier as StockEodQuote.companyName below — checked before
@@ -1208,5 +1253,7 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     indexMembership,
     isBseEquity,
     belowBseEquityFloor,
+    isBseFund,
+    bseFundDetails,
   };
 }

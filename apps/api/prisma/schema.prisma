@@ -1929,6 +1929,15 @@ model BseIndexEodQuote {
 /// verified live 2026-08-12, archive depth back to ~Nov 2024 — see
 /// bseBhavcopy.ts's module doc for the Accept-header gotcha and full
 /// verification evidence).
+///
+/// BSE Expansion Phase 3B (2026-08-14) — this table ALSO carries BSE-only
+/// FUNDS/ETFs, no schema change needed. `securityGroup` is NOT the fund
+/// signal (live-verified: BSE's SctySrs E/F values are mostly corporate
+/// NCDs/bonds with zero genuine ETF survivors, while real BSE ETFs trade
+/// under the SAME `B` series as plain stocks) — a fund row is identified
+/// entirely in apps/web (lib/finance/bseFundRegistry.ts) as any row whose
+/// `isin` matches AMFI's registered scheme master. See that module's own
+/// doc for the full evidence and the "why not SctySrs" finding.
 model BseEodQuote {
   id            String   @id @default(cuid())
   /// Trading-session date (IST calendar day), stored at IST midnight

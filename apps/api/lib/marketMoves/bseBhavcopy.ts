@@ -131,6 +131,35 @@
  * hundred shares/day, often stale/thin-book prices) while keeping the large
  * majority of the universe indexable. 20x lower than NSE's 10,000 floor,
  * reflecting how much thinner this universe genuinely trades.
+ *
+ * ── BSE FUNDS/ETFs (Phase 3B, 2026-08-14) — NOT a separate SctySrs, verified
+ * live, corrects this module's own EQUITY-SERIES FILTER note above ─────────
+ *
+ * This module's own comment above (Phase 3A) guessed E/F = "funds/ETFs,
+ * Phase 3B's scope" from two sampled names. Live-verified 2026-08-14 against
+ * the FULL current bhavcopy and it's WRONG as a classification rule: `E`
+ * carries physical-commodity ETFs (Gold/Silver) that are ALL dual-listed on
+ * NSE (excluded by the existing ISIN dedup with zero survivors), and `F`
+ * is overwhelmingly corporate NCDs/bonds/InvIT units (361 of 368 rows on the
+ * verification day) plus a handful of mutual-fund "segregated portfolio"
+ * wind-down units (side-pocketed units created after a bond default — not a
+ * purchasable fund) — zero genuine, investable BSE-only ETFs found under E
+ * or F. Meanwhile the bulk of real BSE-listed ETFs (NIFTYBEES-equivalents,
+ * ICICI Prudential *IETF, DSP *ADD, Nippon India *BEES, SBI/Kotak/Bandhan
+ * Sensex ETFs, ...) trade under `SctySrs` `B` — the SAME series already
+ * included in `EQUITY_SERIES` above, indistinguishable from a plain stock by
+ * series alone. There is therefore NO usable SctySrs-based fund/ETF marker
+ * in this file (unlike NSE's separate eq_etfseclist.csv master) — per this
+ * brief's own fallback instruction, fund identification is done entirely in
+ * apps/web as a PRESENTATION-layer classification over the SAME
+ * EQUITY_SERIES-ingested `BseEodQuote` rows this module already writes: a
+ * row whose `isin` matches AMFI's registered scheme master (NAVAll.txt) is a
+ * fund (apps/web/lib/finance/bseFundRegistry.ts). No ingestion or schema
+ * change — `EQUITY_SERIES` stays exactly as Phase 3A defined it, since it
+ * already carries every genuine BSE-only fund found live (7 confirmed
+ * SENSEX/BSE-100/BSE-Sensex-Next-50-tracking ETFs, series B, on the
+ * verification day — see bseFundRegistry.ts's own module doc for the full
+ * list and the segregated-portfolio exclusion rule).
  */
 
 import { resolveNseSymbolByCompanyName } from "./nseSymbolResolver";

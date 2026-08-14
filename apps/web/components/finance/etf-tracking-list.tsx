@@ -1,17 +1,26 @@
 import Link from "next/link";
 
 import { Card, CardContent } from "@/components/ui/card";
-import type { EtfRegistryEntry } from "@/lib/finance/etfRegistry";
 
 /**
  * "ETFs tracking this index" (ETF Layer, 2026-08-12 Ask 3 — the product-glue
  * cross-link, symmetric with `EtfDetailsPanel`'s "Tracks: <index> →" link on
- * the ETF side). Renders only registry-confirmed ETFs whose NSE Underlying
- * column was hand-verified to resolve to THIS exact index — never a guess;
- * an index with zero verified-tracking ETFs simply doesn't render this
- * section (same graceful-degrade discipline as `IndexCompositionPanel`).
+ * the ETF side). Renders only registry-confirmed funds whose Underlying/own
+ * name was hand-verified (NSE) or embedding-matched (BSE — see
+ * bseFundRegistry.ts's own doc on the weaker-but-verified guarantee) to
+ * resolve to THIS exact index — never a guess; an index with zero
+ * verified-tracking funds simply doesn't render this section (same
+ * graceful-degrade discipline as `IndexCompositionPanel`).
+ *
+ * BSE Phase 3B (2026-08-14) — widened from `EtfRegistryEntry[]` (NSE-only)
+ * to this minimal structural shape so the SAME component renders a mixed
+ * NSE-ETF-registry + BSE-fund-registry list (instrument.ts merges both
+ * before this component ever sees the array) without either registry
+ * depending on the other's full type.
  */
-export function EtfTrackingList({ etfs }: { etfs: EtfRegistryEntry[] }) {
+type TrackingFundEntry = { symbol: string; displayName: string };
+
+export function EtfTrackingList({ etfs }: { etfs: TrackingFundEntry[] }) {
   if (etfs.length === 0) return null;
 
   return (

@@ -7,6 +7,11 @@ import { fetchAllIndices } from "@/lib/finance/indices";
 import { fetchLatestBseIndices } from "@/lib/finance/bseIndices";
 import { INDEX_SLUG_TO_TRADABLE_UNDERLYING } from "@/lib/finance/indexTradableAlias";
 import { getEtfNameMap, getEtfSymbolSet, searchEtfRegistryByName } from "@/lib/finance/etfRegistry";
+import {
+  getBseFundNameMap,
+  getBseFundSymbolSet,
+  searchBseFundRegistryByName,
+} from "@/lib/finance/bseFundRegistry";
 import { isTradableOptionUnderlyingServer } from "@/lib/paperTrading/fnoUniverseServer";
 import { isFuturesTradingEnabled, isOptionsTradingEnabled } from "@/lib/paperTrading/featureFlags";
 import { bseEquityPageSymbol, clearsBseEquityFloor } from "@/lib/finance/bseEquity";
@@ -27,7 +32,9 @@ import { bseEquityPageSymbol, clearsBseEquityFloor } from "@/lib/finance/bseEqui
  *    browse/search surface, per the brief's "stored but noindex" rule),
  *    sublabeled "· BSE" (never blending into an NSE result unlabeled) and
  *    linked to the SAME `.BO`-suffixed `/instruments/[symbol]` namespace
- *    the instrument page itself uses. Terminal search
+ *    the instrument page itself uses. A BSE-only row that IS a fund
+ *    (bseFundRegistry.ts) is excluded here and surfaces under "fund"
+ *    instead — see that category's own note. Terminal search
  *    (/api/paper-trading/symbols/search) deliberately does NOT get this —
  *    that route only ever queries StockEodQuote (Paper Trading's tradeable
  *    universe is NSE equities only; BSE-only names have no PaperOrder path,
@@ -38,6 +45,13 @@ import { bseEquityPageSymbol, clearsBseEquityFloor } from "@/lib/finance/bseEqui
  *    342 ETFs live as of 2026-08-12) rather than a name/symbol heuristic —
  *    the bhavcopy's EQ series carries listed ETFs alongside stocks with no
  *    distinct series marker, so the registry is the only reliable source.
+ *    BSE Expansion Phase 3B (2026-08-14) — ALSO includes BSE-EXCLUSIVE funds
+ *    (lib/finance/bseFundRegistry.ts's AMFI-ISIN-matched BseEodQuote rows —
+ *    see that module's doc for why BSE's own SctySrs is NOT a usable fund
+ *    marker), sublabeled "· BSE" and shown with their real AMFI name, same
+ *    as the NSE branch. A BSE-only fund is REMOVED from the "stock" category
+ *    below (it would otherwise double-count as both) — see that category's
+ *    own note.
  *  - "index": the 5 F&O-tradable indices AND, since Index History Stage 2
  *    (2026-08-11), every other NSE-published index — all link to
  *    /instruments/[symbol] now that every index has a full instrument page
@@ -187,12 +201,34 @@ async function buildDefaults(): Promise<NextResponse> {
   // Founder 2026-08-12: fund results display their REAL registry names —
   // StockEodQuote.companyName for an ETF is the ticker duplicated.
   const etfNames = await getEtfNameMap();
-  const fundResults: SearchResultItem[] = topFunds.map((r) => ({
+  const nseFundResults: SearchResultItem[] = topFunds.map((r) => ({
     href: `/instruments/${r.symbol}`,
     label: r.symbol,
     sublabel: etfNames.get(r.symbol.toUpperCase()) ?? r.companyName,
     category: "fund" as const,
   }));
+  // BSE Expansion Phase 3B (2026-08-14) — same "top by volume" default shape
+  // for BSE-only funds, sublabeled "· BSE".
+  const bseTopFunds = await (async () => {
+    const latest = await prisma.bseEodQuote.findFirst({ orderBy: { sessionDate: "desc" }, select: { sessionDate: true } });
+    const bseFundSymbols = await getBseFundSymbolSet();
+    if (!latest || bseFundSymbols.size === 0) return [];
+    const tickers = [...bseFundSymbols].map((s) => s.replace(/\.BO$/i, ""));
+    return prisma.bseEodQuote.findMany({
+      where: { sessionDate: latest.sessionDate, tickerSymbol: { in: tickers } },
+      orderBy: { volume: "desc" },
+      take: MAX_PER_CATEGORY,
+      select: { tickerSymbol: true, companyName: true },
+    });
+  })();
+  const bseFundNames = await getBseFundNameMap();
+  const bseFundResults: SearchResultItem[] = bseTopFunds.map((r) => ({
+    href: `/instruments/${bseEquityPageSymbol(r.tickerSymbol)}`,
+    label: r.tickerSymbol,
+    sublabel: `${bseFundNames.get(bseEquityPageSymbol(r.tickerSymbol)) ?? r.companyName} · BSE`,
+    category: "fund" as const,
+  }));
+  const fundResults: SearchResultItem[] = [...nseFundResults, ...bseFundResults].slice(0, MAX_PER_CATEGORY);
 
   // Founder 2026-08-12: while F&O is gated "coming soon", search must not
   // advertise option-chain/futures destinations (same rule as the index
@@ -350,21 +386,29 @@ export async function GET(request: Request) {
   // volume floor, fuzzy-matched by ticker or company name against the
   // latest ingested BseEodQuote session. Sublabeled "· BSE" — see this
   // route's own module doc.
-  const bseEquityRows = await (async () => {
-    const latest = await prisma.bseEodQuote.findFirst({ orderBy: { sessionDate: "desc" }, select: { sessionDate: true } });
-    if (!latest) return [];
-    return prisma.bseEodQuote.findMany({
-      where: {
-        sessionDate: latest.sessionDate,
-        OR: [{ tickerSymbol: { contains: q, mode: "insensitive" } }, { companyName: { contains: q, mode: "insensitive" } }],
-      },
-      orderBy: { volume: "desc" },
-      take: MAX_PER_CATEGORY,
-      select: { tickerSymbol: true, companyName: true, volume: true },
-    });
-  })();
+  const [bseEquityRows, bseFundSymbols] = await Promise.all([
+    (async () => {
+      const latest = await prisma.bseEodQuote.findFirst({ orderBy: { sessionDate: "desc" }, select: { sessionDate: true } });
+      if (!latest) return [];
+      return prisma.bseEodQuote.findMany({
+        where: {
+          sessionDate: latest.sessionDate,
+          OR: [{ tickerSymbol: { contains: q, mode: "insensitive" } }, { companyName: { contains: q, mode: "insensitive" } }],
+        },
+        orderBy: { volume: "desc" },
+        take: MAX_PER_CATEGORY * 2, // over-fetch: some matches get pulled out into the fund category below
+        select: { tickerSymbol: true, companyName: true, volume: true },
+      });
+    })(),
+    getBseFundSymbolSet(),
+  ]);
+  // BSE Expansion Phase 3B (2026-08-14) — a BSE-only row that's a
+  // registry-confirmed fund surfaces under "fund" instead (see below), never
+  // both — same "never double-count" rule the NSE stock/fund split already
+  // follows via `etfSymbols`.
   const bseStockResults: SearchResultItem[] = bseEquityRows
-    .filter((r) => clearsBseEquityFloor(r.volume))
+    .filter((r) => clearsBseEquityFloor(r.volume) && !bseFundSymbols.has(bseEquityPageSymbol(r.tickerSymbol)))
+    .slice(0, MAX_PER_CATEGORY)
     .map((r) => ({
       href: `/instruments/${bseEquityPageSymbol(r.tickerSymbol)}`,
       label: r.tickerSymbol,
@@ -384,20 +428,42 @@ export async function GET(request: Request) {
   const nameOnlyFundRows = etfNameMatches
     .filter((e) => !fuzzyFundSymbols.has(e.symbol))
     .map((e) => ({ symbol: e.symbol, companyName: e.displayName, volume: 0 }));
-  const fundResults: SearchResultItem[] = [...fuzzyFundRows, ...nameOnlyFundRows]
+  const nseFundResults: SearchResultItem[] = [...fuzzyFundRows, ...nameOnlyFundRows]
     // ETF Layer (2026-08-12) — re-rank by liquidity (see fuzzyRows' own
     // comment): a broad query can alphabetically match 30+ ETFs, and the
     // well-known, heavily-traded fund should surface over a thin one that
     // merely sorts earlier by name. Name-only registry matches carry no
     // same-session volume (volume 0) and so rank after ticker matches.
     .sort((a, b) => b.volume - a.volume)
-    .slice(0, MAX_PER_CATEGORY)
     .map((r) => ({
       href: `/instruments/${r.symbol}`,
       label: r.symbol,
       sublabel: etfNames.get(r.symbol.toUpperCase()) ?? r.companyName,
       category: "fund" as const,
     }));
+
+  // BSE Expansion Phase 3B (2026-08-14) — BSE-only funds, same
+  // fuzzy-ticker/companyName-match-plus-name-only-registry-search shape as
+  // the NSE branch above, sublabeled "· BSE" so a result never reads as an
+  // NSE fund. `bseEquityRows` (fetched above for the stock split) already
+  // carries every ticker/companyName match for this query; filter down to
+  // the fund-classified subset and merge in registry name-only hits.
+  const bseFuzzyFundRows = bseEquityRows.filter((r) => bseFundSymbols.has(bseEquityPageSymbol(r.tickerSymbol)));
+  const bseFuzzyFundSymbols = new Set(bseFuzzyFundRows.map((r) => bseEquityPageSymbol(r.tickerSymbol)));
+  const [bseFundNameMatches, bseFundNames] = await Promise.all([searchBseFundRegistryByName(q), getBseFundNameMap()]);
+  const bseNameOnlyFundRows = bseFundNameMatches
+    .filter((e) => !bseFuzzyFundSymbols.has(e.symbol))
+    .map((e) => ({ tickerSymbol: e.tickerSymbol, companyName: e.displayName, volume: 0 }));
+  const bseFundResults: SearchResultItem[] = [...bseFuzzyFundRows, ...bseNameOnlyFundRows]
+    .sort((a, b) => b.volume - a.volume)
+    .map((r) => ({
+      href: `/instruments/${bseEquityPageSymbol(r.tickerSymbol)}`,
+      label: r.tickerSymbol,
+      sublabel: `${bseFundNames.get(bseEquityPageSymbol(r.tickerSymbol)) ?? r.companyName} · BSE`,
+      category: "fund" as const,
+    }));
+
+  const fundResults: SearchResultItem[] = [...nseFundResults, ...bseFundResults].slice(0, MAX_PER_CATEGORY);
 
   // ── Options: direct chain links for F&O-eligible matches ──────────────────
   const optionCandidateSymbols = [
