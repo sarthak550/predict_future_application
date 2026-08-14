@@ -97,12 +97,42 @@ const FUND_HOUSE_TOKENS = [
 /** Trailing filler words stripped repeatedly from either normalization pass — "ETF"/"Exchange Traded Fund"/"Index"/TRI-style return-index suffixes carry no index identity of their own. */
 const NOISE_SUFFIXES = ["EXCHANGETRADEDFUND", "ETF", "TOTALRETURNINDEX", "INDEX", "TRI", "TR", "FUND"];
 
+/**
+ * ETF-alias fix-round (2026-08-14): GROWWDEFNC's Underlying cell reads
+ * "Nifty India Defence Index- Total Return Inde" — cut off one character
+ * short of "...Total Return Index". Verified NOT a fixed-width CSV
+ * truncation (this app's longest live Underlying cell is 64 chars, this one
+ * is 45 — plenty of headroom) — a genuine one-off NSE data-entry typo,
+ * confirmed by its own correctly-spelled sibling row ("Nifty India Defence
+ * Total Return Index"). Rather than hand-alias just this one row, tolerate
+ * the general case: for the two NOISE_SUFFIXES that end in "INDEX"
+ * ("TOTALRETURNINDEX", "INDEX" itself), also accept the same suffix with its
+ * final "X" dropped, end-anchored. Requires the FULL preceding text (all of
+ * "TOTALRETURNINDE", not just "INDE" in isolation), so the false-positive
+ * surface is a real index name that legitimately ends in "...Total Return
+ * Inde" or a bare "...Inde" with no "x" — verified: no such name exists
+ * anywhere in this app's NSE+BSE index universe or ETF Underlying set (only
+ * one live row exhibits this truncation at all). Composes with the normal
+ * NOISE_SUFFIXES loop across iterations so a truncated COMPOUND suffix still
+ * fully unwinds (e.g. this row: strip "TOTALRETURNINDE" first, which exposes
+ * a now-untruncated "...Index" that the ordinary INDEX suffix strips next).
+ */
+const TRUNCATED_INDEX_SUFFIXES = ["TOTALRETURNINDEX", "INDEX"]
+  .map((suf) => suf.slice(0, -1))
+  .filter((suf) => suf.length > 0);
+
 function stripSuffixes(s: string): string {
   let out = s;
   let changed = true;
   while (changed) {
     changed = false;
     for (const suf of NOISE_SUFFIXES) {
+      if (out.endsWith(suf) && out.length > suf.length) {
+        out = out.slice(0, -suf.length);
+        changed = true;
+      }
+    }
+    for (const suf of TRUNCATED_INDEX_SUFFIXES) {
       if (out.endsWith(suf) && out.length > suf.length) {
         out = out.slice(0, -suf.length);
         changed = true;
@@ -177,6 +207,67 @@ export const NORM_ALIASES: Record<string, string> = {
   NIFTY1DRATE: "Nifty 1D Rate Index",
   NIFTYINDEX50: "Nifty 50",
   NIFTY100LOWVOL30: "Nifty100 Low Volatility 30",
+
+  // ETF-alias fix-round (2026-08-14, 59-underlying resolver audit follow-up
+  // to the SENSEX fix) — five more real indices behind singular/plural or
+  // shortened NSE Underlying spellings, each hand-verified against this
+  // app's own IndexEodQuote/BseIndexEodQuote names live 2026-08-14.
+
+  // CEMNTGROWW's Underlying is "Nifty Cements Index TRI" (plural "Cements")
+  // — this app's own index is singular "Nifty Cement".
+  NIFTYCEMENTS: "Nifty Cement",
+  // MOCAPITAL's Underlying is "Nifty Capital Market Total Return Index"
+  // (singular "Market") — this app's own index is plural "Nifty Capital
+  // Markets".
+  NIFTYCAPITALMARKET: "Nifty Capital Markets",
+  // DIVIDEND's Underlying is "BSE 500 Dividend Leaders" — the real BSE index
+  // carries a trailing "50" this fund's Underlying cell dropped ("BSE 500
+  // Dividend Leaders 50").
+  BSE500DIVIDENDLEADERS: "BSE 500 Dividend Leaders 50",
+  // EBANK10's Underlying is "Index (BSE Top 10 Bank)" (singular "Bank") —
+  // after the paren-unwrap in etfRegistry.ts's `extractIndexParenWrapper`,
+  // the real BSE index is plural "BSE Top 10 Banks".
+  BSETOP10BANK: "BSE Top 10 Banks",
+  // SHARIABEES's Underlying is the bare word "Shariah" — verified via its
+  // AMFI scheme-master name ("Nippon India ETF Nifty 50 Shariah BeES",
+  // ISIN INF732E01128) that it tracks "Nifty50 Shariah" specifically, not
+  // the also-real "Nifty500 Shariah" / "Nifty Shariah 25" / "BSE 500
+  // Shariah" this app also has pages for — never guessed from the bare word
+  // alone.
+  SHARIAH: "Nifty50 Shariah",
+
+  // Resolves the pre-existing "Nifty 10 yr Benchmark G-Sec" vs "... (Clean
+  // Price)" AMBIGUOUS-sentinel collision (see etfRegistry.ts's module doc)
+  // for the 3 ETFs that collide on it — SETF10GILT ("Nifty10yrBenchmarkG-
+  // SecIndex"), GSEC10IETF ("ICICIPrudentialNifty10yrBenchmarkG-SecETF"),
+  // GILT10BETA ("UTINifty10yrBenchmarkG-SecETF"). Verified live 2026-08-14
+  // against SBI Mutual Fund's own official ETF factsheet (December 2025,
+  // sbimf.com) for SETF10GILT: both its "Benchmark/Underlying Index" AND
+  // "Scheme Benchmark" fields read plain "NIFTY 10-Yr Benchmark G-Sec" /
+  // "Nifty 10 yr Benchmark G-Sec" — "Clean Price" appears nowhere in the
+  // document (the factsheet separately notes performance is benchmarked to
+  // "the Total Return variant of the Index", a third, distinct variant this
+  // app doesn't carry either — irrelevant to which of the two EOD-price
+  // indices is the right link target). GSEC10IETF and GILT10BETA are
+  // corroborated (not primary-source-confirmed) via each AMC's own publicly
+  // stated scheme investment objective, both worded identically to SBI's
+  // ("...returns...of NIFTY 10 yr Benchmark G-Sec Index", no "Clean Price"
+  // qualifier) — standard SEBI scheme-information-document language, and
+  // all three gilt ETFs in this product category following the same
+  // benchmark choice is the expected outcome, not a coincidence.
+  NIFTY10YRBENCHMARKGSEC: "Nifty 10 yr Benchmark G-Sec",
+
+  // LICNETFGSC's Underlying cell reads "GSEC10NSEIndex" (implying a 10yr
+  // G-Sec fund) — but its AMFI scheme-master name (ISIN INF767K01MV5) is
+  // "LIC MF Nifty 8-13 yr G-Sec ETF". The Underlying cell is simply wrong,
+  // not merely oddly formatted (NSE data-quality issue, same class of bug as
+  // the SENSEX-bare-word one this fix-round follows up on) — resolved via
+  // the fund's own real name, not the cell's text, exactly per this app's
+  // "never guess, only hand-verified evidence" discipline. "Nifty 8-13 yr
+  // G-Sec" is unambiguous in this app's index universe (already has its own
+  // NORM_ALIASES entry above, NIFTYGS813YR, for a differently-abbreviated
+  // Underlying spelling on other ETFs).
+  GSEC10NSE: "Nifty 8-13 yr G-Sec",
 };
 
 /** `/instruments/[symbol]` code for a REAL, already-confirmed-to-exist index display name — tiered exactly like `fetchInstrumentDetail` itself resolves an index symbol (NSE tradable underlying's short mnemonic first, then NSE INDEX_UNIVERSE, then `deriveIndexSymbol` — which ALSO derives every BSE index's own symbol, tradable or long-tail, by construction: `bseIndexUniverse.ts`'s BSE_INDEX_UNIVERSE entries assert `symbol === deriveIndexSymbol(name)` at module load, and the BSE long tail derives its symbol the identical way — so a BSE index name reaches the correct code via this SAME final fallback with no extra branch needed here). */

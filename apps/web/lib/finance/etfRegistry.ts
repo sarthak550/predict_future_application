@@ -163,19 +163,75 @@ const EXACT_UNDERLYING_ALIASES: Record<string, string> = {
   "Nippon India ETF Nifty Next 50 Junior BeES": "Nifty Next 50",
 };
 
+/**
+ * ETF-alias fix-round (2026-08-14) — a handful of NSE Underlying cells are
+ * literally the word "Index" wrapping the REAL index name in parentheses:
+ * "Index (BSE Top 10 Bank)" (EBANK10), "Index (BSE LargeMid (60:40) Stable
+ * Dividend 50)" (ELMDIV). `coreNorm`'s own paren-stripping regex
+ * (`/\(.*?\)/g`, needed elsewhere to drop genuinely decorative
+ * parentheticals like "(Clean Price)") would delete this content as noise,
+ * since it has no notion of "this cell's parens ARE the name" — worse, on
+ * the second example it's actively wrong: being non-greedy, it stops at the
+ * FIRST close-paren it finds (the one closing the nested "(60:40)"),
+ * mangling the result to "Index Stable Dividend 50" and losing "BSE
+ * LargeMid" entirely.
+ *
+ * Greedy + whole-string-anchored so nesting can't confuse it: captures
+ * everything between the first "(" and the cell's OWN final ")", which is
+ * correct here because the whole cell IS "Index (...)" with nothing after
+ * the closing paren. Only fires when the cell literally starts with
+ * "Index (" and ends with ")" — never touches a normal Underlying string
+ * that merely happens to contain a parenthetical aside (those keep going
+ * through `coreNorm`'s existing non-greedy strip unchanged).
+ */
+function extractIndexParenWrapper(raw: string): string {
+  const m = raw.match(/^Index\s*\((.+)\)$/i);
+  return m ? m[1] : raw;
+}
+
+/**
+ * ETF-alias fix-round (2026-08-14) — Underlying cells that carry NO index
+ * identity at all, verified against the live 342-row eq_etfseclist.csv:
+ * literally "Index" (GROWWNET/GROWWNXT50/GROWWRLTY/BANK10BETF/PVTBANK),
+ * "Equity Index" (INTERNET), "Liquid" (LIQGRWBEES). For exactly these rows —
+ * and ONLY these, gated on an exact (trim + case-insensitive) match against
+ * this small hand-verified set — `resolveTrackedIndex` falls back to
+ * normalizing the fund's OWN name (AMFI scheme-master name preferred,
+ * NSE `SecurityName` otherwise) through the same `coreNorm`/`fundHouseNorm`/
+ * `NORM_ALIASES` tiers used for `Underlying` itself. This can never override
+ * a real underlying: it only runs after the normal tiers already found
+ * nothing, and only for cells in this literal set — a genuinely different,
+ * still-unmapped Underlying string (e.g. "GSEC10NSEIndex") is left alone.
+ * All 7 rows above were hand-verified live via their AMFI ISIN join (e.g.
+ * GROWWNXT50 -> "Groww Nifty Next 50 ETF" -> Nifty Next 50) before this set
+ * was written — never guessed.
+ */
+const JUNK_UNDERLYING_CELLS = new Set(["index", "equity index", "liquid"]);
+
 function resolveTrackedIndex(
   underlyingRaw: string,
-  canonByNorm: CanonIndex
+  canonByNorm: CanonIndex,
+  fundNameForFallback: string | null
 ): { name: string; symbol: string } | null {
   const trimmed = underlyingRaw.trim();
   const exact = EXACT_UNDERLYING_ALIASES[trimmed];
   if (exact) return { name: exact, symbol: resolveIndexNameToSymbol(exact) };
 
-  for (const key of [coreNorm(trimmed), fundHouseNorm(trimmed)]) {
+  const normalizationSource = extractIndexParenWrapper(trimmed);
+  for (const key of [coreNorm(normalizationSource), fundHouseNorm(normalizationSource)]) {
     const fromCanon = canonByNorm.get(key);
     if (fromCanon && fromCanon !== AMBIGUOUS) return { name: fromCanon, symbol: resolveIndexNameToSymbol(fromCanon) };
     const fromAlias = NORM_ALIASES[key];
     if (fromAlias) return { name: fromAlias, symbol: resolveIndexNameToSymbol(fromAlias) };
+  }
+
+  if (fundNameForFallback && JUNK_UNDERLYING_CELLS.has(trimmed.toLowerCase())) {
+    for (const key of [coreNorm(fundNameForFallback), fundHouseNorm(fundNameForFallback)]) {
+      const fromCanon = canonByNorm.get(key);
+      if (fromCanon && fromCanon !== AMBIGUOUS) return { name: fromCanon, symbol: resolveIndexNameToSymbol(fromCanon) };
+      const fromAlias = NORM_ALIASES[key];
+      if (fromAlias) return { name: fromAlias, symbol: resolveIndexNameToSymbol(fromAlias) };
+    }
   }
   return null;
 }
@@ -218,10 +274,16 @@ function parseEtfCsv(
     const [symbolRaw, underlyingRaw, securityNameRaw, dateRaw, marketLotRaw, isinRaw, faceValueRaw] = parts;
     const symbol = symbolRaw?.trim();
     if (!symbol) continue;
-    const tracked = resolveTrackedIndex(underlyingRaw ?? "", canonByNorm);
     const securityName = securityNameRaw?.trim() ?? symbol;
     const isin = isinRaw?.trim() ?? "";
     const amfiName = isin ? amfiIsinMap.get(isin.toUpperCase()) : undefined;
+    // Fund-name fallback source for JUNK_UNDERLYING_CELLS rows (see that
+    // const's doc) — AMFI's real scheme name preferred, NSE's own
+    // (abbreviated) SecurityName otherwise; harmless to pass unconditionally
+    // since resolveTrackedIndex only consults it for the small verified
+    // junk-cell set.
+    const fundNameForFallback = amfiName ? cleanAmfiName(amfiName) : securityName;
+    const tracked = resolveTrackedIndex(underlyingRaw ?? "", canonByNorm, fundNameForFallback);
     rows.push({
       symbol,
       securityName,
