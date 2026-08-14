@@ -83,6 +83,19 @@ export type FundamentalsPanelProps = {
     businessSummary?: string;
   } | null;
   fetchedAt: Date | null;
+  /**
+   * BSE Rotation honest-empty-state (2026-08-14) — see this file's own
+   * module doc "zero data" branch below. Undefined/false for every existing
+   * NSE caller (unchanged rendering: a hard-zero there is rare and usually
+   * transient, and this panel already degrades to nothing per-section).
+   * True only for the plain BSE-only-equity `page.tsx` branch, where the
+   * founder's "no company details" report turned out to affect a real,
+   * if small, minority of `.BO` names (e.g. a BSE-listed fund unit routed
+   * through the equity branch, which has no income statement at all) — those
+   * visitors deserve an honest "not available" message instead of a section
+   * that silently vanishes and reads as broken.
+   */
+  isBseOnlyEquity?: boolean;
 };
 
 /** "2026-03-31" -> "Mar 2026". */
@@ -1155,6 +1168,8 @@ export function FundamentalsPanel({
   dividends,
   debtCoverage,
   keyStats,
+  fetchedAt,
+  isBseOnlyEquity = false,
 }: FundamentalsPanelProps) {
   const [mode, setMode] = useState<"annual" | "quarterly">("annual");
   // Mount-computed (house convention for time values) — gates the Upcoming
@@ -1167,7 +1182,30 @@ export function FundamentalsPanel({
   const hasDividends = dividends != null && dividends.length > 0;
   const hasKeyStats = keyStats != null && Object.keys(keyStats).length > 0;
 
-  if (!hasAnnual && !hasQuarterly && !hasDividends && !hasKeyStats) return null;
+  if (!hasAnnual && !hasQuarterly && !hasDividends && !hasKeyStats) {
+    // BSE Rotation honest-empty-state (2026-08-14, see FundamentalsPanelProps'
+    // `isBseOnlyEquity` doc) — every non-BSE-equity caller keeps the old
+    // silent-nothing behavior. A BSE-only page renders nothing here too on a
+    // true first-ever cold visit (`fetchedAt` still null — the background
+    // fetch just kicked off and hasn't landed; the NEXT visit, or the warm
+    // cron, will show either real data or this message) — only a page that's
+    // been attempted at least once and genuinely came back empty gets the
+    // honest message below, never a guess before the first attempt lands.
+    if (!isBseOnlyEquity || !fetchedAt) return null;
+    return (
+      <section className="space-y-4">
+        <h2 className="text-xl font-semibold text-ink-900">Fundamentals</h2>
+        <Card>
+          <CardContent className="p-5">
+            <p className="text-sm text-ink-500">
+              Company details are not yet available for {companyName || symbol}. We check back periodically — if
+              Yahoo Finance publishes coverage for this listing, it will appear here automatically.
+            </p>
+          </CardContent>
+        </Card>
+      </section>
+    );
+  }
 
   const activeMode: "annual" | "quarterly" = mode === "quarterly" && hasQuarterly ? "quarterly" : "annual";
   const revenue = activeMode === "annual" ? annualRevenue : quarterlyRevenue;

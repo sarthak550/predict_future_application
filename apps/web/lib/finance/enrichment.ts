@@ -25,6 +25,42 @@
  * "ANDHRAPET.BO" all returned real, price-matching `chart` data) — the
  * assigning brief's fallback ("if Yahoo lacks BSE-only names, ship without
  * enrichment") does not apply; coverage exists, so it's wired through.
+ *
+ * BSE Rotation + Negative Cache + Concurrency Guard (2026-08-14) — founder
+ * report: the 2,554 `.BO` pages showed no company details. Root-caused to
+ * TWO independent bugs, both fixed in this pass:
+ *   1. `warm-enrichment/route.ts`'s universe was built purely off
+ *      `StockEodQuote` (NSE bhavcopy) — a BSE-only symbol could never win a
+ *      warm-cron slot, only ever get enriched by a visitor's own on-demand
+ *      fire-and-forget (which DOES work, verified live — see that route's
+ *      own doc for the fix and the rotation-time math).
+ *   2. `warmEnrichmentBatch` always called the refresh functions with their
+ *      DEFAULT `exchange="NSE"` — even after fix #1 added BSE symbols to the
+ *      candidate pool, the warm cron would have built a broken
+ *      "TICKER.BO.NS" Yahoo URL for every one of them. Now threads
+ *      `exchange` through per batch item.
+ * A live sample of 18 real BSE-only tickers spanning the FULL liquidity
+ * spectrum (volume 1 through 20M+, including the founder's own named
+ * examples YSL/BENARAS/VADILENT/POLSON at volume 11-81) came back
+ * 17/18 with full Key Stats + About + financials — Yahoo's `.BO` coverage is
+ * NOT the bottleneck the assigning brief hypothesized. The one miss
+ * (`11GPG.BO`) turned out to be a fund unit (Nippon India Mutual Fund)
+ * trading under an equity-shaped BSE ticker, not a real operating company —
+ * an inherent-absence case, not a transient failure. `computeEnrichmentStaleness`
+ * below still adds a long negative-cache TTL for whatever genuine misses
+ * exist at full 2,000+-symbol scale, and `FundamentalsPanel` (see that
+ * component's own doc) now shows an honest empty state instead of a blank
+ * section for a BSE-only page that hits one.
+ *
+ * Also added: a bounded-concurrency guard (`yahooRefreshQueue`) on the
+ * on-demand background-refresh triggers below. Before this, EVERY cold page
+ * view fired its own uncapped fundamentals+keyStats refresh (each ~4-7
+ * concurrent Yahoo requests) with zero cross-SYMBOL limit — harmless at the
+ * old ~2,100-symbol NSE-only scale where cold pages were rare, but with
+ * 2,554 more pages now live and EVERY one of them cold, a crawl spike
+ * (search-engine indexer, or someone paging through the long tail) could
+ * stack hundreds of concurrent in-flight Yahoo request chains and trip
+ * 429s for every visitor mid-spike, not just the crawler.
  */
 
 import type { Prisma } from "@prisma/client";
@@ -50,6 +86,124 @@ const FUNDAMENTALS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const KEY_STATS_TTL_MS = 24 * 60 * 60 * 1000;
 /** News moves intraday — recheck a visited long-tail symbol every 6h, matching the Market Pulse cron's own freshness bar for its universe. */
 const NEWS_TTL_MS = 6 * 60 * 60 * 1000;
+/**
+ * Negative-cache TTL (2026-08-14) — applies ONLY when a previous attempt
+ * came back with genuinely nothing (see `computeEnrichmentStaleness`). No
+ * schema change: reuses the SAME `fundamentalsFetchedAt`/`keyStatsFetchedAt`
+ * columns every attempt already stamps unconditionally, hit or miss (the
+ * optimistic lock-write in `refreshFundamentalsInBackground`/
+ * `refreshKeyStatsInBackground` below) — a confirmed miss just gets a much
+ * longer effective TTL before the next retry than a hit does, since a
+ * symbol Yahoo has never indexed is unlikely to suddenly appear, whereas a
+ * symbol WITH data needs its normal cadence to stay current. 30 days is
+ * "long enough to stop wasting crawl/on-demand slots on it every cycle,
+ * short enough that a genuine Yahoo backfill (they do add coverage over
+ * time) is still noticed within a month."
+ */
+const NEGATIVE_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * A minimal fetch-shape a staleness check needs — matches (a subset of)
+ * `prisma.instrumentEnrichment`'s row shape so both the on-demand read-through
+ * path (which already has the full row) and the warm-enrichment cron (which
+ * can select just these columns) can share one staleness rule without
+ * re-fetching anything extra.
+ */
+type EnrichmentStalenessRow = {
+  fundamentalsFetchedAt: Date | null;
+  keyStatsFetchedAt: Date | null;
+  annualRevenue: unknown;
+  annualNetIncome: unknown;
+  annualDilutedEps: unknown;
+  quarterlyRevenue: unknown;
+  quarterlyNetIncome: unknown;
+  quarterlyDilutedEps: unknown;
+  dividends: unknown;
+  debtCoverage: unknown;
+  keyStats: unknown;
+};
+
+/**
+ * Shared staleness rule for both refresh cycles this file drives (fundamentals
+ * + key stats) — single source of truth so the on-demand read-through path
+ * and the warm-enrichment cron's candidate selection can never drift on what
+ * counts as "due for a refresh." Applies the long `NEGATIVE_CACHE_TTL_MS`
+ * instead of the normal TTL when the LAST attempt was a confirmed total miss
+ * (attempted — the fetchedAt stamp is set — but came back with nothing at
+ * all), so a symbol Yahoo genuinely has no data for stops eating a refresh
+ * slot every 7 days/1 day and instead waits 30.
+ */
+export function computeEnrichmentStaleness(row: EnrichmentStalenessRow | null): {
+  fundamentalsStale: boolean;
+  keyStatsStale: boolean;
+} {
+  const fundamentalsConfirmedEmpty =
+    row?.fundamentalsFetchedAt != null &&
+    row.annualRevenue == null &&
+    row.annualNetIncome == null &&
+    row.annualDilutedEps == null &&
+    row.quarterlyRevenue == null &&
+    row.quarterlyNetIncome == null &&
+    row.quarterlyDilutedEps == null &&
+    row.dividends == null &&
+    row.debtCoverage == null;
+  const fundamentalsTtl = fundamentalsConfirmedEmpty ? NEGATIVE_CACHE_TTL_MS : FUNDAMENTALS_TTL_MS;
+  const fundamentalsStale =
+    !row?.fundamentalsFetchedAt || Date.now() - row.fundamentalsFetchedAt.getTime() > fundamentalsTtl;
+
+  const keyStatsConfirmedEmpty =
+    row?.keyStatsFetchedAt != null &&
+    (row.keyStats == null || Object.keys(row.keyStats as Record<string, unknown>).length === 0);
+  const keyStatsTtl = keyStatsConfirmedEmpty ? NEGATIVE_CACHE_TTL_MS : KEY_STATS_TTL_MS;
+  const keyStatsStale = !row?.keyStatsFetchedAt || Date.now() - row.keyStatsFetchedAt.getTime() > keyStatsTtl;
+
+  return { fundamentalsStale, keyStatsStale };
+}
+
+/**
+ * Bounded concurrency guard (2026-08-14, see file doc's "Concurrency Guard"
+ * section) for the on-demand background-refresh triggers — caps how many
+ * SYMBOLS can be mid-refresh at once; anything over the cap queues (FIFO)
+ * rather than firing immediately. Per-process (not distributed/Redis) —
+ * sufficient because apps/web runs as a single long-lived Node process on
+ * EC2 (see this file's top doc comment on fire-and-forget), not a
+ * multi-instance serverless fleet, so a per-process cap IS a process-wide cap.
+ */
+class BoundedQueue {
+  private active = 0;
+  private readonly waiters: (() => void)[] = [];
+
+  constructor(private readonly limit: number) {}
+
+  async run<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.active >= this.limit) {
+      await new Promise<void>((resolve) => this.waiters.push(resolve));
+    }
+    this.active++;
+    try {
+      return await fn();
+    } finally {
+      this.active--;
+      const next = this.waiters.shift();
+      if (next) next();
+    }
+  }
+}
+
+/**
+ * Caps concurrent in-flight symbol refreshes against Yahoo (fundamentals +
+ * key stats share this one queue — both hit the same Yahoo endpoints and we
+ * want to bound TOTAL Yahoo concurrency, not each independently). 8 concurrent
+ * symbols × ~4-7 Yahoo requests each still fanned out per symbol (see
+ * `refreshFundamentalsInBackground`'s internal `Promise.all`) caps worst-case
+ * concurrent Yahoo requests at roughly 40-55 during a crawl spike, versus
+ * literally unbounded before. News uses a separate provider (Google News, not
+ * Yahoo) with its own, much lower-risk rate-limit surface — deliberately NOT
+ * routed through this queue, matching this file's existing "news stays
+ * visit-driven, never pre-fetched in bulk" stance.
+ */
+const YAHOO_REFRESH_CONCURRENCY = 8;
+const yahooRefreshQueue = new BoundedQueue(YAHOO_REFRESH_CONCURRENCY);
 
 export type InstrumentEnrichmentData = {
   annualRevenue: FundamentalsPoint[] | null;
@@ -232,29 +386,28 @@ export async function getOrFetchInstrumentEnrichment(
     console.error(`[enrichment] read failed for ${symbol}:`, err);
   }
 
-  const fundamentalsStale =
-    !row?.fundamentalsFetchedAt || Date.now() - row.fundamentalsFetchedAt.getTime() > FUNDAMENTALS_TTL_MS;
+  const { fundamentalsStale, keyStatsStale } = computeEnrichmentStaleness(row);
   if (fundamentalsStale) {
-    void refreshFundamentalsInBackground(symbol, companyName, exchange).catch((err) =>
-      console.error(`[enrichment] unhandled fundamentals refresh error for ${symbol}:`, err)
-    );
+    void yahooRefreshQueue
+      .run(() => refreshFundamentalsInBackground(symbol, companyName, exchange))
+      .catch((err) => console.error(`[enrichment] unhandled fundamentals refresh error for ${symbol}:`, err));
   }
 
   const newsStale = !row?.newsLastCheckedAt || Date.now() - row.newsLastCheckedAt.getTime() > NEWS_TTL_MS;
   if (newsStale) {
     // Google News on-demand refresh is exchange-agnostic (a plain search by
     // ticker + company name, no Yahoo-suffix concept) — works unchanged for
-    // a BSE-only company's full page symbol.
+    // a BSE-only company's full page symbol. Not routed through
+    // `yahooRefreshQueue` (see that queue's own doc — different provider).
     void refreshNewsInBackground(symbol, companyName).catch((err) =>
       console.error(`[enrichment] unhandled news refresh error for ${symbol}:`, err)
     );
   }
 
-  const keyStatsStale = !row?.keyStatsFetchedAt || Date.now() - row.keyStatsFetchedAt.getTime() > KEY_STATS_TTL_MS;
   if (keyStatsStale) {
-    void refreshKeyStatsInBackground(symbol, companyName, exchange).catch((err) =>
-      console.error(`[enrichment] unhandled key-stats refresh error for ${symbol}:`, err)
-    );
+    void yahooRefreshQueue
+      .run(() => refreshKeyStatsInBackground(symbol, companyName, exchange))
+      .catch((err) => console.error(`[enrichment] unhandled key-stats refresh error for ${symbol}:`, err));
   }
 
   if (!row) return EMPTY_INSTRUMENT_ENRICHMENT;
@@ -335,18 +488,26 @@ async function refreshKeyStatsInBackground(symbol: string, companyName: string, 
 /**
  * Warm-up batch processor for the warm-enrichment cron: awaits the SAME
  * refresh functions the read-through path fires (fundamentals + key stats;
- * news stays visit-driven — pre-fetching Google News for 2,100 unvisited
- * symbols would be ~waste and rate-limit risk for pages nobody opened).
- * Sequential with a small politeness delay between symbols.
+ * news stays visit-driven — pre-fetching Google News for thousands of
+ * unvisited symbols would be ~waste and rate-limit risk for pages nobody
+ * opened). Sequential with a small politeness delay between symbols — NOT
+ * routed through `yahooRefreshQueue` (that queue bounds CONCURRENT on-demand
+ * triggers from many simultaneous visitors; this loop is already a single
+ * sequential caller, so it needs no additional gating).
+ *
+ * BSE Rotation (2026-08-14) — `exchange` is now per-item (default "NSE",
+ * unchanged for every pre-existing caller) so the cron can warm a BSE-only
+ * `.BO` symbol correctly instead of building a broken "TICKER.BO.NS" Yahoo
+ * URL (see this file's top doc comment, bug #2).
  */
 export async function warmEnrichmentBatch(
-  batch: { symbol: string; companyName: string }[]
+  batch: { symbol: string; companyName: string; exchange?: "NSE" | "BSE" }[]
 ): Promise<{ processed: number; symbols: string[] }> {
   const symbols: string[] = [];
-  for (const { symbol, companyName } of batch) {
+  for (const { symbol, companyName, exchange = "NSE" } of batch) {
     try {
-      await refreshFundamentalsInBackground(symbol, companyName);
-      await refreshKeyStatsInBackground(symbol, companyName);
+      await refreshFundamentalsInBackground(symbol, companyName, exchange);
+      await refreshKeyStatsInBackground(symbol, companyName, exchange);
       symbols.push(symbol);
     } catch (err) {
       console.error(`[enrichment] warm batch failed for ${symbol}:`, err);
