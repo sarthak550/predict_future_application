@@ -8,9 +8,11 @@
  * raw filing text (MarketMoveEvent rows are demoted, not removed — see the
  * mobile "Regulatory Filings" disclosure).
  *
- * Gated by isNewsRefreshWindow() (08:00-21:00 IST, Mon-Fri) — wider than
- * trading hours since results/news commonly land after the 15:30 close.
- * Silently no-ops outside that window.
+ * isNewsRefreshWindow() (08:00-21:00 IST, Mon-Fri) picks the MODE, not
+ * whether to run (2026-08-15): inside the window = hot lanes + rotation
+ * slice; outside it = rotation-only (the old behavior was a full no-op,
+ * wasting every overnight/weekend crontab tick the rotation lane could be
+ * using — see newsUniverse.ts's rotation doc for the coverage math).
  *
  * Protected by CRON_SECRET (Bearer or x-cron-secret header), identical
  * contract to the two existing Market Pulse crons. Intended cadence: every
@@ -68,11 +70,15 @@ async function run(request: Request) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
 
-  if (!isNewsRefreshWindow()) {
-    return NextResponse.json({ ok: true, skipped: "outside_news_refresh_window" });
-  }
+  // Outside the news window (nights/weekends) this run advances the
+  // ROTATION lane only, instead of the old full no-op — movers/filings
+  // don't change off-hours, but Google News doesn't sleep and the crontab
+  // already fires every 30 min around the clock. See buildNewsUniverse's
+  // `rotationOnly` doc (founder 2026-08-15: full-universe coverage ~2.6d →
+  // ~17h).
+  const rotationOnly = !isNewsRefreshWindow();
 
-  const universe = await buildNewsUniverse().catch((err: unknown) => {
+  const universe = await buildNewsUniverse(new Date(), { rotationOnly }).catch((err: unknown) => {
     console.error("[cron/market-moves-news] universe build threw unexpectedly:", err);
     return [] as Awaited<ReturnType<typeof buildNewsUniverse>>;
   });
@@ -160,6 +166,7 @@ async function run(request: Request) {
 
   return NextResponse.json({
     ok: true,
+    mode: rotationOnly ? "rotation_only" : "full",
     tickers: universe.length,
     fetched,
     upserted,

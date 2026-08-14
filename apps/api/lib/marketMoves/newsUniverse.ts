@@ -22,11 +22,13 @@
  * of slices, so every company is covered without any cursor row to persist,
  * and a missed/failed run just means that slot's slice is picked up next
  * cycle. Coverage math at current scale: ~2,000 NSE names with real company
- * names + ~2,000 above-floor BSE names ≈ 4,000 / 60-per-run ≈ 67 slots; at
- * ~27 runs/day inside the 08:00-21:00 IST refresh window, the whole universe
- * cycles every ~2.5 days. Between rotations, a company's news stays fresh
- * via the hot lane (if it moves or files) and apps/web's per-page-view
- * on-demand refresh (6h TTL, exchange-agnostic — enrichment.ts).
+ * names + ~2,000 above-floor BSE names ≈ 4,100 / 120-per-run ≈ 35 slots;
+ * the rotation advances on EVERY 30-min crontab tick around the clock
+ * (rotation-only mode outside the 08:00-21:00 IST window — see
+ * buildNewsUniverse), so 48 runs/day cycles the whole universe every ~17h.
+ * Between rotations, a company's news stays fresh via the hot lane (if it
+ * moves or files) and apps/web's per-page-view on-demand refresh (6h TTL,
+ * exchange-agnostic — enrichment.ts).
  *
  * NSE rows whose companyName is just the ticker duplicated are SKIPPED in
  * the rotation lane — those are ETFs (the bhavcopy carries no fund names),
@@ -45,8 +47,8 @@ const TOP_MOVERS_PER_DIRECTION = 10;
 const MATERIAL_FILING_LOOKBACK_HOURS = 24;
 const MATERIAL_FILING_TICKER_CAP = 40;
 const UNIVERSE_HARD_CAP = 60;
-/** Rotation-lane slice per run — env-tunable (NEWS_ROTATION_SLICE). 60 keeps a full 120-ticker run around ~2-3 min at the cron's 400ms inter-request spacing, well inside run-cron.sh's 290s curl cap. 0 disables the lane. */
-const ROTATION_SLICE_SIZE = Math.max(0, Number(process.env.NEWS_ROTATION_SLICE ?? 60) || 0);
+/** Rotation-lane slice per run — env-tunable (NEWS_ROTATION_SLICE). 120 (founder 2026-08-15: "2.6 days is long") puts a full hot+rotation run around ~4 min at the cron's 400ms inter-request spacing — just inside run-cron.sh's 290s curl cap, and the route keeps running server-side even if the curl client gives up first. 0 disables the lane. */
+const ROTATION_SLICE_SIZE = Math.max(0, Number(process.env.NEWS_ROTATION_SLICE ?? 120) || 0);
 /** Wall-clock bucket the rotation slot derives from — matches the cron's 30-min cadence so consecutive runs advance one slice. */
 const ROTATION_SLOT_MS = 30 * 60 * 1000;
 /** Mirrors apps/web/lib/finance/bseEquity.ts's MIN_BSE_EQUITY_TURNOVER_RS + 30-session window (no cross-app import path — keep in sync). */
@@ -59,11 +61,29 @@ export type NewsUniverseTicker = {
 };
 
 /**
- * Builds today's capped ticker universe. Never throws — a failure on either
- * half (movers or filings) degrades to an empty contribution from that half
- * rather than failing the whole build, so a partial universe is still fetched.
+ * Builds this run's capped ticker universe. Never throws — a failure on any
+ * lane degrades to an empty contribution from that lane rather than failing
+ * the whole build, so a partial universe is still fetched.
+ *
+ * `rotationOnly` (2026-08-15): outside the 08:00-21:00 IST news window the
+ * hot lane is pointless (movers/filings don't change overnight or on
+ * weekends) but the rotation lane isn't — the cron already fires every 30
+ * min around the clock, and those off-window ticks now advance the rotation
+ * instead of no-oping. That's what compresses full-universe coverage from
+ * ~2.6 days (27 window runs/day at 60/slice) to ~17h (48 runs/day at
+ * 120/slice).
  */
-export async function buildNewsUniverse(now: Date = new Date()): Promise<NewsUniverseTicker[]> {
+export async function buildNewsUniverse(
+  now: Date = new Date(),
+  options: { rotationOnly?: boolean } = {}
+): Promise<NewsUniverseTicker[]> {
+  if (options.rotationOnly) {
+    return fetchRotationSlice(now, new Set()).catch((err: unknown) => {
+      console.error("[marketMoves/newsUniverse] rotation slice failed:", err);
+      return [] as NewsUniverseTicker[];
+    });
+  }
+
   const [moverTickers, filingTickers] = await Promise.all([
     fetchTopMoverTickers(now).catch((err: unknown) => {
       console.error("[marketMoves/newsUniverse] mover lookup failed:", err);
