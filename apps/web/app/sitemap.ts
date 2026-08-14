@@ -7,7 +7,12 @@ import { fetchLatestBseIndices } from "@/lib/finance/bseIndices";
 import { INDEX_SLUG_TO_TRADABLE_UNDERLYING } from "@/lib/finance/indexTradableAlias";
 import { getPublicProfileStats } from "@/lib/finance/publicProfile";
 import { listPublicEligiblePortfolioSlugsForSitemap } from "@/lib/portfolios/queries";
-import { bseEquityPageSymbol, clearsBseEquityFloor } from "@/lib/finance/bseEquity";
+import {
+  bseEquityPageSymbol,
+  clearsBseEquityFloor,
+  getRecentBseEquitySessionDates,
+  summarizeBseEquityWindow,
+} from "@/lib/finance/bseEquity";
 import { prisma } from "@/lib/prisma";
 
 const SITE_URL = "https://predictfuture.app";
@@ -187,12 +192,10 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       changeFrequency: "daily",
       priority: 0.6,
     },
-    {
-      url: `${SITE_URL}/indices`,
-      lastModified: new Date(),
-      changeFrequency: "hourly",
-      priority: 0.6,
-    },
+    // /indices removed 2026-08-14 (QA parity audit): the route has
+    // unconditionally redirected to "/" since 2026-07-25 — submitting a
+    // dead redirect contradicts this file's own crawl-budget principle
+    // documented for the /indices/[slug] entries above.
     ...analystEntries,
     ...instrumentEntries,
     ...portfolioEntries,
