@@ -1122,7 +1122,10 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     };
   })();
 
-  const indexMetrics: InstrumentIndexMetrics | null = liveSnapshot
+  // `let`, not `const`: the advances/declines/unchanged counts are
+  // back-filled from the composition join below when the source itself
+  // published none (BSE Breadth, 2026-08-15) — see that block's comment.
+  let indexMetrics: InstrumentIndexMetrics | null = liveSnapshot
     ? {
         peRatio: liveSnapshot.peRatio,
         pbRatio: liveSnapshot.pbRatio,
@@ -1217,6 +1220,28 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
       .sort((a, b) => (b.changePercent as number) - (a.changePercent as number));
     const unranked = joined.filter((r) => r.changePercent == null);
     indexComposition = [...ranked, ...unranked];
+  }
+
+  // BSE Breadth (2026-08-15, founder: BSE indices "do not show the member
+  // stocks went high and low as we have in NSE indices") — NSE's counts come
+  // free from its live allIndices snapshot; BSE publishes no per-index
+  // breadth feed anywhere (verified 2026-08-12, see bseIndexMetrics' doc),
+  // so its metrics carried null and the panel hid the "Member stocks today"
+  // block. But the composition join just above already priced every member's
+  // day change from our own EOD stores — the breadth is a straight count of
+  // it. Fills ONLY when the source published none (a real NSE snapshot count
+  // always wins) and only over priced members (an unpriced member is
+  // excluded from all three buckets rather than miscounted as "unchanged").
+  if (indexMetrics && indexMetrics.advances == null && indexComposition && indexComposition.length > 0) {
+    const priced = indexComposition.filter((c) => c.changePercent != null);
+    if (priced.length > 0) {
+      indexMetrics = {
+        ...indexMetrics,
+        advances: priced.filter((c) => (c.changePercent as number) > 0).length,
+        declines: priced.filter((c) => (c.changePercent as number) < 0).length,
+        unchanged: priced.filter((c) => (c.changePercent as number) === 0).length,
+      };
+    }
   }
 
   // Index Constituent News (2026-08-15, founder ask) — an index page's Stock
