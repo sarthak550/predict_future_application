@@ -87,6 +87,17 @@ function bareBseTicker(ticker: string): string | null {
   return m ? m[1].toUpperCase() : null;
 }
 
+/**
+ * Yahoo-style canonical ticker for an alias-resolved EQUITY symbol — the
+ * exact shape instrument pages' `startsWith('<symbol>.')` opinion matching
+ * expects. A BSE-only symbol already carries its ".BO" page suffix; a bare
+ * NSE symbol gets ".NS". Never call for an index resolution (index pages
+ * match verbatim Yahoo tickers via INDEX_OPINION_TICKER maps instead).
+ */
+export function canonicalEquityTicker(symbol: string): string {
+  return symbol.includes(".") ? symbol.toUpperCase() : `${symbol.toUpperCase()}.NS`;
+}
+
 export interface InstrumentAliasResolution {
   resolved: boolean;
   symbol: string | null;
@@ -318,25 +329,55 @@ export async function resolveInstrumentAlias(
  */
 export async function retryUnresolvedInstrumentAliases(
   prisma: PrismaClient,
-): Promise<{ scanned: number; resolvedByTicker: number; resolvedByLabel: number }> {
-  const stale = await prisma.instrumentAlias.findMany({ where: { resolved: false } });
-  if (stale.length === 0) return { scanned: 0, resolvedByTicker: 0, resolvedByLabel: 0 };
-
+): Promise<{
+  scanned: number;
+  seeded: number;
+  seededResolved: number;
+  resolvedByTicker: number;
+  resolvedByLabel: number;
+  opinionTickersRepaired: number;
+}> {
   // One bounded pass over live opinions builds the key → labels map (the
   // alias table is keyed by normalized rawName; ticker-keyed rows dropped
   // their label at write time, so it's recovered from the opinions here).
   const opinions = await prisma.expertOpinion.findMany({
     where: { suppressedAt: null },
-    select: { instrument: true, instrumentTicker: true },
+    select: { id: true, instrument: true, instrumentTicker: true },
   });
   const labelsByKey = new Map<string, Set<string>>();
+  const pairByKey = new Map<string, { ticker: string | null; label: string | null }>();
   for (const o of opinions) {
-    const key = normalizeInstrumentRawName(sanitizeExtractedValue(o.instrumentTicker), sanitizeExtractedValue(o.instrument));
+    const ticker = sanitizeExtractedValue(o.instrumentTicker);
     const label = sanitizeExtractedValue(o.instrument);
-    if (!key || !label) continue;
+    const key = normalizeInstrumentRawName(ticker, label);
+    if (!key) continue;
+    if (!pairByKey.has(key)) pairByKey.set(key, { ticker, label });
+    if (!label) continue;
     if (!labelsByKey.has(key)) labelsByKey.set(key, new Set());
     labelsByKey.get(key)!.add(label);
   }
+
+  // SEED pass (2026-08-15 second sweep, founder: "run the analysis on all
+  // instruments which are currently non-clickable"): an opinion whose
+  // extraction PREDATED the alias system has no alias row at all — the
+  // retry passes below can only flip rows that exist, so those opinions
+  // stayed permanently unlinked and invisible to this healer. Every live
+  // opinion key missing a row gets one created here via the standard
+  // resolver (which now carries the label fallback), so the nightly run
+  // covers the entire live-opinion surface, past and future.
+  const existingKeys = new Set(
+    (await prisma.instrumentAlias.findMany({ select: { rawName: true } })).map((r) => r.rawName)
+  );
+  let seeded = 0;
+  let seededResolved = 0;
+  for (const [key, pair] of pairByKey) {
+    if (existingKeys.has(key)) continue;
+    const res = await resolveInstrumentAlias(prisma, pair.label, pair.ticker).catch(() => null);
+    seeded++;
+    if (res?.resolved) seededResolved++;
+  }
+
+  const stale = await prisma.instrumentAlias.findMany({ where: { resolved: false } });
 
   let resolvedByTicker = 0;
   let resolvedByLabel = 0;
@@ -377,5 +418,38 @@ export async function retryUnresolvedInstrumentAliases(
     else resolvedByLabel++;
   }
 
-  return { scanned: stale.length, resolvedByTicker, resolvedByLabel };
+  // REPAIR pass (2026-08-15, founder: "we have opinions on many instruments
+  // but still the stocks instrument page are not showing them"): the alias
+  // maps an opinion's mangled ticker to the right company, but instrument
+  // pages find their opinions via a `instrumentTicker startsWith
+  // '<symbol>.'` prefix on the STORED ticker — so a "KALYAN.NS" opinion
+  // never surfaced on /instruments/KALYANKJIL no matter what the alias said.
+  // Every live opinion whose key maps to an EQUITY-resolved alias gets its
+  // stored ticker rewritten to the canonical form the page matches
+  // (extraction now writes canonical tickers up front — this pass repairs
+  // the backlog and any row that slips through). Index-resolved aliases are
+  // deliberately excluded: index pages match verbatim Yahoo tickers via
+  // their own INDEX_OPINION_TICKER maps, which a rewrite would break. Same
+  // precedent as the ~45 opinions repaired during the index-identity audit
+  // (2026-08-10) — fix the stored data, don't post-hoc fuzzy-match around it.
+  const resolvedAliases = await prisma.instrumentAlias.findMany({
+    where: { resolved: true, resolutionSource: { not: "KNOWN_INDEX" }, symbol: { not: null } },
+    select: { rawName: true, symbol: true },
+  });
+  const equityAliasByKey = new Map(resolvedAliases.map((a) => [a.rawName, a.symbol as string]));
+  let opinionTickersRepaired = 0;
+  for (const o of opinions) {
+    const ticker = sanitizeExtractedValue(o.instrumentTicker);
+    const label = sanitizeExtractedValue(o.instrument);
+    const key = normalizeInstrumentRawName(ticker, label);
+    if (!key) continue;
+    const symbol = equityAliasByKey.get(key);
+    if (!symbol) continue;
+    const canonical = canonicalEquityTicker(symbol);
+    if ((ticker ?? "").toUpperCase() === canonical) continue;
+    await prisma.expertOpinion.update({ where: { id: o.id }, data: { instrumentTicker: canonical } });
+    opinionTickersRepaired++;
+  }
+
+  return { scanned: stale.length, seeded, seededResolved, resolvedByTicker, resolvedByLabel, opinionTickersRepaired };
 }

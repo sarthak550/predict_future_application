@@ -14,7 +14,7 @@ import { checkAndIncrementFinanceAiDailyCap } from "@/lib/ai/financeAiDailyCap";
 import { callGeminiAI } from "@/lib/ai/gemini";
 import { sanitizeExtractedValue } from "@/lib/ai/sanitizeExtractedValue";
 import { findOrCreateExpert } from "@/lib/finance/expertMatch";
-import { resolveInstrumentAlias } from "@/lib/finance/instrumentAlias";
+import { canonicalEquityTicker, resolveInstrumentAlias } from "@/lib/finance/instrumentAlias";
 import { notifyExpertFollowersOnNewOpinion } from "@/lib/notifyExpertFollowersOnNewOpinion";
 
 /**
@@ -915,17 +915,28 @@ export async function persistExpertOpinions(
     resolvedInstrument = sanitizeExtractedValue(resolvedInstrument);
     resolvedTicker = sanitizeExtractedValue(resolvedTicker);
     // Instrument-identity resolution (lookup-first, self-extending — see
-    // lib/finance/instrumentAlias.ts). This is a SIDE EFFECT only: it
-    // populates/consults InstrumentAlias so apps/web's links/dropdown/
-    // cascade have a durable, authoritative-source-backed identity to read
-    // — it never rewrites resolvedInstrument/resolvedTicker themselves,
-    // which stay exactly what the extractor produced (the analyst's/
-    // extractor's own phrasing, left alone, same convention the old
-    // per-request instrumentLink.ts documented). Never allowed to block
-    // opinion persistence — a resolution hiccup degrades to "not resolved
-    // this pass," not a lost opinion.
+    // lib/finance/instrumentAlias.ts). `resolvedInstrument` (the display
+    // label) stays exactly what the extractor produced — the analyst's own
+    // phrasing, left alone. The TICKER, however, is canonicalized when the
+    // alias resolves to an EQUITY (2026-08-15, founder: "we have opinions on
+    // many instruments but still the stocks instrument page are not showing
+    // them"): instrument pages find their opinions by a
+    // `instrumentTicker startsWith '<symbol>.'` prefix, so an
+    // extraction-mangled ticker ("KALYAN.NS" for Kalyan Jewellers) stored
+    // verbatim is invisible to the page the alias correctly maps it to.
+    // Index resolutions deliberately do NOT rewrite — index pages match on
+    // the verbatim Yahoo tickers via their own INDEX_OPINION_TICKER maps.
+    // Never allowed to block opinion persistence — a resolution hiccup
+    // degrades to "not resolved this pass," not a lost opinion.
     try {
-      await resolveInstrumentAlias(prisma, resolvedInstrument, resolvedTicker);
+      const aliasResolution = await resolveInstrumentAlias(prisma, resolvedInstrument, resolvedTicker);
+      if (
+        aliasResolution?.resolved &&
+        aliasResolution.symbol &&
+        aliasResolution.resolutionSource !== "KNOWN_INDEX"
+      ) {
+        resolvedTicker = canonicalEquityTicker(aliasResolution.symbol);
+      }
     } catch (err) {
       console.warn(
         `[Finance AI] Instrument alias resolution failed for "${resolvedInstrument ?? resolvedTicker ?? "(none)"}": ${err instanceof Error ? err.message : err}`
