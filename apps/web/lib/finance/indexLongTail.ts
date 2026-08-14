@@ -114,3 +114,23 @@ export async function getLongTailIndexBySlug(slug: string): Promise<LongTailInde
   const { bySlug } = await getCache();
   return bySlug.get(slug.trim().toUpperCase()) ?? null;
 }
+
+/**
+ * Name-contains matches over the long-tail universe, for the search route
+ * (searchability-sweep finding #2, 2026-08-15): search previously matched
+ * indices ONLY against the live /api/allIndices feed (139 names on a given
+ * day), while instrument pages resolve from this DB-derived set (163 names)
+ * — leaving 25 indices with working pages (Nifty Power, Nifty Insurance,
+ * Nifty NBFC, ...) unfindable. Search must cover the same universe the pages
+ * themselves resolve from; live-feed matches still rank first at the call
+ * site, this fills the gap. Same 5-min cache as the resolvers — zero extra
+ * DB cost per query.
+ */
+export async function searchLongTailIndexNames(needle: string): Promise<LongTailIndexEntry[]> {
+  const { bySymbol } = await getCache();
+  const upper = needle.trim().toUpperCase();
+  if (!upper) return [];
+  return [...bySymbol.values()]
+    .filter((e) => e.name.toUpperCase().includes(upper))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}

@@ -35,6 +35,7 @@ import {
   bseEquityTurnover,
   BSE_EQUITY_FLOOR_WINDOW_SESSIONS,
 } from "@/lib/finance/bseEquity";
+import { latestBseQuoteByTicker, latestStockQuoteBySymbol } from "@/lib/finance/latestQuotes";
 import { prisma } from "@/lib/prisma";
 
 // Enough sessions for a 1Y timeframe on the interactive chart (~250 trading
@@ -1144,12 +1145,10 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
   let indexComposition: IndexConstituentQuoteRow[] | null = null;
   if (constituentListRows && constituentListRows.length > 0) {
     const constituentSymbols = constituentListRows.map((r) => r.symbol);
-    const constituentQuotes = await prisma.stockEodQuote.findMany({
-      where: { symbol: { in: constituentSymbols } },
-      orderBy: [{ symbol: "asc" }, { sessionDate: "desc" }],
-      distinct: ["symbol"],
-      select: { symbol: true, close: true, changePercent: true },
-    });
+    // Raw DISTINCT ON (latestQuotes.ts, 2026-08-15): Prisma's findMany
+    // distinct fetched every constituent's FULL history (~750 × ~257
+    // sessions ≈ 190k rows for NIFTY TOTAL MARKET) to keep one row each.
+    const constituentQuotes = await latestStockQuoteBySymbol(constituentSymbols);
     const quoteBySymbol = new Map(constituentQuotes.map((q) => [q.symbol, q]));
     const joined: IndexConstituentQuoteRow[] = constituentListRows.map((c) => {
       const q = quoteBySymbol.get(c.symbol);
@@ -1191,22 +1190,8 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     const bseTickers = bseSymbols.map((s) => s.replace(/\.BO$/i, ""));
 
     const [nseConstituentQuotes, bseConstituentQuotes] = await Promise.all([
-      nseSymbols.length > 0
-        ? prisma.stockEodQuote.findMany({
-            where: { symbol: { in: nseSymbols } },
-            orderBy: [{ symbol: "asc" }, { sessionDate: "desc" }],
-            distinct: ["symbol"],
-            select: { symbol: true, close: true, changePercent: true },
-          })
-        : Promise.resolve([]),
-      bseTickers.length > 0
-        ? prisma.bseEodQuote.findMany({
-            where: { tickerSymbol: { in: bseTickers } },
-            orderBy: [{ tickerSymbol: "asc" }, { sessionDate: "desc" }],
-            distinct: ["tickerSymbol"],
-            select: { tickerSymbol: true, close: true, changePercent: true },
-          })
-        : Promise.resolve([]),
+      latestStockQuoteBySymbol(nseSymbols),
+      latestBseQuoteByTicker(bseTickers),
     ]);
     const quoteBySymbol = new Map(nseConstituentQuotes.map((q) => [q.symbol, { close: q.close, changePercent: q.changePercent }]));
     for (const q of bseConstituentQuotes) {

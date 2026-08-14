@@ -18,9 +18,11 @@ import {
   bseEquityPageSymbol,
   clearsBseEquityFloor,
   getRecentBseEquitySessionDates,
+  searchBseEquityTickerCandidates,
   summarizeBseEquityWindow,
   type BseEquityWindowSummary,
 } from "@/lib/finance/bseEquity";
+import { searchLongTailIndexNames } from "@/lib/finance/indexLongTail";
 
 /**
  * GET /api/instruments/search?q= — global nav-bar search (public), CATEGORIZED
@@ -290,7 +292,7 @@ export async function GET(request: Request) {
 
   const needle = q.toUpperCase();
 
-  const [exactStock, fuzzyRows, allIndices, bseIndices, bondRows, etfSymbols] = await Promise.all([
+  const [exactStock, fuzzyRows, allIndices, bseIndices, bondRows, etfSymbols, longTailIndexMatches] = await Promise.all([
     prisma.stockEodQuote.findFirst({
       where: { symbol: { equals: needle, mode: "insensitive" } },
       orderBy: { sessionDate: "desc" },
@@ -342,6 +344,12 @@ export async function GET(request: Request) {
       });
     })(),
     getEtfSymbolSet(),
+    // Searchability sweep #2 (2026-08-15): the live allIndices feed carries
+    // ~139 names but instrument pages resolve from the DB-derived 163-name
+    // set (indexLongTail.ts) — 25 indices with working pages (Nifty Power,
+    // Nifty Insurance, ...) were unsearchable. Both universes are matched
+    // now; the long-tail arm is 5-min-cached, zero extra DB cost per query.
+    searchLongTailIndexNames(q),
   ]);
 
   // ── Indices ────────────────────────────────────────────────────────────────
@@ -372,6 +380,21 @@ export async function GET(request: Request) {
       sublabel: "NSE index",
       category: "index" as const,
     })),
+    // Long-tail arm (sweep #2, see the fetch above) — only entries the live
+    // feed didn't already surface this query; deduped by derived symbol
+    // (both arms derive with the same deriveIndexSymbol, so the keys agree).
+    ...longTailIndexMatches
+      .filter(
+        (e) =>
+          !tradableIndexMatches.some((t) => t.symbol === e.symbol) &&
+          !infoIndexMatches.some((idx) => deriveIndexSymbol(idx.name) === e.symbol)
+      )
+      .map((e) => ({
+        href: `/instruments/${e.symbol}`,
+        label: e.name,
+        sublabel: "NSE index",
+        category: "index" as const,
+      })),
     ...bseIndexMatches.map((idx) => ({
       href: `/instruments/${deriveIndexSymbol(idx.indexName)}`,
       label: idx.indexName,
@@ -396,31 +419,31 @@ export async function GET(request: Request) {
   // miss it entirely even when it's well above the floor; see
   // bseEquity.ts's module doc for the full root-cause writeup). Sublabeled
   // "· BSE" — see this route's own module doc.
+  // Session window hoisted out of the summaries closure (sweep #3 needs it
+  // again below to floor-check name-only fund matches). Raw-SQL 9ms since
+  // sweep #1's rewrite — see getRecentBseEquitySessionDates' own doc.
+  const recentBseSessionDates = await getRecentBseEquitySessionDates();
   const [bseEquitySummaries, bseFundSymbols] = await Promise.all([
     (async () => {
-      const recentSessionDates = await getRecentBseEquitySessionDates();
-      if (recentSessionDates.length === 0) return [];
+      if (recentBseSessionDates.length === 0) return [];
       // Step 1: bounded set of DISTINCT symbols whose ticker OR company name
-      // matches anywhere in the window — this is the only step the text
-      // query narrows on, so it's the take()-bound the audit law wants.
-      const matchedTickers = await prisma.bseEodQuote.findMany({
-        where: {
-          sessionDate: { in: recentSessionDates },
-          OR: [{ tickerSymbol: { contains: q, mode: "insensitive" } }, { companyName: { contains: q, mode: "insensitive" } }],
-        },
-        distinct: ["tickerSymbol"],
-        orderBy: { tickerSymbol: "asc" },
-        take: MAX_PER_CATEGORY * 2, // over-fetch: some matches get pulled out into the fund category below
-        select: { tickerSymbol: true },
-      });
+      // matches anywhere in the window — raw-SQL helper (sweep #1: Prisma's
+      // distinct+take is client-side emulation) with a dedicated exact-ticker
+      // arm (sweep #4: alphabetical LIMIT could evict a company's own exact
+      // ticker, e.g. "SHREE").
+      const matchedTickers = await searchBseEquityTickerCandidates(
+        q,
+        recentBseSessionDates,
+        MAX_PER_CATEGORY * 2 // over-fetch: some matches get pulled out into the fund category below
+      );
       if (matchedTickers.length === 0) return [];
       // Step 2: every window row for exactly those matched symbols (bounded
       // to candidateCount × window size) so `summarizeBseEquityWindow` can
       // compute a real MAX-turnover-in-window instead of one day's number.
       const windowRows = await prisma.bseEodQuote.findMany({
         where: {
-          tickerSymbol: { in: matchedTickers.map((t) => t.tickerSymbol) },
-          sessionDate: { in: recentSessionDates },
+          tickerSymbol: { in: matchedTickers },
+          sessionDate: { in: recentBseSessionDates },
         },
         select: { tickerSymbol: true, companyName: true, sessionDate: true, close: true, volume: true },
       });
@@ -432,8 +455,17 @@ export async function GET(request: Request) {
   // registry-confirmed fund surfaces under "fund" instead (see below), never
   // both — same "never double-count" rule the NSE stock/fund split already
   // follows via `etfSymbols`.
-  const bseStockResults: SearchResultItem[] = bseEquitySummaries
-    .filter((r) => clearsBseEquityFloor(r.maxTurnoverInWindow) && !bseFundSymbols.has(bseEquityPageSymbol(r.tickerSymbol)))
+  const flooredBseSummaries = bseEquitySummaries.filter(
+    (r) => clearsBseEquityFloor(r.maxTurnoverInWindow) && !bseFundSymbols.has(bseEquityPageSymbol(r.tickerSymbol))
+  );
+  // Exact ticker first WITHIN this branch too (sweep #4): the turnover-desc
+  // slice below would otherwise drop a thin company's own exact ticker
+  // before the combined-list exact-priority ever sees it (live: "AMS" —
+  // AMS Polymers is above-floor but not top-6-by-turnover among matches).
+  const bseStockResults: SearchResultItem[] = [
+    ...flooredBseSummaries.filter((r) => r.tickerSymbol.toUpperCase() === needle),
+    ...flooredBseSummaries.filter((r) => r.tickerSymbol.toUpperCase() !== needle),
+  ]
     .slice(0, MAX_PER_CATEGORY)
     .map((r) => ({
       href: `/instruments/${bseEquityPageSymbol(r.tickerSymbol)}`,
@@ -441,7 +473,16 @@ export async function GET(request: Request) {
       sublabel: `${r.companyName} · BSE`,
       category: "stock" as const,
     }));
-  const stockResults: SearchResultItem[] = [...nseStockResults, ...bseStockResults].slice(0, MAX_PER_CATEGORY);
+  // Sweep #4's second half: the combined NSE-then-BSE concatenation could
+  // starve a BSE company's own exact ticker out of the visible window — NSE
+  // substring matches alone fill all 6 slots (live: "AMS" returned CAMS,
+  // UTTAMSUGAR, ... but never AMS.BO). Exact-label matches always rank
+  // first; NSE-before-BSE order is preserved within each tier.
+  const combinedStockResults = [...nseStockResults, ...bseStockResults];
+  const stockResults: SearchResultItem[] = [
+    ...combinedStockResults.filter((r) => r.label.toUpperCase() === needle),
+    ...combinedStockResults.filter((r) => r.label.toUpperCase() !== needle),
+  ].slice(0, MAX_PER_CATEGORY);
   // Founder 2026-08-12: funds must be searchable by their REAL names, and
   // display them. StockEodQuote.companyName for an ETF is the ticker
   // duplicated (bhavcopy has no fund names), so (a) name-matched registry
@@ -478,11 +519,37 @@ export async function GET(request: Request) {
   const bseFuzzyFundRows = bseEquitySummaries.filter((r) => bseFundSymbols.has(bseEquityPageSymbol(r.tickerSymbol)));
   const bseFuzzyFundSymbols = new Set(bseFuzzyFundRows.map((r) => bseEquityPageSymbol(r.tickerSymbol)));
   const [bseFundNameMatches, bseFundNames] = await Promise.all([searchBseFundRegistryByName(q), getBseFundNameMap()]);
+  // Sweep #3 (2026-08-15): this branch skipped the turnover floor its
+  // sibling stock branch enforces — 11/20 registry funds are below-floor
+  // dead shells (segregated portfolios etc., e.g. 08AGG at ₹19.8K max
+  // window turnover) whose pages are noindexed, yet they surfaced in
+  // search. Name-only registry matches carry no window rows yet, so their
+  // real MAX turnover is fetched here (bounded: registry matches × window)
+  // and EVERY fund row now passes clearsBseEquityFloor — unlike the NSE
+  // branch's volume-0 name-only rows, which are floorless by design (NSE
+  // has no floor; its registry is exchange-curated and shell-free).
+  const bseNameOnlyCandidates = bseFundNameMatches.filter((e) => !bseFuzzyFundSymbols.has(e.symbol));
+  const bseNameOnlyWindowRows =
+    bseNameOnlyCandidates.length > 0 && recentBseSessionDates.length > 0
+      ? await prisma.bseEodQuote.findMany({
+          where: {
+            tickerSymbol: { in: bseNameOnlyCandidates.map((e) => e.tickerSymbol) },
+            sessionDate: { in: recentBseSessionDates },
+          },
+          select: { tickerSymbol: true, companyName: true, sessionDate: true, close: true, volume: true },
+        })
+      : [];
+  const bseNameOnlyTurnover = new Map(
+    summarizeBseEquityWindow(bseNameOnlyWindowRows).map((s) => [s.tickerSymbol.toUpperCase(), s.maxTurnoverInWindow])
+  );
   const bseNameOnlyFundRows: Array<Pick<BseEquityWindowSummary, "tickerSymbol" | "companyName" | "maxTurnoverInWindow">> =
-    bseFundNameMatches
-      .filter((e) => !bseFuzzyFundSymbols.has(e.symbol))
-      .map((e) => ({ tickerSymbol: e.tickerSymbol, companyName: e.displayName, maxTurnoverInWindow: 0 }));
+    bseNameOnlyCandidates.map((e) => ({
+      tickerSymbol: e.tickerSymbol,
+      companyName: e.displayName,
+      maxTurnoverInWindow: bseNameOnlyTurnover.get(e.tickerSymbol.toUpperCase()) ?? 0,
+    }));
   const bseFundResults: SearchResultItem[] = [...bseFuzzyFundRows, ...bseNameOnlyFundRows]
+    .filter((r) => clearsBseEquityFloor(r.maxTurnoverInWindow))
     .sort((a, b) => b.maxTurnoverInWindow - a.maxTurnoverInWindow)
     .map((r) => ({
       href: `/instruments/${bseEquityPageSymbol(r.tickerSymbol)}`,

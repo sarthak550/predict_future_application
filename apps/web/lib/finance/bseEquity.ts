@@ -1,3 +1,5 @@
+import { Prisma } from "@prisma/client";
+
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -139,15 +141,68 @@ export function summarizeBseEquityWindow(
   return [...bySymbol.values()];
 }
 
-/** Distinct BseEodQuote trading-session dates, most recent first, bounded to `BSE_EQUITY_FLOOR_WINDOW_SESSIONS` — the shared "what is THE window" query so search/sitemap/instrument-page all mean the same 30 sessions. Returns `[]` before the BSE cron has ever run (never throws). */
+/**
+ * Distinct BseEodQuote trading-session dates, most recent first, bounded to
+ * `BSE_EQUITY_FLOOR_WINDOW_SESSIONS` — the shared "what is THE window" query
+ * so search/sitemap/instrument-page all mean the same 30 sessions. Returns
+ * `[]` before the BSE cron has ever run (never throws).
+ *
+ * RAW SQL, not findMany (2026-08-15, searchability-sweep finding #1): Prisma
+ * emulates `distinct`+`take` CLIENT-SIDE — pg_stat_activity showed the
+ * emitted SQL as an unbounded `ORDER BY sessionDate DESC OFFSET $1` with NO
+ * LIMIT, paging the whole 536k-row table into the engine to dedup 30 dates.
+ * Measured 75.7s per call — and this ran on EVERY search keystroke. The raw
+ * `SELECT DISTINCT ... LIMIT` below uses the existing
+ * (sessionDate, scripCode) index: 9ms (EXPLAIN ANALYZE verified).
+ */
 export async function getRecentBseEquitySessionDates(): Promise<Date[]> {
-  const rows = await prisma.bseEodQuote.findMany({
-    distinct: ["sessionDate"],
-    orderBy: { sessionDate: "desc" },
-    take: BSE_EQUITY_FLOOR_WINDOW_SESSIONS,
-    select: { sessionDate: true },
-  });
+  const rows = await prisma.$queryRaw<Array<{ sessionDate: Date }>>`
+    SELECT DISTINCT "sessionDate" FROM "BseEodQuote"
+    ORDER BY "sessionDate" DESC
+    LIMIT ${BSE_EQUITY_FLOOR_WINDOW_SESSIONS}
+  `;
   return rows.map((r) => r.sessionDate);
+}
+
+/** Escapes LIKE/ILIKE metacharacters so a user query is matched literally. */
+function escapeLikePattern(raw: string): string {
+  return raw.replace(/[\\%_]/g, (m) => `\\${m}`);
+}
+
+/**
+ * Bounded DISTINCT ticker candidates for a search query over the window:
+ * an exact-ticker arm UNIONed with an alphabetical contains-match arm.
+ *
+ * Raw SQL for the same reason as `getRecentBseEquitySessionDates` above —
+ * the original findMany({distinct, take}) fetched every window row matching
+ * the text filter before deduping client-side. The separate exact arm is
+ * sweep finding #4: the contains arm's alphabetical LIMIT can evict a
+ * company's own exact ticker (e.g. "SHREE" — many alphabetically-earlier
+ * tickers/names contain the substring), and the NSE branch has had this
+ * exact-always-wins protection since the "REL must never push out RELIANCE"
+ * bug; this extends it to the BSE branch.
+ */
+export async function searchBseEquityTickerCandidates(
+  q: string,
+  sessionDates: Date[],
+  limit: number
+): Promise<string[]> {
+  if (sessionDates.length === 0) return [];
+  const dates = Prisma.join(sessionDates);
+  const pattern = `%${escapeLikePattern(q)}%`;
+  const rows = await prisma.$queryRaw<Array<{ tickerSymbol: string }>>`
+    (SELECT DISTINCT "tickerSymbol" FROM "BseEodQuote"
+      WHERE "sessionDate" IN (${dates}) AND UPPER("tickerSymbol") = ${q.toUpperCase()})
+    UNION
+    (SELECT "tickerSymbol" FROM (
+      SELECT DISTINCT "tickerSymbol" FROM "BseEodQuote"
+      WHERE "sessionDate" IN (${dates})
+        AND ("tickerSymbol" ILIKE ${pattern} OR "companyName" ILIKE ${pattern})
+      ORDER BY "tickerSymbol" ASC
+      LIMIT ${limit}
+    ) contains_arm)
+  `;
+  return rows.map((r) => r.tickerSymbol);
 }
 
 /** Builds a BSE-only equity's `/instruments/[symbol]` page symbol from its BseEodQuote.tickerSymbol. */

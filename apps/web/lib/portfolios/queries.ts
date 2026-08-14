@@ -14,6 +14,7 @@ import { isEligibleForPublicRanking } from "@predict-future/business-rules/portf
 
 import { getPortfolioOwnerUserLabel } from "@/lib/portfolios/displayName";
 import { getEtfNameMap, searchEtfRegistryByName } from "@/lib/finance/etfRegistry";
+import { latestStockQuoteBySymbol } from "@/lib/finance/latestQuotes";
 import { prisma } from "@/lib/prisma";
 
 const EXECUTED_TX_SELECT = {
@@ -31,12 +32,10 @@ const EXECUTED_TX_SELECT = {
  */
 export async function getLatestCloseBySymbol(symbols: string[]): Promise<Map<string, number>> {
   if (symbols.length === 0) return new Map();
-  const rows = await prisma.stockEodQuote.findMany({
-    where: { symbol: { in: symbols } },
-    select: { symbol: true, close: true },
-    orderBy: { sessionDate: "desc" },
-    distinct: ["symbol"]
-  });
+  // Raw DISTINCT ON (latestQuotes.ts, 2026-08-15): this function's doc always
+  // promised DISTINCT ON, but Prisma's findMany distinct emulates it
+  // client-side over every symbol's full history.
+  const rows = await latestStockQuoteBySymbol(symbols);
   return new Map(rows.map((r) => [r.symbol, r.close]));
 }
 

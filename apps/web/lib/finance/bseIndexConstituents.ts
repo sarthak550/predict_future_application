@@ -146,6 +146,7 @@
  * remain unlinked, same "no dead links" honesty rule as before.
  */
 
+import { latestBseRowByScripCode } from "@/lib/finance/latestQuotes";
 import { prisma } from "@/lib/prisma";
 
 const ASIA_INDEX_API_BASE = "https://www.bseindices.com/AsiaIndexAPI/api";
@@ -626,12 +627,9 @@ async function resolveScripCodesAgainstBseEquities(
   const result = new Map<string, { symbol: string; companyName: string }>();
   if (scripCodes.length === 0) return result;
   try {
-    const rows = await prisma.bseEodQuote.findMany({
-      where: { scripCode: { in: scripCodes } },
-      orderBy: [{ scripCode: "asc" }, { sessionDate: "desc" }],
-      distinct: ["scripCode"],
-      select: { scripCode: true, tickerSymbol: true, companyName: true },
-    });
+    // Raw DISTINCT ON (latestQuotes.ts, 2026-08-15): Prisma's findMany
+    // distinct fetched every matching scrip code's full session history.
+    const rows = await latestBseRowByScripCode(scripCodes);
     for (const r of rows) {
       result.set(r.scripCode, { symbol: `${r.tickerSymbol.toUpperCase()}.BO`, companyName: r.companyName });
     }
