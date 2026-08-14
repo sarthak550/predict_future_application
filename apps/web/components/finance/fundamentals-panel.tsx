@@ -96,6 +96,8 @@ export type FundamentalsPanelProps = {
    * that silently vanishes and reads as broken.
    */
   isBseOnlyEquity?: boolean;
+  /** BSE scrip code — required to build the bseindia.com quote link for a BSE-only equity (their site addresses stocks by numeric code, not ticker). */
+  bseScripCode?: string | null;
 };
 
 /** "2026-03-31" -> "Mar 2026". */
@@ -1170,6 +1172,7 @@ export function FundamentalsPanel({
   keyStats,
   fetchedAt,
   isBseOnlyEquity = false,
+  bseScripCode = null,
 }: FundamentalsPanelProps) {
   const [mode, setMode] = useState<"annual" | "quarterly">("annual");
   // Mount-computed (house convention for time values) — gates the Upcoming
@@ -1280,13 +1283,22 @@ export function FundamentalsPanel({
                   results, shareholding pattern, announcements live there. */}
               <div>
                 <p className="text-xs text-ink-400">Exchange</p>
+                {/* Founder 2026-08-15: a BSE-only stock must link to BSE's own
+                    quote page, not NSE (which doesn't even know the symbol) —
+                    bseindia.com addresses stocks by numeric scrip code; the
+                    /x/x/ path segments are display slugs BSE ignores
+                    (verified live: 200 for /stock-share-price/x/x/540980/). */}
                 <a
-                  href={`https://www.nseindia.com/get-quotes/equity?symbol=${encodeURIComponent(symbol)}`}
+                  href={
+                    isBseOnlyEquity && bseScripCode
+                      ? `https://www.bseindia.com/stock-share-price/x/x/${encodeURIComponent(bseScripCode)}/`
+                      : `https://www.nseindia.com/get-quotes/equity?symbol=${encodeURIComponent(symbol)}`
+                  }
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-sm font-semibold text-signal-sky hover:underline"
                 >
-                  View on NSE ↗
+                  {isBseOnlyEquity && bseScripCode ? "View on BSE ↗" : "View on NSE ↗"}
                 </a>
               </div>
             </div>

@@ -222,6 +222,8 @@ export interface InstrumentDetail {
    * argument applies here).
    */
   isBseEquity: boolean;
+  /** BSE scrip code for a BSE-only equity (external quote links target bseindia.com by scrip code) — null for everything else. */
+  bseScripCode: string | null;
   /**
    * True when `isBseEquity` AND this stock's MAX turnover across its
    * trailing BSE_EQUITY_FLOOR_WINDOW_SESSIONS does NOT clear
@@ -1273,6 +1275,7 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     etfsTrackingIndex,
     indexMembership,
     isBseEquity,
+    bseScripCode: bseEquityLatestRow?.scripCode ?? null,
     belowBseEquityFloor,
     isBseFund,
     bseFundDetails,

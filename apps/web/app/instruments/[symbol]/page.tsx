@@ -310,6 +310,7 @@ export default async function InstrumentDetailPage({
             debtCoverage={instrument.enrichment.debtCoverage}
             fetchedAt={instrument.enrichment.fundamentalsFetchedAt}
             isBseOnlyEquity={instrument.isBseEquity}
+            bseScripCode={instrument.bseScripCode}
           />
           {/* Index Membership (2026-08-12) — plain-equity-only, symmetric with
               EtfTrackingList on the index side (see that component's own
