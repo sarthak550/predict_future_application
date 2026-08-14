@@ -142,6 +142,31 @@ export function normalizeIndexDisplayName(raw: string): string {
   return raw.trim().toUpperCase().replace(/\s+/g, " ");
 }
 
+/**
+ * The 5 F&O-tradable underlyings: page symbol ↔ NSE's own display name.
+ * SINGLE SOURCE (founder, 2026-08-15: mappings live in one place, never
+ * re-hardcoded per consumer) — these five need a registry at all only
+ * because their `/instruments/[symbol]` code is a short exchange mnemonic
+ * ("NIFTY", "BANKNIFTY") that `deriveIndexSymbol(name)` can never produce
+ * from the NSE name, unlike every other index. Names verified live
+ * 2026-07-25 (see apps/web/lib/finance/indexTradableAlias.ts's module doc,
+ * the original source of the list).
+ *
+ * Consumers: apps/api/lib/finance/instrumentNameMatch.ts (alias healer).
+ * KNOWN DUPLICATES to migrate here when next touched (each predates this
+ * registry and is live-verified in place — migrate WITH a QA pass, not
+ * mechanically): apps/web instrument.ts INDEX_DISPLAY_NAME's tradable-5
+ * head, indexLongTail.ts TRADABLE_INDEX_NSE_NAMES,
+ * app/api/instruments/search TRADABLE_INDEX_ENTRIES.
+ */
+export const TRADABLE_INDEX_IDENTITIES: ReadonlyArray<{ symbol: string; nseName: string }> = [
+  { symbol: "NIFTY", nseName: "NIFTY 50" },
+  { symbol: "BANKNIFTY", nseName: "NIFTY BANK" },
+  { symbol: "FINNIFTY", nseName: "NIFTY FINANCIAL SERVICES" },
+  { symbol: "MIDCPNIFTY", nseName: "NIFTY MIDCAP SELECT" },
+  { symbol: "NIFTYNXT50", nseName: "NIFTY NEXT 50" },
+];
+
 export const INDEX_UNIVERSE: readonly IndexUniverseEntry[] = [
   // --- BROAD MARKET INDICES (10 of 19 candidates verified live) ---
   { name: "NIFTY 100", displayName: "Nifty 100", slug: "NIFTY-100", symbol: "NIFTY100", yahooTicker: "^CNX100" },

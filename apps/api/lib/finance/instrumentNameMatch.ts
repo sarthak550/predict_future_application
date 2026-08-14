@@ -1,6 +1,10 @@
 import type { InstrumentResolutionSource, PrismaClient } from "@prisma/client";
 
-import { deriveIndexSymbol, INDEX_UNIVERSE } from "@predict-future/business-rules/finance/indexUniverse";
+import {
+  deriveIndexSymbol,
+  INDEX_UNIVERSE,
+  TRADABLE_INDEX_IDENTITIES,
+} from "@predict-future/business-rules/finance/indexUniverse";
 import { BSE_INDEX_UNIVERSE } from "@predict-future/business-rules/finance/bseIndexUniverse";
 import { normalizeCompanyName } from "@/lib/marketMoves/nseSymbolResolver";
 import { fetchEquityNames } from "@/lib/marketMoves/nse";
@@ -133,11 +137,7 @@ async function buildUniverse(prisma: PrismaClient): Promise<NonNullable<typeof c
   // derivation — the tradable 5 + Yahoo-verified universes use page symbols
   // deriveIndexSymbol can't produce from the name alone.
   const knownIndexSymbolByName = new Map<string, string>([
-    ["NIFTY 50", "NIFTY"],
-    ["NIFTY BANK", "BANKNIFTY"],
-    ["NIFTY FINANCIAL SERVICES", "FINNIFTY"],
-    ["NIFTY MIDCAP SELECT", "MIDCPNIFTY"],
-    ["NIFTY NEXT 50", "NIFTYNXT50"],
+    ...TRADABLE_INDEX_IDENTITIES.map((e): [string, string] => [normalizeCompanyName(e.nseName), e.symbol]),
     ...INDEX_UNIVERSE.map((e): [string, string] => [normalizeCompanyName(e.name), e.symbol]),
     ...BSE_INDEX_UNIVERSE.map((e): [string, string] => [normalizeCompanyName(e.name), e.symbol]),
   ]);
