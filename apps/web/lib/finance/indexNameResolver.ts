@@ -162,6 +162,13 @@ export function buildCanonIndex(allIndexNames: string[]): CanonIndex {
  * as indexUniverse.ts's own INDEX_NAME_ALIASES).
  */
 export const NORM_ALIASES: Record<string, string> = {
+  // Founder-reported live 2026-08-14: HDFCSENSEX/SENSEXIETF/SENSEXBETA/
+  // LICNETFSEN publish their Underlying as literally the bare word "SENSEX"
+  // (verified in eq_etfseclist.csv) — no normalization rule can reach
+  // "BSE SENSEX" from it, so those four rendered "not yet linked" while
+  // long-form underlyings ("S&PBSESensexIndex") resolved fine. "SENSEX"
+  // unambiguously means exactly one index.
+  SENSEX: "BSE SENSEX",
   NIFTYINFRA: "Nifty Infrastructure",
   NIFTYCONSUMPTION: "Nifty India Consumption",
   NIFTYDIVOPPS50: "Nifty Dividend Opportunities 50",
