@@ -26,6 +26,7 @@ import { INDEX_UNIVERSE } from "@predict-future/business-rules/finance/indexUniv
 import { BSE_INDEX_UNIVERSE } from "@predict-future/business-rules/finance/bseIndexUniverse";
 import { sanitizeExtractedValue } from "@/lib/ai/sanitizeExtractedValue";
 import { fetchEquityNames } from "@/lib/marketMoves/nse";
+import { matchInstrumentByName } from "@/lib/finance/instrumentNameMatch";
 
 /**
  * Small, stable, hand-verified index-identity map — the only non-equity
@@ -132,6 +133,15 @@ function toResolution(row: InstrumentAlias): InstrumentAliasResolution {
  * signal first (when both theoretically could match) is the correct,
  * intentional precedence, not an accident of ordering.
  *
+ *   5. NAME MATCH (2026-08-15, founder: instruments "mapped but not
+ *      clickable... handled at database level") — when every ticker path
+ *      missed but the opinion carried a display LABEL, match the label
+ *      against the combined NSE+BSE listed-name universe (exact or unique
+ *      ≥2-token prefix ONLY — see instrumentNameMatch.ts's precision law).
+ *      This is what resolves an extraction-mangled ticker ("KALYAN.NS",
+ *      "KAJARI.NS") whose label ("Kalyan Jewellers") identifies the company
+ *      unambiguously — the ticker paths above can never fix those.
+ *
  * Commodity futures, FX pairs, sectoral indices, and any ticker matching
  * none of the above return null — genuinely unresolvable, not a gap in this
  * function.
@@ -139,15 +149,17 @@ function toResolution(row: InstrumentAlias): InstrumentAliasResolution {
 async function resolveAuthoritatively(
   prisma: PrismaClient,
   ticker: string | null,
+  label: string | null = null,
 ): Promise<{ symbol: string; canonicalName: string; resolutionSource: InstrumentResolutionSource } | null> {
-  if (!ticker) return null;
+  const nameFallback = async () => (label ? matchInstrumentByName(prisma, label) : null);
+  if (!ticker) return nameFallback();
 
   const known = KNOWN_INDEX_IDENTITIES[ticker];
   if (known) return { ...known, resolutionSource: "KNOWN_INDEX" };
 
   const bseBareTicker = bareBseTicker(ticker);
   const bare = bareEquitySymbol(ticker) ?? bseBareTicker;
-  if (!bare) return null;
+  if (!bare) return nameFallback();
 
   const eodRows = await prisma.stockEodQuote.findMany({
     where: { symbol: bare },
@@ -194,7 +206,7 @@ async function resolveAuthoritatively(
     }
   }
 
-  return null;
+  return nameFallback();
 }
 
 /**
@@ -219,7 +231,7 @@ export async function previewInstrumentResolution(
   const sanitizedLabel = sanitizeExtractedValue(instrumentLabel);
   const sanitizedTicker = sanitizeExtractedValue(ticker);
   const rawName = normalizeInstrumentRawName(sanitizedTicker, sanitizedLabel);
-  const resolution = await resolveAuthoritatively(prisma, sanitizedTicker);
+  const resolution = await resolveAuthoritatively(prisma, sanitizedTicker, sanitizedLabel);
   return { rawName, resolution };
 }
 
@@ -255,7 +267,7 @@ export async function resolveInstrumentAlias(
   const existing = await prisma.instrumentAlias.findUnique({ where: { rawName } });
   if (existing) return toResolution(existing);
 
-  const resolution = await resolveAuthoritatively(prisma, sanitizedTicker);
+  const resolution = await resolveAuthoritatively(prisma, sanitizedTicker, sanitizedLabel);
   const now = new Date();
 
   // Upsert, not create+catch — a concurrent extraction can race this exact
@@ -276,4 +288,94 @@ export async function resolveInstrumentAlias(
   });
 
   return toResolution(saved);
+}
+
+/**
+ * Self-healing retry over every `resolved: false` InstrumentAlias row
+ * (founder, 2026-08-15: unresolved instruments must fix themselves "at
+ * database level... we can't change the code every time a new instrument
+ * comes in"). Run daily by /api/cron/refresh-instrument-aliases; also
+ * replaces the manual scripts/refresh-stale-index-aliases.ts chore.
+ *
+ * Two retry angles per stale row, in order:
+ *   1. TICKER RETRY — re-run the full authoritative chain on the rawName
+ *      itself (ticker-keyed rows). This is what flips a negative row the
+ *      day a NEW instrument starts trading (fresh IPO, BSE universe growth,
+ *      index-registry addition) — the sources GROW, the old verdict doesn't.
+ *   2. LABEL CONSENSUS — collect the display labels of every live opinion
+ *      whose (ticker, label) pair normalizes to this row's key (the alias
+ *      row itself never stored the label for ticker-keyed rows), plus the
+ *      rawName itself for label-keyed rows, and name-match each
+ *      (instrumentNameMatch.ts, exact/unique-prefix only). Resolves ONLY on
+ *      unanimous agreement — labels matching two different symbols, or none,
+ *      leave the row untouched. This is what fixes extraction-mangled
+ *      tickers ("KALYAN.NS"/"KAJARI.NS" → the "Kalyan Jewellers" label →
+ *      KALYANKJIL) that a ticker retry can never reach.
+ *
+ * A row that stays unresolved is simply retried again next run — cheap
+ * (the table holds ~100 negative rows) and the honest steady state for
+ * genuinely unlinkable instruments (commodities, FX, delisted names).
+ */
+export async function retryUnresolvedInstrumentAliases(
+  prisma: PrismaClient,
+): Promise<{ scanned: number; resolvedByTicker: number; resolvedByLabel: number }> {
+  const stale = await prisma.instrumentAlias.findMany({ where: { resolved: false } });
+  if (stale.length === 0) return { scanned: 0, resolvedByTicker: 0, resolvedByLabel: 0 };
+
+  // One bounded pass over live opinions builds the key → labels map (the
+  // alias table is keyed by normalized rawName; ticker-keyed rows dropped
+  // their label at write time, so it's recovered from the opinions here).
+  const opinions = await prisma.expertOpinion.findMany({
+    where: { suppressedAt: null },
+    select: { instrument: true, instrumentTicker: true },
+  });
+  const labelsByKey = new Map<string, Set<string>>();
+  for (const o of opinions) {
+    const key = normalizeInstrumentRawName(sanitizeExtractedValue(o.instrumentTicker), sanitizeExtractedValue(o.instrument));
+    const label = sanitizeExtractedValue(o.instrument);
+    if (!key || !label) continue;
+    if (!labelsByKey.has(key)) labelsByKey.set(key, new Set());
+    labelsByKey.get(key)!.add(label);
+  }
+
+  let resolvedByTicker = 0;
+  let resolvedByLabel = 0;
+  const now = new Date();
+
+  for (const row of stale) {
+    let resolution = await resolveAuthoritatively(prisma, row.rawName).catch(() => null);
+    let via: "ticker" | "label" = "ticker";
+
+    if (!resolution) {
+      const labels = new Set(labelsByKey.get(row.rawName) ?? []);
+      // A label-keyed row's rawName IS its (normalized) label — always a candidate.
+      if (!/\.(NS|BO)$/i.test(row.rawName)) labels.add(row.rawName);
+      const matches: Array<NonNullable<Awaited<ReturnType<typeof matchInstrumentByName>>>> = [];
+      for (const label of labels) {
+        const m = await matchInstrumentByName(prisma, label);
+        if (m) matches.push(m);
+      }
+      const symbols = new Set(matches.map((m) => m.symbol));
+      if (matches.length > 0 && symbols.size === 1) {
+        resolution = matches[0];
+        via = "label";
+      }
+    }
+
+    if (!resolution) continue;
+    await prisma.instrumentAlias.update({
+      where: { rawName: row.rawName },
+      data: {
+        resolved: true,
+        symbol: resolution.symbol,
+        canonicalName: resolution.canonicalName,
+        resolutionSource: resolution.resolutionSource,
+        resolvedAt: now,
+      },
+    });
+    if (via === "ticker") resolvedByTicker++;
+    else resolvedByLabel++;
+  }
+
+  return { scanned: stale.length, resolvedByTicker, resolvedByLabel };
 }
