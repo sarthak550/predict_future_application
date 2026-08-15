@@ -7,11 +7,14 @@ import { AnalystDisclaimerFooter } from "@/components/finance/disclaimer-footer"
 import { DirectionChip, VerdictBadge } from "@/components/finance/analyst-badges";
 import { FirmLink } from "@/components/finance/firm-link";
 import { PaperTradeCta } from "@/components/finance/paper-trade-cta";
+import { ShareCallButton } from "@/components/finance/share-call-button";
 import { TakeASide } from "@/components/finance/take-a-side";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { canonicalizeOrgDisplay } from "@predict-future/business-rules/experts/firmAliases";
+import { formatAccuracyCaption } from "@/components/finance/accuracy-stat";
+import { computeScorecard, PROVISIONAL_MIN_RESOLVED_CALLS } from "@predict-future/business-rules";
 import { prisma } from "@/lib/prisma";
 import { formatDateOnly } from "@/lib/utils";
 
@@ -35,7 +38,22 @@ async function fetchResolvedCall(id: string) {
       resolutionNote: true,
       suppressedAt: true,
       expert: {
-        select: { name: true, organization: true, slug: true, verified: true, avatarUrl: true },
+        select: {
+          name: true,
+          organization: true,
+          slug: true,
+          verified: true,
+          avatarUrl: true,
+          // Growth Loop Sprint G3 (Decision 3) — the analyst's own aggregate
+          // track record, rendered below the quote via formatAccuracyCaption
+          // once they clear PROVISIONAL_MIN_RESOLVED_CALLS. Same shape
+          // getPublicProfileStats expects (mirrors analysts/[slug]/page.tsx's
+          // fetchExpertBySlug), suppressed opinions excluded.
+          opinions: {
+            where: { suppressedAt: null },
+            select: { resolutionStatus: true },
+          },
+        },
       },
     },
   });
@@ -48,9 +66,12 @@ async function fetchResolvedCall(id: string) {
     return { kind: "unresolved" as const, expertSlug: opinion.expert.slug };
   }
 
+  const expertStats = computeScorecard(opinion.expert.opinions);
+
   return {
     kind: "resolved" as const,
     opinion: { ...opinion, expert: { ...opinion.expert, organization: canonicalizeOrgDisplay(opinion.expert.organization) } },
+    expertStats,
   };
 }
 
@@ -103,8 +124,13 @@ export default async function CallSharePage({ params }: { params: { id: string }
     notFound();
   }
 
-  const { opinion } = result;
+  const { opinion, expertStats } = result;
   const isHit = opinion.resolutionStatus === "RESOLVED_HIT";
+  // Decision 3: only render the aggregate line once the analyst clears the
+  // same provisional-track-record gate used everywhere else on the site —
+  // below that, the analyst's own profile already handles "building a track
+  // record," so we just omit the line here rather than duplicate it.
+  const showAccuracyCaption = expertStats.resolvedCount >= PROVISIONAL_MIN_RESOLVED_CALLS;
 
   return (
     <div className="space-y-8">
@@ -135,6 +161,11 @@ export default async function CallSharePage({ params }: { params: { id: string }
           <blockquote className="rounded-[24px] bg-white/10 p-5 text-lg leading-8 text-white">
             &ldquo;{opinion.quote}&rdquo;
           </blockquote>
+          {showAccuracyCaption && (
+            <p className="text-sm text-white/60">
+              {opinion.expert.name}&rsquo;s track record: {formatAccuracyCaption(expertStats.hitCount, expertStats.resolvedCount)}
+            </p>
+          )}
           <div className="flex flex-wrap items-center gap-3">
             {opinion.instrument && <Badge className="bg-white/10 text-white">{opinion.instrument}</Badge>}
             <DirectionChip direction={opinion.direction} />
@@ -148,9 +179,18 @@ export default async function CallSharePage({ params }: { params: { id: string }
 
       <Card>
         <CardContent className="flex flex-col gap-4 p-6">
-          <div className="flex items-center gap-2 text-sm text-ink-500">
-            <span>Verdict:</span>
-            <VerdictBadge status={opinion.resolutionStatus} />
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ink-100 pb-4">
+            <div className="flex items-center gap-2 text-sm text-ink-500">
+              <span>Verdict:</span>
+              <VerdictBadge status={opinion.resolutionStatus} />
+            </div>
+            <ShareCallButton
+              callId={opinion.id}
+              analystName={opinion.expert.name}
+              direction={opinion.direction}
+              instrument={opinion.instrument}
+              resolutionStatus={isHit ? "RESOLVED_HIT" : "RESOLVED_MISS"}
+            />
           </div>
           {opinion.resolutionNote && (
             <p className="text-sm leading-6 text-ink-600">{opinion.resolutionNote}</p>
