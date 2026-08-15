@@ -58,8 +58,18 @@ async function fetchResolvedCall(id: string) {
     },
   });
 
-  if (!opinion || opinion.suppressedAt) {
+  if (!opinion) {
     return { kind: "not-found" as const };
+  }
+
+  // A suppressed opinion is REMOVED from the public scorecard — never render
+  // its share artifact. But it must not 404 either (QA, 2026-08-15: ~45% of
+  // opinions are suppressed, and a user's own /profile My Takes list links
+  // every vote here — a third of a vote-rich user's rows dead-ended one
+  // click from their own profile). Same graceful exit the unresolved branch
+  // already uses: redirect to the analyst's profile when we know it.
+  if (opinion.suppressedAt) {
+    return { kind: "unresolved" as const, expertSlug: opinion.expert.slug };
   }
 
   if (opinion.resolutionStatus !== "RESOLVED_HIT" && opinion.resolutionStatus !== "RESOLVED_MISS") {
