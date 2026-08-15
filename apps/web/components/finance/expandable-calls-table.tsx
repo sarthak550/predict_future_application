@@ -28,7 +28,7 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { ArrowUpRight, ChevronDown } from "lucide-react";
+import { ArrowUpRight, ChevronDown, Share2 } from "lucide-react";
 import type { OpinionDirection, OpinionResolutionStatus } from "@prisma/client";
 
 import {
@@ -196,16 +196,35 @@ export function ExpandableCallsTable({
                     <VerdictBadge status={call.resolutionStatus} />
                   </TableCell>
                   <TableCell>
-                    <a
-                      href={call.sourceUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      onClick={(e) => e.stopPropagation()}
-                      className="inline-flex items-center gap-1 text-signal-sky hover:underline"
-                    >
-                      Source
-                      <ArrowUpRight className="h-3.5 w-3.5" />
-                    </a>
+                    <span className="inline-flex items-center gap-3">
+                      <a
+                        href={call.sourceUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="inline-flex items-center gap-1 text-signal-sky hover:underline"
+                      >
+                        Source
+                        <ArrowUpRight className="h-3.5 w-3.5" />
+                      </a>
+                      {/* Founder 2026-08-15: the share affordance was buried as a
+                          text link inside the EXPANDED panel only — invisible
+                          without clicking a row open. Graded calls now carry a
+                          row-level share icon straight to the /calls/[id] share
+                          page (which owns the native/WhatsApp/Twitter kit).
+                          Graded-only: /calls redirects ungraded calls anyway. */}
+                      {isGraded && (
+                        <Link
+                          href={`/calls/${call.id}`}
+                          onClick={(e) => e.stopPropagation()}
+                          aria-label="Share this call"
+                          title="Share this call"
+                          className="text-ink-400 transition hover:text-signal-sky"
+                        >
+                          <Share2 className="h-4 w-4" />
+                        </Link>
+                      )}
+                    </span>
                   </TableCell>
                 </TableRow>
 
