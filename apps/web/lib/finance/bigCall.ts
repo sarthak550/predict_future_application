@@ -98,7 +98,7 @@ export async function getTodaysBigCall(): Promise<BigCallResult> {
         ist.setUTCHours(0, 0, 0, 0);
         return new Date(ist.getTime() - (5 * 60 + 30) * 60 * 1000);
       })()
-    : new Date(Date.now() - 24 * 60 * 60 * 1000);
+    : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000); // 7d, not 24h (2026-08-15 audit #3): a graded receipt is showcase-worthy all week — see minVotesForHit below
 
   const hitOpinionIds = await prisma.expertOpinion.findMany({
     where: {
@@ -123,7 +123,13 @@ export async function getTodaysBigCall(): Promise<BigCallResult> {
     pollAMap.set(row.opinionId, row._count.id);
   }
 
-  const minVotesForHit = isClosingWrap ? 0 : 20;
+  // 2026-08-15 (audit critical #3, founder-picked): the old "≥20 poll votes
+  // outside closing-wrap" gate structurally locked graded HITs out of the
+  // hero (polls have ~zero votes pre-launch), so the page's single largest
+  // visual element was almost always an UNGRADED claim — on a product whose
+  // pitch is grading. Any recent graded HIT now qualifies in every window;
+  // pending calls remain the fallback when no recent receipt exists.
+  const minVotesForHit = 0;
   const eligibleHitIds = hitOpinionIds
     .filter((op) => (pollAMap.get(op.id) ?? 0) >= minVotesForHit)
     .map((op) => op.id);
@@ -217,7 +223,9 @@ export async function getTodaysBigCall(): Promise<BigCallResult> {
 
     let score: number;
     if (op.isPostResolution) {
-      score = tierWeight * 1.5;
+      // 1.5x keeps any receipt above every pending call's tiny score; the
+      // recency factor ranks receipts among themselves (newest resolution wins).
+      score = tierWeight * 1.5 * (0.5 + 0.5 * freshnessScore(op.resolvedAt ?? op.publishedAt));
     } else {
       const freshness = freshnessScore(op.publishedAt);
       score = tierWeight * freshness * clusterHeat * Math.max(pollAVolumeNorm, 0.1);

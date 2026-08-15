@@ -30,7 +30,15 @@ export function BigCallCard({ result }: { result: BigCallResult }) {
           <span className="text-xs font-semibold uppercase tracking-[0.24em] text-signal-sky">
             {result.windowLabel}
           </span>
-          {opinion.isPostResolution && <Badge className="bg-emerald-500/20 text-emerald-300">Called it</Badge>}
+          {/* Audit #3 (2026-08-15): every hero call declares its grading state —
+              a graded HIT wears its receipt, and a pending call says so
+              plainly instead of reading as an implicit endorsement on a page
+              whose whole pitch is "we grade every call". */}
+          {opinion.isPostResolution ? (
+            <Badge className="bg-emerald-500/20 text-emerald-300">HIT — graded correct</Badge>
+          ) : (
+            <Badge className="bg-amber-500/20 text-amber-300">Pending — not yet graded</Badge>
+          )}
         </div>
 
         <div className="flex items-center gap-3">
