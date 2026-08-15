@@ -1,7 +1,11 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 
+import { MyAnalystCard } from "@/components/finance/my-analyst-card";
 import { Avatar } from "@/components/ui/avatar";
+import { Card, CardContent } from "@/components/ui/card";
 import { requireUser } from "@/lib/auth";
+import { getMyAnalysts } from "@/lib/finance/profile";
 import { formatDateOnly } from "@/lib/utils";
 
 export const metadata: Metadata = {
@@ -24,6 +28,7 @@ export const metadata: Metadata = {
  */
 export default async function ProfilePage() {
   const user = await requireUser();
+  const myAnalysts = await getMyAnalysts(user.id);
 
   return (
     <div className="space-y-8">
@@ -34,6 +39,30 @@ export default async function ProfilePage() {
           <p className="mt-1 text-sm text-ink-500">Member since {formatDateOnly(user.createdAt)}</p>
         </div>
       </div>
+
+      <section className="space-y-4">
+        <div>
+          <h2 className="text-xl font-semibold text-ink-900">My Analysts</h2>
+          <p className="mt-1 text-sm text-ink-500">Analysts you follow, and their track record.</p>
+        </div>
+        {myAnalysts.length === 0 ? (
+          <Card>
+            <CardContent className="p-8 text-center text-sm text-ink-500">
+              You&rsquo;re not following any analysts yet.{" "}
+              <Link href="/analysts" className="font-medium text-signal-sky hover:underline">
+                Follow one from their profile or the Scorecard
+              </Link>{" "}
+              to see their calls here.
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {myAnalysts.map((analyst) => (
+              <MyAnalystCard key={analyst.followId} analyst={analyst} />
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
