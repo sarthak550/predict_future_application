@@ -14,15 +14,15 @@ import { SessionChip } from "@/components/finance/session-chip";
 // Portfolios hidden 2026-07-25 (founder: launch later); Indices directory page
 // removed same day (founder: search categories replace it — /indices/[slug]
 // detail pages remain as search destinations).
+// Methodology is deliberately NOT here (founder 2026-08-15: "methodology
+// matters for analysts only" — keep the nav uncrowded). It surfaces
+// prominently on /analysts' own header instead, plus the site footer,
+// AnalystDisclaimerFooter, and every Low-sample badge.
 const NAV_LINKS = [
   { href: "/analysts", label: "Analysts" },
   { href: "/opinions", label: "Opinions" },
   { href: "/pulse", label: "Market Pulse" },
   { href: "/paper-trading", label: "Paper Trading" },
-  // Founder 2026-08-15: /methodology was reachable only via footer links and
-  // the Low-sample badges — invisible for a page whose whole job is letting
-  // a skeptic audit the scorecard's rules. Top-level nav, site-wide.
-  { href: "/methodology", label: "Methodology" },
 ];
 
 export function PublicHeader() {

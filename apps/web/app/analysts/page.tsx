@@ -49,11 +49,26 @@ export default async function AnalystsDirectoryPage({
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-3xl font-semibold text-ink-900">Analyst Scorecard</h1>
+        {/* Founder 2026-08-15: Methodology lives HERE, not in the global nav —
+            it's analyst-domain, and this is the page where a skeptic first
+            meets an accuracy number. */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h1 className="text-3xl font-semibold text-ink-900">Analyst Scorecard</h1>
+          <Link
+            href="/methodology"
+            className="text-sm font-medium text-signal-sky hover:underline"
+          >
+            How grading works →
+          </Link>
+        </div>
         <p className="mt-3 max-w-2xl text-sm leading-6 text-ink-500">
           We track what market analysts said in the press, and grade every call HIT or MISS against what
           actually happened. Below are the analysts with enough graded calls to show a meaningful track
-          record. Not investment advice — a record of public statements, not a recommendation.
+          record. Not investment advice — a record of public statements, not a recommendation.{" "}
+          <Link href="/methodology" className="text-signal-sky hover:underline">
+            Read exactly how every call is graded
+          </Link>
+          .
         </p>
       </div>
 
