@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { ArrowUpRight, Bell } from "lucide-react";
 
 import { AccuracyCaption, AccuracyPercent } from "@/components/finance/accuracy-stat";
 import { DirectionChip, VerdictBadge } from "@/components/finance/analyst-badges";
@@ -11,6 +12,8 @@ import { PROVISIONAL_MIN_RESOLVED_CALLS } from "@predict-future/business-rules";
 import { requireUser } from "@/lib/auth";
 import { getMyAnalysts, getMyTakes } from "@/lib/finance/profile";
 import { computeUserAccuracy, implicationChoiceToAgreement } from "@/lib/finance/userAccuracy";
+import { getAccountDetail } from "@/lib/paperTrading/queries";
+import { prisma } from "@/lib/prisma";
 import { formatDateOnly } from "@/lib/utils";
 
 const STANCE_LABEL: Record<ReturnType<typeof implicationChoiceToAgreement>, string> = {
@@ -18,6 +21,13 @@ const STANCE_LABEL: Record<ReturnType<typeof implicationChoiceToAgreement>, stri
   DISAGREED: "You disagreed",
   NEUTRAL: "You were neutral",
 };
+
+/** Same `₹{value.toLocaleString("en-IN", ...)}` convention paper-trading-dashboard.tsx's
+ *  own local formatRupees uses — a small one-liner duplicated per call site by
+ *  established codebase convention, not worth a shared-utils migration for this ticket. */
+function formatRupees(value: number): string {
+  return `₹${value.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+}
 
 export const metadata: Metadata = {
   title: "My Profile — Predict Future",
@@ -39,10 +49,24 @@ export const metadata: Metadata = {
  */
 export default async function ProfilePage() {
   const user = await requireUser();
-  const myAnalysts = await getMyAnalysts(user.id);
-  const myTakes = await getMyTakes(user.id);
+
+  const [myAnalysts, myTakes, activePaperAccount, unreadNotificationCount] = await Promise.all([
+    getMyAnalysts(user.id),
+    getMyTakes(user.id),
+    // Ticket 4 gating requirement: a `findFirst`, NEVER `getOrCreateActiveAccount`
+    // — visiting /profile must never silently provision a paper-trading account
+    // for a user who has never opened Paper Trading.
+    prisma.paperTradingAccount.findFirst({ where: { userId: user.id, status: "ACTIVE" }, select: { id: true } }),
+    prisma.notification.count({ where: { userId: user.id, isRead: false } }),
+  ]);
   const accuracy = computeUserAccuracy(myTakes);
   const hasProvisionalTrackRecord = accuracy.resolvedCount < PROVISIONAL_MIN_RESOLVED_CALLS;
+
+  // Only reached once we've already confirmed (above) that an ACTIVE account
+  // exists — getAccountDetail's own getOrCreateActiveAccount call is a no-op
+  // re-read in that case, never a create, so this still never provisions an
+  // account as a side effect of visiting this page.
+  const paperAccount = activePaperAccount ? await getAccountDetail(user.id) : null;
 
   return (
     <div className="space-y-8">
@@ -156,6 +180,80 @@ export default async function ProfilePage() {
             </CardContent>
           </Card>
         )}
+      </section>
+
+      <section className="grid gap-4 sm:grid-cols-2">
+        <Card>
+          <CardContent className="flex flex-col gap-3 p-5">
+            <h2 className="text-sm font-semibold text-ink-900">Paper Trading</h2>
+            {paperAccount ? (
+              <>
+                <div>
+                  <p className="text-xs text-ink-500">Total account value</p>
+                  <p className="mt-0.5 text-2xl font-semibold text-ink-900">{formatRupees(paperAccount.totalValue)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-ink-500">Lifetime net P&amp;L</p>
+                  <p
+                    className={`mt-0.5 text-lg font-semibold ${
+                      paperAccount.lifetimeNetPnl > 0
+                        ? "text-emerald-600"
+                        : paperAccount.lifetimeNetPnl < 0
+                          ? "text-rose-600"
+                          : "text-ink-900"
+                    }`}
+                  >
+                    {paperAccount.lifetimeNetPnl >= 0 ? "+" : ""}
+                    {formatRupees(paperAccount.lifetimeNetPnl)}
+                  </p>
+                </div>
+                <Link
+                  href="/paper-trading"
+                  className="inline-flex items-center gap-1 text-sm font-medium text-signal-sky hover:underline"
+                >
+                  View full account <ArrowUpRight className="h-3.5 w-3.5" />
+                </Link>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-ink-500">
+                  You haven&rsquo;t started paper trading. Get ₹1 crore in virtual capital and trade India&rsquo;s
+                  markets risk-free.
+                </p>
+                <Link
+                  href="/paper-trading"
+                  className="inline-flex w-fit items-center gap-1 rounded-full bg-ink-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-ink-700"
+                >
+                  Start paper trading
+                </Link>
+              </>
+            )}
+          </CardContent>
+        </Card>
+
+        <Link href="/notifications" className="block h-full">
+          <Card className="h-full transition hover:border-signal-sky/40">
+            <CardContent className="flex h-full items-center justify-between gap-3 p-5">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-ink-100 text-ink-500">
+                  <Bell className="h-5 w-5" />
+                </div>
+                <div>
+                  <h2 className="text-sm font-semibold text-ink-900">Notifications</h2>
+                  <p className="text-xs text-ink-500">New calls and resolutions on calls you&rsquo;ve engaged with.</p>
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                {unreadNotificationCount > 0 && (
+                  <span className="flex h-6 min-w-[1.5rem] items-center justify-center rounded-full bg-rose-600 px-1.5 text-xs font-semibold text-white">
+                    {unreadNotificationCount > 99 ? "99+" : unreadNotificationCount}
+                  </span>
+                )}
+                <ArrowUpRight className="h-4 w-4 text-ink-400" />
+              </div>
+            </CardContent>
+          </Card>
+        </Link>
       </section>
     </div>
   );
