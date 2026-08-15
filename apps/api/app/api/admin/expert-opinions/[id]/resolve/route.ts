@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getUserIdFromRequest } from "@/lib/auth";
 import { notifyOpinionResolution } from "@/lib/notifyOpinionResolution";
+import { notifyExpertFollowersOnOpinionResolution } from "@/lib/notifyExpertFollowersOnOpinionResolution";
 import { prisma } from "@/lib/prisma";
 
 const VALID_RESOLUTION_STATUSES = ["RESOLVED_HIT", "RESOLVED_MISS"] as const;
@@ -103,6 +104,14 @@ export async function POST(
   }
 
   const { notified, pushQueued } = await notifyOpinionResolution(params.id);
+  // Growth Loop Sprint G5 — fan out to the expert's FOLLOWERS too (a
+  // sibling call, not a merge into notifyOpinionResolution — see that
+  // function's own doc comment for why). Best-effort: a failure here must
+  // never roll back the resolution itself or block the voter notification
+  // that already succeeded above.
+  await notifyExpertFollowersOnOpinionResolution(params.id).catch((err) => {
+    console.error("[admin/resolve] follower notification failed:", err);
+  });
 
   // S42-T2: Stamp notifiedAt so the auto-resolve cron Phase-0 sweep does not
   // re-notify this opinion. Best-effort — notification already happened; if

@@ -60,6 +60,7 @@ import { prisma } from "@/lib/prisma";
 import { notifyWebRevalidate } from "@/lib/webRevalidate";
 import { parseOpinionTimeframe, evaluateOpinionResolution, wasLastCallRateLimited } from "@/lib/ai/evaluateOpinionResolution";
 import { notifyOpinionResolution } from "@/lib/notifyOpinionResolution";
+import { notifyExpertFollowersOnOpinionResolution } from "@/lib/notifyExpertFollowersOnOpinionResolution";
 
 // Vercel function timeout hint (Next.js convention) — inert on the actual EC2/Docker deployment.
 export const maxDuration = 60;
@@ -120,6 +121,12 @@ async function runNotificationSweep(): Promise<{ swept: number }> {
   for (const { id } of stuckOpinions) {
     try {
       await notifyOpinionResolution(id);
+      // Growth Loop Sprint G5 — same sweep also fans out to followers, one
+      // of the three required call sites. Best-effort: doesn't block the
+      // voter-notified/notifiedAt bookkeeping below.
+      await notifyExpertFollowersOnOpinionResolution(id).catch((err) => {
+        console.error(`[cron/auto-resolve-opinions] sweep follower notify failed for ${id}:`, err);
+      });
       await prisma.expertOpinion.update({
         where: { id },
         data: { notifiedAt: new Date() },
@@ -360,6 +367,12 @@ async function runResolution(): Promise<{
         const notify = await notifyOpinionResolution(opinion.id);
         notifiedVoters += notify.notified;
         pushQueued += notify.pushQueued;
+        // Growth Loop Sprint G5 — third of the three required call sites
+        // (the main resolution loop, as opposed to Phase 0's stuck-opinion
+        // sweep above). Best-effort, same as the sweep site.
+        await notifyExpertFollowersOnOpinionResolution(opinion.id).catch((err) => {
+          console.error(`[cron/auto-resolve-opinions] follower notify failed for ${opinion.id}:`, err);
+        });
         await prisma.expertOpinion.update({
           where: { id: opinion.id },
           data: { notifiedAt: new Date() },
