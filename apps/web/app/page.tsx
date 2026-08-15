@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowUpRight, BarChart3, FileSearch, Gauge, ScrollText, Wallet } from "lucide-react";
 
+import { AccuracyCaption, AccuracyPercent } from "@/components/finance/accuracy-stat";
 import { BigCallCard } from "@/components/finance/big-call-card";
 import { DirectionChip, VerdictBadge } from "@/components/finance/analyst-badges";
 import { EconomySection } from "@/components/finance/economy-section";
@@ -26,7 +27,7 @@ import { computeOrderCosts } from "@predict-future/business-rules/papertrading/c
 import { getSentimentSplit } from "@/lib/finance/sentiment";
 import { getPublishedNewsItems } from "@/lib/news/queries";
 import { prisma } from "@/lib/prisma";
-import { formatDateOnly, formatPercent } from "@/lib/utils";
+import { formatDateOnly } from "@/lib/utils";
 
 /** Indian Economy section (T-Economy) — the macro news strip's item count, kept small and skimmable, matching the homepage's other "latest N" sections. */
 const MACRO_NEWS_LIMIT = 4;
@@ -689,8 +690,23 @@ function TopAnalysts({ analysts }: { analysts: Awaited<ReturnType<typeof fetchIn
                 </p>
               </div>
               <div className="text-right">
-                <p className="text-xl font-semibold text-ink-900">{formatPercent(analyst.stats.hitRate ?? 0)}</p>
-                <p className="text-xs text-ink-400">{analyst.stats.resolvedCount} graded calls</p>
+                <p className="text-xl">
+                  <AccuracyPercent
+                    hitCount={analyst.stats.hitCount}
+                    resolvedCount={analyst.stats.resolvedCount}
+                    normalClassName="font-semibold text-ink-900"
+                    mutedClassName="font-medium text-ink-500"
+                  />
+                </p>
+                <p className="text-xs text-ink-400">
+                  {/* Same stretched-link CardContent pointer-events-none pattern as
+                      app/analysts/page.tsx — badgeClassName re-enables the badge's own link. */}
+                  <AccuracyCaption
+                    hitCount={analyst.stats.hitCount}
+                    resolvedCount={analyst.stats.resolvedCount}
+                    badgeClassName="pointer-events-auto relative z-20 inline-block align-middle"
+                  />
+                </p>
               </div>
             </CardContent>
           </Card>

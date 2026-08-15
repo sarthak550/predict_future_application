@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import { AccuracyCaption, AccuracyPercent } from "@/components/finance/accuracy-stat";
 import { AnalystFirmFilter } from "@/components/finance/analyst-firm-filter";
 import { AnalystDisclaimerFooter } from "@/components/finance/disclaimer-footer";
 import { FirmLink } from "@/components/finance/firm-link";
@@ -8,7 +9,6 @@ import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { buildFirmOptions, fetchIndexableAnalysts, sortAnalysts, type AnalystSortMode } from "@/lib/finance/analysts";
-import { formatPercent } from "@/lib/utils";
 
 export const revalidate = 3600;
 
@@ -108,10 +108,26 @@ export default async function AnalystsDirectoryPage({
                   </p>
                 </div>
                 <div className="text-right">
-                  <p className="text-xl font-semibold text-ink-900">
-                    {formatPercent(analyst.stats.hitRate ?? 0)}
+                  <p className="text-xl">
+                    <AccuracyPercent
+                      hitCount={analyst.stats.hitCount}
+                      resolvedCount={analyst.stats.resolvedCount}
+                      normalClassName="font-semibold text-ink-900"
+                      mutedClassName="font-medium text-ink-500"
+                    />
                   </p>
-                  <p className="text-xs text-ink-400">{analyst.stats.resolvedCount} graded calls</p>
+                  <p className="text-xs text-ink-400">
+                    {/* Card is a "stretched link" (Link positioned absolute+inset-0, z-0) with
+                        CardContent set pointer-events-none — badgeClassName re-enables pointer
+                        events + raises z-index, same opt-in pattern FirmLink uses above, so the
+                        badge's own /methodology link is actually clickable instead of being
+                        swallowed by the full-card link underneath it. */}
+                    <AccuracyCaption
+                      hitCount={analyst.stats.hitCount}
+                      resolvedCount={analyst.stats.resolvedCount}
+                      badgeClassName="pointer-events-auto relative z-20 inline-block align-middle"
+                    />
+                  </p>
                 </div>
               </CardContent>
             </Card>

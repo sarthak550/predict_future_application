@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
+import { AccuracyCaption, AccuracyPercent, formatCiRange, getAccuracyTier, LowSampleBadge } from "@/components/finance/accuracy-stat";
 import { AnalystDisclaimerFooter } from "@/components/finance/disclaimer-footer";
 import { ExpandableCallsTable } from "@/components/finance/expandable-calls-table";
 import { FirmLink } from "@/components/finance/firm-link";
@@ -8,6 +9,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { canonicalizeOrgDisplay } from "@predict-future/business-rules/experts/firmAliases";
+import { PROVISIONAL_MIN_RESOLVED_CALLS } from "@predict-future/business-rules";
 import { getPublicProfileStats } from "@/lib/finance/publicProfile";
 import { resolveInstrumentPageSymbols } from "@/lib/finance/instrumentLink";
 import { prisma } from "@/lib/prisma";
@@ -182,9 +184,23 @@ export default async function AnalystProfilePage({
         <CardContent className="grid gap-4 sm:grid-cols-3">
           <div className="rounded-[24px] bg-white/10 p-4">
             <p className="text-sm text-white/60">Track record</p>
-            <p className="mt-2 text-2xl font-semibold">
-              {hasProvisionalTrackRecord ? "Building a track record" : formatPercent(stats.hitRate ?? 0)}
+            <p className="mt-2 text-2xl">
+              {hasProvisionalTrackRecord ? (
+                "Building a track record"
+              ) : (
+                <AccuracyPercent
+                  hitCount={stats.hitCount}
+                  resolvedCount={stats.resolvedCount}
+                  normalClassName="font-semibold"
+                  mutedClassName="font-medium text-white/60"
+                />
+              )}
             </p>
+            {!hasProvisionalTrackRecord && (
+              <p className="mt-1 text-xs text-white/50">
+                <AccuracyCaption hitCount={stats.hitCount} resolvedCount={stats.resolvedCount} />
+              </p>
+            )}
           </div>
           <div className="rounded-[24px] bg-white/10 p-4">
             <p className="text-sm text-white/60">Graded calls</p>
@@ -250,15 +266,27 @@ export default async function AnalystProfilePage({
                   <div>
                     <p className="text-sm font-semibold text-ink-900">{row.instrument}</p>
                     <p className="text-xs text-ink-400">
-                      {row.resolvedCount > 0
-                        ? `${row.hitCount} hit · ${row.missCount} miss`
-                        : `${row.pendingCount} pending`}
+                      {row.resolvedCount === 0
+                        ? `${row.pendingCount} pending`
+                        : row.resolvedCount < PROVISIONAL_MIN_RESOLVED_CALLS
+                          ? // Below 3 resolved calls, a percentage would be a decorative number
+                            // (e.g. a single hit/miss reading as a bare "100%"/"0%") — show the
+                            // raw counts only, same "no percentage until there's enough signal"
+                            // rule the hero and leaderboard already apply elsewhere on this page.
+                            `${row.hitCount} hit · ${row.missCount} miss`
+                          : `${row.hitCount} hit · ${row.missCount} miss · ${formatCiRange(row.hitCount, row.resolvedCount)}`}
                     </p>
+                    {getAccuracyTier(row.resolvedCount) === "low" && (
+                      <LowSampleBadge className="mt-1 inline-block align-middle" />
+                    )}
                   </div>
-                  {row.resolvedCount > 0 && (
-                    <p className="text-lg font-semibold text-ink-900">
-                      {formatPercent(row.hitCount / row.resolvedCount)}
-                    </p>
+                  {row.resolvedCount >= PROVISIONAL_MIN_RESOLVED_CALLS && (
+                    <AccuracyPercent
+                      hitCount={row.hitCount}
+                      resolvedCount={row.resolvedCount}
+                      normalClassName="text-lg font-semibold text-ink-900"
+                      mutedClassName="text-lg font-medium text-ink-500"
+                    />
                   )}
                 </div>
               ))}
