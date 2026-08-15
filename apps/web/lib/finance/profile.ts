@@ -9,6 +9,8 @@
  * own /analysts/[slug] page can never show different numbers.
  */
 
+import type { OpinionDirection, OpinionResolutionStatus } from "@prisma/client";
+
 import { prisma } from "@/lib/prisma";
 import { canonicalizeOrgDisplay } from "@predict-future/business-rules/experts/firmAliases";
 import { getPublicProfileStats, type PublicProfileStats } from "@/lib/finance/publicProfile";
@@ -55,5 +57,81 @@ export async function getMyAnalysts(userId: string): Promise<MyAnalyst[]> {
     verified: follow.expert.verified,
     avatarUrl: follow.expert.avatarUrl,
     stats: getPublicProfileStats(follow.expert.opinions),
+  }));
+}
+
+export type MyTakeVote = {
+  id: string;
+  choice: string;
+  lockedAt: Date;
+  opinion: {
+    id: string;
+    resolutionStatus: OpinionResolutionStatus;
+    resolvedAt: Date | null;
+    publishedAt: Date;
+    direction: OpinionDirection;
+    quote: string;
+    instrument: string | null;
+    instrumentTicker: string | null;
+    expert: {
+      name: string;
+      organization: string;
+      verified: boolean;
+      avatarUrl: string | null;
+    };
+  };
+};
+
+/**
+ * The user's full locked-IMPLICATION-vote history — functionally the
+ * web-side port of apps/api/app/api/finance/my-calls-digest/route.ts's own
+ * query (reused/ported rather than re-invented; apps/web cannot call
+ * apps/api's route directly, cross-origin — same reasoning
+ * app/api/finance/experts/[id]/follow/route.ts documents at its own top).
+ * Newest vote first. Feeds both the "My Takes" row list and, via
+ * lib/finance/userAccuracy.ts#computeUserAccuracy, the aggregate accuracy
+ * stat — one query, two consumers, so the list and the headline number can
+ * never disagree with each other.
+ */
+export async function getMyTakes(userId: string): Promise<MyTakeVote[]> {
+  const votes = await prisma.expertOpinionVote.findMany({
+    where: {
+      userId,
+      pollType: "IMPLICATION",
+      lockedAt: { not: null },
+    },
+    select: {
+      id: true,
+      choice: true,
+      lockedAt: true,
+      opinion: {
+        select: {
+          id: true,
+          resolutionStatus: true,
+          resolvedAt: true,
+          publishedAt: true,
+          direction: true,
+          quote: true,
+          instrument: true,
+          instrumentTicker: true,
+          expert: {
+            select: { name: true, organization: true, verified: true, avatarUrl: true },
+          },
+        },
+      },
+    },
+    orderBy: { lockedAt: "desc" },
+  });
+
+  // lockedAt is guaranteed non-null by the `{ not: null }` filter above —
+  // Prisma's generated type can't express that, so narrow it here once
+  // rather than at every call site.
+  return votes.map((vote) => ({
+    ...vote,
+    lockedAt: vote.lockedAt as Date,
+    opinion: {
+      ...vote.opinion,
+      expert: { ...vote.opinion.expert, organization: canonicalizeOrgDisplay(vote.opinion.expert.organization) },
+    },
   }));
 }
