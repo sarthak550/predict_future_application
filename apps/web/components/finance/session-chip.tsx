@@ -50,12 +50,21 @@ export function SessionChip() {
 
   return (
     <div className="flex items-center gap-2">
-      <span className="flex items-center gap-2 rounded-full border border-ink-200 py-1 pl-1 pr-3 text-sm font-medium text-ink-700">
+      {/* User Profile Page (2026-08-15): the chip itself is now the nav entry
+          point to /profile. Sign out stays a SIBLING <button>, not nested
+          inside this <Link> — nested <a>/<button> interactive elements are
+          invalid HTML and would make one of the two targets unreliable to
+          click, the same "opt-out children" concern FirmLink's stretched-card
+          pattern documents elsewhere in this codebase. */}
+      <Link
+        href="/profile"
+        className="flex items-center gap-2 rounded-full border border-ink-200 py-1 pl-1 pr-3 text-sm font-medium text-ink-700 transition-colors hover:border-ink-300 hover:bg-ink-50"
+      >
         <span className="flex h-6 w-6 items-center justify-center rounded-full bg-ink-900 text-xs font-semibold text-white">
           {initial}
         </span>
         <span className="max-w-[10rem] truncate">{label}</span>
-      </span>
+      </Link>
       <button
         type="button"
         onClick={() => signOut({ callbackUrl: "/" })}
