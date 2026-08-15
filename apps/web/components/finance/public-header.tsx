@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { GlobalSymbolSearch } from "@/components/finance/global-symbol-search";
+import { NotificationBell } from "@/components/finance/notification-bell";
 import { SessionChip } from "@/components/finance/session-chip";
 
 /**
@@ -56,6 +57,9 @@ export function PublicHeader() {
               {link.label}
             </Link>
           ))}
+          {/* Self-hides when signed out (see notification-bell.tsx) — safe to
+              render unconditionally alongside SessionChip. */}
+          <NotificationBell />
           <SessionChip />
         </nav>
       </div>
