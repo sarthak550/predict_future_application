@@ -24,32 +24,11 @@
 
 import { prisma } from "../lib/prisma";
 import { getPriceOnDate } from "../lib/finance/priceHistory";
+import { deriveVerdict, shortVerdict, type Verdict } from "../lib/finance/resolutionVerdict";
 
 const DAYS = parseInt(process.env.AUDIT_DAYS ?? "30", 10);
 const LIMIT = parseInt(process.env.AUDIT_LIMIT ?? "50", 10);
 const VERBOSE = process.env.AUDIT_VERBOSE === "1";
-const NOISE_PCT = 1.5;
-
-type Verdict = "HIT" | "MISS" | "NOT_GRADED";
-
-function deriveVerdict(direction: string, pctChange: number): Verdict {
-  if (Math.abs(pctChange) < NOISE_PCT) {
-    // Below the noise floor — NEUTRAL calls are arguably right when range-bound,
-    // but the AI treats sub-threshold moves as NOT_GRADED regardless.
-    return direction === "NEUTRAL" ? "HIT" : "NOT_GRADED";
-  }
-  if (direction === "BULLISH") return pctChange > 0 ? "HIT" : "MISS";
-  if (direction === "BEARISH") return pctChange < 0 ? "HIT" : "MISS";
-  // NEUTRAL with significant move → MISS (analyst said flat, market moved)
-  return "MISS";
-}
-
-function shortVerdict(s: string): Verdict | "UNKNOWN" {
-  if (s === "RESOLVED_HIT") return "HIT";
-  if (s === "RESOLVED_MISS") return "MISS";
-  if (s === "NOT_GRADED") return "NOT_GRADED";
-  return "UNKNOWN";
-}
 
 async function main() {
   const since = new Date(Date.now() - DAYS * 86_400_000);
