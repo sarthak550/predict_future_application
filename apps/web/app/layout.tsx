@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
+import Script from "next/script";
 
 import "@/app/globals.css";
 import { AuthSessionProvider } from "@/components/providers/session-provider";
+import { getAnalyticsDomain, isAnalyticsEnabled } from "@/lib/analytics/featureFlags";
 
 // LAYOUT WIDTH SYSTEM (founder directive 2026-08-15: "make this the last fix
 // for the empty-space problem" — every section layout MUST pick from these
@@ -36,9 +38,26 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
+  // Growth Loop Sprint G0 (2026-08-15): Plausible hosted analytics, env-gated —
+  // see lib/analytics/featureFlags.ts for the full "why non-NEXT_PUBLIC_" and
+  // domain-discrepancy doc comments. Read per-request here (a Server
+  // Component), same as the paper-trading flags, so flipping the env var +
+  // recreating the web container is enough to launch — no rebuild needed.
+  // Unset/anything-but-"true" renders ZERO <Script> — not a disabled-but-
+  // present tag — so local dev can never contaminate prod's numbers.
+  const analyticsEnabled = isAnalyticsEnabled();
+
   return (
     <html lang="en">
       <body className="bg-[#f5f7fb] text-ink-900">
+        {analyticsEnabled && (
+          <Script
+            defer
+            data-domain={getAnalyticsDomain()}
+            src="https://plausible.io/js/script.js"
+            strategy="afterInteractive"
+          />
+        )}
         <AuthSessionProvider>{children}</AuthSessionProvider>
       </body>
     </html>

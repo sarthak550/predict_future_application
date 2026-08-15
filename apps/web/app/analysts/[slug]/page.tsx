@@ -5,6 +5,7 @@ import { AccuracyCaption, AccuracyPercent, formatCiRange, getAccuracyTier, LowSa
 import { AnalystDisclaimerFooter } from "@/components/finance/disclaimer-footer";
 import { ExpandableCallsTable } from "@/components/finance/expandable-calls-table";
 import { FirmLink } from "@/components/finance/firm-link";
+import { FollowExpertButton } from "@/components/finance/follow-expert-button";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -161,23 +162,28 @@ export default async function AnalystProfilePage({
 
       <Card className="overflow-hidden border-0 bg-ink-900 text-white">
         <CardHeader>
-          <div className="flex items-center gap-4">
-            <Avatar name={expert.organization} src={expert.avatarUrl} className="h-14 w-14 text-lg" />
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <CardTitle className="text-2xl text-white">
-                  {expert.isFirm ? expert.organization : expert.name}
-                </CardTitle>
-                {expert.verified && <Badge className="bg-white/10 text-white">Verified</Badge>}
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <Avatar name={expert.organization} src={expert.avatarUrl} className="h-14 w-14 text-lg" />
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <CardTitle className="text-2xl text-white">
+                    {expert.isFirm ? expert.organization : expert.name}
+                  </CardTitle>
+                  {expert.verified && <Badge className="bg-white/10 text-white">Verified</Badge>}
+                </div>
+                <CardDescription className="text-white/70">
+                  {expert.isFirm ? (
+                    "Market analysis from this source"
+                  ) : (
+                    <FirmLink organization={expert.organization} className="hover:underline" />
+                  )}
+                </CardDescription>
               </div>
-              <CardDescription className="text-white/70">
-                {expert.isFirm ? (
-                  "Market analysis from this source"
-                ) : (
-                  <FirmLink organization={expert.organization} className="hover:underline" />
-                )}
-              </CardDescription>
             </div>
+            {/* Growth Loop Sprint G1 — works for both HUMAN and FIRM entityKind
+                experts, since both render through this same template. */}
+            <FollowExpertButton expertId={expert.id} />
           </div>
           {expert.bio && <p className="mt-4 max-w-2xl text-sm leading-6 text-white/70">{expert.bio}</p>}
         </CardHeader>
