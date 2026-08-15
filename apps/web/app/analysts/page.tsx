@@ -93,21 +93,28 @@ export default async function AnalystsDirectoryPage({
                 className="absolute inset-0 z-0"
                 aria-label={analyst.name}
               />
-              <CardContent className="pointer-events-none relative z-10 flex items-center gap-4 p-5">
-                <Avatar name={analyst.name} src={analyst.avatarUrl} />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <p className="truncate text-base font-semibold text-ink-900">{analyst.name}</p>
-                    {analyst.verified && <Badge variant="accent">Verified</Badge>}
+              {/* Founder 2026-08-15: two stacked rows, not one squeezed row — the
+                  identity row (avatar + name + firm) owns the card's full width
+                  with wrapping allowed (no truncate), and the accuracy block sits
+                  on its own divider row below, so the CI caption can never
+                  compress the analyst's name or firm. */}
+              <CardContent className="pointer-events-none relative z-10 flex flex-col gap-3 p-5">
+                <div className="flex items-center gap-4">
+                  <Avatar name={analyst.name} src={analyst.avatarUrl} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-base font-semibold text-ink-900">{analyst.name}</p>
+                      {analyst.verified && <Badge variant="accent">Verified</Badge>}
+                    </div>
+                    <p className="text-sm text-ink-500">
+                      <FirmLink
+                        organization={analyst.organization}
+                        className="pointer-events-auto relative z-20 hover:underline"
+                      />
+                    </p>
                   </div>
-                  <p className="truncate text-sm text-ink-500">
-                    <FirmLink
-                      organization={analyst.organization}
-                      className="pointer-events-auto relative z-20 hover:underline"
-                    />
-                  </p>
                 </div>
-                <div className="text-right">
+                <div className="flex items-baseline justify-between gap-3 border-t border-ink-100 pt-3">
                   <p className="text-xl">
                     <AccuracyPercent
                       hitCount={analyst.stats.hitCount}
@@ -116,7 +123,7 @@ export default async function AnalystsDirectoryPage({
                       mutedClassName="font-medium text-ink-500"
                     />
                   </p>
-                  <p className="text-xs text-ink-400">
+                  <p className="text-right text-xs text-ink-400">
                     {/* Card is a "stretched link" (Link positioned absolute+inset-0, z-0) with
                         CardContent set pointer-events-none — badgeClassName re-enables pointer
                         events + raises z-index, same opt-in pattern FirmLink uses above, so the

@@ -19,6 +19,10 @@ const NAV_LINKS = [
   { href: "/opinions", label: "Opinions" },
   { href: "/pulse", label: "Market Pulse" },
   { href: "/paper-trading", label: "Paper Trading" },
+  // Founder 2026-08-15: /methodology was reachable only via footer links and
+  // the Low-sample badges — invisible for a page whose whole job is letting
+  // a skeptic audit the scorecard's rules. Top-level nav, site-wide.
+  { href: "/methodology", label: "Methodology" },
 ];
 
 export function PublicHeader() {

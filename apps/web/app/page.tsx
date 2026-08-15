@@ -675,21 +675,26 @@ function TopAnalysts({ analysts }: { analysts: Awaited<ReturnType<typeof fetchIn
               className="absolute inset-0 z-0"
               aria-label={analyst.name}
             />
-            <CardContent className="pointer-events-none relative z-10 flex items-center gap-4 p-5">
-              <Avatar name={analyst.name} src={analyst.avatarUrl} />
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <p className="truncate text-base font-semibold text-ink-900">{analyst.name}</p>
-                  {analyst.verified && <Badge variant="accent">Verified</Badge>}
+            {/* Two stacked rows, mirroring app/analysts/page.tsx's 2026-08-15
+                restructure — identity row owns the full width (no truncate),
+                accuracy block on its own divider row below. */}
+            <CardContent className="pointer-events-none relative z-10 flex flex-col gap-3 p-5">
+              <div className="flex items-center gap-4">
+                <Avatar name={analyst.name} src={analyst.avatarUrl} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-base font-semibold text-ink-900">{analyst.name}</p>
+                    {analyst.verified && <Badge variant="accent">Verified</Badge>}
+                  </div>
+                  <p className="text-sm text-ink-500">
+                    <FirmLink
+                      organization={analyst.organization}
+                      className="pointer-events-auto relative z-20 hover:underline"
+                    />
+                  </p>
                 </div>
-                <p className="truncate text-sm text-ink-500">
-                  <FirmLink
-                    organization={analyst.organization}
-                    className="pointer-events-auto relative z-20 hover:underline"
-                  />
-                </p>
               </div>
-              <div className="text-right">
+              <div className="flex items-baseline justify-between gap-3 border-t border-ink-100 pt-3">
                 <p className="text-xl">
                   <AccuracyPercent
                     hitCount={analyst.stats.hitCount}
@@ -698,7 +703,7 @@ function TopAnalysts({ analysts }: { analysts: Awaited<ReturnType<typeof fetchIn
                     mutedClassName="font-medium text-ink-500"
                   />
                 </p>
-                <p className="text-xs text-ink-400">
+                <p className="text-right text-xs text-ink-400">
                   {/* Same stretched-link CardContent pointer-events-none pattern as
                       app/analysts/page.tsx — badgeClassName re-enables the badge's own link. */}
                   <AccuracyCaption
