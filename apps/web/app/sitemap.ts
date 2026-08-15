@@ -98,13 +98,16 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       priority: 0.7,
     }));
 
-  const eligiblePortfolios = await listPublicEligiblePortfolioSlugsForSitemap();
-  const portfolioEntries: MetadataRoute.Sitemap = eligiblePortfolios.map((p) => ({
-    url: `${SITE_URL}/portfolios/${p.slug}`,
-    lastModified: p.lastModified,
-    changeFrequency: "daily",
-    priority: 0.6,
-  }));
+  // Portfolios PARKED (founder 2026-07-25: launch later — app/portfolios/
+  // layout.tsx unconditionally redirects to "/"). Submitting redirecting
+  // URLs wastes crawl budget, the exact principle this file's own /indices
+  // doc comment documents — so ALL /portfolios* entries (the directory
+  // entry below and the per-slug list) are withheld while parked
+  // (2026-08-15 audit item). TO RESTORE at portfolios relaunch: reinstate
+  // `listPublicEligiblePortfolioSlugsForSitemap()` here (import kept) and
+  // the /portfolios static entry below.
+  const portfolioEntries: MetadataRoute.Sitemap = [];
+  void listPublicEligiblePortfolioSlugsForSitemap; // import kept for the relaunch — see comment above
 
   const allIndices = await fetchAllIndices();
   const now = new Date();
@@ -190,12 +193,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       changeFrequency: "hourly",
       priority: 0.6,
     },
-    {
-      url: `${SITE_URL}/portfolios`,
-      lastModified: new Date(),
-      changeFrequency: "daily",
-      priority: 0.6,
-    },
+    // /portfolios static entry withheld while parked — see portfolioEntries above.
     // /indices removed 2026-08-14 (QA parity audit): the route has
     // unconditionally redirected to "/" since 2026-07-25 — submitting a
     // dead redirect contradicts this file's own crawl-budget principle
