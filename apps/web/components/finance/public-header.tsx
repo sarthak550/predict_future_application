@@ -19,9 +19,16 @@ import { SessionChip } from "@/components/finance/session-chip";
 // matters for analysts only" — keep the nav uncrowded). It surfaces
 // prominently on /analysts' own header instead, plus the site footer,
 // AnalystDisclaimerFooter, and every Low-sample badge.
+// Screener IS here (Growth Loop Sprint G4, 2026-08-15) — a deliberate
+// exception to the above curation discipline, not an oversight: Methodology
+// is a trust/legal page (secondary, one click from where it matters);
+// Screener is a primary discovery surface on par with Analysts/Opinions/
+// Pulse — it's the USP wedge (graded-call signal no generic screener has),
+// so it earns top-nav placement the same way those three did.
 const NAV_LINKS = [
   { href: "/analysts", label: "Analysts" },
   { href: "/opinions", label: "Opinions" },
+  { href: "/screener", label: "Screener" },
   { href: "/pulse", label: "Market Pulse" },
   { href: "/paper-trading", label: "Paper Trading" },
 ];

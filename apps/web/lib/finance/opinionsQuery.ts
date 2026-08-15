@@ -145,8 +145,15 @@ async function fetchOpinionOrgGroups(): Promise<Map<string, { count: number; raw
   return groups;
 }
 
-/** Ticker <-> sector index — see buildSectorIndex below for the full doc comment. Unfiltered NAME-RESOLUTION lookup (canonical sector -> its ticker set), same role as fetchOpinionOrgGroups above. */
-async function buildSectorIndex(): Promise<{
+/**
+ * Ticker <-> sector index. Unfiltered NAME-RESOLUTION lookup (canonical
+ * sector -> its ticker set), same role as fetchOpinionOrgGroups above.
+ * Exported (not just used internally) so lib/finance/screenerQuery.ts
+ * (Growth Loop Sprint G4) can resolve the SAME ticker->sector labels
+ * /opinions?sector= already uses, rather than re-deriving a second mapping
+ * that could silently drift from this one.
+ */
+export async function buildSectorIndex(): Promise<{
   tickerToSector: Map<string, string>;
   sectorToTickers: Map<string, string[]>;
 }> {
