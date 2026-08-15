@@ -22,6 +22,7 @@ const FOOTER_COLUMNS: { heading: string; links: { href: string; label: string }[
     links: [
       { href: "/analysts", label: "Analysts" },
       { href: "/opinions", label: "Opinions" },
+      { href: "/methodology", label: "Methodology" },
     ],
   },
   {

@@ -1,3 +1,4 @@
+export * from "./experts/analystOpinionSources";
 export * from "./experts/firmAliases";
 export * from "./experts/scorecard";
 export * from "./finance/voteTallies";

@@ -9,6 +9,8 @@ import { createHash } from "crypto";
 
 import { OpinionDirection, type PrismaClient } from "@prisma/client";
 
+import { ANALYST_OPINION_SOURCES } from "@predict-future/business-rules/experts/analystOpinionSources";
+
 import { checkTickerMap, extractInstrumentFromQuote, normalizeYahooTicker } from "@/lib/ai/extractInstrument";
 import { checkAndIncrementFinanceAiDailyCap } from "@/lib/ai/financeAiDailyCap";
 import { callGeminiAI } from "@/lib/ai/gemini";
@@ -25,38 +27,10 @@ function computeQuoteHash(quote: string): string {
   return createHash("sha256").update(quote.toLowerCase().trim()).digest("hex");
 }
 
-/**
- * Domain-only allowlist for analyst opinion extraction.
- *
- * S74-T1: previously gated on domain AND a narrow URL path-prefix allowlist (e.g. ET
- * only /markets/expert-view, /opinion/columns/; CNBC TV18 only /views/,
- * /market/expert-views/). That path gate meant general finance NEWS on the same
- * approved domains — the bulk of ET/Mint/CNBC coverage, which regularly contains named
- * analyst/brokerage calls in ordinary market-report stories — never reached the
- * extractor. Root-caused in prod: 424 FINANCE stories/7d, only 81 had opinions (19% hit
- * rate); CNBC TV18 alone was 111 stories/week with 0 opinions because nothing matched
- * the narrow prefixes.
- *
- * The quality bar now lives entirely downstream in validateRawOpinions() and the
- * EXTRACTION_SYSTEM_PROMPT (named-expert-or-institution requirement, numeric-anchor +
- * unit-token check, 0.82 confidence floor, 80-char quote floor, one-direction-per-
- * expert-instrument collapse) — that AI+validator combo is strict enough to hold the
- * quality line on its own (89% hit rate on curated ET Expert View feeds proves it).
- * Do NOT add path gating back here; if quality drifts on newly-opened general-news
- * paths, tighten the validator's numeric-anchor or confidence floor instead.
- *
- * bqprime.com and ndtvprofit.com were removed here — both had zero matching RSS feed
- * in rssSources.ts (dead allowlist entries that never fired). seekingalpha.com was
- * removed — its RSS source is isActive:false (killed in the news-source overhaul), so
- * global/non-Indian expansion is explicitly out of scope. See S74-T3 for the
- * replacement domain (NDTV Profit, once verified live) plus new source additions.
- */
-const ANALYST_OPINION_SOURCES: string[] = [
-  "economictimes.indiatimes.com",
-  "cnbctv18.com",
-  "livemint.com",
-  "moneycontrol.com",
-];
+// ANALYST_OPINION_SOURCES (the domain-only allowlist + its full S74-T1 history) now
+// lives in packages/business-rules/src/experts/analystOpinionSources.ts (Trust Layer
+// Sprint T3, 2026-08-15) — apps/web's /methodology page imports the SAME constant to
+// render a live, always-current tracked-source list rather than a copy that could drift.
 
 export type RawExpertOpinion = {
   expertName: string;
