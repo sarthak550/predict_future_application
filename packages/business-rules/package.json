@@ -4,6 +4,9 @@
   "private": true,
   "main": "src/index.ts",
   "types": "src/index.ts",
+  "scripts": {
+    "check": "tsx src/experts/scorecard.selfcheck.ts"
+  },
   "exports": {
     ".": "./src/index.ts",
     "./markets/access": "./src/markets/access.ts",
@@ -41,5 +44,8 @@
   },
   "dependencies": {
     "@prisma/client": "^5.22.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2"
   }
 }

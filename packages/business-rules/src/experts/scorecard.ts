@@ -77,6 +77,59 @@ export function computeScorecard(opinions: ScorecardOpinion[]): ScorecardResult 
   return { hitRate: hitCount / resolvedCount, resolvedCount, hitCount, missCount, provisional: false };
 }
 
+// ─── Wilson confidence interval ─────────────────────────────────────────────────
+
+export interface WilsonInterval {
+  /** Lower bound of the 95% CI, as a fraction in [0, 1]. */
+  lower: number;
+  /** Upper bound of the 95% CI, as a fraction in [0, 1]. */
+  upper: number;
+}
+
+/** z-score for a 95% confidence interval (two-tailed). Locked per Trust Layer Sprint Decision 2. */
+const WILSON_Z_95 = 1.96;
+
+/**
+ * Wilson score interval at 95% confidence for a binomial hit rate — Trust Layer Sprint
+ * (2026-08-15) Decision 2, formula locked by the founder brief. Given `hitCount` HITs out
+ * of `resolvedCount` graded (HIT + MISS) calls, returns the 95% CI on the true underlying
+ * hit rate. Unlike a naive normal-approximation interval, Wilson stays well-behaved (and
+ * inside [0, 1]) even at small n or at p̂ near 0/1 — exactly the small-sample analyst-track-
+ * record case this exists for.
+ *
+ * Pure, zero-Prisma, unit-tested via `scorecard.selfcheck.ts` (`npm run check` in this
+ * package) — does NOT change `computeCredibilityScore`/`computeScorecard`'s hitRate
+ * definition or the indexable-profile gate; it is a separate, additive disclosure number
+ * consumed by apps/web's accuracy-stat display (Decision 2) and the /methodology page's
+ * sample-size explainer (Decision 3).
+ *
+ * Returns `null` when `resolvedCount === 0` (no graded calls — nothing to compute a CI on;
+ * n < PROVISIONAL_MIN_RESOLVED_CALLS callers should already be showing "Building a track
+ * record" instead of calling this at all).
+ *
+ * @example
+ *   computeWilsonInterval(4, 6) // founder's own worked example → { lower: ~0.30, upper: ~0.90 }
+ */
+export function computeWilsonInterval(hitCount: number, resolvedCount: number): WilsonInterval | null {
+  if (resolvedCount === 0) return null;
+
+  const z = WILSON_Z_95;
+  const phat = hitCount / resolvedCount;
+  const zSquared = z * z;
+
+  const center = phat + zSquared / (2 * resolvedCount);
+  const margin = z * Math.sqrt(phat * (1 - phat) / resolvedCount + zSquared / (4 * resolvedCount * resolvedCount));
+  const denom = 1 + zSquared / resolvedCount;
+
+  // Clamp to [0, 1] — the raw formula can land a hair outside this range (e.g. a
+  // -1e-17 "lower" at hitCount=0) purely from floating-point arithmetic, not because
+  // the interval is genuinely unbounded.
+  const lower = Math.min(1, Math.max(0, (center - margin) / denom));
+  const upper = Math.min(1, Math.max(0, (center + margin) / denom));
+
+  return { lower, upper };
+}
+
 // ─── Instrument canonicalization ────────────────────────────────────────────────
 
 /**
