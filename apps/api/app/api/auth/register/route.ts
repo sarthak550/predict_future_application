@@ -1,6 +1,8 @@
 import bcrypt from "bcryptjs";
 import { NextResponse } from "next/server";
 
+import { isCredentialsLoginAllowed } from "@/lib/credentialsGate";
+
 import { STARTING_BALANCE } from "@/lib/constants";
 import { prisma } from "@/lib/prisma";
 import { checkRateLimit } from "@/lib/rate-limit";
@@ -15,6 +17,23 @@ import { registerSchema } from "@/lib/validations/auth";
  * Invalid codes are silently ignored — registration never fails because of them.
  */
 export async function POST(request: Request) {
+  // Sprint 74 residual (QA finding, 2026-08-16): this pre-pivot "web
+  // registration endpoint" has had ZERO callers since apps/web grew its own
+  // register route (web calls its own origin; mobile registers via
+  // /api/auth/mobile/register — verified in packages/api-client). Left open
+  // it was the last remaining "any random string as email" surface — same
+  // flag, same 403 contract as apps/web's route.
+  if (!isCredentialsLoginAllowed()) {
+    console.warn(
+      "[auth/register] Rejected: ALLOW_CREDENTIALS_LOGIN is not enabled. " +
+        "Credentials sign-up is dev-only in production; direct users to Google sign-in."
+    );
+    return NextResponse.json(
+      { error: "Email/password sign-up is not available. Please sign in with Google." },
+      { status: 403 }
+    );
+  }
+
   try {
     // IP-based rate limit: 5 registrations per IP per hour.
     // NOTE: in-memory — resets on cold start. Sprint N should migrate to Redis.

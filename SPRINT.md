@@ -2,8 +2,8 @@
 
 > Human-readable view of `.claude/sprint-board.json`. Auto-maintained by the CEO/CTO/QA agents — do not edit by hand.
 
-**Current sprint:** 73
-**Status:** Sprint 73 LOADED (4 tickets pending) — mobile-only UI polish: expert-takes-first layout on Story screen (T1, HIGH), YES/NO button dark-mode contrast fix in market detail + QuickPredict (T2, HIGH), RBI MPC poll lock-after-vote + voted state on pack card (T3, HIGH, minor backend touch), always-visible vote breakdown on MPC pack card + detail screen (T4, HIGH). Sprint 72 in progress (4 tickets, India Macro MacroSnapshot panel). Sprint 71 backend-only (2 tickets, feed balance + summarizer). Sprint 70 LOADED (4 tickets pending). Sprint 69 in-progress (India toggle). Sprint 68 QA COMPLETE (1/1, incl. runtime). Sprint 67 QA COMPLETE (1/1). Sprint 66 QA COMPLETE (5/5) — Profile redesigned into a LinkedIn-style single elegant scroll. Sprint 65 QA COMPLETE (1/1). Sprint 64 QA COMPLETE (2/2). Sprint 63 QA COMPLETE (2/2). Sprint 62 loaded — Poll/Market Separation Phase 1. Sprint 60 in progress — Scorecard integrity hardening. Sprint 59 QA COMPLETE (6/6). Sprint 58 QA COMPLETE (8/8). Sprint 57 QA COMPLETE (5/5). Sprint 56 QA COMPLETE (9/9). Sprint 55 QA COMPLETE (8/8). Sprint 54 QA COMPLETE (8/8). Sprint 53 QA COMPLETE (6/6). Sprint 52 QA COMPLETE (4/4). Sprint 51 COMPLETE (5/5). Sprint 50 COMPLETE (6/6). Sprint 49 COMPLETE (9/9). Sprints 43–48 COMPLETE. Sprints 38–42 COMPLETE (security/correctness hardening, 54 tickets). Sprints 12, 25–34 COMPLETE.
+**Current sprint:** 74
+**Status:** Sprint 74 QA COMPLETE (5/5) — LAUNCH-GATING production auth: Google OAuth as primary sign-in via NextAuth GoogleProvider + PrismaAdapter, custom createUser (username/wallet/stats/notification/avatarUrl) since schema is already OAuth-shaped (T1, CRIT), email+password locked to dev-only via ALLOW_CREDENTIALS_LOGIN env gate on both the provider and /api/auth/register (T2, CRIT), sign-in/sign-up UI rebuilt around a single "Continue with Google" CTA with graceful not-configured-yet state (T3, CRIT), privacy/terms placeholder pages to unblock the founder's Google Console consent screen (T4, HIGH), Google Cloud Console + deploy runbook doc for the founder (T5, HIGH, doc-only — accuracy-reviewed, execution is the founder's own next action). Mobile (apps/api, apps/mobile) explicitly untouched — independent JWT-bearer auth confirmed. Sprint 73 LOADED (4 tickets pending) — mobile-only UI polish: expert-takes-first layout on Story screen (T1, HIGH), YES/NO button dark-mode contrast fix in market detail + QuickPredict (T2, HIGH), RBI MPC poll lock-after-vote + voted state on pack card (T3, HIGH, minor backend touch), always-visible vote breakdown on MPC pack card + detail screen (T4, HIGH). Sprint 72 in progress (4 tickets, India Macro MacroSnapshot panel). Sprint 71 backend-only (2 tickets, feed balance + summarizer). Sprint 70 LOADED (4 tickets pending). Sprint 69 in-progress (India toggle). Sprint 68 QA COMPLETE (1/1, incl. runtime). Sprint 67 QA COMPLETE (1/1). Sprint 66 QA COMPLETE (5/5) — Profile redesigned into a LinkedIn-style single elegant scroll. Sprint 65 QA COMPLETE (1/1). Sprint 64 QA COMPLETE (2/2). Sprint 63 QA COMPLETE (2/2). Sprint 62 loaded — Poll/Market Separation Phase 1. Sprint 60 in progress — Scorecard integrity hardening. Sprint 59 QA COMPLETE (6/6). Sprint 58 QA COMPLETE (8/8). Sprint 57 QA COMPLETE (5/5). Sprint 56 QA COMPLETE (9/9). Sprint 55 QA COMPLETE (8/8). Sprint 54 QA COMPLETE (8/8). Sprint 53 QA COMPLETE (6/6). Sprint 52 QA COMPLETE (4/4). Sprint 51 COMPLETE (5/5). Sprint 50 COMPLETE (6/6). Sprint 49 COMPLETE (9/9). Sprints 43–48 COMPLETE. Sprints 38–42 COMPLETE (security/correctness hardening, 54 tickets). Sprints 12, 25–34 COMPLETE.
 
 ---
 
@@ -23,6 +23,22 @@
 | high | HIGH |
 | medium | MED |
 | low | LOW |
+
+---
+
+## Sprint 74
+
+| ID | Pri | Status | Title |
+|---|---|---|---|
+| S74-T1 | CRIT | ✅ done | Google OAuth: provider wiring, adapter, account linking |
+| S74-T2 | CRIT | ✅ done | Lock email+password signup/login to dev-only (production Google-only) |
+| S74-T3 | CRIT | ✅ done | Sign-in/sign-up UI: Google-primary CTA |
+| S74-T4 | HIGH | ✅ done | Minimal privacy policy + terms pages |
+| S74-T5 | HIGH | ✅ done | Google Cloud Console + deploy runbook doc for founder |
+
+_Launch-gating, founder-requested 2026-08-16: "right now we accepting any random string as email, but for final product we need proper gmail setup." Schema already OAuth-shaped (Account/Session/emailVerified/image already exist, @next-auth/prisma-adapter already installed) — no migration needed. Google-only for production sign-in/sign-up; email+password survives dev-only behind ALLOW_CREDENTIALS_LOGIN. Mobile untouched — independent JWT-bearer auth confirmed via investigation. Full brief: `.claude/agent-memory/ceo-product-strategist/cto_assignment_brief_production_auth.md`._
+
+_**SPRINT 74 COMPLETE (5/5).** docs/GOOGLE_OAUTH_SETUP.md is the founder's own next action — Google Cloud Console configuration + one env-var update and container cycle on the pf-web box, none of which the CTO/QA pipeline can execute (no real Google credentials, no prod SSH in scope). Code ships inert-but-safe until those two env vars are set._
 
 ---
 

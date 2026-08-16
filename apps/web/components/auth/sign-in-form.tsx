@@ -5,46 +5,38 @@ import Link from "next/link";
 import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 
+import { GoogleContinueButton } from "@/components/auth/google-continue-button";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { resolveAuthErrorMessage } from "@/lib/auth/errorMessages";
+import { resolveRedirectTarget } from "@/lib/auth/resolveRedirectTarget";
 
-/**
- * Resolves where to send the user after a successful sign-in.
- *
- * `callbackUrl` must be a same-origin relative path (starts with "/") — an
- * absolute/external value is rejected and we fall back to "/", so this can
- * never be turned into an open redirect via a crafted sign-in link.
- *
- * When `call` is present (Phase C.1 return-to-call: the "Sign in to take a
- * side" CTA on a call's expanded panel), it's appended as a `call` query
- * param on the destination so ExpandableCallsTable can auto-expand and
- * scroll to that row on landing.
- */
-function resolveRedirectTarget(callbackUrl?: string, call?: string): string {
-  const target = callbackUrl && callbackUrl.startsWith("/") && !callbackUrl.startsWith("//") ? callbackUrl : "/";
-  if (!call) return target;
-
-  const [path, query = ""] = target.split("?");
-  const params = new URLSearchParams(query);
-  params.set("call", call);
-  return `${path}?${params.toString()}`;
-}
+// NEXT_PUBLIC_* is inlined at build time, safe to read directly in a client
+// component. Mirrors the server-side ALLOW_CREDENTIALS_LOGIN gate (S74-T2)
+// that controls whether CredentialsProvider/api/auth/register even work —
+// this only controls whether the form renders, so the two must stay in sync
+// deploy-to-deploy (same env source, set together).
+const CREDENTIALS_LOGIN_ENABLED = process.env.NEXT_PUBLIC_ALLOW_CREDENTIALS_LOGIN === "true";
 
 export function SignInForm({
-  initialErrorMessage = "",
+  googleConfigured,
+  error,
   callbackUrl,
   call
 }: {
-  initialErrorMessage?: string;
+  googleConfigured: boolean;
+  error?: string;
   callbackUrl?: string;
   call?: string;
 }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
+  const [credentialsError, setCredentialsError] = useState("");
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
+
+  const errorMessage = credentialsError || resolveAuthErrorMessage(error);
 
   return (
     <Card className="w-full max-w-md">
@@ -53,46 +45,64 @@ export function SignInForm({
         <CardDescription>Open your news feed, virtual points balance, and forecasting streak.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="space-y-2">
-          <label className="text-sm font-medium text-ink-700">Email</label>
-          <Input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" />
-        </div>
-        <div className="space-y-2">
-          <label className="text-sm font-medium text-ink-700">Password</label>
-          <Input
-            type="password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            placeholder="••••••••"
-          />
-        </div>
-        {(error || initialErrorMessage) && (
-          <p className="rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-600">
-            {error || initialErrorMessage}
+        {errorMessage && (
+          <p className="rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-600">{errorMessage}</p>
+        )}
+
+        {googleConfigured ? (
+          <GoogleContinueButton callbackUrl={callbackUrl} call={call} label="Continue with Google" />
+        ) : (
+          <p className="rounded-2xl border border-dashed border-ink-200 bg-ink-50 px-4 py-3 text-sm text-ink-500">
+            Sign-in is being finalized — check back shortly.
           </p>
         )}
-        <Button
-          className="w-full"
-          disabled={isPending}
-          onClick={() =>
-            startTransition(async () => {
-              setError("");
-              const result = await signIn("credentials", {
-                email,
-                password,
-                redirect: false
-              });
-              if (result?.error) {
-                setError("Email or password is incorrect.");
-                return;
+
+        {CREDENTIALS_LOGIN_ENABLED && (
+          <>
+            <div className="flex items-center gap-3 text-xs font-medium uppercase tracking-wide text-ink-400">
+              <span className="h-px flex-1 bg-ink-100" />
+              Dev-only password sign-in
+              <span className="h-px flex-1 bg-ink-100" />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-ink-700">Email</label>
+              <Input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-ink-700">Password</label>
+              <Input
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder="••••••••"
+              />
+            </div>
+            <Button
+              variant="secondary"
+              className="w-full"
+              disabled={isPending}
+              onClick={() =>
+                startTransition(async () => {
+                  setCredentialsError("");
+                  const result = await signIn("credentials", {
+                    email,
+                    password,
+                    redirect: false
+                  });
+                  if (result?.error) {
+                    setCredentialsError("Email or password is incorrect.");
+                    return;
+                  }
+                  router.push(resolveRedirectTarget(callbackUrl, call));
+                  router.refresh();
+                })
               }
-              router.push(resolveRedirectTarget(callbackUrl, call));
-              router.refresh();
-            })
-          }
-        >
-          {isPending ? "Signing in..." : "Sign in"}
-        </Button>
+            >
+              {isPending ? "Signing in..." : "Sign in with password"}
+            </Button>
+          </>
+        )}
+
         <p className="text-sm text-ink-500">
           No account yet?{" "}
           <Link href="/sign-up" className="font-medium text-signal-sky">
