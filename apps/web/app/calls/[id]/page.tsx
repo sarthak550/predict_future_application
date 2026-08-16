@@ -7,6 +7,7 @@ import { AnalystDisclaimerFooter } from "@/components/finance/disclaimer-footer"
 import { DirectionChip, VerdictBadge } from "@/components/finance/analyst-badges";
 import { FirmLink } from "@/components/finance/firm-link";
 import { PaperTradeCta } from "@/components/finance/paper-trade-cta";
+import { SaveOpinionButton } from "@/components/finance/save-opinion-button";
 import { ShareCallButton } from "@/components/finance/share-call-button";
 import { TakeASide } from "@/components/finance/take-a-side";
 import { Avatar } from "@/components/ui/avatar";
@@ -15,14 +16,26 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { canonicalizeOrgDisplay } from "@predict-future/business-rules/experts/firmAliases";
 import { formatAccuracyCaption } from "@/components/finance/accuracy-stat";
 import { computeScorecard, PROVISIONAL_MIN_RESOLVED_CALLS } from "@predict-future/business-rules";
+import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { formatDateOnly } from "@/lib/utils";
 
 // Resolved outcomes only render a full share card. This is thin, single-call content,
 // so it stays noindex — the sitemap only ever lists /analysts/[slug] pages.
+//
+// Saved Opinions (Ticket 3): the page now also reads getSession() to pass a
+// server-known `saved` boolean into SaveOpinionButton (brief's explicit
+// call — RSC-known session, no client mount-fetch). Reading the session
+// cookie makes Next.js render this route dynamically on every request
+// rather than serving the `revalidate` cache below — the same ISR-vs-
+// session-read tradeoff FollowExpertButton's own doc comment flags for
+// /analysts/[slug] (which sidesteps it by fetching client-side instead).
+// Kept as directed since /calls/[id] is thin, noindex, single-call content
+// with far lower traffic than the analyst directory it was traded off
+// against there.
 export const revalidate = 3600;
 
-async function fetchResolvedCall(id: string) {
+async function fetchResolvedCall(id: string, userId: string | null) {
   const opinion = await prisma.expertOpinion.findUnique({
     where: { id },
     select: {
@@ -78,15 +91,25 @@ async function fetchResolvedCall(id: string) {
 
   const expertStats = computeScorecard(opinion.expert.opinions);
 
+  // Single extra query, only on the resolved-render path (generateMetadata
+  // below always passes userId: null, so this is skipped there entirely).
+  const savedRow = userId
+    ? await prisma.savedOpinion.findUnique({
+        where: { userId_opinionId: { userId, opinionId: id } },
+        select: { id: true },
+      })
+    : null;
+
   return {
     kind: "resolved" as const,
     opinion: { ...opinion, expert: { ...opinion.expert, organization: canonicalizeOrgDisplay(opinion.expert.organization) } },
     expertStats,
+    saved: Boolean(savedRow),
   };
 }
 
 export async function generateMetadata({ params }: { params: { id: string } }): Promise<Metadata> {
-  const result = await fetchResolvedCall(params.id);
+  const result = await fetchResolvedCall(params.id, null);
 
   if (result.kind !== "resolved") {
     return { title: "Call not found — Predict Future" };
@@ -119,7 +142,9 @@ export async function generateMetadata({ params }: { params: { id: string } }): 
 }
 
 export default async function CallSharePage({ params }: { params: { id: string } }) {
-  const result = await fetchResolvedCall(params.id);
+  const session = await getSession();
+  const userId = session?.user?.id ?? null;
+  const result = await fetchResolvedCall(params.id, userId);
 
   if (result.kind === "not-found") {
     notFound();
@@ -134,7 +159,7 @@ export default async function CallSharePage({ params }: { params: { id: string }
     notFound();
   }
 
-  const { opinion, expertStats } = result;
+  const { opinion, expertStats, saved } = result;
   const isHit = opinion.resolutionStatus === "RESOLVED_HIT";
   // Decision 3: only render the aggregate line once the analyst clears the
   // same provisional-track-record gate used everywhere else on the site —
@@ -194,13 +219,16 @@ export default async function CallSharePage({ params }: { params: { id: string }
               <span>Verdict:</span>
               <VerdictBadge status={opinion.resolutionStatus} />
             </div>
-            <ShareCallButton
-              callId={opinion.id}
-              analystName={opinion.expert.name}
-              direction={opinion.direction}
-              instrument={opinion.instrument}
-              resolutionStatus={isHit ? "RESOLVED_HIT" : "RESOLVED_MISS"}
-            />
+            <div className="flex flex-wrap items-center gap-2">
+              <SaveOpinionButton opinionId={opinion.id} initialSaved={saved} variant="labeled" />
+              <ShareCallButton
+                callId={opinion.id}
+                analystName={opinion.expert.name}
+                direction={opinion.direction}
+                instrument={opinion.instrument}
+                resolutionStatus={isHit ? "RESOLVED_HIT" : "RESOLVED_MISS"}
+              />
+            </div>
           </div>
           {opinion.resolutionNote && (
             <p className="text-sm leading-6 text-ink-600">{opinion.resolutionNote}</p>

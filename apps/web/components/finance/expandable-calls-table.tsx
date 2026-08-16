@@ -42,6 +42,7 @@ import {
 import { DirectionChip, VerdictBadge } from "@/components/finance/analyst-badges";
 import { firmHref } from "@/lib/finance/firmLink";
 import { PaperTradeCta } from "@/components/finance/paper-trade-cta";
+import { SaveOpinionButton } from "@/components/finance/save-opinion-button";
 import { TakeASide } from "@/components/finance/take-a-side";
 
 export type ExpandableCall = {
@@ -80,21 +81,49 @@ export function ExpandableCallsTable({
   firmLinkBasePath?: "/analysts" | "/opinions";
 }) {
   const [openId, setOpenId] = useState<string | null>(null);
+  // Saved Opinions (Ticket 3): ONE batch fetch of the signed-in user's saved
+  // set for the whole table, not a per-row mount-fetch — see
+  // save-opinion-button.tsx's own doc comment for the N+1 rationale. Starts
+  // empty; every row's SaveOpinionButton re-syncs once this resolves.
+  const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
   const showAnalystColumn = calls.some((call) => call.analyst);
   const columnCount = showAnalystColumn ? 7 : 6;
   const searchParams = useSearchParams();
   const rowRefs = useRef(new Map<string, HTMLTableRowElement>());
 
   useEffect(() => {
+    let cancelled = false;
+
+    // Saved Opinions (Ticket 3): ONE batch fetch of the signed-in user's
+    // saved set for the whole table, sharing this same mount effect rather
+    // than a second one — see save-opinion-button.tsx's doc comment for the
+    // N+1-per-row rationale this avoids.
+    fetch("/api/finance/opinions/saved-ids")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { ids: string[] } | null) => {
+        if (!cancelled && data) setSavedIds(new Set(data.ids));
+      })
+      .catch(() => {
+        // Offline — leave savedIds empty, every row's icon renders unsaved
+        // until a real click (the route already degrades signed-out to []).
+      });
+
     const targetId = searchParams.get("call");
-    if (!targetId || !calls.some((call) => call.id === targetId)) return;
+    if (!targetId || !calls.some((call) => call.id === targetId)) {
+      return () => {
+        cancelled = true;
+      };
+    }
 
     setOpenId(targetId);
     // Wait a tick for the expanded panel row to mount before scrolling to it.
     const raf = requestAnimationFrame(() => {
       rowRefs.current.get(targetId)?.scrollIntoView({ behavior: "smooth", block: "center" });
     });
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+    };
     // Only ever react to the initial ?call= on load, not every searchParams change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -207,6 +236,11 @@ export function ExpandableCallsTable({
                         Source
                         <ArrowUpRight className="h-3.5 w-3.5" />
                       </a>
+                      {/* Save this call (Saved Opinions brief) — every row, pending
+                          included: unlike Share2 below (gated on isGraded because
+                          /calls/[id] has nothing to show for an ungraded call), a
+                          save is just a bookmark row and has no such constraint. */}
+                      <SaveOpinionButton opinionId={call.id} initialSaved={savedIds.has(call.id)} />
                       {/* Founder 2026-08-15: the share affordance was buried as a
                           text link inside the EXPANDED panel only — invisible
                           without clicking a row open. Graded calls now carry a
