@@ -219,15 +219,24 @@ export default async function MethodologyPage() {
               own stat grid) gets the full width below them. */}
           <div className="grid gap-6 lg:grid-cols-2">
           <div className="space-y-2">
-            <h3 className="text-sm font-semibold text-ink-900">The bullish-extraction skew</h3>
+            <h3 className="text-sm font-semibold text-ink-900">How we tag direction, and why bullish still leads</h3>
             <p>
               Of {directionSplit.total.toLocaleString("en-IN")} non-suppressed opinions, {pct1(directionSplit.bullishPct)}{" "}
               are tagged bullish, {pct1(directionSplit.bearishPct)} bearish, and {pct1(directionSplit.neutralPct)}{" "}
-              neutral. That bullish share runs wider than independent industry sentiment baselines typically show,
-              and this is at least partly a <strong>known bias in our own extraction pipeline</strong> — a few-shot
-              prompt and a merge rule that both lean ambiguous calls toward &ldquo;bullish&rdquo; — not purely a
-              reflection of what analysts actually said. This is an open item we&apos;re working on, not something
-              this page fixes; we&apos;re disclosing it rather than smoothing it over.
+              neutral. Some of that gap is real: Indian brokerage research genuinely skews toward initiations,
+              upgrades, and buy calls more than outright sell calls, and analysts hedge positive views in print far
+              more often than negative ones — independent sentiment baselines run bullish-leaning too, just not
+              always this wide. We work to keep our own extraction and counting process from adding to that
+              real-world skew on top of it: the model is shown equally rigorous worked examples of bullish, bearish,
+              and neutral calls, so it isn&apos;t primed to reach for one direction more readily than another; when a
+              single article&apos;s signals are genuinely mixed, we tag whichever direction is actually dominant,
+              with a true tie landing on neutral rather than being awarded to conviction; and every sentiment number
+              on this site counts each analyst&apos;s latest stance on an instrument once, no matter how many times
+              they&apos;ve repeated that same call across different articles — a restated view is still one opinion,
+              not several. We validate this quote-by-quote against real published calls, not just by checking
+              whether an aggregate percentage looks better. The number above will keep drifting as new opinions
+              replace older ones in our rolling windows — it won&apos;t land at an even three-way split, and
+              shouldn&apos;t, because the underlying commentary itself isn&apos;t evenly split either.
             </p>
           </div>
 
