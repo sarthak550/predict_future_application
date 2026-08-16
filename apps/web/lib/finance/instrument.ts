@@ -201,6 +201,26 @@ export interface InstrumentDetail {
    */
   hasLiveIndexPipe: boolean;
   /**
+   * Intraday Chart Ranges (2026-08-16) — true when this symbol has a real,
+   * resolvable Yahoo ticker for the candles endpoints (apps/api's
+   * `/candles`/`index/[symbol]/candles` routes), so `PriceChart`'s 1W/1M
+   * chips can lazy-fetch genuine 15m/1h bars instead of re-slicing the daily
+   * `spark` array. True for: a plain NSE equity/ETF (`!isIndex &&
+   * !isBseEquity` — the equity candles route's `.NS`-suffix convention
+   * always resolves for these, `latestQuote` presence not required), and
+   * every index this page's own `hasLiveIndexPipe` field already covers (the
+   * 5 tradable + ~30 NSE INDEX_UNIVERSE + ~18 BSE_INDEX_UNIVERSE indices —
+   * literally the same symbols the index candles route's own
+   * `resolveIndexYahooTicker` resolves, by construction). False for a
+   * BSE-only equity/fund (`isBseEquity` — the equity candles route hardcodes
+   * `.NS`, out of scope to fix here, see the CTO brief's instrument-class
+   * table) and for a long-tail index (`isIndex && !hasLiveIndexPipe` above —
+   * no yahooTicker exists to resolve, by design). Bonds never reach this
+   * function's return at all (a separate page/fetcher — see
+   * lib/finance/bonds.ts), so they need no explicit branch here.
+   */
+  supportsIntradayRanges: boolean;
+  /**
    * BSE Expansion Phase 2 (2026-08-12) — true for ANY BSE index page (the 18
    * BSE_INDEX_UNIVERSE Yahoo-verified indices AND the ~115-index BSE long
    * tail — see lib/finance/bseIndexLongTail.ts). Mutually exclusive with a
@@ -861,6 +881,14 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
   // the same "always resolves" case, one level over — see
   // `bseEquityLatestRow`'s own doc.
   const isBseEquity = bseEquityLatestRow != null;
+  // Intraday Chart Ranges (2026-08-16) — see InstrumentDetail.supportsIntradayRanges's
+  // own doc. Reuses `hasLiveIndexPipe`/`hasLiveBseIndexPipe` (already computed
+  // above for the SAME "does a real Yahoo ticker resolve" question the index
+  // candles route asks) rather than re-deriving index eligibility a second
+  // way; the equity/ETF branch is a single `!isBseEquity` check since the
+  // equity candles route's `.NS`-suffix convention resolves for any NSE
+  // symbol string, quote-availability not required.
+  const supportsIntradayRanges = isIndex ? hasLiveIndexPipe || hasLiveBseIndexPipe : !isBseEquity;
   /** BSE Expansion Phase 3B (2026-08-14) — see InstrumentDetail's own doc. Computed from the registry lookup already fetched above, not re-derived. */
   const isBseFund = bseFundDetails != null;
   const hasAnyContent = latestQuote != null || news.length > 0 || filings.length > 0 || matchedOpinions.length > 0;
@@ -1313,6 +1341,7 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     // symbol: hasLiveBseIndexPipe is only ever true for a BSE-prefixed
     // symbol (see `nseUnresolved`'s own doc above).
     hasLiveIndexPipe: hasLiveIndexPipe || hasLiveBseIndexPipe,
+    supportsIntradayRanges,
     isBseIndex,
     indexMetrics,
     indexComposition,
