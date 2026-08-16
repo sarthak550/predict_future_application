@@ -65,9 +65,9 @@ export default async function MethodologyPage() {
         <CardHeader>
           <CardTitle>1. What gets graded</CardTitle>
         </CardHeader>
-        <CardContent className="max-w-3xl space-y-4 text-sm leading-6 text-ink-600">
+        <CardContent className="space-y-4 text-sm leading-6 text-ink-600">
           <p>
-            An analyst opinion starts as a quote pulled from a tracked news source (see Section 6 for the current
+            An analyst opinion starts as a quote pulled from a tracked news source (see Section 5 for the current
             source list), tagged with a direction — bullish, bearish, or neutral — and, where possible, a specific
             tradeable instrument. Not every opinion we log is gradable: before grading ever starts, an AI pass checks
             whether the claim is specific and resolvable against real price data. Vague or non-directional commentary
@@ -103,12 +103,16 @@ export default async function MethodologyPage() {
         </CardContent>
       </Card>
 
+      {/* Sections 2 + 3 side by side (founder 2026-08-16: the full-width
+          cards left a dead right half — paired medium-length sections use
+          the width instead). Stacks back to one column below lg. */}
+      <div className="grid gap-8 lg:grid-cols-2 lg:items-stretch">
       {/* Section 2 — How HIT/MISS is decided */}
-      <Card>
+      <Card className="h-full">
         <CardHeader>
           <CardTitle>2. How HIT / MISS is decided</CardTitle>
         </CardHeader>
-        <CardContent className="max-w-3xl space-y-4 text-sm leading-6 text-ink-600">
+        <CardContent className="space-y-4 text-sm leading-6 text-ink-600">
           <p>
             Once a call&apos;s resolution window has passed, we pull the instrument&apos;s real closing price and
             compare it against the price on the day the call was made. We use a{" "}
@@ -129,11 +133,11 @@ export default async function MethodologyPage() {
       </Card>
 
       {/* Section 3 — Resolution window */}
-      <Card>
+      <Card className="h-full">
         <CardHeader>
           <CardTitle>3. Resolution window</CardTitle>
         </CardHeader>
-        <CardContent className="max-w-3xl space-y-4 text-sm leading-6 text-ink-600">
+        <CardContent className="space-y-4 text-sm leading-6 text-ink-600">
           <p>
             A call isn&apos;t graded early, and it isn&apos;t graded on some fixed company-wide schedule — it&apos;s
             graded once the <strong>analyst&apos;s own implied timeframe</strong> has actually passed, inferred from
@@ -145,13 +149,15 @@ export default async function MethodologyPage() {
           </p>
         </CardContent>
       </Card>
+      </div>
 
+      <div className="grid gap-8 lg:grid-cols-2 lg:items-stretch">
       {/* Section 4 — Suppression */}
-      <Card>
+      <Card className="h-full">
         <CardHeader>
           <CardTitle>4. Suppression</CardTitle>
         </CardHeader>
-        <CardContent className="max-w-3xl space-y-4 text-sm leading-6 text-ink-600">
+        <CardContent className="space-y-4 text-sm leading-6 text-ink-600">
           <p>
             Opinions can be manually removed from the public scorecard by the editorial/moderation team. This is a
             simple boolean fact about a row — suppressed or not — independent of whatever grading status it has
@@ -183,13 +189,46 @@ export default async function MethodologyPage() {
           </p>
         </CardContent>
       </Card>
+      {/* Section 6 — Data sources */}
+      <Card className="h-full">
+        <CardHeader>
+          <CardTitle>5. Data sources</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4 text-sm leading-6 text-ink-600">
+          <p>
+            <strong>Price data</strong> comes from Yahoo Finance — end-of-day/delayed quotes, not tick-level or
+            real-time data. <strong>Historical end-of-day price data</strong> for grading older calls is
+            cross-checked against NSE/BSE bhavcopy archives. Neither source is instantaneous, and we don&apos;t claim
+            otherwise anywhere on this site.
+          </p>
+          <p>
+            <strong>Opinions are extracted only from a tracked allowlist of news sources</strong> — currently{" "}
+            {trackedSources.length} domain{trackedSources.length === 1 ? "" : "s"}:
+          </p>
+          <ul className="list-disc space-y-1 pl-5">
+            {trackedSources.map((source) => (
+              <li key={source}>{source}</li>
+            ))}
+          </ul>
+          <p className="text-ink-500">
+            This list has changed before and will change again as coverage expands — it is queried live from the
+            same allowlist constant the extraction pipeline itself gates on, so it can never silently go stale on
+            this page.
+          </p>
+        </CardContent>
+      </Card>
+
+      </div>
 
       {/* Section 5 — Known limitations */}
       <Card className="border-amber-200">
         <CardHeader>
-          <CardTitle>5. Known limitations</CardTitle>
+          <CardTitle>6. Known limitations</CardTitle>
         </CardHeader>
-        <CardContent className="max-w-3xl space-y-6 text-sm leading-6 text-ink-600">
+        <CardContent className="space-y-6 text-sm leading-6 text-ink-600">
+          {/* Two shorter limitations share a row; the era analysis (with its
+              own stat grid) gets the full width below them. */}
+          <div className="grid gap-6 lg:grid-cols-2">
           <div className="space-y-2">
             <h3 className="text-sm font-semibold text-ink-900">The bullish-extraction skew</h3>
             <p>
@@ -201,6 +240,29 @@ export default async function MethodologyPage() {
               reflection of what analysts actually said. This is an open item we&apos;re working on, not something
               this page fixes; we&apos;re disclosing it rather than smoothing it over.
             </p>
+          </div>
+
+          <div className="space-y-2" id="sample-size">
+            <h3 className="text-sm font-semibold text-ink-900">The sample-size caveat</h3>
+            <p>
+              A hit rate computed from only a handful of calls can look impressively high (or low) purely by chance.
+              Take our own worked example: an analyst with {sampleSizeExample.hitCount} hits out of{" "}
+              {sampleSizeExample.resolvedCount} graded calls has a headline rate of{" "}
+              {pct0((sampleSizeExample.hitCount / sampleSizeExample.resolvedCount) * 100)} — but the real 95%
+              confidence interval on that number, computed with a Wilson score interval, is roughly{" "}
+              <strong>
+                {sampleSizeExample.ci.lowerPct}–{sampleSizeExample.ci.upperPct}%
+              </strong>
+              . That is a huge range — wide enough that this analyst could plausibly be a genuine coin-flip or a
+              genuinely strong performer, and {sampleSizeExample.resolvedCount} calls alone can&apos;t tell you
+              which. Anywhere you see a percentage on this site with a{" "}
+              <span className="inline-flex items-center rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-700">
+                Low sample
+              </span>{" "}
+              badge next to it, this is why — look for the confidence-interval range next to the number, not just the
+              number itself.
+            </p>
+          </div>
           </div>
 
           <div className="space-y-2">
@@ -259,56 +321,6 @@ export default async function MethodologyPage() {
             </p>
           </div>
 
-          <div className="space-y-2" id="sample-size">
-            <h3 className="text-sm font-semibold text-ink-900">The sample-size caveat</h3>
-            <p>
-              A hit rate computed from only a handful of calls can look impressively high (or low) purely by chance.
-              Take our own worked example: an analyst with {sampleSizeExample.hitCount} hits out of{" "}
-              {sampleSizeExample.resolvedCount} graded calls has a headline rate of{" "}
-              {pct0((sampleSizeExample.hitCount / sampleSizeExample.resolvedCount) * 100)} — but the real 95%
-              confidence interval on that number, computed with a Wilson score interval, is roughly{" "}
-              <strong>
-                {sampleSizeExample.ci.lowerPct}–{sampleSizeExample.ci.upperPct}%
-              </strong>
-              . That is a huge range — wide enough that this analyst could plausibly be a genuine coin-flip or a
-              genuinely strong performer, and {sampleSizeExample.resolvedCount} calls alone can&apos;t tell you
-              which. Anywhere you see a percentage on this site with a{" "}
-              <span className="inline-flex items-center rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-700">
-                Low sample
-              </span>{" "}
-              badge next to it, this is why — look for the confidence-interval range next to the number, not just the
-              number itself.
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Section 6 — Data sources */}
-      <Card>
-        <CardHeader>
-          <CardTitle>6. Data sources</CardTitle>
-        </CardHeader>
-        <CardContent className="max-w-3xl space-y-4 text-sm leading-6 text-ink-600">
-          <p>
-            <strong>Price data</strong> comes from Yahoo Finance — end-of-day/delayed quotes, not tick-level or
-            real-time data. <strong>Historical end-of-day price data</strong> for grading older calls is
-            cross-checked against NSE/BSE bhavcopy archives. Neither source is instantaneous, and we don&apos;t claim
-            otherwise anywhere on this site.
-          </p>
-          <p>
-            <strong>Opinions are extracted only from a tracked allowlist of news sources</strong> — currently{" "}
-            {trackedSources.length} domain{trackedSources.length === 1 ? "" : "s"}:
-          </p>
-          <ul className="list-disc space-y-1 pl-5">
-            {trackedSources.map((source) => (
-              <li key={source}>{source}</li>
-            ))}
-          </ul>
-          <p className="text-ink-500">
-            This list has changed before and will change again as coverage expands — it is queried live from the
-            same allowlist constant the extraction pipeline itself gates on, so it can never silently go stale on
-            this page.
-          </p>
         </CardContent>
       </Card>
 
