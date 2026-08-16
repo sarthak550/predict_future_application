@@ -27,7 +27,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { Check, Copy, MessageCircle, Share2, Twitter } from "lucide-react";
+import { Check, Copy, Linkedin, MessageCircle, Share2, Twitter } from "lucide-react";
 import type { OpinionDirection } from "@prisma/client";
 
 const UTM_SUFFIX = "utm_source=predictfuture&utm_medium=share&utm_campaign=call_share";
@@ -92,6 +92,12 @@ export function ShareCallButton({
   const twitterHref = shareUrl
     ? `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}&url=${encodeURIComponent(shareUrl)}`
     : undefined;
+  // LinkedIn's share-offsite endpoint takes only a URL — no prefilled text
+  // param exists anymore; the OG card (title/verdict/image) carries the
+  // content there.
+  const linkedinHref = shareUrl
+    ? `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(shareUrl)}`
+    : undefined;
 
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -132,7 +138,19 @@ export function ShareCallButton({
         className="inline-flex items-center gap-1.5 rounded-full border border-ink-200 bg-white px-3.5 py-1.5 text-sm font-medium text-ink-700 transition hover:border-ink-900 hover:text-ink-900"
       >
         <Twitter className="h-3.5 w-3.5" />
-        Post
+        X
+      </a>
+      <a
+        href={linkedinHref ?? undefined}
+        target="_blank"
+        rel="noreferrer"
+        onClick={(e) => {
+          if (!linkedinHref) e.preventDefault();
+        }}
+        className="inline-flex items-center gap-1.5 rounded-full border border-ink-200 bg-white px-3.5 py-1.5 text-sm font-medium text-ink-700 transition hover:border-[#0a66c2] hover:text-[#0a66c2]"
+      >
+        <Linkedin className="h-3.5 w-3.5" />
+        LinkedIn
       </a>
     </div>
   );
