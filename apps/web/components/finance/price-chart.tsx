@@ -8,13 +8,27 @@
  * the interaction model users know from other market apps. Pure inline SVG,
  * no chart library; works for mouse and touch.
  *
- * Two distinct data sources feed this one chart:
- *   - 1W..MAX: daily EOD closes (StockEodQuote), passed in as `series` from
- *     the server component — one point per trading session, oldest first.
+ * Three distinct data sources feed this one chart:
+ *   - 3M..MAX (always) and 1W/1M (when `supportsIntradayRanges` is falsy):
+ *     daily EOD closes (StockEodQuote), passed in as `series` from the
+ *     server component — one point per trading session, oldest first.
  *   - 1D: live 1-minute intraday ticks for the current (or last completed)
  *     NSE session, fetched client-side from /api/instruments/[symbol]/intraday
  *     ONLY when the user selects it (never prefetched) — a live NSE call is
  *     too expensive/volatile to run for every page view.
+ *   - 1W/1M, Intraday Chart Ranges (2026-08-16), ONLY when
+ *     `supportsIntradayRanges` is true: 15-minute (1W) / 1-hour (1M) OHLCV
+ *     bars from the SAME candles endpoint the Charting Workbench already
+ *     uses (`/api/instruments/[symbol]/candles` or the `/index/[symbol]/`
+ *     sibling for an index instrument), fetched lazily on first selection
+ *     exactly like 1D above, then sliced client-side to the last 5 (1W) / 22
+ *     (1M) IST trading sessions via `sliceToLastIstSessions`. Renders
+ *     through the SAME line/area path as every other timeframe (bar `close`
+ *     only, index-spaced x-axis, no candlesticks — see the CTO brief's
+ *     Decisions 5/6). A class without real intraday coverage (BSE-only
+ *     equities, long-tail indices, bonds — `supportsIntradayRanges` false)
+ *     keeps the exact pre-existing 1W/1M behavior: a daily-EOD re-slice of
+ *     `series`, zero fetch attempted.
  *
  * Quote-driven intrabar ticks (founder complaint, live market open,
  * 2026-08-04): between `pollIntervalMs` background refreshes of the FULL 1D
@@ -31,6 +45,8 @@
 
 import { Loader2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import { sliceToLastIstSessions } from "@predict-future/business-rules/marketPulse/intradaySessions";
 
 import {
   CANCEL_HIT_DIAMETER,
@@ -62,6 +78,35 @@ type IntradayFetchState =
   | { status: "error" }
   | { status: "ready"; points: IntradayTick[]; prevClose: number | null; sessionLabel: string };
 
+/** Intraday Chart Ranges (2026-08-16) — the two EOD timeframes eligible for a real intraday candles fetch (see `supportsIntradayRanges`). */
+type RangeTimeframeKey = "1W" | "1M";
+
+/** One OHLCV bar as returned by the candles endpoint — only `close`/`timestamp` are read (Decision 6: line/area from close, never a candlestick). */
+type CandleBar = { timestamp: number; close: number };
+
+type RangeFetchState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "error" }
+  | { status: "ready"; bars: CandleBar[] };
+
+/**
+ * Interval + session-window + footer copy per intraday-eligible timeframe —
+ * Decision 1 (15m for 1W, 1h — not 30m — for 1M) and Decision 7 (disclosure
+ * copy) of the CTO brief, both locked. `sessions` feeds
+ * `sliceToLastIstSessions` the same way `TIMEFRAMES[].sessions` feeds the
+ * daily `series.slice(-sessions)` path — same trimming principle, applied to
+ * an intraday bar array instead of a one-row-per-session daily array.
+ */
+const RANGE_INTERVAL: Record<RangeTimeframeKey, { interval: "15m" | "60m"; sessions: number; footerNote: string }> = {
+  "1W": { interval: "15m", sessions: 5, footerNote: "15-min bars · delayed" },
+  "1M": { interval: "60m", sessions: 22, footerNote: "1-hour bars · delayed" },
+};
+
+function isRangeTimeframe(key: TimeframeKey): key is RangeTimeframeKey {
+  return key === "1W" || key === "1M";
+}
+
 const TIMEFRAMES = [
   { key: "1D", sessions: 0 },
   { key: "1W", sessions: 5 },
@@ -85,6 +130,18 @@ function formatRupees(v: number): string {
 /** "14:32" — IST wall-clock time from an epoch-millis timestamp, regardless of the viewer's own timezone. */
 function formatIstTime(epochMs: number): string {
   return new Intl.DateTimeFormat("en-IN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: "Asia/Kolkata",
+  }).format(new Date(epochMs));
+}
+
+/** "16 Aug, 14:30" — IST calendar date + wall-clock time from an epoch-millis timestamp, for a 1W/1M intraday bar (unlike 1D's `formatIstTime`, a 1W/1M window spans multiple calendar days, so the label needs the date too — a bare time would be ambiguous across sessions). */
+function formatIstBarLabel(epochMs: number): string {
+  return new Intl.DateTimeFormat("en-IN", {
+    day: "2-digit",
+    month: "short",
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
@@ -120,6 +177,7 @@ export function PriceChart({
   onOrderLineCancel,
   pollIntervalMs,
   quoteSource,
+  supportsIntradayRanges,
 }: {
   series: PricePoint[];
   symbol: string;
@@ -131,6 +189,14 @@ export function PriceChart({
    * underlying chart). Omitted: zero behavior change for every existing
    * caller. The pointed-at endpoint MUST return the same
    * `{prevClose, points, sessionLabel}` shape as the default equity proxy.
+   *
+   * Intraday Chart Ranges (2026-08-16) — ALSO used to pick the 1W/1M candles
+   * base URL (see the `fetchRangeCandles` callback below): a truthy
+   * `intradaySource` means this chart is an index instrument, so 1W/1M point
+   * at the `/index/[symbol]/candles` sibling instead of the default equity
+   * `/candles` route — the exact same "is this an index" signal
+   * `effectiveQuoteUrl` below already reads this prop for, not a second,
+   * independently-derived flag.
    */
   intradaySource?: { url: string };
   /**
@@ -256,6 +322,19 @@ export function PriceChart({
    *     rather than guessing a URL — zero behavior change for those.
    */
   quoteSource?: { url: string } | false;
+  /**
+   * Intraday Chart Ranges (2026-08-16) — additive, optional, defaults to
+   * falsy. Server-computed eligibility (Decision 8 of the CTO brief: "the
+   * server must tell the client, don't re-derive it client-side") —
+   * `lib/finance/instrument.ts`'s `supportsIntradayRanges` field, true only
+   * for a plain NSE equity/ETF or one of the 5+30+18 Yahoo-verified indices.
+   * True: selecting 1W/1M lazily fetches real 15m/1h candles (see this
+   * file's own module doc). Falsy (omitted, `false`, or any non-instrument-
+   * page caller — every terminal/dashboard consumer of this component
+   * simply never passes it): 1W/1M behave EXACTLY as before this feature —
+   * a client-side re-slice of the daily `series` prop, zero network request.
+   */
+  supportsIntradayRanges?: boolean;
 }) {
   const [timeframe, setTimeframe] = useState<TimeframeKey>(defaultTimeframe ?? "3M");
 
@@ -289,6 +368,14 @@ export function PriceChart({
   };
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const [intraday, setIntraday] = useState<IntradayFetchState>({ status: "idle" });
+  // Intraday Chart Ranges (2026-08-16) — one fetch-state slot per range
+  // timeframe (never shared with `intraday`'s own 1D-only state above), so
+  // switching 1W -> 1M -> 1W doesn't clobber either range's already-fetched
+  // bars — see `fetchRangeCandles`'s own doc below.
+  const [rangeCandles, setRangeCandles] = useState<Record<RangeTimeframeKey, RangeFetchState>>({
+    "1W": { status: "idle" },
+    "1M": { status: "idle" },
+  });
   const svgRef = useRef<SVGSVGElement | null>(null);
   // Sprint C, C1/C2 — the chart's own DOM wrapper, `position: relative` so
   // the order-intent popover (an absolutely-positioned sibling of the
@@ -415,6 +502,68 @@ export function PriceChart({
     return () => clearInterval(id);
   }, [timeframe, pollIntervalMs]);
 
+  // Intraday Chart Ranges (2026-08-16) — 1W/1M lazy candles fetch, mirroring
+  // `fetchIntraday` above almost exactly (same loading/error state shape,
+  // same never-throws `.catch`), with two deliberate differences: (1) the
+  // base URL branches on `intradaySource` presence (index vs equity — see
+  // that prop's own doc), with the interval appended per `RANGE_INTERVAL`,
+  // never a client-supplied `range` (Decision 2 — keeps the server's cache
+  // key uniform); (2) NO `silent` mode / no `pollIntervalMs` wiring — 1W/1M
+  // are historical-granularity, not live-ticking (Decision 4), so there is
+  // no background-refresh caller for this callback to serve, unlike 1D's.
+  const fetchRangeCandles = useCallback(
+    (tf: RangeTimeframeKey) => {
+      const { interval, sessions } = RANGE_INTERVAL[tf];
+      setRangeCandles((prev) => ({ ...prev, [tf]: { status: "loading" } }));
+      const base = intradaySource
+        ? `/api/instruments/index/${encodeURIComponent(symbol)}/candles`
+        : `/api/instruments/${encodeURIComponent(symbol)}/candles`;
+      fetch(`${base}?interval=${interval}`)
+        .then(async (res) => {
+          if (!res.ok) throw new Error(`candles fetch ${res.status}`);
+          const body = await res.json();
+          return body as { candles?: Array<{ timestamp?: unknown; close?: unknown }> };
+        })
+        .then((body) => {
+          const rawBars: CandleBar[] = Array.isArray(body.candles)
+            ? body.candles
+                .filter((b) => Number.isFinite(b?.timestamp) && Number.isFinite(b?.close) && (b!.close as number) > 0)
+                .map((b) => ({ timestamp: b.timestamp as number, close: b.close as number }))
+            : [];
+          const bars = sliceToLastIstSessions(rawBars, sessions);
+          if (bars.length < 2) {
+            // T4: not a hard error state — the render layer falls back to
+            // the daily `series` slice for this timeframe (same honest
+            // "graceful degrade" as any other transient upstream blip),
+            // never a blank chart. See the `points` memo's own comment.
+            setRangeCandles((prev) => ({ ...prev, [tf]: { status: "error" } }));
+            return;
+          }
+          setRangeCandles((prev) => ({ ...prev, [tf]: { status: "ready", bars } }));
+        })
+        .catch(() => {
+          setRangeCandles((prev) => ({ ...prev, [tf]: { status: "error" } }));
+        });
+    },
+    [symbol, intradaySource]
+  );
+  const fetchRangeCandlesRef = useRef(fetchRangeCandles);
+  fetchRangeCandlesRef.current = fetchRangeCandles;
+
+  // Guards each range's initial fetch to once per symbol — same ref-keyed
+  // discipline as `intradayFetchedFor` above, one slot per timeframe so 1W
+  // and 1M each get their own one-shot fetch rather than sharing a single
+  // guard. No-op entirely when `supportsIntradayRanges` is falsy (T1's
+  // server-computed gate) — an ineligible instrument class fires ZERO
+  // candles requests, ever.
+  const rangeFetchedFor = useRef<Record<RangeTimeframeKey, string | null>>({ "1W": null, "1M": null });
+  useEffect(() => {
+    if (!supportsIntradayRanges || !isRangeTimeframe(timeframe)) return;
+    if (rangeFetchedFor.current[timeframe] === symbol) return;
+    rangeFetchedFor.current[timeframe] = symbol;
+    fetchRangeCandlesRef.current(timeframe);
+  }, [timeframe, symbol, supportsIntradayRanges]);
+
   // Quote-driven intrabar ticks (2026-08-04) — see this file's own module
   // doc and `quoteSource`'s prop doc for the full 3-state default/override/
   // opt-out contract (the `=== false` check is a REQUIRED explicit opt-out
@@ -441,16 +590,41 @@ export function PriceChart({
     setLiveTicks((prev) => [...prev, { t: liveTick.asOf, price: liveTick.price }].slice(-500));
   }, [liveTick]);
 
+  /** The daily-EOD re-slice of `series` — every pre-existing EOD timeframe's rendering, AND the T4 fallback for an intraday-eligible 1W/1M whose candles fetch errored. */
+  const dailySlicePoints = useCallback(
+    (key: TimeframeKey): ChartPoint[] => {
+      const tf = TIMEFRAMES.find((t) => t.key === key)!;
+      const windowed = tf.sessions === Infinity ? series : series.slice(-tf.sessions);
+      return windowed.map((p, i) => ({ xValue: i, y: p.close, label: p.date }));
+    },
+    [series]
+  );
+
   const points = useMemo<ChartPoint[]>(() => {
     if (timeframe === "1D") {
       if (intraday.status !== "ready") return [];
       const allPoints = liveTicks.length > 0 ? [...intraday.points, ...liveTicks] : intraday.points;
       return allPoints.map((p) => ({ xValue: p.t, y: p.price, label: formatIstTime(p.t) }));
     }
-    const tf = TIMEFRAMES.find((t) => t.key === timeframe)!;
-    const windowed = tf.sessions === Infinity ? series : series.slice(-tf.sessions);
-    return windowed.map((p, i) => ({ xValue: i, y: p.close, label: p.date }));
-  }, [series, timeframe, intraday, liveTicks]);
+    // Intraday Chart Ranges (2026-08-16) — Decision 5 (index-spaced x-axis,
+    // reused verbatim from the daily-EOD branch below: `xValue: i`, never the
+    // bar's real epoch timestamp) + Decision 6 (bar `close` only, no OHLC
+    // rendered). `rangeState.status`:
+    //   - "ready": real bars, the whole point of this feature.
+    //   - "error": T4's graceful fallback — same daily re-slice this
+    //     timeframe would've rendered pre-feature, NOT a blank/error chart.
+    //   - "idle"/"loading": `[]` — the loading early-return below pre-empts
+    //     rendering entirely for these, same pattern as 1D's own loading gate.
+    if (supportsIntradayRanges && isRangeTimeframe(timeframe)) {
+      const rangeState = rangeCandles[timeframe];
+      if (rangeState.status === "ready") {
+        return rangeState.bars.map((b, i) => ({ xValue: i, y: b.close, label: formatIstBarLabel(b.timestamp) }));
+      }
+      if (rangeState.status === "error") return dailySlicePoints(timeframe);
+      return [];
+    }
+    return dailySlicePoints(timeframe);
+  }, [timeframe, intraday, liveTicks, supportsIntradayRanges, rangeCandles, dailySlicePoints]);
 
   // Reports the chart's own last-price/prevClose/change figures out to the
   // caller (terminal-header.tsx) — computed unconditionally (before any early
@@ -526,6 +700,29 @@ export function PriceChart({
         <TimeframeChips timeframe={timeframe} setTimeframe={pickTimeframe} series={series} setHoverIdx={setHoverIdx} />
       </div>
     );
+  }
+
+  // Intraday Chart Ranges (2026-08-16), T4 — loading state for the 1W/1M
+  // candles fetch, consistent with 1D's own loading gate above. Deliberately
+  // has NO error-state twin here (unlike 1D): an errored range fetch is
+  // handled entirely inside the `points` memo (falls back to the daily
+  // slice), so by the time `rangeCandles[timeframe].status === "error"`
+  // this component is already past this block with real fallback points —
+  // never reaching the generic "not enough price history" catch-all below
+  // for a reason that isn't actually true (there IS daily history).
+  if (supportsIntradayRanges && isRangeTimeframe(timeframe)) {
+    const rangeState = rangeCandles[timeframe];
+    if (rangeState.status === "idle" || rangeState.status === "loading") {
+      return (
+        <div>
+          <div className="flex h-[200px] items-center justify-center rounded-xl border border-ink-100 bg-ink-50/40 text-sm text-ink-400">
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
+            Loading {RANGE_INTERVAL[timeframe].interval === "15m" ? "15-min" : "1-hour"} bars…
+          </div>
+          <TimeframeChips timeframe={timeframe} setTimeframe={pickTimeframe} series={series} setHoverIdx={setHoverIdx} />
+        </div>
+      );
+    }
   }
 
   if (!geometry || points.length < 2) {
@@ -690,10 +887,19 @@ export function PriceChart({
     setDragState(null);
   };
 
+  // Intraday Chart Ranges (2026-08-16), Decision 7 — honest disclosure by
+  // instrument class: real bars showing get the "N-min/hour bars · delayed"
+  // copy; anything else (an ineligible class, OR an eligible one whose fetch
+  // errored and fell back to the daily slice — T4) keeps the pre-existing
+  // "Daily closes" copy UNCHANGED, since that's exactly what's on screen
+  // either way. Never a third, separate "fallback" caption — the daily copy
+  // is already honest for both cases.
   const footerNote =
     timeframe === "1D" && intraday.status === "ready"
       ? `1-minute ticks${effectiveQuoteUrl ? " + live" : ""} · ${intraday.sessionLabel}`
-      : "Daily closes · updates after each session";
+      : supportsIntradayRanges && isRangeTimeframe(timeframe) && rangeCandles[timeframe].status === "ready"
+        ? RANGE_INTERVAL[timeframe].footerNote
+        : "Daily closes · updates after each session";
 
   return (
     <div ref={wrapperRef} className="relative">

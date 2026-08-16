@@ -159,6 +159,11 @@ export default async function InstrumentDetailPage({
             }))}
             intradaySource={hasLiveIndexPipe ? { url: indexIntradayUrl } : undefined}
             defaultTimeframe={hasLiveIndexPipe ? "1D" : undefined}
+            // Intraday Chart Ranges (2026-08-16) — server-computed eligibility
+            // (lib/finance/instrument.ts's own doc has the full per-class
+            // table) so PriceChart never has to guess/re-derive which
+            // instrument classes get a real 1W/1M candles fetch attempt.
+            supportsIntradayRanges={instrument.supportsIntradayRanges}
             // Index History Stage 2 (2026-08-11) — a long-tail index isn't a
             // real NSE equity ticker, so the chart's default bare-equity
             // quote poll (`/api/instruments/[symbol]/quote`) must be
