@@ -26,7 +26,7 @@ function pct0(value: number): string {
 
 export default async function MethodologyPage() {
   const data = await fetchMethodologyData();
-  const { reconciliation, directionSplit, eraSplit, sampleSizeExample, trackedSources } = data;
+  const { reconciliation, directionSplit, sampleSizeExample, trackedSources } = data;
 
   const notGradedShare =
     reconciliation.nonSuppressedTotal > 0
@@ -36,17 +36,6 @@ export default async function MethodologyPage() {
     reconciliation.nonSuppressedTotal > 0
       ? (reconciliation.nonSuppressed.PENDING / reconciliation.nonSuppressedTotal) * 100
       : 0;
-
-  // Three-way, not two-way: if either era has no resolved calls yet (e.g. a freshly
-  // seeded/local DB), there is nothing to compare — saying "meaningfully separated" in
-  // that case would be a false claim, not just an unlikely one. Only declare overlap or
-  // separation when both eras actually have a computable interval.
-  const eraComparison: "overlap" | "separated" | "insufficient-data" =
-    !eraSplit.pre.ci || !eraSplit.post.ci
-      ? "insufficient-data"
-      : eraSplit.pre.ci.lowerPct <= eraSplit.post.ci.upperPct && eraSplit.post.ci.lowerPct <= eraSplit.pre.ci.upperPct
-        ? "overlap"
-        : "separated";
 
   return (
     <div className="space-y-8">
@@ -211,7 +200,7 @@ export default async function MethodologyPage() {
             ))}
           </ul>
           <p className="text-ink-500">
-            This list has changed before and will change again as coverage expands — it is queried live from the
+            This list will grow as coverage expands — it is queried live from the
             same allowlist constant the extraction pipeline itself gates on, so it can never silently go stale on
             this page.
           </p>
@@ -263,62 +252,6 @@ export default async function MethodologyPage() {
               number itself.
             </p>
           </div>
-          </div>
-
-          <div className="space-y-2">
-            <h3 className="text-sm font-semibold text-ink-900">The accuracy-measurement-era question</h3>
-            <p>
-              On 2026-07-20 we shipped a fix to the grading pipeline that changed two things at once: the backlog of
-              opinions is now processed oldest-first instead of newest-first, and any HIT/MISS verdict the AI itself
-              flags as low-confidence is now excluded rather than published. We investigated whether this changed
-              measured accuracy — reproducible any time by running{" "}
-              <code className="rounded bg-ink-100 px-1 py-0.5 text-xs">
-                scripts/investigate-accuracy-discrepancy.ts
-              </code>{" "}
-              in this repo. The honest answer: not by much, and not enough to explain a headline gap some may have
-              seen between an all-time rate and a recent-calls rate.
-            </p>
-            <div className="grid gap-4 rounded-[20px] border border-ink-100 p-5 sm:grid-cols-2">
-              <div>
-                <p className="text-xs uppercase tracking-wide text-ink-400">Before 2026-07-20</p>
-                <p className="mt-1 text-xl font-semibold text-ink-900">{pct0(eraSplit.pre.hitRatePct)}</p>
-                <p className="text-xs text-ink-400">
-                  {eraSplit.pre.hitCount} hit / {eraSplit.pre.missCount} miss (n={eraSplit.pre.n})
-                  {eraSplit.pre.ci ? ` · 95% CI ${eraSplit.pre.ci.lowerPct}–${eraSplit.pre.ci.upperPct}%` : ""}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs uppercase tracking-wide text-ink-400">On or after 2026-07-20</p>
-                <p className="mt-1 text-xl font-semibold text-ink-900">{pct0(eraSplit.post.hitRatePct)}</p>
-                <p className="text-xs text-ink-400">
-                  {eraSplit.post.hitCount} hit / {eraSplit.post.missCount} miss (n={eraSplit.post.n})
-                  {eraSplit.post.ci ? ` · 95% CI ${eraSplit.post.ci.lowerPct}–${eraSplit.post.ci.upperPct}%` : ""}
-                </p>
-              </div>
-            </div>
-            <p>
-              {eraComparison === "insufficient-data" ? (
-                "There isn't yet enough resolved data in one of these two periods to compare confidence intervals — check back as more calls resolve, or run the investigation script above against a fuller dataset."
-              ) : eraComparison === "overlap" ? (
-                "These two confidence intervals overlap almost entirely — the small difference between them is well within ordinary sampling noise, not a sign the grading rules materially changed what gets counted as right."
-              ) : (
-                "These two confidence intervals are meaningfully separated — there is a real, statistically distinguishable shift between the two periods."
-              )}{" "}
-              {eraSplit.recent.n > 0 ? (
-                <>
-                  Separately, the most-recently-resolved {eraSplit.recent.n} calls
-                  {eraSplit.recent.spanLabel ? ` (${eraSplit.recent.spanLabel})` : ""} show a{" "}
-                  {pct0(eraSplit.recent.hitRatePct)} hit rate
-                  {eraSplit.recent.ci ? ` (95% CI ${eraSplit.recent.ci.lowerPct}–${eraSplit.recent.ci.upperPct}%)` : ""} —
-                  a small, recent sample that can swing widely by chance alone, which is exactly why we show a
-                  confidence interval next to it rather than a bare percentage. The all-time number blends a long
-                  history with a much smaller, noisier recent window; both are real, but neither alone tells the
-                  whole story.
-                </>
-              ) : (
-                "No calls have resolved yet to show a recent-window comparison."
-              )}
-            </p>
           </div>
 
         </CardContent>

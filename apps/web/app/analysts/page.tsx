@@ -48,28 +48,46 @@ export default async function AnalystsDirectoryPage({
 
   return (
     <div className="space-y-8">
-      <div>
-        {/* Founder 2026-08-15: Methodology lives HERE, not in the global nav —
-            it's analyst-domain, and this is the page where a skeptic first
-            meets an accuracy number. */}
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h1 className="text-3xl font-semibold text-ink-900">Analyst Scorecard</h1>
-          <Link
-            href="/methodology"
-            className="text-sm font-medium text-signal-sky hover:underline"
-          >
-            How grading works →
-          </Link>
+      {/* Founder 2026-08-16 ("fix the empty spaces in Analyst page"): the
+          header's right half was dead space beside the intro paragraph — it
+          now carries the scorecard's aggregate numbers, computed from the
+          already-fetched FULL analyst list (stable across firm filters, no
+          extra queries). Methodology link stays here per the 2026-08-15
+          nav-curation decision. */}
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
+        <div>
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="text-3xl font-semibold text-ink-900">Analyst Scorecard</h1>
+            <Link
+              href="/methodology"
+              className="text-sm font-medium text-signal-sky hover:underline"
+            >
+              How grading works →
+            </Link>
+          </div>
+          <p className="mt-3 max-w-2xl text-sm leading-6 text-ink-500">
+            We track what market analysts said in the press, and grade every call HIT or MISS against what
+            actually happened. Below are the analysts with enough graded calls to show a meaningful track
+            record. Not investment advice — a record of public statements, not a recommendation.{" "}
+            <Link href="/methodology" className="text-signal-sky hover:underline">
+              Read exactly how every call is graded
+            </Link>
+            .
+          </p>
         </div>
-        <p className="mt-3 max-w-2xl text-sm leading-6 text-ink-500">
-          We track what market analysts said in the press, and grade every call HIT or MISS against what
-          actually happened. Below are the analysts with enough graded calls to show a meaningful track
-          record. Not investment advice — a record of public statements, not a recommendation.{" "}
-          <Link href="/methodology" className="text-signal-sky hover:underline">
-            Read exactly how every call is graded
-          </Link>
-          .
-        </p>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-2">
+          {[
+            { value: analysts.length, label: "analysts on the scorecard" },
+            { value: new Set(analysts.map((a) => a.organization)).size, label: "firms covered" },
+            { value: analysts.reduce((sum, a) => sum + a.stats.resolvedCount, 0), label: "calls graded" },
+            { value: analysts.reduce((sum, a) => sum + a.stats.pendingCount, 0), label: "awaiting resolution" },
+          ].map((tile) => (
+            <div key={tile.label} className="rounded-[20px] border border-ink-100 bg-white px-4 py-3 lg:min-w-[150px]">
+              <p className="text-2xl font-semibold text-ink-900">{tile.value.toLocaleString("en-IN")}</p>
+              <p className="text-xs leading-4 text-ink-400">{tile.label}</p>
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
