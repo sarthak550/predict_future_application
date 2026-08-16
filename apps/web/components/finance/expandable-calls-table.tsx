@@ -4,11 +4,11 @@
  * Expandable "Recent calls" table for the public analyst profile page.
  *
  * Each row toggles an inline detail panel (full quote, headline, verdict +
- * resolution note, dates, source link) instead of navigating. Rationale:
- * /calls/[id] only exists as a share artifact for GRADED calls — it redirects
- * PENDING/NOT_GRADED back to the profile, so linking every row there made
- * clicks on ungraded calls look like dead links. Graded rows still offer a
- * "Share this call" link to /calls/[id] inside the expanded panel.
+ * resolution note, dates, source link) instead of navigating. Since
+ * 2026-08-16 /calls/[id] renders for EVERY non-suppressed call (pending
+ * included), so row links there are always safe; the inline panel remains
+ * the fast browse experience. The row-level Share icon stays graded-only —
+ * pending calls have no verdict to share.
  *
  * Dates arrive preformatted as strings — the server component owns formatting
  * so this stays a purely presentational client component.

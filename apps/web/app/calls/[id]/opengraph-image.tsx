@@ -19,16 +19,20 @@ export default async function CallOpengraphImage({ params }: { params: { id: str
   });
 
   const isHit = opinion?.resolutionStatus === "RESOLVED_HIT";
+  const isMiss = opinion?.resolutionStatus === "RESOLVED_MISS";
   const name = opinion?.expert.name ?? "Analyst";
   const organization = opinion?.expert.organization ?? "";
   const instrument = opinion?.instrument ?? "";
   const quote = opinion?.quote ?? "";
   const truncatedQuote = quote.length > 180 ? `${quote.slice(0, 180)}…` : quote;
 
-  // Verdict-colored accent only — the overall card layout is identical for HIT and MISS
-  // so a MISS never reads as punitive. Neutral slate accent for MISS, not red/alarm.
-  const accentColor = isHit ? "#22c55e" : "#94a3b8";
-  const verdictLabel = isHit ? "HIT" : "MISS";
+  // Verdict-colored accent only — the overall card layout is identical for
+  // every state so a MISS never reads as punitive. Neutral slate for MISS,
+  // amber for a not-yet-graded call (2026-08-16: /calls now renders pending
+  // calls too — the old binary fell through to labeling them "MISS", a
+  // falsehood on the one image people share).
+  const accentColor = isHit ? "#22c55e" : isMiss ? "#94a3b8" : "#f59e0b";
+  const verdictLabel = isHit ? "HIT" : isMiss ? "MISS" : "PENDING";
 
   return new ImageResponse(
     (

@@ -20,8 +20,11 @@ import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { formatDateOnly } from "@/lib/utils";
 
-// Resolved outcomes only render a full share card. This is thin, single-call content,
-// so it stays noindex — the sitemap only ever lists /analysts/[slug] pages.
+// Every public (non-suppressed) call renders here — graded calls as a full
+// share card, pending/not-graded ones with an honest state badge and live
+// voting (founder 2026-08-16: "it should be call page"). Thin, single-call
+// content, so it stays noindex — the sitemap only ever lists
+// /analysts/[slug] pages.
 //
 // Saved Opinions (Ticket 3): the page now also reads getSession() to pass a
 // server-known `saved` boolean into SaveOpinionButton (brief's explicit
@@ -86,20 +89,18 @@ async function fetchResolvedCall(id: string, userId: string | null) {
     return { kind: "suppressed" as const, expertSlug: opinion.expert.slug };
   }
 
-  // Founder 2026-08-16: a PENDING call should land on THE OPINION ITSELF,
-  // not the analyst's page — /opinions already supports a ?call= deep-link
-  // that auto-expands and scrolls to the row (Return-to-call, Phase C.1),
-  // so My Takes / Saved calls / stale share links all land on the actual
-  // call with its Take-a-Side panel open-able. status=all keeps pending
-  // rows visible past the graded-first default.
-  if (opinion.resolutionStatus !== "RESOLVED_HIT" && opinion.resolutionStatus !== "RESOLVED_MISS") {
-    return { kind: "unresolved" as const, expertSlug: opinion.expert.slug };
-  }
-
+  // Founder 2026-08-16 (second pass — the first fix redirected pending
+  // calls into the opinions feed and was explicitly rejected: "it should be
+  // call page"): every public, non-suppressed call now RENDERS its own
+  // /calls/[id] page. A graded call shows its verdict + share kit; a
+  // pending call shows the same card with an honest Pending state, live
+  // Take-a-Side voting (only possible while pending), and no share kit
+  // (nothing gradable to share — the never-share-ungraded-as-verdict law
+  // stands). NOT_GRADED renders too, labeled as such.
   const expertStats = computeScorecard(opinion.expert.opinions);
 
-  // Single extra query, only on the resolved-render path (generateMetadata
-  // below always passes userId: null, so this is skipped there entirely).
+  // Single extra query, only on the render path (generateMetadata below
+  // always passes userId: null, so this is skipped there entirely).
   const savedRow = userId
     ? await prisma.savedOpinion.findUnique({
         where: { userId_opinionId: { userId, opinionId: id } },
@@ -107,8 +108,11 @@ async function fetchResolvedCall(id: string, userId: string | null) {
       })
     : null;
 
+  const isGraded =
+    opinion.resolutionStatus === "RESOLVED_HIT" || opinion.resolutionStatus === "RESOLVED_MISS";
+
   return {
-    kind: "resolved" as const,
+    kind: isGraded ? ("resolved" as const) : ("pending" as const),
     opinion: { ...opinion, expert: { ...opinion.expert, organization: canonicalizeOrgDisplay(opinion.expert.organization) } },
     expertStats,
     saved: Boolean(savedRow),
@@ -118,14 +122,24 @@ async function fetchResolvedCall(id: string, userId: string | null) {
 export async function generateMetadata({ params }: { params: { id: string } }): Promise<Metadata> {
   const result = await fetchResolvedCall(params.id, null);
 
-  if (result.kind !== "resolved") {
+  if (result.kind !== "resolved" && result.kind !== "pending") {
     return { title: "Call not found — Predict Future" };
   }
 
   const { opinion } = result;
-  const verdictLabel = opinion.resolutionStatus === "RESOLVED_HIT" ? "HIT" : "MISS";
+  const verdictLabel =
+    result.kind === "pending"
+      ? opinion.resolutionStatus === "NOT_GRADED"
+        ? "Not graded"
+        : "Pending"
+      : opinion.resolutionStatus === "RESOLVED_HIT"
+        ? "HIT"
+        : "MISS";
   const title = `${opinion.expert.name}'s call on ${opinion.instrument ?? "the market"} — ${verdictLabel} | Predict Future`;
-  const description = `"${opinion.quote}" — ${opinion.expert.name}, ${opinion.expert.organization}. Graded ${verdictLabel} by Predict Future's Analyst Scorecard.`;
+  const description =
+    result.kind === "pending"
+      ? `"${opinion.quote}" — ${opinion.expert.name}, ${opinion.expert.organization}. Tracked by Predict Future's Analyst Scorecard — graded HIT or MISS once its window elapses.`
+      : `"${opinion.quote}" — ${opinion.expert.name}, ${opinion.expert.organization}. Graded ${verdictLabel} by Predict Future's Analyst Scorecard.`;
 
   return {
     title,
@@ -166,14 +180,8 @@ export default async function CallSharePage({ params }: { params: { id: string }
     notFound();
   }
 
-  if (result.kind === "unresolved") {
-    // No completed verdict yet — nothing shareable to show HERE, but the call
-    // itself lives in the opinions feed: deep-link to it expanded (see
-    // fetchResolvedCall's comment on the founder ask + ?call= mechanics).
-    redirect(`/opinions?status=all&call=${params.id}`);
-  }
-
   const { opinion, expertStats, saved } = result;
+  const isGraded = result.kind === "resolved";
   const isHit = opinion.resolutionStatus === "RESOLVED_HIT";
   // Decision 3: only render the aggregate line once the analyst clears the
   // same provisional-track-record gate used everywhere else on the site —
@@ -201,9 +209,15 @@ export default async function CallSharePage({ params }: { params: { id: string }
                 </p>
               </div>
             </div>
-            <Badge variant={isHit ? "success" : "default"} className={isHit ? "" : "bg-white/10 text-white"}>
-              {isHit ? "HIT" : "MISS"}
-            </Badge>
+            {isGraded ? (
+              <Badge variant={isHit ? "success" : "default"} className={isHit ? "" : "bg-white/10 text-white"}>
+                {isHit ? "HIT" : "MISS"}
+              </Badge>
+            ) : opinion.resolutionStatus === "NOT_GRADED" ? (
+              <Badge className="bg-white/10 text-white">Not graded</Badge>
+            ) : (
+              <Badge className="bg-amber-500/20 text-amber-300">Pending — not yet graded</Badge>
+            )}
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -235,17 +249,28 @@ export default async function CallSharePage({ params }: { params: { id: string }
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <SaveOpinionButton opinionId={opinion.id} initialSaved={saved} variant="labeled" />
-              <ShareCallButton
-                callId={opinion.id}
-                analystName={opinion.expert.name}
-                direction={opinion.direction}
-                instrument={opinion.instrument}
-                resolutionStatus={isHit ? "RESOLVED_HIT" : "RESOLVED_MISS"}
-              />
+              {/* Share kit is graded-only: a pending call has no verdict to
+                  share, and the never-share-ungraded-as-a-verdict law stands.
+                  Save (above) is the pending call's "watch this" action. */}
+              {isGraded && (
+                <ShareCallButton
+                  callId={opinion.id}
+                  analystName={opinion.expert.name}
+                  direction={opinion.direction}
+                  instrument={opinion.instrument}
+                  resolutionStatus={isHit ? "RESOLVED_HIT" : "RESOLVED_MISS"}
+                />
+              )}
             </div>
           </div>
-          {opinion.resolutionNote && (
+          {isGraded && opinion.resolutionNote && (
             <p className="text-sm leading-6 text-ink-600">{opinion.resolutionNote}</p>
+          )}
+          {!isGraded && opinion.resolutionStatus === "PENDING" && (
+            <p className="text-sm leading-6 text-ink-500">
+              This call hasn&apos;t reached its evaluation window yet — the HIT/MISS verdict will appear here once
+              it&apos;s graded against real price data. Save it above to find it again from your profile.
+            </p>
           )}
           <TakeASide opinionId={opinion.id} resolutionStatus={opinion.resolutionStatus} />
           <PaperTradeCta opinionId={opinion.id} direction={opinion.direction} instrumentTicker={opinion.instrumentTicker} />
