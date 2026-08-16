@@ -1090,6 +1090,23 @@ export function PaperTradingDashboard({
                   onOrderLineCancel={handleOrderLineCancel}
                   onQuoteChange={(q) => setChartQuote(q ? { price: q.price } : null)}
                   pollIntervalMs={60_000}
+                  // Paper-Trading Chart Granularity Parity (2026-08-16) —
+                  // founder: "the granularity of charts got improved now,
+                  // but same thing is not there in paper trading charts."
+                  // This terminal's own equity search (`/api/paper-trading/
+                  // symbols/search`, see symbol-search-input.tsx) hits
+                  // `searchSymbols` -> StockEodQuote directly, and every
+                  // equity order (new-trade-form.tsx / orders route) prices
+                  // off that same NSE-only table — there is no BSE-equity
+                  // trading path anywhere in Paper Trading (grepped: zero
+                  // `BseEodQuote` references under lib/paperTrading or the
+                  // paper-trading API routes). `focusedSymbol` is therefore
+                  // ALWAYS a genuine NSE equity/ETF, unlike the public
+                  // instrument page's `supportsIntradayRanges` (which must
+                  // ask a per-symbol server flag because that page ALSO
+                  // renders BSE-only equities). Statically `true` here is
+                  // the honest answer for this domain, not a shortcut.
+                  supportsIntradayRanges
                 />
               </div>
               <InstrumentContextCard symbol={focusedSymbol} />

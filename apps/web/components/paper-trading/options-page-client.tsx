@@ -1128,5 +1128,12 @@ function OptionsUnderlyingChart({
     );
   }
 
-  return <PriceChart key={underlying} symbol={underlying} series={stockEodSeries} pollIntervalMs={60_000} />;
+  // Paper-Trading Chart Granularity Parity (2026-08-16) — this branch's
+  // `underlying` only ever comes from the F&O stock combobox
+  // (option-chain-browser.tsx's `fnoUniverse`, ~210 NSE F&O-eligible
+  // stocks) — an underlying that can be written into an option contract is
+  // by definition NSE-listed, so `supportsIntradayRanges` is statically
+  // true here for the same reason it is on the equity terminal's own
+  // docked chart (see that file's identical comment).
+  return <PriceChart key={underlying} symbol={underlying} series={stockEodSeries} pollIntervalMs={60_000} supportsIntradayRanges />;
 }
