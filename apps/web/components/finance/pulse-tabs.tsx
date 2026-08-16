@@ -340,22 +340,29 @@ function NewsRowItem({ item }: { item: PulseNewsItem }) {
     );
   }
 
+  // Stretched-link row, NOT a wrapping <a> (QA 2026-08-16): the ticker badge
+  // is itself a <Link>, and nesting an <a> inside an <a> is invalid HTML that
+  // threw a real React hydration error on every instrument-page load. Same
+  // absolute-inset overlay + elevated-child pattern the analyst cards use —
+  // row click opens the article, badge click still goes to the instrument.
   return (
-    <a
-      href={item.sourceUrl}
-      target="_blank"
-      rel="noreferrer"
-      className="flex items-start gap-3 px-5 py-4 transition hover:bg-ink-50/60"
-    >
-      {tickerBadge}
-      <div className="min-w-0 flex-1">
+    <div className="relative flex items-start gap-3 px-5 py-4 transition hover:bg-ink-50/60">
+      <a
+        href={item.sourceUrl}
+        target="_blank"
+        rel="noreferrer"
+        className="absolute inset-0 z-0"
+        aria-label={`Read at ${item.publisher}: ${item.headline}`}
+      />
+      <span className="relative z-10">{tickerBadge}</span>
+      <div className="pointer-events-none relative z-10 min-w-0 flex-1">
         <p className="text-sm leading-6 text-ink-900">{item.headline}</p>
         <p className="mt-1 text-xs text-ink-400">
           {item.publisher} · {item.timeLabel}
         </p>
       </div>
-      <ArrowUpRight className="mt-1 h-3.5 w-3.5 shrink-0 text-ink-300" />
-    </a>
+      <ArrowUpRight className="pointer-events-none relative z-10 mt-1 h-3.5 w-3.5 shrink-0 text-ink-300" />
+    </div>
   );
 }
 

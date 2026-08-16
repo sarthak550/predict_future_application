@@ -426,6 +426,14 @@ export function PriceChart({
     "1M": { status: "idle" },
   });
   const svgRef = useRef<SVGSVGElement | null>(null);
+  // QA 2026-08-16: after a TAP, Chromium fires synthetic touch-compat mouse
+  // events — including a `mouseleave` on the <svg> at certain tap positions
+  // (reproduced at ~20%-width and near the right edge) — which un-pinned the
+  // tooltip right after finger-lift. This ref marks the last input as
+  // touch-sourced so `onMouseLeave` skips clearing for synthetic leaves; a
+  // subsequent REAL `onMouseMove` resets it, restoring normal
+  // clear-on-leave for mouse users.
+  const touchActiveRef = useRef(false);
   // Sprint C, C1/C2 — the chart's own DOM wrapper, `position: relative` so
   // the order-intent popover (an absolutely-positioned sibling of the
   // `<svg>`, never a portal) can anchor to a click point in local
@@ -1101,15 +1109,29 @@ export function PriceChart({
         viewBox={`0 0 ${W} ${H}`}
         className="w-full cursor-crosshair touch-none select-none"
         onMouseMove={(e) => {
+          // A real mouse is moving — re-arm normal clear-on-leave. (Chromium's
+          // synthetic post-tap mousemove fires BEFORE its synthetic
+          // mouseleave, but at the tapped coordinates — harmless: it just
+          // re-sets the same hover point; the ref stays touch-marked until a
+          // genuinely new mouse position arrives.)
+          if (e.movementX !== 0 || e.movementY !== 0) touchActiveRef.current = false;
           onPointer(e.clientX);
           updateAxisHover(e.clientX, e.clientY);
         }}
         onMouseLeave={() => {
+          // Skip synthetic touch-compat leaves — see touchActiveRef's doc.
+          if (touchActiveRef.current) return;
           setHoverIdx(null);
           setAxisHover(null);
         }}
-        onTouchStart={(e) => onPointer(e.touches[0].clientX)}
-        onTouchMove={(e) => onPointer(e.touches[0].clientX)}
+        onTouchStart={(e) => {
+          touchActiveRef.current = true;
+          onPointer(e.touches[0].clientX);
+        }}
+        onTouchMove={(e) => {
+          touchActiveRef.current = true;
+          onPointer(e.touches[0].clientX);
+        }}
         // Interaction-model rework (2026-08-16) — "tap = show nearest point"
         // means SHOW, not flash-then-vanish: a mouse gets `onMouseLeave` to
         // dismiss the tooltip, but touch has no such event (a finger just

@@ -32,17 +32,24 @@ export function NotificationBell() {
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/notifications/unread-count")
-      .then((r) => {
-        if (cancelled) return;
-        if (r.status === 401) {
+    // Auth-check via /api/auth/session FIRST (QA 2026-08-16): it answers 200
+    // with `{}` for a signed-out visitor, so anonymous page loads no longer
+    // produce the browser's own red "Failed to load resource: 401" console
+    // line that probing unread-count directly guaranteed on every page.
+    // Signed-in users cost one extra tiny request; signed-out users cost one
+    // fewer failed one.
+    fetch("/api/auth/session")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((session: { user?: { id?: string } } | null) => {
+        if (cancelled) return null;
+        if (!session?.user?.id) {
           setSignedIn(false);
-          return;
+          return null;
         }
         setSignedIn(true);
-        return r.json();
+        return fetch("/api/notifications/unread-count").then((r) => (r.ok ? r.json() : null));
       })
-      .then((data: { count: number } | undefined) => {
+      .then((data: { count: number } | null) => {
         if (!cancelled && data) setUnreadCount(data.count);
       })
       .catch(() => {
