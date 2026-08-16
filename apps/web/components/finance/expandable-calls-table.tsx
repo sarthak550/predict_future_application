@@ -143,17 +143,17 @@ export function ExpandableCallsTable({
               the designed mobile reading surface anyway. Header and body
               cells must hide in lockstep or table-fixed misaligns. */}
           <TableRow>
-            <TableHeaderCell className={showAnalystColumn ? "w-[34%] sm:w-[38%]" : "w-[38%] sm:w-[46%]"}>Call</TableHeaderCell>
+            <TableHeaderCell className={showAnalystColumn ? "w-[38%] sm:w-[38%]" : "w-[40%] sm:w-[46%]"}>Call</TableHeaderCell>
             {showAnalystColumn && <TableHeaderCell className="w-[15%] sm:w-[13%]">Analyst</TableHeaderCell>}
             <TableHeaderCell className="w-[15%] sm:w-[12%]">Instrument</TableHeaderCell>
             <TableHeaderCell className="hidden w-[10%] sm:table-cell">Direction</TableHeaderCell>
             <TableHeaderCell className="hidden w-[10%] sm:table-cell">Date</TableHeaderCell>
-            <TableHeaderCell className="w-[14%] sm:w-[10%]">Verdict</TableHeaderCell>
+            <TableHeaderCell className="w-[16%] sm:w-[10%]">Verdict</TableHeaderCell>
             {/* "Actions", not "Source" — the cell has held source + share +
                 save since 2026-08-16; on mobile the Source TEXT link folds
                 into the expanded panel (it's already there) and only the
                 icons render, so the freed width keeps them on-screen. */}
-            <TableHeaderCell className="w-[22%] sm:w-[7%]">Actions</TableHeaderCell>
+            <TableHeaderCell className="w-[18%] sm:w-[7%]">Actions</TableHeaderCell>
           </TableRow>
         </TableHead>
         <TableBody>
@@ -236,20 +236,26 @@ export function ExpandableCallsTable({
                     <VerdictBadge status={call.resolutionStatus} />
                   </TableCell>
                   <TableCell>
-                    <span className="inline-flex items-center gap-2 sm:gap-3">
-                      {/* Mobile: the Source TEXT link hides (it already lives in
-                          every row's expanded panel as "Read the original
-                          article") so the Save/Share icons fit on-screen —
-                          see the Actions header cell's comment. */}
+                    {/* Founder 2026-08-16 ("the table is so cluttered"): the
+                        Actions cell is three UNIFORM icons — source / save /
+                        share — no text links competing with them. The full
+                        "Read the original article" text link still lives in
+                        every row's expanded panel. */}
+                    {/* flex-wrap: on narrow mobile cells the three icons wrap
+                        to a second line inside the cell instead of overflowing
+                        the table horizontally (measured 16-25px overflow at
+                        390px without it). Desktop fits one line. */}
+                    <span className="inline-flex flex-wrap items-center gap-2 sm:gap-3">
                       <a
                         href={call.sourceUrl}
                         target="_blank"
                         rel="noreferrer"
                         onClick={(e) => e.stopPropagation()}
-                        className="hidden items-center gap-1 text-signal-sky hover:underline sm:inline-flex"
+                        aria-label="Read the original article"
+                        title="Read the original article"
+                        className="text-ink-400 transition hover:text-signal-sky"
                       >
-                        Source
-                        <ArrowUpRight className="h-3.5 w-3.5" />
+                        <ArrowUpRight className="h-4 w-4" />
                       </a>
                       {/* Save this call (Saved Opinions brief) — every row, pending
                           included: unlike Share2 below (gated on isGraded because

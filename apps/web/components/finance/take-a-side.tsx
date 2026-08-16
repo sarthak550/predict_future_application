@@ -129,7 +129,23 @@ export function TakeASide({
   if (isGraded) {
     if (talliesLoading || !tallies) return null;
     const folded = foldBuckets(tallies.implication);
-    if (folded.total === 0) return null;
+    // Founder 2026-08-16 ("the agree/disagree/neutral buttons are gone now,
+    // why?"): with /opinions now defaulting to GRADED calls, a zero-vote
+    // graded call rendered NOTHING here, which read as the voting feature
+    // having vanished from the product. Voting closing at grading is by
+    // design (taking a side after the outcome is known is meaningless) —
+    // say so honestly and point at where open calls live, instead of a
+    // silent blank.
+    if (folded.total === 0) {
+      return (
+        <p className="border-t border-ink-100 pt-3 text-sm text-ink-500">
+          Voting closed — this call is graded.{" "}
+          <Link href="/opinions?status=pending" className="text-signal-sky hover:underline">
+            Take a side on open calls
+          </Link>
+        </p>
+      );
+    }
     const agreePct = folded.agree / folded.total;
     return (
       <div className="flex flex-wrap items-center gap-2 border-t border-ink-100 pt-3 text-sm text-ink-600">
