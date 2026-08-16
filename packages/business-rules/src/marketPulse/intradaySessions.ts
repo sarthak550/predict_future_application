@@ -66,3 +66,34 @@ export function sliceToLastIstSessions<T extends IstTimestampedBar>(bars: T[], s
   const keepSessions = new Set(orderedSessionKeys.slice(-sessionCount));
   return bars.filter((bar) => keepSessions.has(istSessionKey(bar.timestamp)));
 }
+
+/**
+ * Session-open anchor points (2026-08-16 addendum to Intraday Chart Ranges)
+ * — founder: "for each day I should see 9:15 price when market opens and
+ * 3:30 price when market closes for 1W and 1M." Splits an already-sliced,
+ * ascending-by-timestamp bar array (typically `sliceToLastIstSessions`'s own
+ * output) into one sub-array per distinct IST session, preserving both
+ * session order and each session's internal bar order — the grouping step a
+ * consumer needs to prepend each session's own opening print (`bars[0].open`
+ * of that session) ahead of its bar-close points, without re-deriving IST
+ * session boundaries a second way. Reuses the exact same `istSessionKey`
+ * `sliceToLastIstSessions` itself groups by, so the two functions can never
+ * disagree about where one session ends and the next begins.
+ *
+ * Pure, no I/O. An empty `bars` array returns `[]`. Every returned
+ * sub-array is non-empty by construction (a session only exists in the
+ * output because at least one bar produced its key).
+ */
+export function groupBarsByIstSession<T extends IstTimestampedBar>(bars: T[]): T[][] {
+  const groups: T[][] = [];
+  let currentKey: string | null = null;
+  for (const bar of bars) {
+    const key = istSessionKey(bar.timestamp);
+    if (key !== currentKey) {
+      groups.push([]);
+      currentKey = key;
+    }
+    groups[groups.length - 1].push(bar);
+  }
+  return groups;
+}

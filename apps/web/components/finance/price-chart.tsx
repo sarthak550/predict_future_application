@@ -46,7 +46,7 @@
 import { Loader2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { sliceToLastIstSessions } from "@predict-future/business-rules/marketPulse/intradaySessions";
+import { groupBarsByIstSession, sliceToLastIstSessions } from "@predict-future/business-rules/marketPulse/intradaySessions";
 
 import {
   CANCEL_HIT_DIAMETER,
@@ -81,8 +81,16 @@ type IntradayFetchState =
 /** Intraday Chart Ranges (2026-08-16) — the two EOD timeframes eligible for a real intraday candles fetch (see `supportsIntradayRanges`). */
 type RangeTimeframeKey = "1W" | "1M";
 
-/** One OHLCV bar as returned by the candles endpoint — only `close`/`timestamp` are read (Decision 6: line/area from close, never a candlestick). */
-type CandleBar = { timestamp: number; close: number };
+/**
+ * One OHLCV bar as returned by the candles endpoint. `close`/`timestamp`
+ * back the line itself (Decision 6: line/area from close, never a
+ * candlestick); `open` is ALSO read now (Session-open anchors addendum,
+ * 2026-08-16) — solely to seed each session's 9:15 opening-print anchor
+ * point, never to draw a second series or a candlestick — still a strict
+ * line-from-`close` chart everywhere except that one anchor point per
+ * session.
+ */
+type CandleBar = { timestamp: number; open: number; close: number };
 
 type RangeFetchState =
   | { status: "idle" }
@@ -98,9 +106,12 @@ type RangeFetchState =
  * daily `series.slice(-sessions)` path — same trimming principle, applied to
  * an intraday bar array instead of a one-row-per-session daily array.
  */
-const RANGE_INTERVAL: Record<RangeTimeframeKey, { interval: "15m" | "60m"; sessions: number; footerNote: string }> = {
-  "1W": { interval: "15m", sessions: 5, footerNote: "15-min bars · delayed" },
-  "1M": { interval: "60m", sessions: 22, footerNote: "1-hour bars · delayed" },
+const RANGE_INTERVAL: Record<
+  RangeTimeframeKey,
+  { interval: "15m" | "60m"; sessions: number; footerNote: string; intervalMs: number }
+> = {
+  "1W": { interval: "15m", sessions: 5, footerNote: "15-min bars · delayed", intervalMs: 15 * 60 * 1000 },
+  "1M": { interval: "60m", sessions: 22, footerNote: "1-hour bars · delayed", intervalMs: 60 * 60 * 1000 },
 };
 
 function isRangeTimeframe(key: TimeframeKey): key is RangeTimeframeKey {
@@ -147,6 +158,44 @@ function formatIstBarLabel(epochMs: number): string {
     hour12: false,
     timeZone: "Asia/Kolkata",
   }).format(new Date(epochMs));
+}
+
+const ONE_MINUTE_MS = 60 * 1000;
+/** Same NSE close as `packages/business-rules/src/papertrading/marketHours.ts`'s `isNseWeekdayMarketHours` — 15:30 IST, duplicated here (not imported) per this codebase's own established precedent for a one-line IST constant (see that file's own doc, and `portfolios/shadow.ts`'s `IST_OFFSET_MS`) rather than pulling a whole market-hours module in for one number. */
+const NSE_SESSION_CLOSE_IST_MINUTES = 15 * 60 + 30;
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+
+/** The 15:30 IST instant, as an epoch-millis timestamp, for the IST calendar day containing `epochMs`. */
+function istSessionCloseForDay(epochMs: number): number {
+  const ist = new Date(epochMs + IST_OFFSET_MS);
+  const closeIst = Date.UTC(
+    ist.getUTCFullYear(),
+    ist.getUTCMonth(),
+    ist.getUTCDate(),
+    Math.floor(NSE_SESSION_CLOSE_IST_MINUTES / 60),
+    NSE_SESSION_CLOSE_IST_MINUTES % 60,
+    0,
+    0
+  );
+  return closeIst - IST_OFFSET_MS;
+}
+
+/**
+ * Bar-end-time labeling (founder, 2026-08-16: "market closing time is 3:30
+ * so why the last time I see for a date is 3:15 we need to fix that").
+ * Yahoo stamps every intraday bar (1m/15m/60m alike) by its START time, but
+ * a line chart plots each bar's `close` — the price AS OF the bar's END —
+ * so the honest label for a bar is `start + interval`, not `start` itself.
+ * Capped to that calendar day's own 15:30 IST session close, which is what
+ * makes the final, truncated bar of a session label correctly BY
+ * CONSTRUCTION: NSE's last 15m bar starts at 15:15 and 15:15+15m=15:30
+ * exactly (no cap ever engages), but the last 60m bar starts at 15:15 too
+ * (a 15-minute stub, since hourly bars from 9:15 don't divide the 6h15m
+ * session evenly) — 15:15+60m would be 16:15, a full 45 minutes past the
+ * market's own close, which the cap corrects to the true 15:30.
+ */
+function barEndMs(startMs: number, intervalMs: number): number {
+  return Math.min(startMs + intervalMs, istSessionCloseForDay(startMs));
 }
 
 /** A single renderable point, normalized from either the EOD `series` prop or a fetched intraday tick. */
@@ -522,13 +571,20 @@ export function PriceChart({
         .then(async (res) => {
           if (!res.ok) throw new Error(`candles fetch ${res.status}`);
           const body = await res.json();
-          return body as { candles?: Array<{ timestamp?: unknown; close?: unknown }> };
+          return body as { candles?: Array<{ timestamp?: unknown; open?: unknown; close?: unknown }> };
         })
         .then((body) => {
           const rawBars: CandleBar[] = Array.isArray(body.candles)
             ? body.candles
-                .filter((b) => Number.isFinite(b?.timestamp) && Number.isFinite(b?.close) && (b!.close as number) > 0)
-                .map((b) => ({ timestamp: b.timestamp as number, close: b.close as number }))
+                .filter(
+                  (b) =>
+                    Number.isFinite(b?.timestamp) &&
+                    Number.isFinite(b?.open) &&
+                    Number.isFinite(b?.close) &&
+                    (b!.open as number) > 0 &&
+                    (b!.close as number) > 0
+                )
+                .map((b) => ({ timestamp: b.timestamp as number, open: b.open as number, close: b.close as number }))
             : [];
           const bars = sliceToLastIstSessions(rawBars, sessions);
           if (bars.length < 2) {
@@ -603,13 +659,28 @@ export function PriceChart({
   const points = useMemo<ChartPoint[]>(() => {
     if (timeframe === "1D") {
       if (intraday.status !== "ready") return [];
-      const allPoints = liveTicks.length > 0 ? [...intraday.points, ...liveTicks] : intraday.points;
-      return allPoints.map((p) => ({ xValue: p.t, y: p.price, label: formatIstTime(p.t) }));
+      // Bar-end-time labeling (2026-08-16 addendum) — `intraday.points` are
+      // Yahoo 1-minute OHLC bars (see intraday.ts's own doc: `interval=1m`,
+      // `price` is that bar's close), so each one gets the same
+      // start-to-end label shift as the 1W/1M bars below. `liveTicks` are
+      // NOT bars — they're real point-in-time last-price observations
+      // appended locally between server refreshes (see this file's own
+      // module doc on quote-driven intrabar ticks) — a tick's own timestamp
+      // already IS the instant its value is true as of, so it's labeled
+      // unshifted.
+      const barPoints = intraday.points.map((p) => ({
+        xValue: p.t,
+        y: p.price,
+        label: formatIstTime(barEndMs(p.t, ONE_MINUTE_MS)),
+      }));
+      const tickPoints = liveTicks.map((p) => ({ xValue: p.t, y: p.price, label: formatIstTime(p.t) }));
+      return [...barPoints, ...tickPoints];
     }
     // Intraday Chart Ranges (2026-08-16) — Decision 5 (index-spaced x-axis,
     // reused verbatim from the daily-EOD branch below: `xValue: i`, never the
     // bar's real epoch timestamp) + Decision 6 (bar `close` only, no OHLC
-    // rendered). `rangeState.status`:
+    // rendered — the one exception being the session-open anchor below,
+    // which reads `open`, still never renders a candlestick). `rangeState.status`:
     //   - "ready": real bars, the whole point of this feature.
     //   - "error": T4's graceful fallback — same daily re-slice this
     //     timeframe would've rendered pre-feature, NOT a blank/error chart.
@@ -618,7 +689,41 @@ export function PriceChart({
     if (supportsIntradayRanges && isRangeTimeframe(timeframe)) {
       const rangeState = rangeCandles[timeframe];
       if (rangeState.status === "ready") {
-        return rangeState.bars.map((b, i) => ({ xValue: i, y: b.close, label: formatIstBarLabel(b.timestamp) }));
+        // Session-open anchors (2026-08-16 addendum) — founder: "for each
+        // day I should see 9:15 price when market opens and 3:30 price when
+        // market closes." Per IST session, prepend one point at that
+        // session's own first bar's literal opening print (`open`, at the
+        // bar's own unshifted start timestamp — 9:15 IS the true open
+        // instant, nothing to end-label), then every bar's own close point,
+        // end-time-labeled per `barEndMs` above. A currently-forming session
+        // (today, mid-market) naturally still gets its 9:15 open anchor and
+        // simply ends at the latest completed bar — never projects forward
+        // to 3:30 for a session that hasn't closed yet, since this only ever
+        // maps bars that actually exist. Real data throughout: `open` is the
+        // same field every OTHER OHLCV consumer in this codebase (the
+        // workbench's candlestick chart) already treats as ground truth,
+        // never a synthesized/interpolated value.
+        const { intervalMs } = RANGE_INTERVAL[timeframe];
+        const sessions = groupBarsByIstSession(rangeState.bars);
+        const out: ChartPoint[] = [];
+        for (const session of sessions) {
+          if (session.length === 0) continue;
+          out.push({
+            xValue: out.length,
+            y: session[0].open,
+            label: `${formatIstBarLabel(session[0].timestamp)} · Open`,
+          });
+          session.forEach((bar, idx) => {
+            const isLastOfSession = idx === session.length - 1;
+            const endMs = barEndMs(bar.timestamp, intervalMs);
+            out.push({
+              xValue: out.length,
+              y: bar.close,
+              label: isLastOfSession ? `${formatIstBarLabel(endMs)} · Close` : formatIstBarLabel(endMs),
+            });
+          });
+        }
+        return out;
       }
       if (rangeState.status === "error") return dailySlicePoints(timeframe);
       return [];
@@ -751,7 +856,6 @@ export function PriceChart({
   const up = changeAbs >= 0;
   const tone = up ? "#059669" : "#e11d48";
   const active = hoverIdx != null ? points[hoverIdx] : null;
-  const activeReturnPct = active && referenceClose > 0 ? ((active.y - referenceClose) / referenceClose) * 100 : null;
 
   const onPointer = (clientX: number) => {
     // Sprint C, C1 — crosshair suppressed during a drag: a dragged line's
@@ -901,21 +1005,87 @@ export function PriceChart({
         ? RANGE_INTERVAL[timeframe].footerNote
         : "Daily closes · updates after each session";
 
+  // Cursor tooltip (interaction-model rework, 2026-08-16) — pixel position
+  // of the hovered point, in the SAME coordinate space `axisHover`/
+  // `intentPopover`/`contextMenu` already use (CSS pixels relative to
+  // `wrapperRef`'s own `position: relative` box), computed from the SAME
+  // SVG-viewBox point the crosshair circle already renders at
+  // (`geometry.x(hoverIdx)`/`geometry.y(...)`) rather than the raw pointer
+  // position — so the tooltip visually anchors to the DOT on the line, not
+  // wherever the mouse/finger happens to be hovering above or below it.
+  // `svgRef`'s own rendered box scales uniformly from the `640x200` viewBox
+  // (the `<svg>` has no CSS height override, so it scales by its own
+  // preserved aspect ratio off `w-full`), so a single `scale` factor from
+  // width alone is exact for both axes. Plain synchronous DOM reads at
+  // render time — no state, no effect — same discipline this file already
+  // uses for `openIntentPopoverAt`'s `wrapperRef` reads; recomputed on every
+  // render, but only ever RENDERED while `active` is non-null, which only
+  // happens after a real pointer event has already forced a render.
+  const tooltip = (() => {
+    if (!active || hoverIdx == null) return null;
+    const svgRect = svgRef.current?.getBoundingClientRect();
+    const wrapperRect = wrapperRef.current?.getBoundingClientRect();
+    if (!svgRect || !wrapperRect || !svgRect.width) return null;
+    const scale = svgRect.width / W;
+    const originLeft = svgRect.left - wrapperRect.left;
+    const originTop = svgRect.top - wrapperRect.top;
+    const pointX = originLeft + geometry.x(hoverIdx) * scale;
+    const pointY = originTop + geometry.y(active.y) * scale;
+    // Clamped to the wrapper's own bounds (never clipped at a card edge) —
+    // flips to the opposite side of the point when the default placement
+    // would overflow, then hard-clamps as a final backstop for a very
+    // narrow (390px) card where even the flipped placement could still spill.
+    const TOOLTIP_W = 128;
+    const TOOLTIP_H = 40;
+    const GAP = 10;
+    let left = pointX + GAP;
+    if (left + TOOLTIP_W > wrapperRect.width) left = pointX - GAP - TOOLTIP_W;
+    left = Math.max(4, Math.min(left, wrapperRect.width - TOOLTIP_W - 4));
+    // Flip below the point when there isn't room to place it above WITHIN
+    // the chart's own plot area (`pointY - originTop`, not the wrapper's
+    // outer top edge) — a short/mobile chart's `position: relative` wrapper
+    // also contains the static header row ABOVE the `<svg>`, so judging
+    // "room above" against the wrapper instead would happily place the
+    // tooltip in that header's own space and visually cover it (caught live
+    // at 390px: the tooltip sat on top of the "10 Aug -> 14 Aug" range
+    // label because the wrapper technically had headroom there even though
+    // the CHART didn't).
+    let top = pointY - TOOLTIP_H - GAP;
+    if (pointY - originTop < TOOLTIP_H + GAP) top = pointY + GAP;
+    top = Math.max(4, Math.min(top, wrapperRect.height - TOOLTIP_H - 4));
+    return { left, top, price: active.y, label: active.label };
+  })();
+
   return (
     <div ref={wrapperRef} className="relative">
-      {/* Header: window return + hover readout */}
+      {/*
+        Header: window return, ALWAYS static (interaction-model rework,
+        2026-08-16 — founder, verbatim: "I want the date/time and price to
+        [be] hovered over the point and not just change on right and left of
+        the card this does not look good"). This header used to swap BOTH
+        the price and the return text to the hovered point's own values, and
+        swap the right-hand label between the full range and the hovered
+        point's own date — the exact corner-jumping the founder is
+        describing. It no longer reads `active`/`hoverIdx` at all: the price
+        shown is always the chart's own latest value, the return line is
+        always the period's own return, and the date range is always
+        first->last. All hover-specific detail (date/time + price at the
+        exact hovered point) now lives ONLY in the floating tooltip below,
+        which follows the cursor instead of fighting this header for the
+        same two corners.
+      */}
       <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
         <div className="flex items-baseline gap-2">
-          <span className="text-lg font-semibold text-ink-900">
-            {formatRupees((active ?? last).y)}
-          </span>
+          <span className="text-lg font-semibold text-ink-900">{formatRupees(last.y)}</span>
           <span className="text-sm font-medium" style={{ color: tone }}>
-            {active
-              ? `${(activeReturnPct ?? 0) >= 0 ? "+" : ""}${(activeReturnPct ?? 0).toFixed(2)}% since ${timeframe === "1D" ? (intraday.status === "ready" && intraday.prevClose != null ? "prev. close" : first.label) : first.label}`
-              : `${up ? "+" : ""}${formatRupees(Math.abs(changeAbs)).replace("₹", up ? "₹" : "-₹")} (${up ? "+" : ""}${changePct.toFixed(2)}%) · ${timeframe}`}
+            {up ? "+" : ""}
+            {formatRupees(Math.abs(changeAbs)).replace("₹", up ? "₹" : "-₹")} ({up ? "+" : ""}
+            {changePct.toFixed(2)}%) · {timeframe}
           </span>
         </div>
-        <span className="text-xs text-ink-400">{active ? active.label : `${first.label} → ${last.label}`}</span>
+        <span className="text-xs text-ink-400">
+          {first.label} → {last.label}
+        </span>
       </div>
 
       {/* Interaction-model rework (2026-08-04) — one-time discoverability hint, terminal-only (gated on onOrderIntentConfirm). */}
@@ -940,7 +1110,13 @@ export function PriceChart({
         }}
         onTouchStart={(e) => onPointer(e.touches[0].clientX)}
         onTouchMove={(e) => onPointer(e.touches[0].clientX)}
-        onTouchEnd={() => setHoverIdx(null)}
+        // Interaction-model rework (2026-08-16) — "tap = show nearest point"
+        // means SHOW, not flash-then-vanish: a mouse gets `onMouseLeave` to
+        // dismiss the tooltip, but touch has no such event (a finger just
+        // stops touching), so clearing `hoverIdx` on lift used to hide the
+        // tooltip the instant a tap ended — effectively never visible on a
+        // real tap. The tooltip now stays pinned at the last-touched point
+        // until the next tap/drag moves it elsewhere on this chart.
         onContextMenu={onOrderIntentConfirm ? handleContextMenu : undefined}
         role="img"
         aria-label={`Price chart, ${timeframe}: ${formatRupees(first.y)} to ${formatRupees(last.y)}`}
@@ -1068,6 +1244,25 @@ export function PriceChart({
           </g>
         )}
       </svg>
+
+      {/*
+        Interaction-model rework (2026-08-16) — founder: "I want the
+        date/time and price to [be] hovered over the point." Follows the
+        hovered point (see `tooltip`'s own doc above) with a small card
+        instead of the removed corner-swap. `pointer-events-none` so it can
+        never intercept a mouse move meant for the SVG's own crosshair
+        tracking, the price-axis "+" button, or an order-line drag hit-line
+        underneath it — it is purely a readout, never a click target.
+      */}
+      {tooltip && (
+        <div
+          className="pointer-events-none absolute z-20 rounded-lg border border-ink-200 bg-white px-2.5 py-1.5 text-xs shadow-md"
+          style={{ left: tooltip.left, top: tooltip.top, width: 128 }}
+        >
+          <p className="font-semibold text-ink-900">{formatRupees(tooltip.price)}</p>
+          <p className="mt-0.5 text-ink-400">{tooltip.label}</p>
+        </div>
+      )}
 
       {/* Interaction-model rework (2026-08-04) — the price-axis "+" affordance, shown only while hovering the axis band and nothing else is already open. */}
       {axisHover && !intentPopover && !contextMenu && onOrderIntentConfirm && (
