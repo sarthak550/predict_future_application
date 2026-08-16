@@ -11,25 +11,40 @@
  * per-instrument rows, not a cascading N-way system — documented per the
  * brief's explicit "CTO's call, document which" ask.
  *
- * Query strategy — 5 groupBy/aggregate round trips, ALL independent of how
- * many distinct instruments exist in the corpus (never N+1 per instrument,
- * per the brief's explicit warning about this exact class of bug — see
+ * Query strategy — 5 round trips, ALL independent of how many distinct
+ * instruments exist in the corpus (never N+1 per instrument, per the
+ * brief's explicit warning about this exact class of bug — see
  * [[reference_prisma_distinct_emulation]]):
- *   1. allCounts       — window calls (any status) by (ticker, direction) —
- *                        feeds the sentiment-lean filter/column.
- *   2. gradedCounts     — window calls (HIT/MISS only) by (ticker, direction)
- *                        — feeds column 3 (bull/bear/neutral graded counts)
- *                        and the min-graded-count filter.
+ *   1. allCounts       — window calls (any status) by (ticker, direction),
+ *                        deduped to each analyst's latest stance per
+ *                        instrument — feeds the sentiment-lean filter/column.
+ *   2. gradedCounts     — window calls (HIT/MISS only) by (ticker, direction),
+ *                        same dedup — feeds column 3 (bull/bear/neutral
+ *                        graded counts) and the min-graded-count filter.
  *   3. analystPairs     — window calls (any status) by (ticker, expertId) —
- *                        feeds the distinct-analyst-coverage column.
+ *                        feeds the distinct-analyst-coverage column. Already
+ *                        a Set<expertId>, direction-agnostic by design — a
+ *                        repeat row from the same analyst was already a
+ *                        no-op here; unaffected by the mechanism-3 dedup.
  *   4. scoreRows        — window GRADED, DIRECTIONAL (BULLISH/BEARISH) calls
- *                        by (ticker, direction, expertId) — feeds the
- *                        accuracy-weighted sentiment score.
+ *                        by (ticker, direction, expertId), same dedup —
+ *                        feeds the accuracy-weighted sentiment score.
  *   5. expertAllTime    — ALL-TIME (unwindowed) per-expert hit/resolved
  *                        counts by (expertId, resolutionStatus) — the Wilson
  *                        weight input for #4. ~500 experts at current corpus
  *                        size per the brief's own estimate — one cheap
  *                        groupBy, not a per-call lookup.
+ *
+ * Sentiment bias fix mechanism 3 (2026-08-16): #1, #2, and #4 fetch minimal-
+ * column rows via `findMany` (never Prisma's `distinct` option — client-side-
+ * emulated, see dedupeToLatestStancePerExpertInstrument's own doc) and dedupe
+ * in application code via the same shared helper every other sentiment
+ * aggregate in the app uses, instead of a raw `groupBy` count — an analyst
+ * restating the same call across multiple articles in-window must not
+ * multiply a screener count OR (the sharper bug) get 3x the weight in the
+ * accuracy-weighted score. This stays O(1) round trips, same as before —
+ * the tally is computed in application code instead of in SQL, not an extra
+ * query per instrument.
  * Plus 3 batch lookups (also O(1), not O(instruments)): instrument identity
  * (resolveInstrumentIdentities), sector labels (buildSectorIndex, shared
  * with /opinions), and InstrumentEnrichment.keyStats for the read-only
@@ -44,13 +59,18 @@
  * [symbol] and pick up a sector; it just isn't fabricated a display name.
  */
 
-import type { OpinionDirection } from "@prisma/client";
+import type { OpinionDirection, Prisma } from "@prisma/client";
 import { computeWilsonInterval, PROVISIONAL_MIN_RESOLVED_CALLS } from "@predict-future/business-rules";
 
 import { prisma } from "@/lib/prisma";
 import { buildSectorIndex } from "@/lib/finance/opinionsQuery";
 import { resolveInstrumentIdentities } from "@/lib/finance/instrumentLink";
-import { computeDominantLean, computeSentimentPercentages, type DominantLean } from "@/lib/finance/sentiment";
+import {
+  computeDominantLean,
+  computeSentimentPercentages,
+  dedupeToLatestStancePerExpertInstrument,
+  type DominantLean,
+} from "@/lib/finance/sentiment";
 import {
   parseScreenerFilters,
   windowDays,
@@ -91,6 +111,25 @@ export interface ScreenerRow {
 }
 
 /**
+ * Fetches minimal-column ExpertOpinion rows for `where` and collapses each
+ * analyst's repeated stances on the same instrument (within this window) to
+ * their single latest row — sentiment bias fix mechanism 3, 2026-08-16.
+ * `instrumentTicker` is guaranteed non-null by every caller's `where`
+ * (windowWhere always includes `instrumentTicker: { not: null }`), so the
+ * dedup key always resolves via the ticker branch — `instrument` is passed
+ * through as `null` without a wasted extra select column.
+ */
+async function fetchDedupedDirectionRows(
+  where: Prisma.ExpertOpinionWhereInput,
+): Promise<{ expertId: string; instrumentTicker: string | null; direction: OpinionDirection }[]> {
+  const rows = await prisma.expertOpinion.findMany({
+    where,
+    select: { expertId: true, instrumentTicker: true, direction: true, publishedAt: true },
+  });
+  return dedupeToLatestStancePerExpertInstrument(rows.map((r) => ({ ...r, instrument: null as string | null })));
+}
+
+/**
  * Main aggregate query. Returns EVERY instrument with >=1 call in the
  * window, already filtered/sorted per `filters` — sector, minGraded, and
  * lean all apply as independent AND clauses over the aggregated rows (not a
@@ -103,29 +142,17 @@ export async function fetchScreenerRows(filters: ScreenerFilters): Promise<Scree
   const windowStart = new Date(Date.now() - windowDays(filters.window) * 24 * 60 * 60 * 1000);
   const windowWhere = { suppressedAt: null, publishedAt: { gte: windowStart }, instrumentTicker: { not: null } } as const;
 
-  const [allCounts, gradedCounts, analystPairs, scoreRows, expertAllTime] = await Promise.all([
-    prisma.expertOpinion.groupBy({
-      by: ["instrumentTicker", "direction"],
-      where: windowWhere,
-      _count: { _all: true },
-    }),
-    prisma.expertOpinion.groupBy({
-      by: ["instrumentTicker", "direction"],
-      where: { ...windowWhere, resolutionStatus: { in: ["RESOLVED_HIT", "RESOLVED_MISS"] } },
-      _count: { _all: true },
-    }),
+  const [allRows, gradedRows, analystPairs, scoreDirectionRows, expertAllTime] = await Promise.all([
+    fetchDedupedDirectionRows(windowWhere),
+    fetchDedupedDirectionRows({ ...windowWhere, resolutionStatus: { in: ["RESOLVED_HIT", "RESOLVED_MISS"] } }),
     prisma.expertOpinion.groupBy({
       by: ["instrumentTicker", "expertId"],
       where: windowWhere,
     }),
-    prisma.expertOpinion.groupBy({
-      by: ["instrumentTicker", "direction", "expertId"],
-      where: {
-        ...windowWhere,
-        resolutionStatus: { in: ["RESOLVED_HIT", "RESOLVED_MISS"] },
-        direction: { in: ["BULLISH", "BEARISH"] },
-      },
-      _count: { _all: true },
+    fetchDedupedDirectionRows({
+      ...windowWhere,
+      resolutionStatus: { in: ["RESOLVED_HIT", "RESOLVED_MISS"] },
+      direction: { in: ["BULLISH", "BEARISH"] },
     }),
     prisma.expertOpinion.groupBy({
       by: ["expertId", "resolutionStatus"],
@@ -191,25 +218,32 @@ export async function fetchScreenerRows(filters: ScreenerFilters): Promise<Scree
     }
   }
 
-  for (const row of allCounts) {
+  // Each deduped row IS one analyst's one surviving opinion — count 1 per
+  // row, not a groupBy _count (sentiment bias fix mechanism 3, 2026-08-16).
+  for (const row of allRows) {
     if (!row.instrumentTicker) continue;
-    addByDirection(acc(row.instrumentTicker), "All", row.direction, row._count._all);
+    addByDirection(acc(row.instrumentTicker), "All", row.direction, 1);
   }
-  for (const row of gradedCounts) {
+  for (const row of gradedRows) {
     if (!row.instrumentTicker) continue;
-    addByDirection(acc(row.instrumentTicker), "Graded", row.direction, row._count._all);
+    addByDirection(acc(row.instrumentTicker), "Graded", row.direction, 1);
   }
   for (const row of analystPairs) {
     if (!row.instrumentTicker) continue;
     acc(row.instrumentTicker).analysts.add(row.expertId);
   }
-  for (const row of scoreRows) {
+  for (const row of scoreDirectionRows) {
     if (!row.instrumentTicker) continue;
     const weight = expertWeight(row.expertId);
     const sign = row.direction === "BULLISH" ? 1 : -1;
     const entry = acc(row.instrumentTicker);
-    entry.scoreNumerator += sign * weight * row._count._all;
-    entry.scoreDenominator += weight * row._count._all;
+    // weight × 1 per surviving (deduped) row — NEVER weight × raw row count.
+    // The old `weight * row._count._all` gave an analyst who restated the
+    // same call 3 times in-window 3x the influence on the score versus one
+    // who said it once; this was the sharper of the three mechanism-3 bugs
+    // (it compounds into the score via multiplication, not just a count).
+    entry.scoreNumerator += sign * weight;
+    entry.scoreDenominator += weight;
   }
 
   const tickers = [...byTicker.keys()];

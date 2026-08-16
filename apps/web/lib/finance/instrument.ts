@@ -36,6 +36,7 @@ import {
   BSE_EQUITY_FLOOR_WINDOW_SESSIONS,
 } from "@/lib/finance/bseEquity";
 import { latestBseQuoteByTicker, latestStockQuoteBySymbol } from "@/lib/finance/latestQuotes";
+import { dedupeToLatestStancePerExpertInstrument } from "@/lib/finance/sentiment";
 import { prisma } from "@/lib/prisma";
 
 // Enough sessions for a 1Y timeframe on the interactive chart (~250 trading
@@ -644,6 +645,7 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
       orderBy: { publishedAt: "desc" },
       select: {
         id: true,
+        expertId: true,
         quote: true,
         headline: true,
         instrument: true,
@@ -1046,7 +1048,16 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
   /** BSE Expansion Phase 3A (2026-08-12) — see InstrumentDetail's own doc on why this flag never hides/drops data, only gates presentation surfaces downstream (page.tsx robots, search, sitemap). */
   const belowBseEquityFloor = isBseEquity && !clearsBseEquityFloor(bseEquityMaxTurnoverInWindow);
 
-  const sentimentCounts = matchedOpinions.reduce(
+  // Sentiment bias fix mechanism 3 (2026-08-16): dedupe each analyst's
+  // repeated stances to their single latest row BEFORE counting — an analyst
+  // restating the same call across multiple articles must not multiply the
+  // gauge's bullish/bearish/neutral counts. `matchedOpinions` itself (the raw
+  // quote list rendered below, `opinions:`) stays exactly as-is — only this
+  // aggregate changes. Single-ticker-scoped page, so the dedup key collapses
+  // to `expertId` alone in practice, but reuses the same shared algorithm as
+  // every other sentiment aggregate rather than a hand-rolled variant.
+  const dedupedOpinionsForSentiment = dedupeToLatestStancePerExpertInstrument(matchedOpinions);
+  const sentimentCounts = dedupedOpinionsForSentiment.reduce(
     (acc, o) => {
       if (o.direction === "BULLISH") acc.bullish += 1;
       else if (o.direction === "BEARISH") acc.bearish += 1;
@@ -1328,7 +1339,7 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     })),
     sentiment: {
       ...sentimentCounts,
-      totalCount: matchedOpinions.length,
+      totalCount: dedupedOpinionsForSentiment.length,
       lookbackDays: OPINION_LOOKBACK_DAYS,
     },
     performance,

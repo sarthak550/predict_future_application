@@ -7,7 +7,12 @@ import { prisma } from "@/lib/prisma";
 import { formatDateOnly } from "@/lib/utils";
 import { buildInstrumentWhereOr } from "@/lib/finance/instruments";
 import { isMissingTableError } from "@/lib/finance/instrumentLink";
-import { computeDominantLean, computeSentimentPercentages, type DominantLean } from "@/lib/finance/sentiment";
+import {
+  computeDominantLean,
+  computeSentimentPercentages,
+  dedupeToLatestStancePerExpertInstrument,
+  type DominantLean,
+} from "@/lib/finance/sentiment";
 import { getNseIndustryMap } from "@/lib/finance/nseSectorMaster";
 import { resolveSectorLabel } from "@/lib/finance/sectorTaxonomy";
 
@@ -573,14 +578,24 @@ export async function fetchOpinionsSentimentSplit(
 ): Promise<OpinionsSentimentSplit> {
   const where = buildWhere({ ...filters, direction: undefined }, ctx);
 
-  const [directionCounts, analystExpert] = await Promise.all([
-    prisma.expertOpinion.groupBy({ by: ["direction"], where, _count: { _all: true } }),
+  // findMany + in-app dedup, NOT groupBy — mechanism 3 (2026-08-16): a
+  // groupBy({by:["direction"]}) counts raw rows, double-counting an analyst
+  // who restated the same stance on the same instrument across multiple
+  // articles within `where`'s active filters. Minimal columns only — never
+  // Prisma's `distinct` option (client-side-emulated, see
+  // dedupeToLatestStancePerExpertInstrument's own doc).
+  const [rows, analystExpert] = await Promise.all([
+    prisma.expertOpinion.findMany({
+      where,
+      select: { expertId: true, instrumentTicker: true, instrument: true, direction: true, publishedAt: true },
+    }),
     filters.analyst ? prisma.expert.findFirst({ where: { slug: filters.analyst }, select: { name: true } }) : null,
   ]);
+  const deduped = dedupeToLatestStancePerExpertInstrument(rows);
 
-  const bullishCount = directionCounts.find((c) => c.direction === "BULLISH")?._count._all ?? 0;
-  const bearishCount = directionCounts.find((c) => c.direction === "BEARISH")?._count._all ?? 0;
-  const neutralCount = directionCounts.find((c) => c.direction === "NEUTRAL")?._count._all ?? 0;
+  const bullishCount = deduped.filter((r) => r.direction === "BULLISH").length;
+  const bearishCount = deduped.filter((r) => r.direction === "BEARISH").length;
+  const neutralCount = deduped.filter((r) => r.direction === "NEUTRAL").length;
   const totalCount = bullishCount + bearishCount + neutralCount;
 
   const { bullishPercent, bearishPercent, neutralPercent } = computeSentimentPercentages(

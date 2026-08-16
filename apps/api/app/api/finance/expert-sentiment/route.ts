@@ -1,9 +1,46 @@
 import { NextResponse } from "next/server";
 
+import type { OpinionDirection } from "@prisma/client";
+
 import { prisma } from "@/lib/prisma";
 import { getInstrumentVariants } from "@/lib/news/queries";
 
 export const dynamic = "force-dynamic";
+
+// ─── Cross-article duplicate-stance dedup (sentiment bias fix mechanism 3,
+// 2026-08-16) — KEEP IN LOCKSTEP with apps/web/lib/finance/sentiment.ts's
+// `dedupeToLatestStancePerExpertInstrument` (same pattern this route already
+// uses to stay in lockstep with that file's `getSentimentSplit` for the
+// aggregation math itself — apps/web has no shared Prisma-aware package with
+// apps/api, so this is duplicated, not imported; see that file's own doc
+// comment for the full mechanism-3 rationale). ─────────────────────────────
+
+interface DedupableOpinionRow {
+  expertId: string;
+  instrumentTicker: string | null;
+  instrument: string | null;
+  direction: OpinionDirection;
+  publishedAt: Date;
+}
+
+function dedupKey(r: { instrumentTicker: string | null; instrument: string | null }): string | null {
+  if (r.instrumentTicker) return `t:${r.instrumentTicker.toUpperCase()}`;
+  if (r.instrument) return `l:${r.instrument.toLowerCase().replace(/[^a-z0-9]/g, "")}`;
+  return null;
+}
+
+function dedupeToLatestStancePerExpertInstrument<T extends DedupableOpinionRow>(rows: T[]): T[] {
+  const latestByKey = new Map<string, T>();
+  const passthrough: T[] = [];
+  for (const row of rows) {
+    const instKey = dedupKey(row);
+    if (!instKey) { passthrough.push(row); continue; }
+    const key = `${row.expertId}::${instKey}`;
+    const existing = latestByKey.get(key);
+    if (!existing || row.publishedAt > existing.publishedAt) latestByKey.set(key, row);
+  }
+  return [...latestByKey.values(), ...passthrough];
+}
 
 /**
  * GET /api/finance/expert-sentiment
@@ -24,10 +61,12 @@ export async function GET(request: Request) {
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   const instrument = new URL(request.url).searchParams.get("instrument")?.trim() || undefined;
 
-  // Single groupBy replaces 3 separate count() round-trips.
-  // No resolutionStatus filter — resolved calls still count as "this week's sentiment".
-  const directionCounts = await prisma.expertOpinion.groupBy({
-    by: ["direction"],
+  // findMany + in-app dedup, NOT groupBy — mechanism 3 (2026-08-16): a
+  // groupBy({by:["direction"]}) counts raw rows, double-counting an analyst
+  // who restated the same stance across multiple articles this week. Minimal
+  // columns only — never Prisma's `distinct` option (client-side-emulated,
+  // see the dedup helper's own doc above).
+  const rows = await prisma.expertOpinion.findMany({
     where: {
       suppressedAt: null,
       publishedAt: { gte: sevenDaysAgo },
@@ -44,12 +83,13 @@ export async function GET(request: Request) {
           }
         : {}),
     },
-    _count: { _all: true },
+    select: { expertId: true, instrumentTicker: true, instrument: true, direction: true, publishedAt: true },
   });
+  const deduped = dedupeToLatestStancePerExpertInstrument(rows);
 
-  const bullishCount = directionCounts.find((c) => c.direction === "BULLISH")?._count._all ?? 0;
-  const bearishCount = directionCounts.find((c) => c.direction === "BEARISH")?._count._all ?? 0;
-  const neutralCount = directionCounts.find((c) => c.direction === "NEUTRAL")?._count._all ?? 0;
+  const bullishCount = deduped.filter((r) => r.direction === "BULLISH").length;
+  const bearishCount = deduped.filter((r) => r.direction === "BEARISH").length;
+  const neutralCount = deduped.filter((r) => r.direction === "NEUTRAL").length;
 
   const totalCount = bullishCount + bearishCount + neutralCount;
 

@@ -1,10 +1,51 @@
 import { NextResponse } from "next/server";
 
+import type { OpinionDirection } from "@prisma/client";
+
 import { nseSymbolMatchesInstrumentTicker, refineStockNews } from "@predict-future/business-rules";
 
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
+
+// ─── Cross-article duplicate-stance dedup (sentiment bias fix mechanism 3,
+// 2026-08-16) — KEEP IN LOCKSTEP with apps/web/lib/finance/sentiment.ts's
+// `dedupeToLatestStancePerExpertInstrument` (apps/web has no shared
+// Prisma-aware package with apps/api, so this is duplicated, not imported —
+// same pattern apps/api/app/api/finance/expert-sentiment/route.ts already
+// uses for its own port; see that file's identical block or
+// apps/web/lib/finance/sentiment.ts for the full mechanism-3 rationale).
+// This route's `matchedOpinions` is already scoped to a single ticker, so
+// the dedup key below collapses to `expertId` alone in practice — kept as
+// the same general algorithm rather than a hand-rolled single-ticker
+// shortcut. ──────────────────────────────────────────────────────────────
+
+interface DedupableOpinionRow {
+  expertId: string;
+  instrumentTicker: string | null;
+  instrument: string | null;
+  direction: OpinionDirection;
+  publishedAt: Date;
+}
+
+function dedupKey(r: { instrumentTicker: string | null; instrument: string | null }): string | null {
+  if (r.instrumentTicker) return `t:${r.instrumentTicker.toUpperCase()}`;
+  if (r.instrument) return `l:${r.instrument.toLowerCase().replace(/[^a-z0-9]/g, "")}`;
+  return null;
+}
+
+function dedupeToLatestStancePerExpertInstrument<T extends DedupableOpinionRow>(rows: T[]): T[] {
+  const latestByKey = new Map<string, T>();
+  const passthrough: T[] = [];
+  for (const row of rows) {
+    const instKey = dedupKey(row);
+    if (!instKey) { passthrough.push(row); continue; }
+    const key = `${row.expertId}::${instKey}`;
+    const existing = latestByKey.get(key);
+    if (!existing || row.publishedAt > existing.publishedAt) latestByKey.set(key, row);
+  }
+  return [...latestByKey.values(), ...passthrough];
+}
 
 /** Mini trend: how many trailing sessions' closes to return. */
 const SPARK_SESSIONS = 30;
@@ -154,7 +195,9 @@ export async function GET(_request: Request, { params }: { params: { symbol: str
       orderBy: { publishedAt: "desc" },
       select: {
         id: true,
+        expertId: true,
         quote: true,
+        instrument: true,
         instrumentTicker: true,
         direction: true,
         publishedAt: true,
@@ -206,7 +249,13 @@ export async function GET(_request: Request, { params }: { params: { symbol: str
     expert: { name: o.expert.name, slug: o.expert.slug },
   }));
 
-  const sentiment = matchedOpinions.reduce(
+  // Sentiment bias fix mechanism 3 (2026-08-16): dedupe each analyst's
+  // repeated stances to their single latest row BEFORE counting — an analyst
+  // restating the same call across multiple articles must not multiply the
+  // `sentiment` aggregate. `matchedOpinions` itself (the raw `opinions` list
+  // returned below) stays exactly as-is — only this aggregate changes.
+  const dedupedOpinionsForSentiment = dedupeToLatestStancePerExpertInstrument(matchedOpinions);
+  const sentiment = dedupedOpinionsForSentiment.reduce(
     (acc, o) => {
       if (o.direction === "BULLISH") acc.bullish += 1;
       else if (o.direction === "BEARISH") acc.bearish += 1;
