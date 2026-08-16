@@ -135,14 +135,25 @@ export function ExpandableCallsTable({
           Call quote — long values wrap onto multiple lines within their column. */}
       <Table className="table-fixed">
         <TableHead>
+          {/* Mobile (<sm): Direction + Date columns hide entirely (QA
+              2026-08-16: at 390px the fixed percentage columns overflowed
+              ~80px, pushing the Save/Share icons fully off-screen — the
+              feature's main mobile surface was undiscoverable). Both hidden
+              values still live in each row's own expanded panel, which is
+              the designed mobile reading surface anyway. Header and body
+              cells must hide in lockstep or table-fixed misaligns. */}
           <TableRow>
-            <TableHeaderCell className={showAnalystColumn ? "w-[38%]" : "w-[46%]"}>Call</TableHeaderCell>
-            {showAnalystColumn && <TableHeaderCell className="w-[13%]">Analyst</TableHeaderCell>}
-            <TableHeaderCell className="w-[12%]">Instrument</TableHeaderCell>
-            <TableHeaderCell className="w-[10%]">Direction</TableHeaderCell>
-            <TableHeaderCell className="w-[10%]">Date</TableHeaderCell>
-            <TableHeaderCell className="w-[10%]">Verdict</TableHeaderCell>
-            <TableHeaderCell className="w-[7%]">Source</TableHeaderCell>
+            <TableHeaderCell className={showAnalystColumn ? "w-[34%] sm:w-[38%]" : "w-[38%] sm:w-[46%]"}>Call</TableHeaderCell>
+            {showAnalystColumn && <TableHeaderCell className="w-[15%] sm:w-[13%]">Analyst</TableHeaderCell>}
+            <TableHeaderCell className="w-[15%] sm:w-[12%]">Instrument</TableHeaderCell>
+            <TableHeaderCell className="hidden w-[10%] sm:table-cell">Direction</TableHeaderCell>
+            <TableHeaderCell className="hidden w-[10%] sm:table-cell">Date</TableHeaderCell>
+            <TableHeaderCell className="w-[14%] sm:w-[10%]">Verdict</TableHeaderCell>
+            {/* "Actions", not "Source" — the cell has held source + share +
+                save since 2026-08-16; on mobile the Source TEXT link folds
+                into the expanded panel (it's already there) and only the
+                icons render, so the freed width keeps them on-screen. */}
+            <TableHeaderCell className="w-[22%] sm:w-[7%]">Actions</TableHeaderCell>
           </TableRow>
         </TableHead>
         <TableBody>
@@ -215,23 +226,27 @@ export function ExpandableCallsTable({
                       <span className="block break-words">{call.instrument ?? "—"}</span>
                     )}
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="hidden sm:table-cell">
                     <DirectionChip direction={call.direction} />
                   </TableCell>
-                  <TableCell className="text-ink-500">
+                  <TableCell className="hidden text-ink-500 sm:table-cell">
                     {call.publishedAtLabel}
                   </TableCell>
                   <TableCell>
                     <VerdictBadge status={call.resolutionStatus} />
                   </TableCell>
                   <TableCell>
-                    <span className="inline-flex items-center gap-3">
+                    <span className="inline-flex items-center gap-2 sm:gap-3">
+                      {/* Mobile: the Source TEXT link hides (it already lives in
+                          every row's expanded panel as "Read the original
+                          article") so the Save/Share icons fit on-screen —
+                          see the Actions header cell's comment. */}
                       <a
                         href={call.sourceUrl}
                         target="_blank"
                         rel="noreferrer"
                         onClick={(e) => e.stopPropagation()}
-                        className="inline-flex items-center gap-1 text-signal-sky hover:underline"
+                        className="hidden items-center gap-1 text-signal-sky hover:underline sm:inline-flex"
                       >
                         Source
                         <ArrowUpRight className="h-3.5 w-3.5" />
