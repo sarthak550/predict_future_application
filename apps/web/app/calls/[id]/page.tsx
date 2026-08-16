@@ -79,12 +79,19 @@ async function fetchResolvedCall(id: string, userId: string | null) {
   // its share artifact. But it must not 404 either (QA, 2026-08-15: ~45% of
   // opinions are suppressed, and a user's own /profile My Takes list links
   // every vote here — a third of a vote-rich user's rows dead-ended one
-  // click from their own profile). Same graceful exit the unresolved branch
-  // already uses: redirect to the analyst's profile when we know it.
+  // click from their own profile). It also can't deep-link into the public
+  // opinions feed (suppressed rows aren't in it), so the analyst profile is
+  // the honest destination.
   if (opinion.suppressedAt) {
-    return { kind: "unresolved" as const, expertSlug: opinion.expert.slug };
+    return { kind: "suppressed" as const, expertSlug: opinion.expert.slug };
   }
 
+  // Founder 2026-08-16: a PENDING call should land on THE OPINION ITSELF,
+  // not the analyst's page — /opinions already supports a ?call= deep-link
+  // that auto-expands and scrolls to the row (Return-to-call, Phase C.1),
+  // so My Takes / Saved calls / stale share links all land on the actual
+  // call with its Take-a-Side panel open-able. status=all keeps pending
+  // rows visible past the graded-first default.
   if (opinion.resolutionStatus !== "RESOLVED_HIT" && opinion.resolutionStatus !== "RESOLVED_MISS") {
     return { kind: "unresolved" as const, expertSlug: opinion.expert.slug };
   }
@@ -150,13 +157,20 @@ export default async function CallSharePage({ params }: { params: { id: string }
     notFound();
   }
 
-  if (result.kind === "unresolved") {
-    // No completed verdict yet — nothing shareable to show. Send the visitor to the
-    // analyst's full profile if we know it, otherwise there's nothing left to show.
+  if (result.kind === "suppressed") {
+    // Removed from the public record — the analyst profile is the only honest
+    // destination (see fetchResolvedCall's comment).
     if (result.expertSlug) {
       redirect(`/analysts/${result.expertSlug}`);
     }
     notFound();
+  }
+
+  if (result.kind === "unresolved") {
+    // No completed verdict yet — nothing shareable to show HERE, but the call
+    // itself lives in the opinions feed: deep-link to it expanded (see
+    // fetchResolvedCall's comment on the founder ask + ?call= mechanics).
+    redirect(`/opinions?status=all&call=${params.id}`);
   }
 
   const { opinion, expertStats, saved } = result;
