@@ -646,7 +646,7 @@ export async function extractExpertOpinionsFromStory(story: {
  * Enriched raw opinion: the AI-emitted opinion plus the instrument/ticker
  * we resolved in-process before persistence. Used for in-memory dedup.
  */
-type EnrichedRawOpinion = RawExpertOpinion & {
+export type EnrichedRawOpinion = RawExpertOpinion & {
   resolvedInstrument: string | null;
   resolvedTicker: string | null;
 };
@@ -740,17 +740,21 @@ function pickRepresentative(group: EnrichedRawOpinion[]): EnrichedRawOpinion {
 /**
  * Collapse a single (expert, instrument) group to at most one opinion.
  *
- * Rules:
- *   - 1 opinion → keep as-is
- *   - All same direction → keep the representative (longest/most confident)
- *   - Mixed BULLISH + NEUTRAL → keep BULLISH (directional view trumps non-view)
- *   - Mixed BEARISH + NEUTRAL → keep BEARISH (directional view trumps non-view)
- *   - BULLISH + BEARISH (with or without NEUTRAL) → drop ALL.
- *     A single expert cannot credibly hold opposite directional views on the
- *     same instrument in the same article. This is virtually always an AI
- *     extraction artifact; showing both confuses the user. Suppress.
+ * Rules (rewritten 2026-08-16 — sentiment bias fix, mechanism 2):
+ *   - 1 opinion -> keep as-is.
+ *   - BULLISH + BEARISH both present (with or without NEUTRAL) -> drop ALL, UNCHANGED
+ *     from before. A single expert cannot credibly hold opposite directional views on
+ *     the same instrument in the same article.
+ *   - Otherwise: count occurrences of each direction actually present in the group and
+ *     let the STRICT majority by count win. A genuine tie between a directional stance
+ *     and NEUTRAL resolves to NEUTRAL, not to the directional stance — a hedge that only
+ *     ties with conviction is not full conviction. This replaces the old rule, which let
+ *     ANY presence of BULLISH (even 1-vs-many against NEUTRAL) win outright — symmetric
+ *     in code between BULLISH and BEARISH, but bullish-amplifying in practice because
+ *     real analyst commentary hedges positive far more often than negative (2026-08-15
+ *     audit finding).
  */
-function collapseGroup(group: EnrichedRawOpinion[]): EnrichedRawOpinion[] {
+export function collapseGroup(group: EnrichedRawOpinion[]): EnrichedRawOpinion[] {
   if (group.length <= 1) return group;
 
   const dirs = new Set(group.map((o) => o.direction));
@@ -764,11 +768,19 @@ function collapseGroup(group: EnrichedRawOpinion[]): EnrichedRawOpinion[] {
     return [];
   }
 
-  const winningDir: "BULLISH" | "BEARISH" | "NEUTRAL" = hasBullish
-    ? "BULLISH"
-    : hasBearish
-      ? "BEARISH"
-      : "NEUTRAL";
+  const bullishCount = group.filter((o) => o.direction === "BULLISH").length;
+  const bearishCount = group.filter((o) => o.direction === "BEARISH").length;
+  const neutralCount = group.filter((o) => o.direction === "NEUTRAL").length;
+
+  let winningDir: "BULLISH" | "BEARISH" | "NEUTRAL";
+  if (bullishCount > 0) {
+    winningDir = bullishCount > neutralCount ? "BULLISH" : "NEUTRAL";
+  } else if (bearishCount > 0) {
+    winningDir = bearishCount > neutralCount ? "BEARISH" : "NEUTRAL";
+  } else {
+    winningDir = "NEUTRAL";
+  }
+
   const candidates = group.filter((o) => o.direction === winningDir);
   return [pickRepresentative(candidates)];
 }
