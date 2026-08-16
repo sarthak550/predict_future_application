@@ -62,7 +62,7 @@ export function InstrumentSentimentGauge({
             <p className="mt-1 text-base font-semibold text-ink-900">{lean}</p>
           </div>
           <p className="text-xs text-ink-400">
-            {totalCount} call{totalCount === 1 ? "" : "s"} · last {lookbackDays} days
+            {totalCount} analyst stance{totalCount === 1 ? "" : "s"} · last {lookbackDays} days · one per analyst
           </p>
         </div>
 

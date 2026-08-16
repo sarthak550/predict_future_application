@@ -562,11 +562,25 @@ export interface OpinionsSentimentSplit {
  * this filter-aware bar existed.
  *
  * Deliberately ALL-TIME (no 7-day window), unlike getSentimentSplit — the
- * whole point of this function is for `totalCount` to equal the table's own
- * total-matching-rows count (every row has exactly one direction, so
- * bullish+bearish+neutral IS that total) so the bar's basis stays legible:
- * "this bar is built from exactly the N calls in the table below," not a
- * silently different, time-boxed subset of them.
+ * point of the all-time scope is that the bar is built from the SAME
+ * filtered set as the table below it, not a silently different, time-boxed
+ * subset of it.
+ *
+ * INVARIANT (revised 2026-08-16 — sentiment bias fix mechanism 3; the old
+ * invariant here, "`totalCount` equals the table's own total-matching-rows
+ * count," is DELIBERATELY GONE, not a bug): `totalCount` is
+ * `dedupeToLatestStancePerExpertInstrument(rows).length` — every ROW in the
+ * filtered set still appears in the table below (that part is unchanged),
+ * but `totalCount`/bullish/bearish/neutral now count each analyst's LATEST
+ * stance per instrument once, so an analyst who restated the same call
+ * across multiple articles within this filter set contributes one to this
+ * total, not one per row. `totalCount` is therefore <= the table's row
+ * count, not equal to it, whenever any duplicate-stance group exists in the
+ * filtered set. Any caller-facing copy built from this value (see
+ * opinions/page.tsx's `metaLabel`) MUST say "stances"/"one per analyst" or
+ * equivalent, never imply it's a row count — see the QA finding on
+ * 2026-08-16 that caught exactly this mismatch (caption said "N calls",
+ * table below it legitimately showed more rows than N).
  *
  * Takes the SAME already-resolved `filters`/`ctx` as fetchOpinionsPage
  * (both computed once by resolveEffectiveFilters) so the two can never

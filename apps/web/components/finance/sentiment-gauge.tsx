@@ -82,7 +82,8 @@ export function SentimentGauge({
             {split.isSmallSample && <Badge variant="warning">Small sample</Badge>}
           </div>
           <p className="text-xs text-ink-400">
-            {metaLabel ?? `${split.totalCount} call${split.totalCount === 1 ? "" : "s"} · last 7 days`}
+            {metaLabel ??
+              `${split.totalCount} analyst stance${split.totalCount === 1 ? "" : "s"} · last 7 days · one per analyst`}
           </p>
         </div>
 

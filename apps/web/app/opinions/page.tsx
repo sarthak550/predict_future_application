@@ -137,8 +137,8 @@ export default async function OpinionsPage({ searchParams }: { searchParams: Sea
           title={sentiment.scopeLabel}
           metaLabel={
             sentiment.isSmallSample
-              ? `Based on ${sentiment.totalCount} call${sentiment.totalCount === 1 ? "" : "s"}`
-              : `${sentiment.totalCount} call${sentiment.totalCount === 1 ? "" : "s"} matching these filters`
+              ? `Based on ${sentiment.totalCount} analyst stance${sentiment.totalCount === 1 ? "" : "s"} · one per analyst`
+              : `${sentiment.totalCount} analyst stance${sentiment.totalCount === 1 ? "" : "s"} matching these filters · one per analyst`
           }
           // Range-aware (2026-08-09 date-range feature): a custom from/to
           // that yields zero calls should name the actual range rather than
