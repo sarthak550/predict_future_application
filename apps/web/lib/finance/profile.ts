@@ -135,3 +135,66 @@ export async function getMyTakes(userId: string): Promise<MyTakeVote[]> {
     },
   }));
 }
+
+export type SavedCall = {
+  id: string;
+  createdAt: Date;
+  opinion: {
+    id: string;
+    resolutionStatus: OpinionResolutionStatus;
+    resolvedAt: Date | null;
+    publishedAt: Date;
+    direction: OpinionDirection;
+    quote: string;
+    instrument: string | null;
+    instrumentTicker: string | null;
+    expert: {
+      name: string;
+      organization: string;
+      verified: boolean;
+      avatarUrl: string | null;
+    };
+  };
+};
+
+/**
+ * "Save this call" bookmarks (Saved Opinions brief) — structurally identical
+ * to getMyTakes above, same select shape off the opinion relation. NO
+ * suppressedAt filter, deliberately mirroring getMyTakes exactly: a
+ * suppressed save still renders in the list, and click-through already
+ * degrades gracefully via /calls/[id]'s own redirect (see that file's
+ * fetchResolvedCall) rather than needing a filter here.
+ */
+export async function getSavedOpinions(userId: string): Promise<SavedCall[]> {
+  const saves = await prisma.savedOpinion.findMany({
+    where: { userId },
+    select: {
+      id: true,
+      createdAt: true,
+      opinion: {
+        select: {
+          id: true,
+          resolutionStatus: true,
+          resolvedAt: true,
+          publishedAt: true,
+          direction: true,
+          quote: true,
+          instrument: true,
+          instrumentTicker: true,
+          expert: {
+            select: { name: true, organization: true, verified: true, avatarUrl: true },
+          },
+        },
+      },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  return saves.map((save) => ({
+    ...save,
+    opinion: {
+      ...save.opinion,
+      expert: { ...save.opinion.expert, organization: canonicalizeOrgDisplay(save.opinion.expert.organization) },
+    },
+  }));
+}

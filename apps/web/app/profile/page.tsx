@@ -10,7 +10,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { Card, CardContent } from "@/components/ui/card";
 import { PROVISIONAL_MIN_RESOLVED_CALLS } from "@predict-future/business-rules";
 import { requireUser } from "@/lib/auth";
-import { getMyAnalysts, getMyTakes } from "@/lib/finance/profile";
+import { getMyAnalysts, getMyTakes, getSavedOpinions } from "@/lib/finance/profile";
 import { computeUserAccuracy, implicationChoiceToAgreement } from "@/lib/finance/userAccuracy";
 import { getAccountDetail } from "@/lib/paperTrading/queries";
 import { prisma } from "@/lib/prisma";
@@ -50,9 +50,10 @@ export const metadata: Metadata = {
 export default async function ProfilePage() {
   const user = await requireUser();
 
-  const [myAnalysts, myTakes, activePaperAccount, unreadNotificationCount] = await Promise.all([
+  const [myAnalysts, myTakes, savedCalls, activePaperAccount, unreadNotificationCount] = await Promise.all([
     getMyAnalysts(user.id),
     getMyTakes(user.id),
+    getSavedOpinions(user.id),
     // Ticket 4 gating requirement: a `findFirst`, NEVER `getOrCreateActiveAccount`
     // — visiting /profile must never silently provision a paper-trading account
     // for a user who has never opened Paper Trading.
@@ -173,6 +174,63 @@ export default async function ProfilePage() {
                         </div>
                       </div>
                       <VerdictBadge status={vote.opinion.resolutionStatus} />
+                    </div>
+                  </Link>
+                );
+              })}
+            </CardContent>
+          </Card>
+        )}
+      </section>
+
+      <section className="space-y-4">
+        <div>
+          <h2 className="text-xl font-semibold text-ink-900">Saved calls</h2>
+          <p className="mt-1 text-sm text-ink-500">Calls you&rsquo;ve bookmarked to track how they play out.</p>
+        </div>
+
+        {savedCalls.length === 0 ? (
+          <Card>
+            <CardContent className="p-8 text-center text-sm text-ink-500">
+              You haven&rsquo;t saved any calls yet.{" "}
+              <Link href="/opinions" className="font-medium text-signal-sky hover:underline">
+                Save one from an analyst&rsquo;s page or the Scorecard
+              </Link>{" "}
+              to track how it plays out.
+            </CardContent>
+          </Card>
+        ) : (
+          <Card>
+            <CardContent className="space-y-3 p-4">
+              {savedCalls.map((save) => {
+                const label = save.opinion.instrument ?? save.opinion.quote;
+                return (
+                  <Link
+                    key={save.id}
+                    href={`/calls/${save.opinion.id}`}
+                    className="block rounded-[20px] border border-ink-100 px-4 py-3 transition hover:border-signal-sky/40 hover:bg-ink-50/60"
+                  >
+                    <div className="flex items-start gap-3">
+                      <Avatar
+                        name={save.opinion.expert.name}
+                        src={save.opinion.expert.avatarUrl}
+                        className="h-8 w-8 shrink-0"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-sm font-medium text-ink-900">{save.opinion.expert.name}</p>
+                          {/* Not independently clickable — the whole row already links to
+                              /calls/[id], and nesting a second <a> inside it (the pattern
+                              FirmLink's own doc comment warns against) would be invalid HTML. */}
+                          <FirmLink organization={save.opinion.expert.organization} linkable={false} className="text-xs text-ink-400" />
+                          <DirectionChip direction={save.opinion.direction} />
+                        </div>
+                        <p className="mt-1 truncate text-sm text-ink-700">{label}</p>
+                        <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-ink-400">
+                          <span>Saved {formatDateOnly(save.createdAt)}</span>
+                        </div>
+                      </div>
+                      <VerdictBadge status={save.opinion.resolutionStatus} />
                     </div>
                   </Link>
                 );
