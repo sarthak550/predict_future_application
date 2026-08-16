@@ -262,13 +262,12 @@ export function ExpandableCallsTable({
                           /calls/[id] has nothing to show for an ungraded call), a
                           save is just a bookmark row and has no such constraint. */}
                       <SaveOpinionButton opinionId={call.id} initialSaved={savedIds.has(call.id)} />
-                      {/* Founder 2026-08-15: the share affordance was buried as a
-                          text link inside the EXPANDED panel only — invisible
-                          without clicking a row open. Graded calls now carry a
-                          row-level share icon straight to the /calls/[id] share
-                          page (which owns the native/WhatsApp/Twitter kit).
-                          Graded-only: /calls redirects ungraded calls anyway. */}
-                      {isGraded && (
+                      {/* Founder 2026-08-15/16: row-level share icon straight to
+                          the /calls/[id] page (which owns the share kit) —
+                          graded AND pending calls both (a pending share is
+                          "will it land?", explicitly non-verdict). NOT_GRADED
+                          is excluded: it will never resolve, nothing to share. */}
+                      {(isGraded || call.resolutionStatus === "PENDING") && (
                         <Link
                           href={`/calls/${call.id}`}
                           onClick={(e) => e.stopPropagation()}

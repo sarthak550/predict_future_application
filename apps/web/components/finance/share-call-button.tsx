@@ -1,11 +1,15 @@
 "use client";
 
 /**
- * One-tap share action for a graded call's share card (Growth Loop Sprint
- * G3, Decision 3). MISS calls are shareable identically to HIT calls — no
- * separate gate, confirmation dialog, or different treatment; the OG image's
- * own "a MISS never reads as punitive" design intent already made this call,
- * this button just needs to honor it (see /calls/[id]/opengraph-image.tsx).
+ * One-tap share action for a call's share card (Growth Loop Sprint G3,
+ * Decision 3; extended 2026-08-16). MISS calls are shareable identically to
+ * HIT calls — no separate gate or different treatment; the OG image's own
+ * "a MISS never reads as punitive" design intent already made this call.
+ * PENDING calls are shareable too (founder 2026-08-16: "sharing should also
+ * be for PENDING calls") — the honesty law is about COPY, not access: a
+ * pending share says "will it land?", never implies a verdict, and both the
+ * call page and the OG image render an explicit amber PENDING state
+ * (see /calls/[id]/opengraph-image.tsx).
  *
  * navigator.share() is what actually matters here — on mobile web it opens
  * the native OS sheet, which reaches WhatsApp directly, the GTM wedge — but
@@ -45,7 +49,7 @@ export function ShareCallButton({
   analystName: string;
   direction: OpinionDirection;
   instrument: string | null;
-  resolutionStatus: "RESOLVED_HIT" | "RESOLVED_MISS";
+  resolutionStatus: "RESOLVED_HIT" | "RESOLVED_MISS" | "PENDING";
 }) {
   const [shareUrl, setShareUrl] = useState("");
   const [canNativeShare, setCanNativeShare] = useState(false);
@@ -56,12 +60,14 @@ export function ShareCallButton({
     setCanNativeShare(typeof navigator !== "undefined" && typeof navigator.share === "function");
   }, [callId]);
 
-  const verdictLabel = resolutionStatus === "RESOLVED_HIT" ? "HIT" : "MISS";
   const subject = instrument ?? "the market";
   // Factual, non-punitive tone (founder brief, Decision 3) — matches
   // AnalystDisclaimerFooter's voice. No "wrong again," no exclamation-mark
-  // spin on a MISS.
-  const shareText = `${analystName} called ${DIRECTION_LABELS[direction]} on ${subject} — ${verdictLabel}. See the full track record →`;
+  // spin on a MISS, and a PENDING share never implies a verdict exists.
+  const shareText =
+    resolutionStatus === "PENDING"
+      ? `${analystName} called ${DIRECTION_LABELS[direction]} on ${subject} — will it land? Every call gets graded HIT or MISS →`
+      : `${analystName} called ${DIRECTION_LABELS[direction]} on ${subject} — ${resolutionStatus === "RESOLVED_HIT" ? "HIT" : "MISS"}. See the full track record →`;
 
   async function handlePrimaryAction() {
     if (!shareUrl) return;

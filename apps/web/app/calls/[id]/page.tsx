@@ -249,16 +249,17 @@ export default async function CallSharePage({ params }: { params: { id: string }
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <SaveOpinionButton opinionId={opinion.id} initialSaved={saved} variant="labeled" />
-              {/* Share kit is graded-only: a pending call has no verdict to
-                  share, and the never-share-ungraded-as-a-verdict law stands.
-                  Save (above) is the pending call's "watch this" action. */}
-              {isGraded && (
+              {/* Share kit: graded AND pending (founder 2026-08-16 — a
+                  pending share reads "will it land?", never a verdict; the
+                  OG image renders an explicit amber PENDING). NOT_GRADED is
+                  the one state with nothing to share: it will never resolve. */}
+              {(isGraded || opinion.resolutionStatus === "PENDING") && (
                 <ShareCallButton
                   callId={opinion.id}
                   analystName={opinion.expert.name}
                   direction={opinion.direction}
                   instrument={opinion.instrument}
-                  resolutionStatus={isHit ? "RESOLVED_HIT" : "RESOLVED_MISS"}
+                  resolutionStatus={isGraded ? (isHit ? "RESOLVED_HIT" : "RESOLVED_MISS") : "PENDING"}
                 />
               )}
             </div>
