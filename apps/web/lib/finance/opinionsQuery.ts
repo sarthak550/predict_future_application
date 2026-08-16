@@ -19,6 +19,17 @@ export interface OpinionsFilters {
   instrument?: string;
   direction?: OpinionDirection;
   status?: OpinionStatusFilter;
+  /**
+   * True when `status` is the page's own GRADED default rather than a
+   * user-chosen `?status=` param (founder 2026-08-16: the newest-first
+   * default view was pending-heavy — page one of a "we grade every call"
+   * product showed zero graded calls and therefore zero share affordances;
+   * receipts lead now). The bare /opinions URL stays the canonical,
+   * indexable, "no filters active" page — the two has*Filter helpers below
+   * ignore a defaulted status, so noindex/canonical/sentiment-source
+   * decisions are unchanged for the bare URL.
+   */
+  statusIsDefault?: boolean;
   /** Expert slug, not id — matches the public URL shape used everywhere else (/analysts/[slug]). */
   analyst?: string;
   /** Canonical org display string, e.g. "Motilal Oswal Financial Services" — the SAME ?firm= value shape /analysts uses (see lib/finance/firmLink.ts, buildFirmOptions). */
@@ -67,8 +78,15 @@ export function parseOpinionsFilters(searchParams: Record<string, string | strin
     : undefined;
 
   const statusRaw = get("status");
-  const status: OpinionStatusFilter | undefined =
-    statusRaw === "graded" || statusRaw === "pending" ? statusRaw : undefined;
+  const statusExplicit = statusRaw === "graded" || statusRaw === "pending";
+  // Absent (or junk) → GRADED default; explicit "all" opts out entirely —
+  // see `statusIsDefault`'s doc comment on the interface above.
+  const status: OpinionStatusFilter | undefined = statusExplicit
+    ? (statusRaw as OpinionStatusFilter)
+    : statusRaw === "all"
+      ? undefined
+      : "graded";
+  const statusIsDefault = !statusExplicit && statusRaw !== "all";
 
   const instrument = get("instrument")?.trim() || undefined;
   const analyst = get("analyst")?.trim() || undefined;
@@ -80,14 +98,15 @@ export function parseOpinionsFilters(searchParams: Record<string, string | strin
   const pageRaw = Number.parseInt(get("page") ?? "1", 10);
   const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
 
-  return { instrument, direction, status, analyst, firm, sector, from, to, page };
+  return { instrument, direction, status, statusIsDefault, analyst, firm, sector, from, to, page };
 }
 
 /** True if any filter/pagination param beyond the bare unfiltered first page is active. */
 export function hasActiveOpinionsQuery(filters: OpinionsFilters): boolean {
+  const explicitStatus = filters.statusIsDefault ? undefined : filters.status;
   return (
     Boolean(
-      filters.instrument || filters.direction || filters.status || filters.analyst || filters.firm || filters.sector ||
+      filters.instrument || filters.direction || explicitStatus || filters.analyst || filters.firm || filters.sector ||
         filters.from || filters.to,
     ) || filters.page > 1
   );
@@ -108,7 +127,8 @@ export function hasActiveOpinionsQuery(filters: OpinionsFilters): boolean {
  * 7-day getSentimentSplit(), which would ignore the user's chosen range.
  */
 export function hasNonDirectionOpinionsFilter(filters: OpinionsFilters): boolean {
-  return Boolean(filters.instrument || filters.status || filters.analyst || filters.firm || filters.sector || filters.from || filters.to);
+  const explicitStatus = filters.statusIsDefault ? undefined : filters.status;
+  return Boolean(filters.instrument || explicitStatus || filters.analyst || filters.firm || filters.sector || filters.from || filters.to);
 }
 
 const GRADED_STATUSES: OpinionResolutionStatus[] = ["RESOLVED_HIT", "RESOLVED_MISS"];

@@ -25,12 +25,28 @@ import { Card, CardContent } from "@/components/ui/card";
 import { PROVISIONAL_MIN_RESOLVED_CALLS } from "@predict-future/business-rules";
 import type { MyAnalyst } from "@/lib/finance/profile";
 
+/** How long the two-step confirm stays armed before quietly reverting — long enough to read "Unfollow?", short enough that a forgotten armed state can't surprise a later click. */
+const CONFIRM_REVERT_MS = 4000;
+
 export function MyAnalystCard({ analyst }: { analyst: MyAnalyst }) {
   const [removed, setRemoved] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  // Founder 2026-08-16: "un-following the analyst is pretty easy right now"
+  // — a single accidental tap on the X silently destroyed the follow (and
+  // with it the user's notification stream for that analyst). Two-step
+  // inline confirm: first click arms ("Unfollow?" + cancel), only an
+  // explicit second click on the armed control actually deletes; it
+  // disarms itself after a few seconds or on Cancel.
+  const [armed, setArmed] = useState(false);
 
   if (removed) return null;
+
+  function armConfirm() {
+    setArmed(true);
+    setError("");
+    window.setTimeout(() => setArmed(false), CONFIRM_REVERT_MS);
+  }
 
   async function handleUnfollow() {
     if (pending) return;
@@ -76,15 +92,39 @@ export function MyAnalystCard({ analyst }: { analyst: MyAnalyst }) {
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={handleUnfollow}
-            disabled={pending}
-            aria-label={`Unfollow ${analyst.name}`}
-            className="pointer-events-auto relative z-20 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-ink-400 transition hover:bg-ink-100 hover:text-ink-700 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          {armed ? (
+            <span className="pointer-events-auto relative z-20 flex shrink-0 items-center gap-1.5">
+              <button
+                type="button"
+                onClick={handleUnfollow}
+                disabled={pending}
+                aria-label={`Confirm unfollow ${analyst.name}`}
+                className="rounded-full bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-600 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {pending ? "Unfollowing…" : "Unfollow?"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setArmed(false)}
+                disabled={pending}
+                aria-label="Cancel unfollow"
+                className="rounded-full px-2 py-1 text-xs font-medium text-ink-400 transition hover:bg-ink-100 hover:text-ink-700"
+              >
+                Cancel
+              </button>
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={armConfirm}
+              disabled={pending}
+              aria-label={`Unfollow ${analyst.name}`}
+              title={`Unfollow ${analyst.name}`}
+              className="pointer-events-auto relative z-20 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-ink-400 transition hover:bg-ink-100 hover:text-ink-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
         </div>
         <div className="flex items-baseline justify-between gap-3 border-t border-ink-100 pt-3">
           {hasProvisionalTrackRecord ? (
