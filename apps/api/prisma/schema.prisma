@@ -83,6 +83,8 @@ model User {
   phoneVerificationOtp             PhoneVerificationOtp?
   reasoningUpvotes                 ReasoningUpvote[]
   savedMarkets                     SavedMarket[]
+  /// "Save this call" bookmarks on analyst opinions — see model SavedOpinion.
+  savedOpinions                    SavedOpinion[]
   sessions                         Session[]
   reviewedStories                  Story[]                           @relation("ReviewedStories")
   createdStories                   Story[]                           @relation("CreatedStories")
@@ -846,19 +848,19 @@ model VerificationToken {
 }
 
 model Expert {
-  id           String          @id @default(cuid())
-  name         String
-  organization String
-  verified     Boolean         @default(false)
-  bio          String?
-  avatarUrl    String?
-  tipranksUrl  String?
-  linkedinUrl  String?
+  id             String           @id @default(cuid())
+  name           String
+  organization   String
+  verified       Boolean          @default(false)
+  bio            String?
+  avatarUrl      String?
+  tipranksUrl    String?
+  linkedinUrl    String?
   /// Public profile URL slug, e.g. "rupak-de-lkp-securities" (apps/web/app/analysts/[slug]).
   /// Nullable so the column can be added to prod without a backfill in the same deploy —
   /// see apps/api/scripts/backfill-expert-slugs.ts. New experts get one at creation time via
   /// apps/api/lib/finance/expertSlug.ts (called from lib/ai/extractExpertOpinions.ts).
-  slug         String?         @unique
+  slug           String?          @unique
   /// Duplicate-expert prevention (2026-08). normalizeExpertName(name) — lowercase, NFKC,
   /// punctuation-stripped, whitespace-collapsed — see apps/api/lib/finance/expertDedup.ts.
   /// Indexed so lib/finance/expertMatch.ts can do a cheap exact lookup at extraction time
@@ -867,20 +869,20 @@ model Expert {
   /// (no required backfill in the same deploy); apps/api/scripts/backfill-expert-name-
   /// normalized.ts populates it for pre-existing rows. Never left "" for a row with a
   /// non-empty name after that backfill has run.
-  nameNormalized String        @default("")
+  nameNormalized String           @default("")
   /// Human-vs-firm classification (round 2, 2026-08-08). Additive, defaults HUMAN so
   /// existing rows need no required backfill in the same deploy — see
   /// apps/api/scripts/backfill-expert-entity-kind.ts for the one-time classification
   /// pass and apps/api/lib/finance/expertEntityKind.ts for the classifier + full
   /// rationale. New experts are classified at creation time by
   /// lib/finance/expertMatch.ts#findOrCreateExpert.
-  entityKind   ExpertEntityKind @default(HUMAN)
-  createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @updatedAt
-  followers    ExpertFollow[]
-  opinions     ExpertOpinion[]
+  entityKind     ExpertEntityKind @default(HUMAN)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  followers      ExpertFollow[]
+  opinions       ExpertOpinion[]
   /// Shadow portfolios (P3.1) auto-tracking this analyst's calls. See model Portfolio.
-  portfolios   Portfolio[]     @relation("PortfolioOwnerExpert")
+  portfolios     Portfolio[]      @relation("PortfolioOwnerExpert")
 
   @@unique([name, organization])
   @@index([nameNormalized])
@@ -943,6 +945,8 @@ model ExpertOpinion {
   votes                   ExpertOpinionVote[]
   /// Paper Trading Phase 1 orders placed via "Paper trade this call". See model PaperOrder.
   paperOrders             PaperOrder[]
+  /// Users who bookmarked this call — see "Saved calls" on /profile, model SavedOpinion.
+  savedByUsers            SavedOpinion[]
 
   @@unique([expertId, storyId, quoteHash])
   @@index([expertId, publishedAt])
@@ -1106,6 +1110,19 @@ model SavedMarket {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, marketId])
+  @@index([userId, createdAt])
+}
+
+/// An opinion (analyst call) bookmarked by a user for later reference — see "save this call".
+model SavedOpinion {
+  id        String        @id @default(cuid())
+  userId    String
+  opinionId String
+  createdAt DateTime      @default(now())
+  opinion   ExpertOpinion @relation(fields: [opinionId], references: [id], onDelete: Cascade)
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, opinionId])
   @@index([userId, createdAt])
 }
 
@@ -1705,19 +1722,19 @@ model MarketMoveNotificationPreference {
 /// specific filing) — see apps/api/lib/marketMoves/googleNews.ts for the fetch
 /// + relevance/recency/dedupe rules and market-moves-news cron for ingestion.
 model MarketMoveNews {
-  id           String   @id @default(cuid())
-  tickerSymbol String
-  companyName  String
+  id                 String    @id @default(cuid())
+  tickerSymbol       String
+  companyName        String
   /// Decoded Google News RSS title with the trailing " - <Publisher>" suffix removed.
-  headline     String
+  headline           String
   /// Decoded publisher name split out of the raw RSS title.
-  publisher    String
+  publisher          String
   /// Google News RSS redirect link, opened directly client-side — no server-side resolution.
-  sourceUrl    String
+  sourceUrl          String
   /// Idempotency key for upsert-on-poll: sha1(tickerSymbol + ":" + normalize(headline)).
-  dedupeKey    String   @unique
-  publishedAt  DateTime
-  ingestedAt   DateTime @default(now())
+  dedupeKey          String    @unique
+  publishedAt        DateTime
+  ingestedAt         DateTime  @default(now())
   /// 2-3 sentence AI-generated summary of the source article (headline alone is never
   /// enough — see lib/marketMoves/summarizeStockNews.ts). Null until generated or when
   /// generation fails (article body fetch failed, AI budget exhausted, etc.) — the row
@@ -2279,7 +2296,7 @@ model PaperOrder {
   /// populated (see futuresCosts.ts's leg-type dispatch, path 4). False for
   /// every other row, including EQUITY/OPTION legs which don't have this
   /// concept.
-  isDailyMtm       Boolean               @default(false)
+  isDailyMtm Boolean @default(false)
 
   // ─── Limit Orders (Sprint, 2026-07-26) — nullable back-relation only ───────
 
@@ -2288,7 +2305,7 @@ model PaperOrder {
   /// every market-order fill and for every pre-Sprint row. UI-badge use only
   /// ("filled from a limit order") — never consulted by replay.ts, which
   /// treats every PaperOrder row identically regardless of origin.
-  pendingOrder     PaperPendingOrder?
+  pendingOrder PaperPendingOrder?
 
   @@index([accountId, symbol])
   @@index([accountId, createdAt])
@@ -2405,28 +2422,28 @@ enum PendingOrderValidity {
 /// never margin-blocked); null (lots-blocked via `quantity`, same shape as an
 /// options SELL block) when it's CLOSING/REDUCING one.
 model PaperPendingOrder {
-  id             String                @id @default(cuid())
-  accountId      String
-  instrumentKind PaperInstrumentKind   @default(EQUITY)
+  id               String               @id @default(cuid())
+  accountId        String
+  instrumentKind   PaperInstrumentKind  @default(EQUITY)
   /// Bare NSE symbol (EQUITY) or the synthetic option-contract symbol
   /// (INDEX_OPTION/STOCK_OPTION) — same convention as PaperOrder.symbol. This
   /// single field is what lets derivePendingBlockedQuantity match a pending
   /// SELL against the right symbol/contract for BOTH asset classes uniformly.
-  symbol         String
-  side           TxSide
+  symbol           String
+  side             TxSide
   /// EQUITY only — null for INDEX_OPTION/STOCK_OPTION, mirrors PaperOrder.
-  productType    PaperProductType?
+  productType      PaperProductType?
   /// Total unit quantity = lots * lotSize for an option row (canonical unit
   /// count, same convention as PaperOrder.quantity — never lots alone).
-  quantity       Int
-  limitPrice     Float
-  status         PendingOrderStatus    @default(PENDING)
-  validity       PendingOrderValidity  @default(DAY)
+  quantity         Int
+  limitPrice       Float
+  status           PendingOrderStatus   @default(PENDING)
+  validity         PendingOrderValidity @default(DAY)
   /// Chart Trading + SL/TP (Sprint A, 2026-07-31) — LIMIT for every
   /// pre-Sprint-A row (silent backfill via @default, zero behavior change)
   /// and every new LIMIT/TP order placed after this sprint; STOP for a new
   /// stop-loss order. See PendingOrderVariant's doc comment.
-  variant        PendingOrderVariant   @default(LIMIT)
+  variant          PendingOrderVariant  @default(LIMIT)
   /// STOP orders only — the price level the fill-check cron watches for a
   /// cross (isStopTriggered), independent of `limitPrice`. On write, a STOP
   /// row ALSO sets `limitPrice = triggerPrice` (denormalized) so every
@@ -2438,7 +2455,7 @@ model PaperPendingOrder {
   /// `triggerPrice < currentQuote` and a STOP BUY requires `triggerPrice >
   /// currentQuote` at placement time — a wrong-side request is always user
   /// error and 422s before a row is ever written.
-  triggerPrice   Float?
+  triggerPrice     Float?
   /// Originally REJECTED-only (see PendingOrderStatus.REJECTED) — explains,
   /// in human-readable terms, why a crossed STOP could not fill at the actual
   /// crossing price (insufficient cash/margin/holdings at fill time). Expiry
@@ -2448,19 +2465,19 @@ model PaperPendingOrder {
   /// underlying contract's expiry has passed (see optionsExpiry.ts's/
   /// futuresExpiry.ts's cancelExpired*PendingOrders helpers). Still null for
   /// every ordinary user-initiated CANCELLED row (that reason IS self-evident).
-  resolutionNote String?
+  resolutionNote   String?
   /// Stamped by Sprint C's drag-to-reprice PATCH endpoint (not built this
   /// sprint — see A6 section 42 for the pure invariant that endpoint will
   /// rely on). Null for a row that has never been repriced since placement.
-  repricedAt     DateTime?
+  repricedAt       DateTime?
   /// The full cost-engine output computed AT PLACEMENT TIME using limitPrice
   /// as the hypothetical fill price — this IS the blocked cash amount shown
   /// to the user for a BUY. Because fill price is deterministically the limit
   /// price, this value exactly equals the eventual fill's netAmount — no
   /// reconciliation needed. Null for a SELL (DELIVERY equity or options),
   /// which blocks QUANTITY instead of cash — see the doc above.
-  blockedAmount  Float?
-  linkedOpinionId String?
+  blockedAmount    Float?
+  linkedOpinionId  String?
   // ─── option contract fields, mirrors PaperOrder — null for EQUITY rows ───
   underlyingSymbol String?
   optionType       PaperOptionType?
@@ -2470,15 +2487,15 @@ model PaperPendingOrder {
   /// "snapshot once, never re-derive" discipline as PaperOrder.lotSize.
   lotSize          Int?
   lots             Int?
-  createdAt      DateTime              @default(now())
+  createdAt        DateTime             @default(now())
   /// Set by the fill-check cron the instant this row transitions PENDING ->
   /// FILLED — points at the PaperOrder row the fill wrote.
-  filledOrderId  String?               @unique
-  filledAt       DateTime?
-  cancelledAt    DateTime?
-  expiredAt      DateTime?
-  account        PaperTradingAccount   @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  filledOrder    PaperOrder?           @relation(fields: [filledOrderId], references: [id])
+  filledOrderId    String?              @unique
+  filledAt         DateTime?
+  cancelledAt      DateTime?
+  expiredAt        DateTime?
+  account          PaperTradingAccount  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  filledOrder      PaperOrder?          @relation(fields: [filledOrderId], references: [id])
 
   @@index([accountId, status])
   @@index([status, instrumentKind])
@@ -2616,19 +2633,19 @@ enum PaperSettlementBasis {
 /// section for the original spec — this table exists so premium history can
 /// start accruing well before the T10 chart UI that will read it.
 model OptionPremiumSnapshot {
-  id               String              @id @default(cuid())
-  capturedAt       DateTime            @default(now())
-  underlyingSymbol String
+  id                 String              @id @default(cuid())
+  capturedAt         DateTime            @default(now())
+  underlyingSymbol   String
   /// Reuses the existing PaperInstrumentKind enum's option values only
   /// (INDEX_OPTION | STOCK_OPTION) — never EQUITY, no new enum needed.
-  instrumentKind   PaperInstrumentKind
-  expiryDate       DateTime
-  strikePrice      Float
-  optionType       PaperOptionType
-  lastPrice        Float?
-  bidPrice         Float?
-  askPrice         Float?
-  underlyingValue  Float
+  instrumentKind     PaperInstrumentKind
+  expiryDate         DateTime
+  strikePrice        Float
+  optionType         PaperOptionType
+  lastPrice          Float?
+  bidPrice           Float?
+  askPrice           Float?
+  underlyingValue    Float
   /// Interval-parity capture cadence project (2026-08-07) — the ACTUAL
   /// capture cadence in seconds this row was written at: 60 for index
   /// underlyings (NIFTY/BANKNIFTY/FINNIFTY/MIDCPNIFTY/NIFTYNXT50, captured
@@ -2643,7 +2660,7 @@ model OptionPremiumSnapshot {
   /// cadence for every row written before this column existed, and the safe
   /// conservative assumption for any future write path that forgets to set
   /// it explicitly).
-  captureIntervalSec Int               @default(300)
+  captureIntervalSec Int                 @default(300)
 
   @@index([underlyingSymbol, expiryDate, strikePrice, optionType, capturedAt])
   @@index([capturedAt])
