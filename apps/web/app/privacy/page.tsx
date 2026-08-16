@@ -21,7 +21,7 @@ export default function PrivacyPolicyPage() {
       </div>
 
       <p className="text-sm leading-6 text-ink-600">
-        This page explains what Predict Future ("we," "us") collects when you use the site, why, and what choices
+        This page explains what Predict Future (&ldquo;we,&rdquo; &ldquo;us&rdquo;) collects when you use the site, why, and what choices
         you have. We&apos;ve kept it short and honest rather than padded with boilerplate. If anything here is
         unclear, contact us using the details at the bottom.
       </p>
