@@ -16,6 +16,7 @@
     "./markets/ranking": "./src/markets/ranking.ts",
     "./marketPulse/newsQuality": "./src/marketPulse/newsQuality.ts",
     "./marketPulse/returns": "./src/marketPulse/returns.ts",
+    "./marketPulse/intradaySessions": "./src/marketPulse/intradaySessions.ts",
     "./marketPulse/topHeadline": "./src/marketPulse/topHeadline.ts",
     "./marketPulse/instrumentMatch": "./src/marketPulse/instrumentMatch.ts",
     "./hosts/trust": "./src/hosts/trust.ts",
