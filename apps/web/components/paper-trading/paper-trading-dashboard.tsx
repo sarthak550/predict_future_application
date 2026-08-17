@@ -143,6 +143,7 @@ import { PaperTradingDisclaimerFooter } from "@/components/paper-trading/paper-t
 import { PendingOrdersPanel } from "@/components/paper-trading/pending-orders-panel";
 import { cancelPendingOrder, repricePendingOrder, type PendingOrderPayload } from "@/lib/paperTrading/pendingOrdersClient";
 import { usePriceOverrides } from "@/components/paper-trading/use-price-overrides";
+import { resolveWorkbenchReturnTarget } from "@/lib/paperTrading/resolveWorkbenchReturnTarget";
 import { useVisiblePolling } from "@/components/paper-trading/use-visible-polling";
 import { useWorkbenchAutoRestore, useWorkbenchUrlParam } from "@/components/paper-trading/use-workbench-url-param";
 import { DockedOrderTicket } from "@/components/paper-trading/terminal/docked-order-ticket";
@@ -497,6 +498,17 @@ export function PaperTradingDashboard({
   const [armedLinkedOpinionId, setArmedLinkedOpinionId] = useState<string | null>(null);
   const [armToken, setArmToken] = useState(0);
 
+  // Workstream E (2026-08-17) — where Minimize sends the user, when the
+  // maximized workbench was opened from an instrument page's "expand chart"
+  // button (`?return=/instruments/<symbol>`). Set ONCE inside the one-shot
+  // deep-link effect below, alongside the `armed*` fields — never written to
+  // by `setFocusedSymbol`/`setFocusedIndexSymbol`/`handleWorkbenchSymbolPick`
+  // (the in-workbench symbol-switcher paths), so switching the charted
+  // symbol mid-session does not change where Minimize goes: it always
+  // returns to the ORIGINATING instrument page, per the founder's own
+  // "go back where I came from" framing (see `onClose` below).
+  const [returnTarget, setReturnTarget] = useState<string | null>(null);
+
   // Shared between the deep-link effect and the bootstrap-fallback effect
   // below — set the instant EITHER has resolved a focused symbol, so
   // whichever runs second (same commit) never races to also set one. A ref
@@ -569,7 +581,7 @@ export function PaperTradingDashboard({
   // run — there is no separate one-time/lazy-init path for them.
   useEffect(() => {
     const params = new URLSearchParams(typeof window !== "undefined" ? window.location.search : searchParamsString);
-    const oneShotKeys = ["side", "productType", "quantity", "symbol", "linkedOpinionId"] as const;
+    const oneShotKeys = ["side", "productType", "quantity", "symbol", "linkedOpinionId", "return"] as const;
     const hasOneShot = oneShotKeys.some((k) => params.has(k));
     if (!hasOneShot) return;
 
@@ -580,6 +592,11 @@ export function PaperTradingDashboard({
     const parsedQuantity = rawQuantity != null ? Number(rawQuantity) : NaN;
     const quantity = Number.isInteger(parsedQuantity) && parsedQuantity > 0 ? parsedQuantity : undefined;
     const linkedOpinionId = params.get("linkedOpinionId");
+    // Workstream E — strict-shape validated (see resolveWorkbenchReturnTarget's
+    // own doc); an invalid/absent value resolves to `null`, same "reset to a
+    // clean slate" treatment every other armed field here already gets on a
+    // fresh one-shot arrival.
+    const returnValue = resolveWorkbenchReturnTarget(params.get("return"));
 
     bootstrappedRef.current = true; // a deep link always wins outright — nothing left to bootstrap.
     if (symbol) applyFocusedSymbol(symbol);
@@ -587,6 +604,7 @@ export function PaperTradingDashboard({
     setArmedProductType(productType);
     setArmedQuantity(quantity);
     setArmedLinkedOpinionId(linkedOpinionId);
+    setReturnTarget(returnValue);
     setArmToken((t) => t + 1);
 
     for (const k of oneShotKeys) params.delete(k);
@@ -1152,6 +1170,19 @@ export function PaperTradingDashboard({
           chartKey={workbenchFeed.kind === "index" ? `INDEX:${workbenchFeed.symbol}` : `EQ:${workbenchFeed.symbol}`}
           title={workbenchFeed.kind === "index" ? indexDisplayName : workbenchFeed.symbol}
           onClose={() => {
+            // Workstream E (2026-08-17) — a validated `returnTarget` means
+            // this workbench was opened via an instrument page's "expand
+            // chart" button: Minimize (and Escape, which routes through the
+            // same `onClose` prop) sends the user back there instead of the
+            // bare Paper Trading dashboard. Every workbench opened from
+            // WITHIN paper trading (holdings-row chart click, the maximize
+            // button, cross-terminal jumps that don't carry `?return=`) has
+            // `returnTarget === null` and falls straight through to the
+            // pre-existing behavior below, completely unaffected.
+            if (returnTarget) {
+              router.push(returnTarget);
+              return;
+            }
             setWorkbenchOpen(false);
             // Index Universe SPRINT B (2026-08-12) — a view-only index is a
             // transient detour (see `focusedIndexSymbol`'s own doc); closing

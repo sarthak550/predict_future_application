@@ -28,9 +28,16 @@ import { Maximize2 } from "lucide-react";
  * (see instrument.ts's own doc on why: "expand chart" is a convenience
  * shortcut, not a feature this page has previously promised, unlike a
  * trading ticket's Buy button).
+ *
+ * Workstream E (2026-08-17) — also carries `?return=/instruments/<symbol>`,
+ * the SAME `symbol` this component already has in hand (this page's own
+ * route param), so Minimize can send the user back here instead of stranding
+ * them on the bare Paper Trading dashboard. Consumed by
+ * `paper-trading-dashboard.tsx`'s existing one-shot deep-link effect and
+ * validated by `resolveWorkbenchReturnTarget` — see those files' own docs.
  */
 export function ChartExpandToWorkbenchButton({ symbol }: { symbol: string }) {
-  const href = `/paper-trading?symbol=${encodeURIComponent(symbol)}&workbench=1`;
+  const href = `/paper-trading?symbol=${encodeURIComponent(symbol)}&workbench=1&return=${encodeURIComponent(`/instruments/${symbol}`)}`;
   return (
     <Link
       href={href}
