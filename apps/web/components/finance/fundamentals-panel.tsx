@@ -214,7 +214,14 @@ function firstYearGrowthFootnote(earliestPeriodEndIso: string): string {
   return `FY${yy} growth needs FY${priorYy} filings, which the data source doesn't provide.`;
 }
 
-function KeyStat({ label, value }: { label: string; value: string }) {
+/**
+ * Workbench Symbol Panel (Workstream D1, 2026-08-17) — promoted from a
+ * private, unexported closure to a named export so `symbol-detail-panel.tsx`
+ * (the maximized workbench's TradingView-style right-side details dock) can
+ * reuse the exact same label/value tile instead of hand-rolling a lookalike.
+ * Zero behavior change to this file's own callers — same JSX, same styling.
+ */
+export function KeyStat({ label, value }: { label: string; value: string }) {
   return (
     <div>
       <p className="text-xs text-ink-400">{label}</p>
