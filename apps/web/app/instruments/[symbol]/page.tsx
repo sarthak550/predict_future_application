@@ -200,6 +200,13 @@ export default async function InstrumentDetailPage({
             // disabled here too, same footgun this comment already warns
             // about for indices.
             quoteSource={isIndex || instrument.isBseEquity ? false : undefined}
+            // "Serious Charts" Program, Workstream C (2026-08-17) — omitted
+            // entirely (not `false`/a disabled state) when
+            // supportsWorkbenchTrading is false, per Decision 3 of the CTO
+            // brief: an unexplained missing button here is fine, this is a
+            // convenience shortcut the page never promised, unlike a
+            // trading ticket's Buy button.
+            workbenchSymbol={instrument.supportsWorkbenchTrading ? instrument.symbol : undefined}
           />
         </CardContent>
       </Card>

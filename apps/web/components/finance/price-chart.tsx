@@ -78,6 +78,7 @@ import {
 import { ChartOrderIntentPopover } from "@/components/finance/chart-order-intent-popover";
 import { ChartAxisPlusButton } from "@/components/finance/chart-axis-plus-button";
 import { ChartContextMenu } from "@/components/finance/chart-context-menu";
+import { ChartExpandToWorkbenchButton } from "@/components/finance/chart-expand-to-workbench-button";
 import { ChartTradeHint, useTradeHintDismissed } from "@/components/finance/chart-trade-hint";
 import { useLiveQuoteTick } from "@/components/paper-trading/use-live-quote-tick";
 
@@ -266,6 +267,7 @@ export function PriceChart({
   quoteSource,
   supportsIntradayRanges,
   selfCapturedSource,
+  workbenchSymbol,
 }: {
   series: PricePoint[];
   symbol: string;
@@ -441,6 +443,17 @@ export function PriceChart({
    * behavior change, 1W/1M behave exactly as before this feature.
    */
   selfCapturedSource?: { url: string };
+  /**
+   * "Serious Charts" Program, Workstream C (2026-08-17) — additive, optional.
+   * When set, renders `ChartExpandToWorkbenchButton` (linking to
+   * `/paper-trading?symbol=${workbenchSymbol}&workbench=1`) in this chart's
+   * own header row. The caller (the public instrument page) passes
+   * `instrument.symbol` here ONLY when `instrument.supportsWorkbenchTrading`
+   * is true — omitted (`undefined`) renders nothing, never a disabled/ghost
+   * state (Decision 3 of the CTO brief). No terminal/dashboard consumer of
+   * this component passes this prop — the button is instrument-page-only.
+   */
+  workbenchSymbol?: string;
 }) {
   const [timeframe, setTimeframe] = useState<TimeframeKey>(defaultTimeframe ?? "3M");
 
@@ -1221,9 +1234,17 @@ export function PriceChart({
             {changePct.toFixed(2)}%) · {timeframe}
           </span>
         </div>
-        <span className="text-xs text-ink-400">
-          {first.label} → {last.label}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-ink-400">
+            {first.label} → {last.label}
+          </span>
+          {/* "Serious Charts" Program, Workstream C (2026-08-17) — always-
+              visible (not a hover-gated overlay like WorkbenchMaximizeButton
+              — this is a primary viewing surface), omitted entirely (not a
+              disabled/ghost state) when the caller doesn't pass a symbol,
+              i.e. instrument.supportsWorkbenchTrading is false. */}
+          {workbenchSymbol && <ChartExpandToWorkbenchButton symbol={workbenchSymbol} />}
+        </div>
       </div>
 
       {/* Interaction-model rework (2026-08-04) — one-time discoverability hint, terminal-only (gated on onOrderIntentConfirm). */}
