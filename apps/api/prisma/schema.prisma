@@ -1872,6 +1872,46 @@ model IndexEodQuote {
   @@index([indexName, sessionDate(sort: Desc)])
 }
 
+/// "Serious Charts" Program, Workstream B (2026-08-17) — self-owned 15-min
+/// intraday snapshots for the ~104 NSE long-tail indices (INDEX_UNIVERSE +
+/// the 5 tradable underlyings already have a verified live Yahoo pipe;
+/// NSE/BSE otherwise publish only a daily close for everything else). Every
+/// one of the 139 NSE indices getAllIndices() returns is captured in one
+/// pass regardless (trivially cheap, gives the 35 Yahoo-backed indices a
+/// free self-owned cross-check) — but only the long-tail set is WIRED to
+/// read from this table on the instrument page (see
+/// lib/finance/instrument.ts's hasSelfCapturedIntraday). NSE-only: no live/
+/// intraday BSE index feed exists anywhere in this codebase (BSE's own
+/// bseIndexEod.ts is a daily EOD archive fetcher, same tier as
+/// BseIndexEodQuote) — a future BseIndexIntradaySnapshot would need its own
+/// live-source research first, mirroring the diligence already applied to
+/// BSE Expansion Phase 1, not invented preemptively here.
+///
+/// One `last` value per snapshot, not a real OHLC bar — rendered as a line/
+/// point series only, never synthesized into open/high/low. `sessionDate`
+/// is the IST calendar session this snapshot belongs to (pruning/query
+/// convenience — see index-intraday-snapshot-prune's chunked 60-day
+/// retention, mirroring OptionPremiumSnapshot's exact pattern).
+model IndexIntradaySnapshot {
+  id            String   @id @default(cuid())
+  /// NSE display name verbatim, same convention as IndexEodQuote.indexName.
+  indexName     String
+  /// IST session date, for pruning/query convenience.
+  sessionDate   DateTime
+  capturedAt    DateTime @default(now())
+  last          Float
+  changeAbs     Float?
+  changePercent Float?
+  open          Float?
+  high          Float?
+  low           Float?
+  previousClose Float?
+
+  @@unique([indexName, capturedAt])
+  @@index([indexName, sessionDate])
+  @@index([capturedAt])
+}
+
 /// BSE Expansion Phase 1 (2026-08-12) — daily index closes for every index
 /// BSE's own bulk archive endpoint publishes, same shape/discipline as
 /// IndexEodQuote one exchange over (see apps/api/lib/marketMoves/bseIndexEod.ts's
