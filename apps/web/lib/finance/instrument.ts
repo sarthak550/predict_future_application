@@ -241,6 +241,21 @@ export interface InstrumentDetail {
   /** IndexIntradaySnapshot.indexName join key for the self-captured series endpoint (NSE's own verbatim display name) — null except when `hasSelfCapturedIntraday` is true. */
   selfCapturedIndexName: string | null;
   /**
+   * "Serious Charts" Program, Workstream C (2026-08-17) — true when this
+   * symbol is resolvable by the paper-trading workbench's own symbol search
+   * (`use-symbol-search.ts`): a plain NSE equity/ETF, one of the 5
+   * F&O-tradable indices, an `INDEX_UNIVERSE` index, or a
+   * `BSE_INDEX_UNIVERSE` index. False for a BSE-only equity (not in
+   * `StockEodQuote`, the workbench's own equity-search table) and for ANY
+   * long-tail index, NSE or BSE (the workbench's own doc comment explains
+   * why long-tail indices are deliberately excluded from its search —
+   * "would either fake intraday granularity or need a second, degraded code
+   * path"). Drives whether `PriceChart`'s "Open in Trading Workbench"
+   * button renders at all (see `chart-expand-to-workbench-button.tsx`) —
+   * omitted entirely, never a disabled/ghost state, when this is false.
+   */
+  supportsWorkbenchTrading: boolean;
+  /**
    * BSE Expansion Phase 2 (2026-08-12) — true for ANY BSE index page (the 18
    * BSE_INDEX_UNIVERSE Yahoo-verified indices AND the ~115-index BSE long
    * tail — see lib/finance/bseIndexLongTail.ts). Mutually exclusive with a
@@ -934,6 +949,18 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
   const hasSelfCapturedIntraday =
     isIndex && !supportsIntradayRanges && !isBseIndex && selfCapturedIntradayRow != null;
   const selfCapturedIndexName = hasSelfCapturedIntraday ? (longTailEntry?.name ?? null) : null;
+  // "Serious Charts" Program, Workstream C (2026-08-17) — see
+  // InstrumentDetail.supportsWorkbenchTrading's own doc. Deliberately the
+  // SAME expression as `supportsIntradayRanges` above rather than reusing
+  // that flag directly: the two questions ("does this symbol have a real
+  // Yahoo intraday ticker" vs. "can the paper-trading workbench's symbol
+  // search resolve this symbol") happen to agree on every case today, but
+  // Workstream B can make a long-tail index `hasSelfCapturedIntraday: true`
+  // WITHOUT making it workbench-tradable (the workbench's own symbol search
+  // has no IndexIntradaySnapshot-aware extension — see C4) — two gates that
+  // happen to coincide now should not silently become one gate that drifts
+  // later.
+  const supportsWorkbenchTrading = isIndex ? hasLiveIndexPipe || hasLiveBseIndexPipe : !isBseEquity;
   /** BSE Expansion Phase 3B (2026-08-14) — see InstrumentDetail's own doc. Computed from the registry lookup already fetched above, not re-derived. */
   const isBseFund = bseFundDetails != null;
   const hasAnyContent = latestQuote != null || news.length > 0 || filings.length > 0 || matchedOpinions.length > 0;
@@ -1398,6 +1425,7 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     supportsIntradayRanges,
     hasSelfCapturedIntraday,
     selfCapturedIndexName,
+    supportsWorkbenchTrading,
     isBseIndex,
     indexMetrics,
     indexComposition,
