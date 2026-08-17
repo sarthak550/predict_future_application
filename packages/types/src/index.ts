@@ -1510,10 +1510,6 @@ export type ApiFinanceBigCallOpinion = {
   resolutionNote: string | null;
   /** True when this opinion is in the post-resolution 24h spotlight window. */
   isPostResolution: boolean;
-  /** Number of Poll A (IMPLICATION) votes cast on this opinion. */
-  pollAVotes: number;
-  /** Percentage of voters who agreed (AGREE + STRONGLY_AGREE). Null if no votes. */
-  agreePercent: number | null;
   /** Raw algorithm score — exposed for debugging; not displayed to users. */
   score: number;
 };

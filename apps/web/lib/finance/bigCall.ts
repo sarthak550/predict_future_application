@@ -9,6 +9,16 @@ import { prisma } from "@/lib/prisma";
  * that route; both must pick the same winner from the same pool at the same
  * moment. See that file for the full scoring-formula writeup; this is a
  * line-for-line port, not a simplification.
+ *
+ * "Serious Charts" Program, Workstream A (2026-08-17) — PENDING scoring
+ * dropped its two vote-derived terms (clusterHeat, pollAVolumeNorm): a public
+ * "how many people voted" input undercuts the product's seriousness goal
+ * regardless of platform, even though mobile voting itself isn't touched
+ * this sprint (see the brief's Correction 1). POST_RESOLUTION scoring was
+ * already vote-free and is unchanged. `pollAVotes`/`agreePercent` were also
+ * dropped from the returned `opinion` shape — confirmed neither
+ * apps/mobile's finance-mode.tsx/combined-analyst-card.tsx nor any apps/web
+ * surface rendered them.
  */
 
 export type BigCallWindow = "live" | "closing-wrap" | "after-hours" | "pre-market" | "weekend" | "holiday";
@@ -34,8 +44,6 @@ export interface BigCallResult {
     resolvedAt: Date | null;
     resolutionNote: string | null;
     isPostResolution: boolean;
-    pollAVotes: number;
-    agreePercent: number | null;
   } | null;
 }
 
@@ -162,36 +170,6 @@ export async function getTodaysBigCall(): Promise<BigCallResult> {
     return { window, windowLabel: WINDOW_LABELS[window], opinion: null };
   }
 
-  const clusterIds = [...new Set(allCandidates.map((op) => op.eventClusterId).filter(Boolean) as string[])];
-  const clusterHeatMap = new Map<string, number>();
-  if (clusterIds.length > 0) {
-    const opinionClusterMap = new Map<string, string>();
-    for (const op of allCandidates) {
-      if (op.eventClusterId) opinionClusterMap.set(op.id, op.eventClusterId);
-    }
-    const clusterVotes = await prisma.expertOpinionVote.groupBy({
-      by: ["opinionId"],
-      where: {
-        pollType: "IMPLICATION",
-        lockedAt: { not: null },
-        opinionId: { in: allCandidates.filter((op) => op.eventClusterId).map((op) => op.id) },
-      },
-      _count: { id: true },
-    });
-    const clusterSums = new Map<string, number>();
-    for (const row of clusterVotes) {
-      const cId = opinionClusterMap.get(row.opinionId);
-      if (cId) clusterSums.set(cId, (clusterSums.get(cId) ?? 0) + row._count.id);
-    }
-    const maxCluster = Math.max(1, ...Array.from(clusterSums.values()));
-    for (const [cId, total] of clusterSums) {
-      clusterHeatMap.set(cId, total / maxCluster);
-    }
-  }
-
-  const allPollACounts = allCandidates.map((op) => pollAMap.get(op.id) ?? 0);
-  const maxLog = Math.max(1, ...allPollACounts.map((v) => Math.log10(v + 1)));
-
   const expertIds = [...new Set(allCandidates.map((op) => op.expert.id))];
   const expertHistory = await prisma.expertOpinion.groupBy({
     by: ["expertId", "resolutionStatus"],
@@ -215,11 +193,11 @@ export async function getTodaysBigCall(): Promise<BigCallResult> {
     return 0.5 + hitRate * confidence;
   }
 
+  // "Serious Charts" Program (2026-08-17) — PENDING score is now just
+  // tierWeight × freshnessScore (clusterHeat and pollAVolumeNorm dropped, see
+  // this file's own module doc). POST_RESOLUTION is unchanged.
   const scored = allCandidates.map((op) => {
     const tierWeight = tierFor(op.expert.id, op.expert.verified);
-    const pollAVotes = pollAMap.get(op.id) ?? 0;
-    const pollAVolumeNorm = Math.log10(pollAVotes + 1) / maxLog;
-    const clusterHeat = op.eventClusterId ? clusterHeatMap.get(op.eventClusterId) ?? 0.1 : 0.1;
 
     let score: number;
     if (op.isPostResolution) {
@@ -227,11 +205,10 @@ export async function getTodaysBigCall(): Promise<BigCallResult> {
       // recency factor ranks receipts among themselves (newest resolution wins).
       score = tierWeight * 1.5 * (0.5 + 0.5 * freshnessScore(op.resolvedAt ?? op.publishedAt));
     } else {
-      const freshness = freshnessScore(op.publishedAt);
-      score = tierWeight * freshness * clusterHeat * Math.max(pollAVolumeNorm, 0.1);
+      score = tierWeight * freshnessScore(op.publishedAt);
     }
 
-    return { op, score, pollAVotes };
+    return { op, score };
   });
 
   scored.sort((a, b) => b.score - a.score);
@@ -240,18 +217,7 @@ export async function getTodaysBigCall(): Promise<BigCallResult> {
     return { window, windowLabel: WINDOW_LABELS[window], opinion: null };
   }
 
-  const { op, pollAVotes } = winner;
-
-  const tallies = await prisma.expertOpinionVote.groupBy({
-    by: ["choice"],
-    where: { opinionId: op.id, pollType: "IMPLICATION", lockedAt: { not: null } },
-    _count: { id: true },
-  });
-  const agreeCount = tallies
-    .filter((t) => t.choice === "AGREE" || t.choice === "STRONGLY_AGREE")
-    .reduce((s, t) => s + t._count.id, 0);
-  const totalTally = tallies.reduce((s, t) => s + t._count.id, 0);
-  const agreePercent = totalTally > 0 ? Math.round((agreeCount / totalTally) * 100) : null;
+  const { op } = winner;
 
   return {
     window,
@@ -277,8 +243,6 @@ export async function getTodaysBigCall(): Promise<BigCallResult> {
       resolvedAt: op.resolvedAt ?? null,
       resolutionNote: op.resolutionNote ?? null,
       isPostResolution: op.isPostResolution,
-      pollAVotes,
-      agreePercent,
     },
   };
 }

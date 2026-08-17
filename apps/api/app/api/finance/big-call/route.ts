@@ -4,21 +4,31 @@
  * Returns the "Today's Big Call" spotlight opinion — the single highest-scored
  * PENDING ExpertOpinion across the current pool, determined by:
  *
- *   score = analystTierWeight × freshnessScore × clusterHeatScore × pollAVolumeScore
+ *   score = analystTierWeight × freshnessScore
  *
  * Where:
- *   analystTierWeight : derived from the opinion's vote count (proxy for analyst credibility)
- *                       since Expert model has no tier — we use resolved HIT rate instead.
- *                       Simplified: all opinions get base tier 0.5 unless opinion is from a
- *                       verified expert (verified=true on Expert), in which case 1.0.
+ *   analystTierWeight : derived from the expert's own resolved HIT rate (see
+ *                       tierFor below), not vote count — Expert model has no
+ *                       manual tier field. Base tier 0.5 (0.7 for a verified
+ *                       expert with no track record yet) climbing toward 1.5
+ *                       as HIT rate + sample-size confidence increase.
  *   freshnessScore    : exp decay with 24-hour half-life (1.0 at publish, 0.5 at 24h)
- *   clusterHeatScore  : total Poll A votes in the opinion's cluster, normalized 0–1
- *   pollAVolumeScore  : log10(pollAVotes + 1), normalized 0–1 across pool
  *
  * Post-resolution spotlight exception:
- *   If an opinion resolved as RESOLVED_HIT within the last 24h with ≥20 Poll A votes,
- *   it may enter a 24h post-resolution spotlight window. Score = tierWeight × 1.5
- *   (freshness frozen at resolution time). Displayed with "CALLED IT" badge.
+ *   If an opinion resolved as RESOLVED_HIT recently enough to be eligible (see
+ *   `eligibleHitIds` below), it may enter a post-resolution spotlight window.
+ *   Score = tierWeight × 1.5 × (freshness of the resolution, not the publish
+ *   date). Displayed with "CALLED IT" badge.
+ *
+ * "Serious Charts" Program, Workstream A (2026-08-17) — dropped the two
+ * vote-derived scoring terms (clusterHeatScore, pollAVolumeScore) and the
+ * `pollAVotes`/`agreePercent` response fields: a public "how many people
+ * voted" input undercuts the product's seriousness goal, regardless of
+ * platform (mobile voting itself is untouched this sprint — see the brief's
+ * Correction 1). Confirmed neither apps/mobile's finance-mode.tsx/
+ * combined-analyst-card.tsx nor any apps/web surface rendered either field
+ * before dropping them. KEEP IN LOCKSTEP with apps/web/lib/finance/bigCall.ts
+ * — both must pick the same winner from the same pool at the same moment.
  *
  * Public endpoint — no authentication required.
  * Cache-Control: 60-minute cache via s-maxage.
@@ -205,40 +215,6 @@ export async function GET() {
     );
   }
 
-  // ── 6. Compute cluster heat map ────────────────────────────────────────────
-  const clusterIds = [
-    ...new Set(allCandidates.map((op) => op.eventClusterId).filter(Boolean) as string[]),
-  ];
-  const clusterHeatMap = new Map<string, number>();
-  if (clusterIds.length > 0) {
-    const opinionClusterMap = new Map<string, string>();
-    for (const op of allCandidates) {
-      if (op.eventClusterId) opinionClusterMap.set(op.id, op.eventClusterId);
-    }
-    const clusterVotes = await prisma.expertOpinionVote.groupBy({
-      by: ["opinionId"],
-      where: {
-        pollType: "IMPLICATION",
-        lockedAt: { not: null }, // Only locked votes count toward cluster heat
-        opinionId: { in: allCandidates.filter((op) => op.eventClusterId).map((op) => op.id) },
-      },
-      _count: { id: true },
-    });
-    const clusterSums = new Map<string, number>();
-    for (const row of clusterVotes) {
-      const cId = opinionClusterMap.get(row.opinionId);
-      if (cId) clusterSums.set(cId, (clusterSums.get(cId) ?? 0) + row._count.id);
-    }
-    const maxCluster = Math.max(1, ...Array.from(clusterSums.values()));
-    for (const [cId, total] of clusterSums) {
-      clusterHeatMap.set(cId, total / maxCluster);
-    }
-  }
-
-  // ── 7. Normalize Poll A volume ─────────────────────────────────────────────
-  const allPollACounts = allCandidates.map((op) => pollAMap.get(op.id) ?? 0);
-  const maxLog = Math.max(1, ...allPollACounts.map((v) => Math.log10(v + 1)));
-
   // ── 7b. Compute hit-rate-based tier for each candidate's expert ────────────
   // Replaces the old binary tier=verified flag (which had ~zero discriminating
   // power because tier=1.0 candidates were almost never in the pool).
@@ -276,11 +252,11 @@ export async function GET() {
   }
 
   // ── 8. Score each candidate ────────────────────────────────────────────────
+  // "Serious Charts" Program (2026-08-17) — dropped clusterHeat and
+  // pollAVolumeNorm (see this file's own module doc). PENDING score is now
+  // just tierWeight × freshnessScore.
   const scored = allCandidates.map((op) => {
     const tierWeight = tierFor(op.expert.id, op.expert.verified);
-    const pollAVotes = pollAMap.get(op.id) ?? 0;
-    const pollAVolumeNorm = Math.log10(pollAVotes + 1) / maxLog;
-    const clusterHeat = op.eventClusterId ? (clusterHeatMap.get(op.eventClusterId) ?? 0.1) : 0.1;
 
     let score: number;
     if (op.isPostResolution) {
@@ -288,11 +264,10 @@ export async function GET() {
       // recency factor ranks receipts among themselves (newest resolution wins).
       score = tierWeight * 1.5 * (0.5 + 0.5 * freshnessScore(op.resolvedAt ?? op.publishedAt));
     } else {
-      const freshness = freshnessScore(op.publishedAt);
-      score = tierWeight * freshness * clusterHeat * Math.max(pollAVolumeNorm, 0.1);
+      score = tierWeight * freshnessScore(op.publishedAt);
     }
 
-    return { op, score, pollAVotes };
+    return { op, score };
   });
 
   scored.sort((a, b) => b.score - a.score);
@@ -304,19 +279,7 @@ export async function GET() {
     );
   }
 
-  const { op, score, pollAVotes } = winner;
-
-  // ── 9. Compute agree % (locked votes only) ───────────────────────────────
-  const tallies = await prisma.expertOpinionVote.groupBy({
-    by: ["choice"],
-    where: { opinionId: op.id, pollType: "IMPLICATION", lockedAt: { not: null } },
-    _count: { id: true },
-  });
-  const agreeCount = tallies
-    .filter((t) => t.choice === "AGREE" || t.choice === "STRONGLY_AGREE")
-    .reduce((s, t) => s + t._count.id, 0);
-  const totalTally = tallies.reduce((s, t) => s + t._count.id, 0);
-  const agreePercent = totalTally > 0 ? Math.round((agreeCount / totalTally) * 100) : null;
+  const { op, score } = winner;
 
   return NextResponse.json(
     {
@@ -341,8 +304,6 @@ export async function GET() {
         resolvedAt: op.resolvedAt?.toISOString() ?? null,
         resolutionNote: op.resolutionNote ?? null,
         isPostResolution: op.isPostResolution,
-        pollAVotes,
-        agreePercent,
         score,
       },
     },
