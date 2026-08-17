@@ -2,7 +2,7 @@
 
 /**
  * Session-aware "Create your portfolio" CTA for the /portfolios directory
- * header. Same client-side session-fetch pattern as SessionChip/TakeASide
+ * header. Same client-side session-fetch pattern as SessionChip/FollowExpertButton
  * (this page is ISR, so signed-in state can't be read server-side without
  * killing the revalidate window) — a signed-out visitor is routed through
  * /sign-in with a callbackUrl back to /portfolios/new; a signed-in visitor

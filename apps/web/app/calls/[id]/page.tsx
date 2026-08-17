@@ -9,7 +9,6 @@ import { FirmLink } from "@/components/finance/firm-link";
 import { PaperTradeCta } from "@/components/finance/paper-trade-cta";
 import { SaveOpinionButton } from "@/components/finance/save-opinion-button";
 import { ShareCallButton } from "@/components/finance/share-call-button";
-import { TakeASide } from "@/components/finance/take-a-side";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -273,7 +272,6 @@ export default async function CallSharePage({ params }: { params: { id: string }
               it&apos;s graded against real price data. Save it above to find it again from your profile.
             </p>
           )}
-          <TakeASide opinionId={opinion.id} resolutionStatus={opinion.resolutionStatus} />
           <PaperTradeCta opinionId={opinion.id} direction={opinion.direction} instrumentTicker={opinion.instrumentTicker} />
           <a
             href={opinion.sourceUrl}

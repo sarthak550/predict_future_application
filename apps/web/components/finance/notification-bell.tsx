@@ -9,8 +9,9 @@
  * duplicating SessionChip's own /api/auth/session call.
  *
  * The latest-10 list is fetched lazily on first dropdown open (not on
- * mount) — same "don't pay for what nobody looks at" principle TakeASide's
- * tallies fetch already established for this codebase.
+ * mount) — same "don't pay for what nobody looks at" principle
+ * SaveOpinionButton's saved-ids batch fetch already established for this
+ * codebase.
  */
 
 import { useEffect, useRef, useState } from "react";

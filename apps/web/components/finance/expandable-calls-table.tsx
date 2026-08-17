@@ -18,11 +18,14 @@
  * (a cross-analyst feed) supplies it to render an extra column linking to
  * /analysts/[slug].
  *
- * Return-to-call (Phase C.1): TakeASide's signed-out CTA links to
- * /sign-in?callbackUrl=<this page>&call=<id>. On landing back here, this
- * component reads ?call= from the URL, auto-expands that row, and scrolls it
- * into view — so a user who signed in specifically to vote on one call isn't
- * dropped back at the top of a long table.
+ * Return-to-call (Phase C.1, dormant since the "Serious Charts" removal of
+ * TakeASide, 2026-08-17): this component still reads ?call= from the URL,
+ * auto-expands that row, and scrolls it into view — preserved as reusable
+ * "return and highlight a row" infrastructure for a future feature (e.g.
+ * Save/Share deep-linking back to a specific expanded row), per explicit
+ * founder instruction, even though TakeASide's own signed-out CTA (its only
+ * producer of ?call=) no longer exists. See lib/auth/resolveRedirectTarget.ts
+ * for the other half of this mechanism.
  */
 
 import { Fragment, useEffect, useRef, useState } from "react";
@@ -43,7 +46,6 @@ import { DirectionChip, VerdictBadge } from "@/components/finance/analyst-badges
 import { firmHref } from "@/lib/finance/firmLink";
 import { PaperTradeCta } from "@/components/finance/paper-trade-cta";
 import { SaveOpinionButton } from "@/components/finance/save-opinion-button";
-import { TakeASide } from "@/components/finance/take-a-side";
 
 export type ExpandableCall = {
   id: string;
@@ -334,7 +336,6 @@ export function ExpandableCallsTable({
                             </Link>
                           ) : null}
                         </div>
-                        <TakeASide opinionId={call.id} resolutionStatus={call.resolutionStatus} />
                         <PaperTradeCta opinionId={call.id} direction={call.direction} instrumentTicker={call.instrumentTicker} />
                       </div>
                     </TableCell>

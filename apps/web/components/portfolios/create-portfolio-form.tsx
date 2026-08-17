@@ -2,7 +2,7 @@
 
 /**
  * /portfolios/new — signed-in create form. Session-aware client-side (same
- * fetch("/api/auth/session") pattern as SessionChip/TakeASide/CreatePortfolioCta)
+ * fetch("/api/auth/session") pattern as SessionChip/FollowExpertButton/CreatePortfolioCta)
  * since this whole route is NOT ISR and can afford it, but staying consistent
  * with the rest of Portfolios keeps one mental model for the surface.
  */

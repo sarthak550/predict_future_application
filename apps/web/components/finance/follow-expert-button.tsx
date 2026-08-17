@@ -3,17 +3,17 @@
 /**
  * Follow/unfollow toggle for an analyst's profile hero (Growth Loop Sprint G1,
  * Decision 2). Session-aware CLIENT-side, the same way SessionChip and
- * TakeASide are — /analysts/[slug] is ISR (revalidate: 3600), so reading
- * cookies()/getSession() in the server component would force dynamic
+ * SaveOpinionButton are — /analysts/[slug] is ISR (revalidate: 3600), so
+ * reading cookies()/getSession() in the server component would force dynamic
  * rendering and kill ISR. On mount, fetches session AND the current follow
  * state in parallel; the follow-state GET is safe to call even when signed
  * out (it degrades to { following: false }), but we still need the session
  * fetch to distinguish "signed out" from "signed in, not following" — the
  * GET response alone can't tell the two apart.
  *
- * Signed-out click: renders a "Sign in to follow" link, the exact same
- * pattern TakeASide uses for its own signed-out state (see
- * components/finance/take-a-side.tsx) — same callbackUrl shape, same
+ * Signed-out click: renders a "Sign in to follow" link, the same general
+ * shape SaveOpinionButton's own signed-out fallback uses (see
+ * components/finance/save-opinion-button.tsx) — same callbackUrl shape, same
  * /sign-in destination — rather than inventing a second auth-prompt pattern.
  *
  * No follower counts (Decision 2, locked): this renders ONLY the current

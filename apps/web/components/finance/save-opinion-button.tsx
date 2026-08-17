@@ -22,8 +22,8 @@
  *    a server-queried `saved` boolean directly (mirrors why MyAnalystCard
  *    skips FollowExpertButton's own unknown-initial-state fetch).
  *
- * Signed-out click: this codebase's usual pattern (FollowExpertButton,
- * TakeASide) renders a visible "Sign in to X" link in place of the toggle.
+ * Signed-out click: this codebase's usual pattern (FollowExpertButton)
+ * renders a visible "Sign in to X" link in place of the toggle.
  * There's no room for that in a dense table cell, so this component always
  * renders the toggle and, on a 401 from the write, navigates to
  * /sign-in?callbackUrl=<current path> instead — the brief's own explicit
