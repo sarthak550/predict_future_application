@@ -47,8 +47,16 @@ export async function getSelfCapturedIndexSeries(indexName: string, sessions: nu
   }
 
   const cutoff = new Date(Date.now() - RETENTION_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
+  // Case-insensitive, matching this codebase's established indexName-join
+  // convention everywhere else two independently-sourced NSE feeds are
+  // compared (e.g. instrument.ts's IndexEodQuote/BseIndexEodQuote lookups):
+  // the live allIndices feed this table's own capture cron writes from
+  // publishes ALL-CAPS names ("NIFTY MOBILITY"), while IndexEodQuote (and
+  // therefore indexLongTail.ts's resolved `name`, the join key callers pass
+  // in here) is Title Case ("Nifty Mobility") — same index, different casing
+  // per source, never assume they agree byte-for-byte.
   const rows = await prisma.indexIntradaySnapshot.findMany({
-    where: { indexName, capturedAt: { gte: cutoff } },
+    where: { indexName: { equals: indexName, mode: "insensitive" }, capturedAt: { gte: cutoff } },
     orderBy: { capturedAt: "asc" },
     select: { capturedAt: true, last: true },
   });

@@ -222,6 +222,25 @@ export interface InstrumentDetail {
    */
   supportsIntradayRanges: boolean;
   /**
+   * "Serious Charts" Program, Workstream B (2026-08-17) — true for an NSE
+   * long-tail index (`isIndex && !supportsIntradayRanges && !isBseIndex` —
+   * a Yahoo-ineligible NSE index; algebraically this is exactly
+   * `isLongTailIndex`) once at least one `IndexIntradaySnapshot` row has
+   * been captured for it (a cheap exists check, not a 5-session minimum —
+   * see index-intraday-capture's cron doc). When true, `PriceChart`'s 1W/1M
+   * lazy-fetch real self-captured 15-min bars from
+   * `/api/instruments/index/[symbol]/captured-intraday` instead of
+   * re-slicing the daily `spark` array — honestly partial if fewer than
+   * 5/22 sessions have accrued yet (never padded, never backfilled). False
+   * for the 35 Yahoo-backed indices (`supportsIntradayRanges` already
+   * covers those — this flag and that one are mutually exclusive by
+   * construction, never both true for the same page) and for a plain
+   * equity/ETF/BSE-anything, which never reaches this branch.
+   */
+  hasSelfCapturedIntraday: boolean;
+  /** IndexIntradaySnapshot.indexName join key for the self-captured series endpoint (NSE's own verbatim display name) — null except when `hasSelfCapturedIntraday` is true. */
+  selfCapturedIndexName: string | null;
+  /**
    * BSE Expansion Phase 2 (2026-08-12) — true for ANY BSE index page (the 18
    * BSE_INDEX_UNIVERSE Yahoo-verified indices AND the ~115-index BSE long
    * tail — see lib/finance/bseIndexLongTail.ts). Mutually exclusive with a
@@ -558,6 +577,7 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     bseEquityLatestRow,
     bseEquitySparkRows,
     bseFundDetails,
+    selfCapturedIntradayRow,
   ] = await Promise.all([
     prisma.stockEodQuote.findFirst({
       where: { symbol },
@@ -795,6 +815,19 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     // registry's first fetch in any 24h window (same caching shape as
     // `etfDetails` above).
     bseEquityTicker ? getBseFundRegistryEntry(bseEquityTicker) : Promise.resolve(null),
+    // "Serious Charts" Program, Workstream B (2026-08-17) — cheap exists
+    // check (not a count, not an arbitrary session threshold) for
+    // `hasSelfCapturedIntraday` below. A no-op Promise for every page that
+    // isn't an NSE long-tail index (`isLongTailIndex` — see this file's
+    // module doc: this is the ONLY class `IndexIntradaySnapshot` is wired to
+    // for reading, per Decision 2 of the CTO brief, even though B2's cron
+    // captures all 139 indices).
+    isLongTailIndex
+      ? prisma.indexIntradaySnapshot.findFirst({
+          where: { indexName: { equals: longTailEntry!.name, mode: "insensitive" } },
+          select: { id: true },
+        })
+      : Promise.resolve(null),
   ]);
 
   // Belt-and-suspenders re-check with the shared matcher, same as the API
@@ -891,6 +924,16 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
   // equity candles route's `.NS`-suffix convention resolves for any NSE
   // symbol string, quote-availability not required.
   const supportsIntradayRanges = isIndex ? hasLiveIndexPipe || hasLiveBseIndexPipe : !isBseEquity;
+  // "Serious Charts" Program, Workstream B (2026-08-17) — see
+  // InstrumentDetail.hasSelfCapturedIntraday's own doc. Algebraically this
+  // reduces to exactly `isLongTailIndex` (isIndex && !supportsIntradayRanges
+  // && !isBseIndex only holds when isIndex is true via the long-tail branch
+  // alone — hasLiveIndexPipe/hasLiveBseIndexPipe/isBseIndex are all false in
+  // that case), written out in full here so the gate stays self-documenting
+  // rather than relying on a reader re-deriving that equivalence.
+  const hasSelfCapturedIntraday =
+    isIndex && !supportsIntradayRanges && !isBseIndex && selfCapturedIntradayRow != null;
+  const selfCapturedIndexName = hasSelfCapturedIntraday ? (longTailEntry?.name ?? null) : null;
   /** BSE Expansion Phase 3B (2026-08-14) — see InstrumentDetail's own doc. Computed from the registry lookup already fetched above, not re-derived. */
   const isBseFund = bseFundDetails != null;
   const hasAnyContent = latestQuote != null || news.length > 0 || filings.length > 0 || matchedOpinions.length > 0;
@@ -1353,6 +1396,8 @@ export async function fetchInstrumentDetail(rawSymbol: string): Promise<Instrume
     // symbol (see `nseUnresolved`'s own doc above).
     hasLiveIndexPipe: hasLiveIndexPipe || hasLiveBseIndexPipe,
     supportsIntradayRanges,
+    hasSelfCapturedIntraday,
+    selfCapturedIndexName,
     isBseIndex,
     indexMetrics,
     indexComposition,

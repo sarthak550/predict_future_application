@@ -164,6 +164,22 @@ export default async function InstrumentDetailPage({
             // table) so PriceChart never has to guess/re-derive which
             // instrument classes get a real 1W/1M candles fetch attempt.
             supportsIntradayRanges={instrument.supportsIntradayRanges}
+            // "Serious Charts" Program, Workstream B (2026-08-17) — the
+            // self-captured-series sibling of `intradaySource` above, for a
+            // long-tail NSE index with at least one accrued
+            // IndexIntradaySnapshot session (mutually exclusive with
+            // `supportsIntradayRanges` being true — see instrument.ts's
+            // `hasSelfCapturedIntraday` doc). `indexName` is already
+            // resolved server-side by fetchInstrumentDetail; this proxy URL
+            // just carries it through as a query param, no client-side
+            // resolution needed.
+            selfCapturedSource={
+              instrument.hasSelfCapturedIntraday && instrument.selfCapturedIndexName
+                ? {
+                    url: `/api/instruments/index/${encodeURIComponent(instrument.symbol)}/captured-intraday?indexName=${encodeURIComponent(instrument.selfCapturedIndexName)}`,
+                  }
+                : undefined
+            }
             // Index History Stage 2 (2026-08-11) — a long-tail index isn't a
             // real NSE equity ticker, so the chart's default bare-equity
             // quote poll (`/api/instruments/[symbol]/quote`) must be

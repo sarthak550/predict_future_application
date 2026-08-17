@@ -8,10 +8,11 @@
  * the interaction model users know from other market apps. Pure inline SVG,
  * no chart library; works for mouse and touch.
  *
- * Three distinct data sources feed this one chart:
- *   - 3M..MAX (always) and 1W/1M (when `supportsIntradayRanges` is falsy):
- *     daily EOD closes (StockEodQuote), passed in as `series` from the
- *     server component — one point per trading session, oldest first.
+ * Four distinct data sources feed this one chart:
+ *   - 3M..MAX (always) and 1W/1M (when neither `supportsIntradayRanges` nor
+ *     `selfCapturedSource` applies): daily EOD closes (StockEodQuote/
+ *     IndexEodQuote), passed in as `series` from the server component — one
+ *     point per trading session, oldest first.
  *   - 1D: live 1-minute intraday ticks for the current (or last completed)
  *     NSE session, fetched client-side from /api/instruments/[symbol]/intraday
  *     ONLY when the user selects it (never prefetched) — a live NSE call is
@@ -25,10 +26,25 @@
  *     (1M) IST trading sessions via `sliceToLastIstSessions`. Renders
  *     through the SAME line/area path as every other timeframe (bar `close`
  *     only, index-spaced x-axis, no candlesticks — see the CTO brief's
- *     Decisions 5/6). A class without real intraday coverage (BSE-only
- *     equities, long-tail indices, bonds — `supportsIntradayRanges` false)
- *     keeps the exact pre-existing 1W/1M behavior: a daily-EOD re-slice of
- *     `series`, zero fetch attempted.
+ *     Decisions 5/6).
+ *   - 1W/1M, "Serious Charts" Program Workstream B (2026-08-17), ONLY when
+ *     `selfCapturedSource` is set (an NSE long-tail index with at least one
+ *     accrued session — mutually exclusive with `supportsIntradayRanges`
+ *     being true for the same page): this app's OWN 15-min-cadence captured
+ *     snapshots (IndexIntradaySnapshot), fetched from that prop's URL and
+ *     sliced server-side (see indexIntradaySeries.ts) to the same 5/22
+ *     session windows. Reuses the exact same line/area/anchor render path as
+ *     the Yahoo-candles case above (a captured point maps to a `CandleBar`
+ *     with `open`=`close`= the one real value, never a fabricated second
+ *     number), with distinct "captured live since {date}" footer copy and
+ *     "First/Latest capture" anchor labels (not "Open"/"Close" — a periodic
+ *     snapshot isn't a genuine session print).
+ *
+ *   A class without real intraday coverage of ANY kind (BSE-only equities,
+ *   bonds, or a long-tail index with zero accrued self-captured sessions
+ *   yet — both `supportsIntradayRanges` and `selfCapturedSource` falsy)
+ *   keeps the exact pre-existing 1W/1M behavior: a daily-EOD re-slice of
+ *   `series`, zero fetch attempted.
  *
  * Quote-driven intrabar ticks (founder complaint, live market open,
  * 2026-08-04): between `pollIntervalMs` background refreshes of the FULL 1D
@@ -92,11 +108,18 @@ type RangeTimeframeKey = "1W" | "1M";
  */
 type CandleBar = { timestamp: number; open: number; close: number };
 
+/**
+ * "Serious Charts" Program, Workstream B (2026-08-17) — `ready` optionally
+ * carries `sinceDate` (the self-captured series endpoint's own `from` field)
+ * so the footer can render an honest "captured live since {date}" caption.
+ * Unset for the pre-existing Yahoo-candles path (that source's footer never
+ * needed a date).
+ */
 type RangeFetchState =
   | { status: "idle" }
   | { status: "loading" }
   | { status: "error" }
-  | { status: "ready"; bars: CandleBar[] };
+  | { status: "ready"; bars: CandleBar[]; sinceDate?: string };
 
 /**
  * Interval + session-window + footer copy per intraday-eligible timeframe —
@@ -104,7 +127,11 @@ type RangeFetchState =
  * copy) of the CTO brief, both locked. `sessions` feeds
  * `sliceToLastIstSessions` the same way `TIMEFRAMES[].sessions` feeds the
  * daily `series.slice(-sessions)` path — same trimming principle, applied to
- * an intraday bar array instead of a one-row-per-session daily array.
+ * an intraday bar array instead of a one-row-per-session daily array. ALSO
+ * reused verbatim as the self-captured series fetch's own `sessions` query
+ * param (same "last N IST sessions" semantic — see
+ * lib/marketMoves/indexIntradaySeries.ts) — Workstream B deliberately did
+ * not invent a second timeframe->session-count table.
  */
 const RANGE_INTERVAL: Record<
   RangeTimeframeKey,
@@ -113,6 +140,17 @@ const RANGE_INTERVAL: Record<
   "1W": { interval: "15m", sessions: 5, footerNote: "15-min bars · delayed", intervalMs: 15 * 60 * 1000 },
   "1M": { interval: "60m", sessions: 22, footerNote: "1-hour bars · delayed", intervalMs: 60 * 60 * 1000 },
 };
+
+/**
+ * "Serious Charts" Program, Workstream B (2026-08-17) — self-captured
+ * snapshots are ALWAYS 15-min cadence regardless of timeframe (unlike the
+ * Yahoo candles path, which requests a native 15m bar for 1W vs. a native
+ * 60m bar for 1M) — so both the anchor-point spacing math and the loading/
+ * footer copy use this fixed interval instead of `RANGE_INTERVAL[tf]`'s
+ * per-timeframe one when `selfCapturedSource` is active.
+ */
+const SELF_CAPTURED_INTERVAL_MS = 15 * 60 * 1000;
+const SELF_CAPTURED_INTERVAL_LABEL = "15-min";
 
 function isRangeTimeframe(key: TimeframeKey): key is RangeTimeframeKey {
   return key === "1W" || key === "1M";
@@ -227,6 +265,7 @@ export function PriceChart({
   pollIntervalMs,
   quoteSource,
   supportsIntradayRanges,
+  selfCapturedSource,
 }: {
   series: PricePoint[];
   symbol: string;
@@ -384,6 +423,24 @@ export function PriceChart({
    * a client-side re-slice of the daily `series` prop, zero network request.
    */
   supportsIntradayRanges?: boolean;
+  /**
+   * "Serious Charts" Program, Workstream B (2026-08-17) — additive, optional.
+   * Mutually exclusive with `supportsIntradayRanges` being true for the same
+   * page (see instrument.ts's `hasSelfCapturedIntraday` doc — the two gates
+   * never both fire for one symbol). When set, 1W/1M lazily fetch real
+   * self-captured 15-min snapshots from `url` (the instrument page's
+   * `/api/instruments/index/[symbol]/captured-intraday?indexName=...` proxy,
+   * already including the `indexName` query param — this callback only
+   * appends `&sessions=N`) instead of the Yahoo candles endpoint, rendered
+   * through the exact same line/area/anchor pipeline `supportsIntradayRanges`
+   * already built (a self-captured point has no real `open`, so it's mapped
+   * to a `CandleBar` with `open` = `close` = the one real captured value —
+   * never a fabricated second number). Honestly partial when fewer sessions
+   * have accrued than the timeframe wants (bars.length < 2 falls back to the
+   * daily EOD slice, same T4 behavior as the Yahoo path). Omitted: zero
+   * behavior change, 1W/1M behave exactly as before this feature.
+   */
+  selfCapturedSource?: { url: string };
 }) {
   const [timeframe, setTimeframe] = useState<TimeframeKey>(defaultTimeframe ?? "3M");
 
@@ -568,10 +625,50 @@ export function PriceChart({
   // key uniform); (2) NO `silent` mode / no `pollIntervalMs` wiring — 1W/1M
   // are historical-granularity, not live-ticking (Decision 4), so there is
   // no background-refresh caller for this callback to serve, unlike 1D's.
+  //
+  // "Serious Charts" Program, Workstream B (2026-08-17) — a THIRD branch:
+  // when `selfCapturedSource` is set, fetch that URL (already carrying
+  // `?indexName=...`) with `&sessions=N` appended instead of the Yahoo
+  // candles endpoint, and parse the self-captured-series response shape
+  // (`{points: [{t, value}], from}`) instead of `{candles}`. Each point maps
+  // to a `CandleBar` with `open` = `close` = the one real captured value (no
+  // fabricated second number — see `selfCapturedSource`'s own prop doc), so
+  // every downstream consumer of `rangeCandles` (rendering, anchors,
+  // tooltip) needs zero further branching.
   const fetchRangeCandles = useCallback(
     (tf: RangeTimeframeKey) => {
       const { interval, sessions } = RANGE_INTERVAL[tf];
       setRangeCandles((prev) => ({ ...prev, [tf]: { status: "loading" } }));
+
+      if (selfCapturedSource) {
+        fetch(`${selfCapturedSource.url}&sessions=${sessions}`)
+          .then(async (res) => {
+            if (!res.ok) throw new Error(`captured-intraday fetch ${res.status}`);
+            const body = await res.json();
+            return body as { points?: Array<{ t?: unknown; value?: unknown }>; from?: unknown };
+          })
+          .then((body) => {
+            const bars: CandleBar[] = Array.isArray(body.points)
+              ? body.points
+                  .filter((p) => Number.isFinite(p?.t) && Number.isFinite(p?.value) && (p!.value as number) > 0)
+                  .map((p) => ({ timestamp: p.t as number, open: p.value as number, close: p.value as number }))
+              : [];
+            if (bars.length < 2) {
+              // Same T4 graceful-degrade contract as the Yahoo path below —
+              // fewer than 2 sessions accrued yet falls back to the daily
+              // EOD slice, never a blank chart.
+              setRangeCandles((prev) => ({ ...prev, [tf]: { status: "error" } }));
+              return;
+            }
+            const sinceDate = typeof body.from === "string" ? body.from : undefined;
+            setRangeCandles((prev) => ({ ...prev, [tf]: { status: "ready", bars, sinceDate } }));
+          })
+          .catch(() => {
+            setRangeCandles((prev) => ({ ...prev, [tf]: { status: "error" } }));
+          });
+        return;
+      }
+
       const base = intradaySource
         ? `/api/instruments/index/${encodeURIComponent(symbol)}/candles`
         : `/api/instruments/${encodeURIComponent(symbol)}/candles`;
@@ -609,7 +706,7 @@ export function PriceChart({
           setRangeCandles((prev) => ({ ...prev, [tf]: { status: "error" } }));
         });
     },
-    [symbol, intradaySource]
+    [symbol, intradaySource, selfCapturedSource]
   );
   const fetchRangeCandlesRef = useRef(fetchRangeCandles);
   fetchRangeCandlesRef.current = fetchRangeCandles;
@@ -617,16 +714,17 @@ export function PriceChart({
   // Guards each range's initial fetch to once per symbol — same ref-keyed
   // discipline as `intradayFetchedFor` above, one slot per timeframe so 1W
   // and 1M each get their own one-shot fetch rather than sharing a single
-  // guard. No-op entirely when `supportsIntradayRanges` is falsy (T1's
-  // server-computed gate) — an ineligible instrument class fires ZERO
-  // candles requests, ever.
+  // guard. No-op entirely when NEITHER `supportsIntradayRanges` nor
+  // `selfCapturedSource` is set (T1's server-computed gate, widened by
+  // Workstream B) — an ineligible instrument class fires ZERO range
+  // requests, ever.
   const rangeFetchedFor = useRef<Record<RangeTimeframeKey, string | null>>({ "1W": null, "1M": null });
   useEffect(() => {
-    if (!supportsIntradayRanges || !isRangeTimeframe(timeframe)) return;
+    if ((!supportsIntradayRanges && !selfCapturedSource) || !isRangeTimeframe(timeframe)) return;
     if (rangeFetchedFor.current[timeframe] === symbol) return;
     rangeFetchedFor.current[timeframe] = symbol;
     fetchRangeCandlesRef.current(timeframe);
-  }, [timeframe, symbol, supportsIntradayRanges]);
+  }, [timeframe, symbol, supportsIntradayRanges, selfCapturedSource]);
 
   // Quote-driven intrabar ticks (2026-08-04) — see this file's own module
   // doc and `quoteSource`'s prop doc for the full 3-state default/override/
@@ -694,7 +792,7 @@ export function PriceChart({
     //     timeframe would've rendered pre-feature, NOT a blank/error chart.
     //   - "idle"/"loading": `[]` — the loading early-return below pre-empts
     //     rendering entirely for these, same pattern as 1D's own loading gate.
-    if (supportsIntradayRanges && isRangeTimeframe(timeframe)) {
+    if ((supportsIntradayRanges || selfCapturedSource) && isRangeTimeframe(timeframe)) {
       const rangeState = rangeCandles[timeframe];
       if (rangeState.status === "ready") {
         // Session-open anchors (2026-08-16 addendum) — founder: "for each
@@ -711,7 +809,19 @@ export function PriceChart({
         // same field every OTHER OHLCV consumer in this codebase (the
         // workbench's candlestick chart) already treats as ground truth,
         // never a synthesized/interpolated value.
-        const { intervalMs } = RANGE_INTERVAL[timeframe];
+        //
+        // "Serious Charts" Program, Workstream B (2026-08-17) — a
+        // self-captured bar's `timestamp` IS the exact instant its one real
+        // value was observed (not a bar START needing `barEndMs`'s
+        // end-of-interval shift, unlike a real Yahoo OHLCV bar), so it's
+        // labeled unshifted; the anchor labels also read "captured" rather
+        // than "Open"/"Close" since a periodic snapshot isn't a genuine
+        // session open/close print, just the first/latest reading this app
+        // happened to capture that session.
+        const usingSelfCaptured = Boolean(selfCapturedSource);
+        const intervalMs = usingSelfCaptured ? SELF_CAPTURED_INTERVAL_MS : RANGE_INTERVAL[timeframe].intervalMs;
+        const openLabel = usingSelfCaptured ? "· First capture" : "· Open";
+        const closeLabel = usingSelfCaptured ? "· Latest capture" : "· Close";
         const sessions = groupBarsByIstSession(rangeState.bars);
         const out: ChartPoint[] = [];
         for (const session of sessions) {
@@ -719,15 +829,15 @@ export function PriceChart({
           out.push({
             xValue: out.length,
             y: session[0].open,
-            label: `${formatIstBarLabel(session[0].timestamp)} · Open`,
+            label: `${formatIstBarLabel(session[0].timestamp)} ${openLabel}`,
           });
           session.forEach((bar, idx) => {
             const isLastOfSession = idx === session.length - 1;
-            const endMs = barEndMs(bar.timestamp, intervalMs);
+            const endMs = usingSelfCaptured ? bar.timestamp : barEndMs(bar.timestamp, intervalMs);
             out.push({
               xValue: out.length,
               y: bar.close,
-              label: isLastOfSession ? `${formatIstBarLabel(endMs)} · Close` : formatIstBarLabel(endMs),
+              label: isLastOfSession ? `${formatIstBarLabel(endMs)} ${closeLabel}` : formatIstBarLabel(endMs),
             });
           });
         }
@@ -737,7 +847,7 @@ export function PriceChart({
       return [];
     }
     return dailySlicePoints(timeframe);
-  }, [timeframe, intraday, liveTicks, supportsIntradayRanges, rangeCandles, dailySlicePoints]);
+  }, [timeframe, intraday, liveTicks, supportsIntradayRanges, selfCapturedSource, rangeCandles, dailySlicePoints]);
 
   // Reports the chart's own last-price/prevClose/change figures out to the
   // caller (terminal-header.tsx) — computed unconditionally (before any early
@@ -823,14 +933,19 @@ export function PriceChart({
   // this component is already past this block with real fallback points —
   // never reaching the generic "not enough price history" catch-all below
   // for a reason that isn't actually true (there IS daily history).
-  if (supportsIntradayRanges && isRangeTimeframe(timeframe)) {
+  if ((supportsIntradayRanges || selfCapturedSource) && isRangeTimeframe(timeframe)) {
     const rangeState = rangeCandles[timeframe];
     if (rangeState.status === "idle" || rangeState.status === "loading") {
+      const intervalLabel = selfCapturedSource
+        ? SELF_CAPTURED_INTERVAL_LABEL
+        : RANGE_INTERVAL[timeframe].interval === "15m"
+          ? "15-min"
+          : "1-hour";
       return (
         <div>
           <div className="flex h-[200px] items-center justify-center rounded-xl border border-ink-100 bg-ink-50/40 text-sm text-ink-400">
             <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
-            Loading {RANGE_INTERVAL[timeframe].interval === "15m" ? "15-min" : "1-hour"} bars…
+            Loading {intervalLabel} bars…
           </div>
           <TimeframeChips timeframe={timeframe} setTimeframe={pickTimeframe} series={series} setHoverIdx={setHoverIdx} />
         </div>
@@ -1006,12 +1121,27 @@ export function PriceChart({
   // "Daily closes" copy UNCHANGED, since that's exactly what's on screen
   // either way. Never a third, separate "fallback" caption — the daily copy
   // is already honest for both cases.
+  //
+  // "Serious Charts" Program, Workstream B (2026-08-17) — Decision 5's own
+  // disclosure rule: self-captured bars get a footer that reads DISTINCTLY
+  // from the Yahoo-sourced "· delayed" copy (the source is genuinely
+  // different — this app's own 15-min poll, not a third-party feed), citing
+  // the real `sinceDate` the series endpoint returned rather than a vague
+  // "recently" — honest about provenance, never copy-pasted from the Yahoo
+  // case.
+  const selfCapturedRangeState = isRangeTimeframe(timeframe) ? rangeCandles[timeframe] : null;
+  const selfCapturedFooterNote =
+    selfCapturedRangeState?.status === "ready"
+      ? `${SELF_CAPTURED_INTERVAL_LABEL} bars · captured live since ${selfCapturedRangeState.sinceDate ?? "recently"}`
+      : null;
   const footerNote =
     timeframe === "1D" && intraday.status === "ready"
       ? `1-minute ticks${effectiveQuoteUrl ? " + live" : ""} · ${intraday.sessionLabel}`
-      : supportsIntradayRanges && isRangeTimeframe(timeframe) && rangeCandles[timeframe].status === "ready"
-        ? RANGE_INTERVAL[timeframe].footerNote
-        : "Daily closes · updates after each session";
+      : selfCapturedSource && selfCapturedFooterNote
+        ? selfCapturedFooterNote
+        : supportsIntradayRanges && isRangeTimeframe(timeframe) && rangeCandles[timeframe].status === "ready"
+          ? RANGE_INTERVAL[timeframe].footerNote
+          : "Daily closes · updates after each session";
 
   // Cursor tooltip (interaction-model rework, 2026-08-16) — pixel position
   // of the hovered point, in the SAME coordinate space `axisHover`/
