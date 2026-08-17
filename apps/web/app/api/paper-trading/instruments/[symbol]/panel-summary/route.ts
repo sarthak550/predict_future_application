@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
-import { fetchInstrumentDetail, type InstrumentIndexMetrics, type InstrumentSentiment } from "@/lib/finance/instrument";
+import { fetchInstrumentDetail } from "@/lib/finance/instrument";
+import type { PanelSummaryResponse } from "@/lib/paperTrading/panelSummaryTypes";
 
 export const dynamic = "force-dynamic";
 
@@ -36,6 +37,10 @@ export const dynamic = "force-dynamic";
  * slowly (60s is plenty fresh) while still blunting repeat-symbol-switch DB
  * load. Deliberately shorter than `eod-series`'s 300s: `indexMetrics`/
  * `sentiment` are somewhat live-ish, unlike a closed daily EOD series.
+ *
+ * Response shape lives in `lib/paperTrading/panelSummaryTypes.ts`, shared
+ * with `use-symbol-panel-summary.ts` (D3) via a type-only import — neither
+ * side imports across the `app/` route-handler boundary.
  */
 export async function GET(_request: Request, { params }: { params: { symbol: string } }) {
   const rawSymbol = params.symbol;
@@ -88,33 +93,4 @@ export async function GET(_request: Request, { params }: { params: { symbol: str
   const response = NextResponse.json(payload);
   response.headers.set("Cache-Control", "public, max-age=60");
   return response;
-}
-
-/** Shared with `use-symbol-panel-summary.ts` (D3) via a type-only import — never a runtime import, so nothing server-only leaks into the client bundle. */
-export interface PanelSummaryResponse {
-  symbol: string;
-  companyName: string;
-  isIndex: boolean;
-  viewOnlyIndex: boolean;
-  isEtf: boolean;
-  etf: { trackedIndexName: string | null; trackedIndexSymbol: string | null } | null;
-  /** Null for a plain equity/ETF — see `InstrumentIndexMetrics`'s own doc. */
-  indexMetrics: InstrumentIndexMetrics | null;
-  sentiment: InstrumentSentiment;
-  /** Null when Yahoo enrichment hasn't landed for this symbol yet (cold cache) OR this is an index (never fetched) — the panel renders an honest "warming up" state, never a blank card, see Decision D4. */
-  keyStats: {
-    marketCap?: number;
-    trailingPE?: number;
-    dividendYield?: number;
-    trailingEps?: number;
-    beta1Y?: number;
-    beta5Y?: number;
-    beta?: number;
-    floatShares?: number;
-    nextEarningsDate?: string;
-    nextEarningsDateEnd?: string;
-    businessSummary?: string;
-  } | null;
-  /** ISO timestamp, null = never successfully fetched — drives the panel's "Fundamentals as of" caption. */
-  fundamentalsFetchedAt: string | null;
 }
