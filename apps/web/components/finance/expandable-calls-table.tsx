@@ -31,7 +31,7 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { ArrowUpRight, ChevronDown, Share2 } from "lucide-react";
+import { ArrowUpRight, ChevronDown, Filter, Share2 } from "lucide-react";
 import type { OpinionDirection, OpinionResolutionStatus } from "@prisma/client";
 
 import {
@@ -68,9 +68,30 @@ export type ExpandableCall = {
 
 const QUOTE_PREVIEW_LENGTH = 120;
 
+/** Which columns carry an ACTIVE user-chosen filter — drives the Excel-style funnel marker in that column's header (founder 2026-08-17: "user knows what column that filter was applied on"). Callers map their own filter params to columns; defaults/off = no funnels. */
+export interface FilteredColumns {
+  analyst?: boolean;
+  instrument?: boolean;
+  direction?: boolean;
+  date?: boolean;
+  verdict?: boolean;
+}
+
+/** Header label + funnel marker for a column with an active filter — Excel's visual convention, title-attributed for hover clarity. */
+function HeaderLabel({ label, filtered }: { label: string; filtered?: boolean }) {
+  if (!filtered) return <>{label}</>;
+  return (
+    <span className="inline-flex items-center gap-1" title={`Filtered by ${label.toLowerCase()}`}>
+      {label}
+      <Filter className="h-3 w-3 text-signal-sky" aria-label="Filter active" />
+    </span>
+  );
+}
+
 export function ExpandableCallsTable({
   calls,
   firmLinkBasePath = "/analysts",
+  filteredColumns,
 }: {
   calls: ExpandableCall[];
   /**
@@ -81,6 +102,8 @@ export function ExpandableCallsTable({
    * from it — founder ask, 2026-08-08 (see lib/finance/firmLink.ts).
    */
   firmLinkBasePath?: "/analysts" | "/opinions";
+  /** See FilteredColumns — omitted entirely by callers without filter UI. */
+  filteredColumns?: FilteredColumns;
 }) {
   const [openId, setOpenId] = useState<string | null>(null);
   // Saved Opinions (Ticket 3): ONE batch fetch of the signed-in user's saved
@@ -146,11 +169,23 @@ export function ExpandableCallsTable({
               cells must hide in lockstep or table-fixed misaligns. */}
           <TableRow>
             <TableHeaderCell className={showAnalystColumn ? "w-[38%] sm:w-[38%]" : "w-[40%] sm:w-[46%]"}>Call</TableHeaderCell>
-            {showAnalystColumn && <TableHeaderCell className="w-[15%] sm:w-[13%]">Analyst</TableHeaderCell>}
-            <TableHeaderCell className="w-[15%] sm:w-[12%]">Instrument</TableHeaderCell>
-            <TableHeaderCell className="hidden w-[10%] sm:table-cell">Direction</TableHeaderCell>
-            <TableHeaderCell className="hidden w-[10%] sm:table-cell">Date</TableHeaderCell>
-            <TableHeaderCell className="w-[16%] sm:w-[10%]">Verdict</TableHeaderCell>
+            {showAnalystColumn && (
+              <TableHeaderCell className="w-[15%] sm:w-[13%]">
+                <HeaderLabel label="Analyst" filtered={filteredColumns?.analyst} />
+              </TableHeaderCell>
+            )}
+            <TableHeaderCell className="w-[15%] sm:w-[12%]">
+              <HeaderLabel label="Instrument" filtered={filteredColumns?.instrument} />
+            </TableHeaderCell>
+            <TableHeaderCell className="hidden w-[10%] sm:table-cell">
+              <HeaderLabel label="Direction" filtered={filteredColumns?.direction} />
+            </TableHeaderCell>
+            <TableHeaderCell className="hidden w-[10%] sm:table-cell">
+              <HeaderLabel label="Date" filtered={filteredColumns?.date} />
+            </TableHeaderCell>
+            <TableHeaderCell className="w-[16%] sm:w-[10%]">
+              <HeaderLabel label="Verdict" filtered={filteredColumns?.verdict} />
+            </TableHeaderCell>
             {/* "Actions", not "Source" — the cell has held source + share +
                 save since 2026-08-16; on mobile the Source TEXT link folds
                 into the expanded panel (it's already there) and only the

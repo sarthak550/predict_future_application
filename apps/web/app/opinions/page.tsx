@@ -166,6 +166,15 @@ export default async function OpinionsPage({ searchParams }: { searchParams: Sea
       ) : (
         <ExpandableCallsTable
           firmLinkBasePath="/opinions"
+          // Excel-style funnel on filtered columns (founder 2026-08-17):
+          // the header of every actively-filtered column carries the marker.
+          filteredColumns={{
+            analyst: Boolean(filters.analyst || filters.firm),
+            instrument: Boolean(filters.instrument || filters.sector),
+            direction: Boolean(filters.direction),
+            date: Boolean(filters.from || filters.to),
+            verdict: Boolean(filters.status),
+          }}
           calls={items.map((call) => ({
             id: call.id,
             quote: call.quote,

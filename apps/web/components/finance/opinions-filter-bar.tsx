@@ -66,13 +66,9 @@ const DIRECTION_OPTIONS = [
   { value: "NEUTRAL", label: "Neutral" },
 ];
 
-// Empty value = param removed = the page's GRADED default (founder
-// 2026-08-16: receipts lead; the newest-first all-calls view was
-// pending-heavy and buried every graded call off page one). "all" is now the
-// explicit opt-out value — parseOpinionsFilters maps it to no status filter.
 const STATUS_OPTIONS = [
-  { value: "", label: "Graded (HIT/MISS)" },
-  { value: "all", label: "All calls" },
+  { value: "", label: "All calls" },
+  { value: "graded", label: "Graded (HIT/MISS)" },
   { value: "pending", label: "Pending" },
 ];
 
